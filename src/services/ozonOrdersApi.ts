@@ -1,3 +1,4 @@
+import { debug } from '@/utils/debug';
 import { OzonStore, OzonPosting, OzonPostingProduct, OzonReturn, DeliveryScheme } from '@/types/ozon';
 
 const PROXY = '/ozon-api';
@@ -165,10 +166,10 @@ export const ozonOrdersApi = {
         ?? postings[postings.length - 1]?.in_process_at ?? '';
       if (oldestDate && oldestDate < since) {
         hasNext = false;
-        console.log(`[Ozon API] FBO: oldest order ${oldestDate} < since ${since} → stop`);
+        debug.log(`[Ozon API] FBO: oldest order ${oldestDate} < since ${since} → stop`);
       }
     }
-    if (!hasNext) console.log(`[Ozon API] FBO: loaded ${postings.length} (last page)`);
+    if (!hasNext) debug.log(`[Ozon API] FBO: loaded ${postings.length} (last page)`);
     (result as any).__hasNext = hasNext;
     return result;
   },

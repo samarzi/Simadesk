@@ -1,3 +1,4 @@
+import { debug } from '@/utils/debug';
 import { OzonStore, OzonProduct, OzonWarehouse } from '@/types/ozon';
 import { fromOzon } from './dimensionsUnit';
 
@@ -294,13 +295,13 @@ export const ozonApi = {
         const resp = JSON.parse(text);
         if (i === 0) {
           // Log raw response structure to debug field names and data location
-          console.log(`[Ozon] info/list chunk 0 raw:`, text.slice(0, 600));
+          debug.log(`[Ozon] info/list chunk 0 raw:`, text.slice(0, 600));
           // Log first item's full keys to find SKU field
           try {
             const firstItem = (JSON.parse(text).items || [])[0];
             if (firstItem) {
-              console.log(`[Ozon] info/list item keys:`, Object.keys(firstItem));
-              console.log(`[Ozon] info/list item sku fields:`, {
+              debug.log(`[Ozon] info/list item keys:`, Object.keys(firstItem));
+              debug.log(`[Ozon] info/list item sku fields:`, {
                 sku: firstItem.sku, fbo_sku: firstItem.fbo_sku, fbs_sku: firstItem.fbs_sku,
                 sources: firstItem.sources?.slice?.(0, 2),
               });
@@ -309,7 +310,7 @@ export const ozonApi = {
         }
         // v3 returns items at top level: { items: [...] }  (no "result" wrapper)
         const items: any[] = resp.items || resp.result?.items || [];
-        console.log(`[Ozon] info/list chunk ${i}: ${items.length} items из ${chunk.length}`);
+        debug.log(`[Ozon] info/list chunk ${i}: ${items.length} items из ${chunk.length}`);
         for (const item of items) {
           // offer_id is in the item; fallback to pidToOfferId map
           const offerId: string = item.offer_id || pidToOfferId.get(item.id) || '';
@@ -400,7 +401,7 @@ export const ozonApi = {
         skuCache[sku] = offerId;
       }
       localStorage.setItem('ozon_sku_map_v1', JSON.stringify(skuCache));
-      console.log(`[Ozon] ozon_sku_map_v1: ${Object.keys(skuCache).length} total SKU→offer_id mappings cached (${allSkuPairs.length} from this sync)`);
+      debug.log(`[Ozon] ozon_sku_map_v1: ${Object.keys(skuCache).length} total SKU→offer_id mappings cached (${allSkuPairs.length} from this sync)`);
     } catch {}
 
     return map;
@@ -500,7 +501,7 @@ export const ozonApi = {
         const skuCache: Record<string, string> = JSON.parse(localStorage.getItem('ozon_sku_map_v1') || '{}');
         for (const [sku, offerId] of stocksSkuPairs) skuCache[sku] = offerId;
         localStorage.setItem('ozon_sku_map_v1', JSON.stringify(skuCache));
-        console.log(`[Ozon] ozon_sku_map_v1: updated with ${stocksSkuPairs.length} SKUs from stocks`);
+        debug.log(`[Ozon] ozon_sku_map_v1: updated with ${stocksSkuPairs.length} SKUs from stocks`);
       } catch {}
     }
   },
@@ -530,7 +531,7 @@ export const ozonApi = {
             if (s) result.set(String(s), offerId);
           }
         }
-        console.log(`[Ozon] resolveSkus chunk ${i}: ${items.length} items resolved from ${chunk.length} SKUs`);
+        debug.log(`[Ozon] resolveSkus chunk ${i}: ${items.length} items resolved from ${chunk.length} SKUs`);
       } catch (e) {
         console.warn(`[Ozon] resolveSkus chunk ${i}:`, (e as Error)?.message?.slice(0, 150));
       }
@@ -542,7 +543,7 @@ export const ozonApi = {
         const skuCache: Record<string, string> = JSON.parse(localStorage.getItem('ozon_sku_map_v1') || '{}');
         for (const [sku, offerId] of result) skuCache[sku] = offerId;
         localStorage.setItem('ozon_sku_map_v1', JSON.stringify(skuCache));
-        console.log(`[Ozon] resolveSkus: resolved ${result.size} SKU mappings, cache now ${Object.keys(skuCache).length}`);
+        debug.log(`[Ozon] resolveSkus: resolved ${result.size} SKU mappings, cache now ${Object.keys(skuCache).length}`);
       } catch {}
     }
     return result;

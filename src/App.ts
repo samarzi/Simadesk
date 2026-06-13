@@ -1728,14 +1728,12 @@ export class App {
   // ── Selection Methods ─────────────────────────────────────────────────────
 
   toggleProductSelection(id: string) {
-    console.log('Toggling selection for product:', id);
     if (this.selectedProducts.has(id)) {
       this.selectedProducts.delete(id);
     } else {
       this.selectedProducts.add(id);
     }
-    console.log('Current selection size:', this.selectedProducts.size);
-    
+
     // ВАЖНО: В режиме карточек нужна полная перерисовка, в режиме таблицы - виртуальная
     if (this.viewMode === 'cards') {
       this.renderProducts();

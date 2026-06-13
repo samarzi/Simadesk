@@ -1,3 +1,4 @@
+import { debug } from '@/utils/debug';
 import * as XLSX from 'xlsx';
 import {
   OzonStore,
@@ -141,7 +142,7 @@ export class OzonOrdersModule {
               this.productImages.set(p.offer_id, img);
             }
           }
-          console.log(`[Orders] Загружено фото товаров: ${this.productImages.size}`);
+          debug.log(`[Orders] Загружено фото товаров: ${this.productImages.size}`);
         }).catch(() => { /* фото не критичны */ }),
       ]);
       this.stores = stores;
@@ -161,8 +162,8 @@ export class OzonOrdersModule {
     const signal = ac.signal;
     const { since, to } = this.getPeriodRange();
 
-    console.log(`[Orders] Запрос периода: ${since} → ${to}`);
-    console.log(`[Orders] Магазинов: ${this.stores.length}`, this.stores.map(s => s.name));
+    debug.log(`[Orders] Запрос периода: ${since} → ${to}`);
+    debug.log(`[Orders] Магазинов: ${this.stores.length}`, this.stores.map(s => s.name));
 
     this.loading = true;
     this.render();
@@ -177,7 +178,7 @@ export class OzonOrdersModule {
     // КРИТИЧНО: если этот цикл загрузки уже устарел (пользователь сменил период) —
     // не трогаем общее состояние, чтобы не сбить новый цикл.
     if (this.abortController !== ac || signal.aborted) {
-      console.log('[Orders] init: цикл загрузки устарел, выходим без рендера');
+      debug.log('[Orders] init: цикл загрузки устарел, выходим без рендера');
       return;
     }
 
@@ -194,7 +195,7 @@ export class OzonOrdersModule {
       ['fbo',  this.postings.get('fbo')?.length  ?? 0],
       ['rfbs', this.postings.get('rfbs')?.length ?? 0],
     ];
-    console.log('[Orders] Загружено заказов:', { fbs: counts[0][1], fbo: counts[1][1], rfbs: counts[2][1] });
+    debug.log('[Orders] Загружено заказов:', { fbs: counts[0][1], fbo: counts[1][1], rfbs: counts[2][1] });
 
     const best = counts.reduce((a, b) => b[1] > a[1] ? b : a);
     if (best[1] > 0) this.activeTab = best[0];
@@ -1220,7 +1221,7 @@ export class OzonOrdersModule {
     const signal = ac.signal;
     const { since, to } = this.getPeriodRange();
 
-    console.log(`[Orders] _reloadAll: период ${since} → ${to}`);
+    debug.log(`[Orders] _reloadAll: период ${since} → ${to}`);
 
     this.loading = true;
     this.render();
@@ -1233,7 +1234,7 @@ export class OzonOrdersModule {
 
     // Если нас уже сменил новый _reloadAll — выходим без побочных эффектов
     if (this.abortController !== ac) {
-      console.log('[Orders] _reloadAll: цикл устарел, новый цикл активен — выходим');
+      debug.log('[Orders] _reloadAll: цикл устарел, новый цикл активен — выходим');
       return;
     }
     if (signal.aborted) {
@@ -1248,7 +1249,7 @@ export class OzonOrdersModule {
 
     this.loading = false;
     this.lastUpdated = new Date();
-    console.log('[Orders] _reloadAll: завершено', {
+    debug.log('[Orders] _reloadAll: завершено', {
       fbs: this.postings.get('fbs')?.length ?? 0,
       fbo: this.postings.get('fbo')?.length ?? 0,
       rfbs: this.postings.get('rfbs')?.length ?? 0,

@@ -2,6 +2,7 @@
  * StockModule — управление остатками товаров по всем маркетплейсам.
  */
 
+import { debug } from '@/utils/debug';
 import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
 import { wbDb } from '@/services/wbDb';
@@ -99,7 +100,7 @@ export class StockModule {
       wbDb.getStores().catch((e) => { console.error('[Stock] getWbStores failed:', e); return [] as WbStore[]; }),
       wbDb.getProducts().catch((e) => { console.error('[Stock] getWbProducts failed:', e); return []; }),
     ]);
-    console.log(`[Stock] load: oz=${ozProducts.length} wb=${wbProducts.length} ym=${ymProducts.length} | stores: oz=${ozStores.length} wb=${wbStores.length} ym=${ymStores.length}`);
+    debug.log(`[Stock] load: oz=${ozProducts.length} wb=${wbProducts.length} ym=${ymProducts.length} | stores: oz=${ozStores.length} wb=${wbStores.length} ym=${ymStores.length}`);
 
     this.ozStores = ozStores;
     this.wbStores = wbStores;
@@ -162,7 +163,7 @@ export class StockModule {
             this.syncStatus = `Ozon: ${store.name} — загружаем товары…`;
             this.render();
             const products = await fetchAllOzonProducts(store);
-            console.log(`[Stock] Ozon slow-path: ${products.length} products for store ${store.id}`);
+            debug.log(`[Stock] Ozon slow-path: ${products.length} products for store ${store.id}`);
             this.syncStatus = `Ozon: ${store.name} — сохраняем ${products.length}…`;
             this.render();
             await ozonDb.replaceStoreProducts(store.id, products);
@@ -171,7 +172,7 @@ export class StockModule {
             this.syncStatus = `Ozon: ${store.name} — остатки…`;
             this.render();
             const stocks = await fetchOzonStocks(store);
-            console.log(`[Stock] Ozon fast-path: ${storeProds.length} cached, ${stocks.length} stocks from API`);
+            debug.log(`[Stock] Ozon fast-path: ${storeProds.length} cached, ${stocks.length} stocks from API`);
             const byOffer = new Map(stocks.map(s => [s.offer_id, s]));
             const updated = storeProds.map(({ id: _id, ...rest }) => ({
               ...rest,

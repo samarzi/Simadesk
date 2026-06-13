@@ -3,6 +3,7 @@
  * Минимальная функциональность: загрузка, фильтр периода, таблица.
  */
 
+import { debug } from '@/utils/debug';
 import { YandexStore, YandexOrder, YandexOrderStatus, YandexProduct } from '@/types/yandex';
 import { yandexDb } from '@/services/yandexDb';
 import { fetchAllYandexOrders, yandexApi } from '@/services/yandexApi';
@@ -121,7 +122,7 @@ export class YandexOrdersModule {
     this.render();
 
     const { from, to } = this.getPeriodRange();
-    console.log(`[Yandex Orders] Период ${from} → ${to}, магазинов: ${this.stores.length}`);
+    debug.log(`[Yandex Orders] Период ${from} → ${to}, магазинов: ${this.stores.length}`);
 
     try {
       const all: YandexOrder[] = [];
@@ -129,7 +130,7 @@ export class YandexOrdersModule {
         try {
           const orders = await fetchAllYandexOrders(store, from, to, signal);
           all.push(...orders);
-          console.log(`[Yandex Orders] ${store.name}: ${orders.length} заказов`);
+          debug.log(`[Yandex Orders] ${store.name}: ${orders.length} заказов`);
         } catch (err: any) {
           if (err?.name !== 'AbortError') {
             console.error(`[Yandex Orders] ${store.name}:`, err.message);

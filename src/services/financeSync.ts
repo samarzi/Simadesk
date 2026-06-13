@@ -4,6 +4,7 @@
  * Поддерживает Ozon, Wildberries (отчёт детализации), Яндекс Маркет (stats/orders).
  */
 
+import { debug } from '../utils/debug';
 import { ozonDb } from './ozonDb';
 import { wbDb } from './wbDb';
 import { yandexDb } from './yandexDb';
@@ -390,10 +391,10 @@ export const financeSync = {
     let stores: YandexStore[];
     if (preloadedStores && preloadedStores.length > 0) {
       stores = preloadedStores;
-      console.log(`[YM Sync] используем ${stores.length} магазинов из AnalyticsModule:`, stores.map(s => s.name));
+      debug.log(`[YM Sync] используем ${stores.length} магазинов из AnalyticsModule:`, stores.map(s => s.name));
     } else {
       stores = await yandexDb.getStores();
-      console.log(`[YM Sync] найдено магазинов через yandexDb: ${stores.length}`, stores.map(s => s.name));
+      debug.log(`[YM Sync] найдено магазинов через yandexDb: ${stores.length}`, stores.map(s => s.name));
     }
     if (stores.length === 0) {
       console.warn('[YM Sync] ⚠ Нет подключённых магазинов Яндекс Маркет — синхронизация пропущена.');
@@ -421,7 +422,7 @@ export const financeSync = {
         const withCommission = txs.filter(t => Math.abs(t.sale_commission || 0) > 0).length;
         const withDelivery   = txs.filter(t => Math.abs(t.delivery_charge || 0) > 0).length;
         const noCommission   = txs.length - withCommission;
-        console.log(
+        debug.log(
           `[YM Sync] ${store.name}: ${txs.length} заказов, ` +
           `с комиссией: ${withCommission}, без комиссии: ${noCommission}, ` +
           `с логистикой: ${withDelivery}`,

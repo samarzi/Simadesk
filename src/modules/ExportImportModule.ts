@@ -1,3 +1,4 @@
+import { debug } from '@/utils/debug';
 import * as XLSX from 'xlsx';
 import { boxes } from '../stores/appStore';
 import { apiService } from '../services/api';
@@ -182,18 +183,18 @@ export class ExportImportModule {
 
          // ИСПОЛЬЗУЕМ НАДЕЖНЫЙ СПОСОБ ДЕКОДИРОВАНИЯ
          const b64 = sheetWithHeaders.template_file_b64.replace(/\s/g, '');
-         console.log('Decoding Base64 template, length:', b64.length);
+         debug.log('Decoding Base64 template, length:', b64.length);
          const binaryString = atob(b64);
          const bytes = new Uint8Array(binaryString.length);
          for (let i = 0; i < binaryString.length; i++) {
              bytes[i] = binaryString.charCodeAt(i);
          }
-         console.log('Uint8Array created, size:', bytes.length);
+         debug.log('Uint8Array created, size:', bytes.length);
 
          const workbook = new ExcelJS.Workbook();
          // Передаем Uint8Array напрямую - это более стабильно в браузерах
          await workbook.xlsx.load(bytes);
-         console.log('ExcelJS workbook loaded successfully');
+         debug.log('ExcelJS workbook loaded successfully');
 
          const ws = workbook.getWorksheet('Шаблон') || workbook.worksheets[0];
          if (!ws) throw new Error('Лист "Шаблон" не найден в оригинальном файле');

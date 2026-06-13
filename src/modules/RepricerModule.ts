@@ -3,6 +3,7 @@
  * WB, Ozon, Яндекс Маркет. Несколько магазинов на каждом МП.
  */
 
+import { debug } from '@/utils/debug';
 import { wbDb } from '@/services/wbDb';
 import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
@@ -2441,7 +2442,7 @@ export class RepricerModule {
         yandexApi.getBusinessId(store.api_key, store.campaign_id).then(businessId => {
           if (businessId) {
             yandexApi.removeOffersFromAllPromos(store.api_key, businessId, allOfferIds)
-              .then(() => console.log('[YM MRC scan] Товары вне промо:', allOfferIds))
+              .then(() => debug.log('[YM MRC scan] Товары вне промо:', allOfferIds))
               .catch(e => console.warn('[YM MRC scan] removeFromPromos error:', e?.message));
           }
         }).catch(() => {});

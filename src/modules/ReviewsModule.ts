@@ -3,6 +3,7 @@
  * Несколько магазинов на каждом маркетплейсе поддерживаются.
  */
 
+import { debug } from '@/utils/debug';
 import { wbDb } from '@/services/wbDb';
 import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
@@ -492,7 +493,7 @@ export class ReviewsModule {
         // store.business_id может быть null в БД — берём из кеша entry (заполняется при loadReviews)
         const ymEntry = this.entries.find(e => e.mp === 'yandex' && e.storeId === storeId);
         const businessId = store.business_id ?? ymEntry?.businessId ?? null;
-        console.log('[YM reply] storeId:', storeId, 'campaignId:', store.campaign_id, 'businessId:', businessId);
+        debug.log('[YM reply]', { storeId, campaignId: store.campaign_id, businessId });
         await yandexApi.replyFeedback(store.api_key, store.campaign_id, reviewId, this.replyText.trim(), undefined, businessId);
       }
       const e = this.entries.find(e => e.mp === mp && e.storeId === storeId);
