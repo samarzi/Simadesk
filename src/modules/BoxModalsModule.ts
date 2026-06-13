@@ -415,7 +415,7 @@ export class BoxModalsModule {
   // ─────────────────────────────────────────────────────────────────────────
 
   deleteBox(id: string, name: string) {
-    this.app.openModal('Удалить группу?', `«${name}»`,
+    this.app.openModal('Удалить группу?', `«${escHtml(name)}»`,
       `<div style="background:var(--red-dim);border:1px solid rgba(255,68,68,0.2);border-radius:8px;padding:14px 16px;margin-bottom:4px">
         <div style="font-size:13px;color:var(--red);font-weight:500;margin-bottom:6px">⚠ Внимание — это нельзя отменить</div>
         <div style="font-size:12.5px;color:var(--text2);line-height:1.6">Будут удалены все товары и листы внутри группы «${escHtml(name)}».</div>

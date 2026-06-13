@@ -1267,7 +1267,7 @@ export class App {
         </span>`
       : '';
 
-    if (metaEl) metaEl.innerHTML = (box ? `в группе «${box.name}»` : (!this.activeBoxId && total > 0 ? 'все группы' : '')) + syncHint + hiddenHint;
+    if (metaEl) metaEl.innerHTML = (box ? `в группе «${this.esc(box.name)}»` : (!this.activeBoxId && total > 0 ? 'все группы' : '')) + syncHint + hiddenHint;
 
     // Toggle export buttons
     const exportBtn = document.getElementById('export-btn');

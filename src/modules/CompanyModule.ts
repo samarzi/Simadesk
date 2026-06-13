@@ -670,7 +670,7 @@ export class CompanyModule {
             <div id="cs-logo-preview" style="width:64px;height:64px;border-radius:14px;background:${company.color};display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:900;color:#fff;overflow:hidden;flex-shrink:0;border:2px solid var(--border2);font-family:system-ui,sans-serif;letter-spacing:-1px;text-shadow:0 1px 4px rgba(0,0,0,0.25)">
               ${company.logo_url
                 ? `<img src="${this.esc(company.logo_url)}" style="width:100%;height:100%;object-fit:cover">`
-                : `<span>${company.name.charAt(0).toUpperCase()}</span>`}
+                : `<span>${this.esc(company.name.charAt(0).toUpperCase())}</span>`}
             </div>
             <div style="flex:1">
               <div style="display:flex;gap:8px;margin-bottom:6px">
@@ -804,7 +804,7 @@ export class CompanyModule {
     document.getElementById('cs-logo-remove')?.addEventListener('click', () => {
       currentLogoUrl = null;
       const preview = document.getElementById('cs-logo-preview');
-      if (preview) preview.innerHTML = `<span>${company.name.charAt(0).toUpperCase()}</span>`;
+      if (preview) preview.innerHTML = `<span>${this.esc(company.name.charAt(0).toUpperCase())}</span>`;
     });
 
     // Save
