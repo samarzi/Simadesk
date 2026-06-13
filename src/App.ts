@@ -12,6 +12,7 @@ import { ExportImportModule } from './modules/ExportImportModule';
 import { ProductModalModule } from './modules/ProductModalModule';
 import { BoxModalsModule } from './modules/BoxModalsModule';
 import { BoxMpLinkModule } from './modules/BoxMpLinkModule';
+import { TableInteractionsModule } from './modules/TableInteractionsModule';
 
 export class App {
   /** Главная страница — командный центр и виджеты (см. modules/HomeDashboardModule.ts). */
@@ -26,6 +27,8 @@ export class App {
   private boxModals = new BoxModalsModule(this);
   /** Привязка/синхронизация групп с Яндекс Маркет, Wildberries, Ozon-каталогом (см. modules/BoxMpLinkModule.ts). */
   private boxMpLink = new BoxMpLinkModule(this);
+  /** Drag-and-drop строк/столбцов, ручное добавление товара (см. modules/TableInteractionsModule.ts). */
+  private tableInteractions = new TableInteractionsModule(this);
 
   // ── UI state ──────────────────────────────────────────────────────────────
   allProducts: Product[] = [];
@@ -54,8 +57,8 @@ export class App {
   mpPresence: Map<string, Array<{ mp: 'wb' | 'ozon' | 'yandex'; storeId: string; storeName: string; color: string }>> = new Map();
 
   // ── Drag-and-drop state ───────────────────────────────────────────────────
-  private dragFromIdx: number | null = null;
-  private dragColIdx: number | null = null;
+  dragFromIdx: number | null = null;
+  dragColIdx: number | null = null;
 
   async copyToClipboard(text: string) {
     try {
@@ -1983,185 +1986,20 @@ export class App {
     if (addInlineBtn) addInlineBtn.style.display = this.activeBoxId ? 'flex' : 'none';
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // FEATURE 1: DRAG-AND-DROP ROW REORDERING
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── TABLE INTERACTIONS: drag-drop, column reorder, manual add (delegates -> modules/TableInteractionsModule.ts) ──
 
-  onRowDragStart(idx: number) {
-    this.dragFromIdx = idx;
-  }
+  onRowDragStart(idx: number) { return this.tableInteractions.onRowDragStart(idx); }
+  onRowDragOver(el: HTMLElement, _idx: number) { return this.tableInteractions.onRowDragOver(el, _idx); }
+  onRowDragLeave(el: HTMLElement) { return this.tableInteractions.onRowDragLeave(el); }
+  onRowDrop(idx: number) { return this.tableInteractions.onRowDrop(idx); }
+  onColDragStart(e: DragEvent, idx: number) { return this.tableInteractions.onColDragStart(e, idx); }
+  onColDragOver(e: DragEvent, el: HTMLElement) { return this.tableInteractions.onColDragOver(e, el); }
+  onColDragLeave(el: HTMLElement) { return this.tableInteractions.onColDragLeave(el); }
+  onColDrop(e: DragEvent, toIdx: number) { return this.tableInteractions.onColDrop(e, toIdx); }
+  onColDragEnd() { return this.tableInteractions.onColDragEnd(); }
+  openAddProductModal() { return this.tableInteractions.openAddProductModal(); }
+  async saveNewProduct() { return this.tableInteractions.saveNewProduct(); }
 
-  onRowDragOver(el: HTMLElement, _idx: number) {
-    // Remove indicator from all rows
-    document.querySelectorAll('#vt-tbody tr').forEach(tr => (tr as HTMLElement).classList.remove('vt-drag-over'));
-    el.classList.add('vt-drag-over');
-  }
-
-  onRowDragLeave(el: HTMLElement) {
-    el.classList.remove('vt-drag-over');
-  }
-
-  onRowDrop(idx: number) {
-    document.querySelectorAll('#vt-tbody tr').forEach(tr => (tr as HTMLElement).classList.remove('vt-drag-over'));
-    if (this.dragFromIdx === null || this.dragFromIdx === idx) {
-      this.dragFromIdx = null;
-      return;
-    }
-    const from = this.dragFromIdx;
-    const to = idx;
-    this.dragFromIdx = null;
-
-    // Reorder in filtered array
-    const item = this.filtered.splice(from, 1)[0];
-    this.filtered.splice(to, 0, item);
-
-    // Sync back to allProducts by reordering within allProducts
-    // Rebuild allProducts to match filtered order (filtered is a subset)
-    const filteredIds = new Set(this.filtered.map(p => p.id));
-    const notFiltered = this.allProducts.filter(p => !filteredIds.has(p.id));
-    this.allProducts = [...this.filtered, ...notFiltered];
-
-    if (this.activeBoxId) {
-      this.cache.set(this.activeBoxId, this.allProducts);
-      idbCache.set(this.activeBoxId, this.allProducts).catch(() => {});
-    }
-
-    this.applyFilters();
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // FEATURE 2: COLUMN REORDERING (in settings)
-  // ─────────────────────────────────────────────────────────────────────────
-
-  onColDragStart(e: DragEvent, idx: number) {
-    this.dragColIdx = idx;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-    }
-    (e.target as HTMLElement).classList.add('dragging');
-  }
-
-  onColDragOver(e: DragEvent, el: HTMLElement) {
-    e.preventDefault();
-    document.querySelectorAll('.col-pick-row').forEach(r => r.classList.remove('drag-over'));
-    el.classList.add('drag-over');
-  }
-
-  onColDragLeave(el: HTMLElement) {
-    el.classList.remove('drag-over');
-  }
-
-  onColDrop(e: DragEvent, toIdx: number) {
-    e.preventDefault();
-    document.querySelectorAll('.col-pick-row').forEach(r => r.classList.remove('drag-over', 'dragging'));
-
-    const fromIdx = this.dragColIdx;
-    this.dragColIdx = null;
-    if (fromIdx === null || fromIdx === toIdx) return;
-
-    // Реорганизуем this.columns (только те, что не в SKIP_COLS)
-    const validCols = this.columns.filter(c => !App.SKIP_COLS.has(c));
-    const item = validCols.splice(fromIdx, 1)[0];
-    validCols.splice(toIdx, 0, item);
-
-    // Сохраняем новый порядок для текущей группы
-    if (this.activeBoxId) {
-      this.columnOrder.set(this.activeBoxId, validCols);
-      const co: Record<string, string[]> = {};
-      for (const [bid, cols] of this.columnOrder) co[bid] = cols;
-      localStorage.setItem('app_column_order', JSON.stringify(co));
-    }
-
-    // Перестраиваем полный список столбцов
-    this.buildColumns();
-
-    // Обновляем UI настроек (перерендерим модал)
-    if (this.activeBoxId) {
-      this.openBoxSettings(this.activeBoxId);
-    }
-  }
-
-  onColDragEnd() {
-    document.querySelectorAll('.col-pick-row').forEach(r => r.classList.remove('drag-over', 'dragging'));
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // FEATURE 2: MANUAL PRODUCT ADDITION
-  // ─────────────────────────────────────────────────────────────────────────
-
-  openAddProductModal() {
-    if (!this.activeBoxId) {
-      this.toast('Сначала выберите группу', 'error');
-      return;
-    }
-
-    const defaultFields = ['Артикул*', 'Название товара', 'Цена, руб.*', 'Тип*', 'Цвет товара'];
-    const fields = this.columns.length > 0 ? this.columns.slice(0, 20) : defaultFields;
-
-    const body = `<table class="edit-table">${fields.map(k => `
-      <tr>
-        <td>${this.esc(k.replace('*', ''))}${k.endsWith('*') ? '<span style="color:var(--accent)">*</span>' : ''}</td>
-        <td><input class="edit-inp" data-key="${this.esc(k)}" placeholder="${this.esc(k.replace('*', ''))}"></td>
-      </tr>
-    `).join('')}</table>`;
-
-    this.openModalLg('Добавить товар', 'Заполните поля нового товара', body,
-      `<button class="btn" onclick="window.app.closeModal()">Отмена</button>
-       <button class="btn btn-primary" onclick="window.app.saveNewProduct()">+ Добавить</button>`
-    );
-  }
-
-  async saveNewProduct() {
-    if (!this.activeBoxId) {
-      this.toast('Нет активной группы', 'error');
-      return;
-    }
-
-    const inputs = document.querySelectorAll<HTMLInputElement>('.edit-inp');
-    const data: Record<string, string> = {};
-    inputs.forEach(inp => {
-      if (inp.dataset.key) data[inp.dataset.key] = inp.value;
-    });
-
-    const art = data['Артикул*'];
-    if (!art || !art.trim()) {
-      this.toast('Введите Артикул*', 'error');
-      return;
-    }
-
-    const btn = document.querySelector<HTMLButtonElement>('#modal-foot .btn-primary');
-    if (btn) { btn.disabled = true; btn.textContent = 'Добавляю...'; }
-
-    try {
-      const sheets = await apiService.getSheetsByBox(this.activeBoxId);
-      if (!sheets || sheets.length === 0) {
-        this.toast('Сначала импортируйте шаблон', 'error');
-        if (btn) { btn.disabled = false; btn.textContent = '+ Добавить'; }
-        return;
-      }
-      const sheetId = sheets[0].id;
-
-      const newProd = await apiService.createProduct({
-        box_id: this.activeBoxId,
-        sheet_id: sheetId,
-        data
-      });
-
-      this.allProducts.unshift(newProd);
-      this.cache.set(this.activeBoxId, this.allProducts);
-      idbCache.set(this.activeBoxId, this.allProducts).catch(() => {});
-
-      this.buildColumns();
-      this.applyFilters();
-      this.loadBoxCount(this.activeBoxId);
-
-      this.toast('Товар добавлен', 'success');
-      this.closeModal();
-    } catch (e: any) {
-      this.toast('Ошибка: ' + e.message, 'error');
-      if (btn) { btn.disabled = false; btn.textContent = '+ Добавить'; }
-    }
-  }
 
   // ── EXPORT ALL (delegates -> modules/ExportImportModule.ts) ──────────────
 
