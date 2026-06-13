@@ -334,7 +334,7 @@ export class ProfileModule {
 
     // Create new company
     document.getElementById('prof-add-company-btn')?.addEventListener('click', () => {
-      (window as any).companyModule?.showCreate?.(true);
+      window.companyModule?.showCreate?.(true);
     });
 
     // Edit company settings
@@ -343,7 +343,7 @@ export class ProfileModule {
         e.stopPropagation();
         const id = btn.dataset.editCompany!;
         const company = companyService.getAll().find(c => c.id === id);
-        if (company) (window as any).companyModule?.openSettings(company);
+        if (company) window.companyModule?.openSettings(company);
       });
     });
 
@@ -510,7 +510,7 @@ export class ProfileModule {
       this.myIncomingInvites = this.myIncomingInvites.filter(i => i.id !== inviteId);
       this.render();
       // Update switcher
-      (window as any).companyModule?.renderSwitcher?.();
+      window.companyModule?.renderSwitcher?.();
     } catch (e: any) {
       showToast(e?.message ?? 'Ошибка принятия', 'error');
     }

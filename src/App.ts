@@ -789,7 +789,7 @@ export class App {
       boxActions.updateBox(boxId, { name, sticker });
       this.renderBoxes();
       this.toast('Название сохранено ✓', 'success');
-      (window as any).settingsHub?.init?.();
+      window.settingsHub?.init?.();
     } catch (e: any) { this.toast('Ошибка: ' + e.message, 'error'); }
   }
 

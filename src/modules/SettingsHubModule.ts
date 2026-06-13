@@ -48,7 +48,7 @@ export class SettingsHubModule {
   hide(): void { this.container.style.display = 'none'; }
 
   private getCurrentBoxId(): string | null {
-    return (window as any).app?.activeBoxId ?? null;
+    return window.app?.activeBoxId ?? null;
   }
 
   async init(): Promise<void> {
@@ -456,14 +456,14 @@ export class SettingsHubModule {
     this.columns = customColumnsDb.getColumns(boxId);
     this.render();
     // Notify the products table to rebuild columns so the new one appears immediately
-    (window as any).app?.buildColumnsAndRefresh?.();
+    window.app?.buildColumnsAndRefresh?.();
   }
 
   toggleShow(id: string, checked: boolean): void {
     customColumnsDb.updateColumn(id, { show_in_table: checked });
     this.columns = customColumnsDb.getColumns(this.getCurrentBoxId());
     this.render();
-    (window as any).app?.buildColumnsAndRefresh?.();
+    window.app?.buildColumnsAndRefresh?.();
   }
 
   deleteColumn(id: string): void {
@@ -473,7 +473,7 @@ export class SettingsHubModule {
     customColumnsDb.deleteColumn(id);
     this.columns = customColumnsDb.getColumns(this.getCurrentBoxId());
     this.render();
-    (window as any).app?.buildColumnsAndRefresh?.();
+    window.app?.buildColumnsAndRefresh?.();
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -624,7 +624,7 @@ export class SettingsHubModule {
 
   private renderImportExport(): string {
     const customCols = this.columns;
-    const groupName = (window as any).app?.getActiveGroupName?.() ?? null;
+    const groupName = window.app?.getActiveGroupName?.() ?? null;
     const offersCount = this.getGroupOffers().length;
     return `
       <div class="sh-page">
@@ -756,7 +756,7 @@ export class SettingsHubModule {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Товары');
     const date = new Date().toISOString().slice(0, 10);
-    const groupName = (window as any).app?.getActiveGroupName?.() ?? 'все_группы';
+    const groupName = window.app?.getActiveGroupName?.() ?? 'все_группы';
     XLSX.writeFile(wb, `${groupName}_${withValues ? 'с_данными' : 'шаблон'}_${date}.xlsx`);
   }
 
@@ -970,10 +970,10 @@ export class SettingsHubModule {
     try {
       await companyService.inviteByUsername(cid, username, role);
       input.value = '';
-      (window as any).app?.toast?.('Приглашение добавлено — пользователь увидит компанию при входе', 'success');
+      window.app?.toast?.('Приглашение добавлено — пользователь увидит компанию при входе', 'success');
       this.loadTeamData();
     } catch (e: any) {
-      (window as any).app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
+      window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
     }
   }
 
@@ -981,29 +981,29 @@ export class SettingsHubModule {
     if (!confirm('Удалить участника из компании?')) return;
     try {
       await companyService.removeMember(memberId);
-      (window as any).app?.toast?.('Участник удалён', 'success');
+      window.app?.toast?.('Участник удалён', 'success');
       this.loadTeamData();
     } catch (e: any) {
-      (window as any).app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
+      window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
     }
   }
 
   async changeMemberRole(memberId: string, role: string): Promise<void> {
     try {
       await companyService.updateMemberRole(memberId, role as CompanyRole);
-      (window as any).app?.toast?.('Роль обновлена', 'success');
+      window.app?.toast?.('Роль обновлена', 'success');
     } catch (e: any) {
-      (window as any).app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
+      window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
     }
   }
 
   async cancelInvite(inviteId: string): Promise<void> {
     try {
       await companyService.cancelPendingInvitation(inviteId);
-      (window as any).app?.toast?.('Приглашение отменено', 'success');
+      window.app?.toast?.('Приглашение отменено', 'success');
       this.loadTeamData();
     } catch (e: any) {
-      (window as any).app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
+      window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
     }
   }
 

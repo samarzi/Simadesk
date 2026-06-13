@@ -313,7 +313,7 @@ export class BoxModalsModule {
       this.app.toast('Группа привязана ко всем магазинам Ozon ✓', 'success');
       this.app.closeModal();
       this.app.renderBoxes();
-      (window as any).settingsHub?.init?.();
+      window.settingsHub?.init?.();
       setTimeout(() => this.app.syncLinkedBox(boxId), 300);
     } catch (e: any) {
       this.app.toast('Ошибка: ' + e.message, 'error');
@@ -329,7 +329,7 @@ export class BoxModalsModule {
       this.app.toast('Группа отвязана от Ozon', 'success');
       this.app.closeModal();
       this.app.renderBoxes();
-      (window as any).settingsHub?.init?.();
+      window.settingsHub?.init?.();
     } catch (e: any) {
       this.app.toast('Ошибка: ' + e.message, 'error');
     }

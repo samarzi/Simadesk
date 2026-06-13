@@ -20,7 +20,7 @@ export class BoxMpLinkModule {
     this.app.toast('Группа привязана к Яндекс Маркет', 'success');
     this.app.closeModal();
     this.app.renderBoxes();
-    (window as any).settingsHub?.init?.();
+    window.settingsHub?.init?.();
     setTimeout(() => this.syncLinkedBoxYM(boxId), 300);
   }
 
@@ -31,7 +31,7 @@ export class BoxMpLinkModule {
     this.app.toast('Группа отвязана от Яндекс Маркет', 'success');
     this.app.closeModal();
     this.app.renderBoxes();
-    (window as any).settingsHub?.init?.();
+    window.settingsHub?.init?.();
   }
 
   async syncLinkedBoxYM(boxId: string) {
@@ -121,7 +121,7 @@ export class BoxMpLinkModule {
     this.app.toast('Группа привязана к Wildberries', 'success');
     this.app.closeModal();
     this.app.renderBoxes();
-    (window as any).settingsHub?.init?.();
+    window.settingsHub?.init?.();
     setTimeout(() => this.syncLinkedBoxWB(boxId), 300);
   }
 
@@ -132,7 +132,7 @@ export class BoxMpLinkModule {
     this.app.toast('Группа отвязана от Wildberries', 'success');
     this.app.closeModal();
     this.app.renderBoxes();
-    (window as any).settingsHub?.init?.();
+    window.settingsHub?.init?.();
   }
 
   async syncLinkedBoxWB(boxId: string) {

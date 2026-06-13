@@ -586,7 +586,7 @@ export class CompanyModule {
       companyService.setActive(id);
       this.closeDropdown();
       this.renderSwitcher();
-      (window as any).app?.init?.();
+      window.app?.init?.();
       showToast(`Переключено на «${companyService.getActive()?.name}»`, 'success');
     }, sig);
 
@@ -790,7 +790,7 @@ export class CompanyModule {
         } else if (remaining.length === 1) {
           companyService.setActive(remaining[0].id);
           this.renderSwitcher();
-          (window as any).app?.init?.();
+          window.app?.init?.();
         } else {
           this.showPicker(remaining);
         }

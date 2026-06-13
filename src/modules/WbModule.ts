@@ -389,7 +389,7 @@ export class WbModule {
       await wbDb.updateStore(storeId, { feedback_api_key });
       const s = this.stores.find(x => x.id === storeId);
       if (s) s.feedback_api_key = feedback_api_key;
-      try { (window as any).app?.toast?.('Токен для чатов и отзывов сохранён', 'success'); } catch (e) { debug.warn('[WbModule] swallowed error', e); }
+      try { window.app?.toast?.('Токен для чатов и отзывов сохранён', 'success'); } catch (e) { debug.warn('[WbModule] swallowed error', e); }
     } catch (err) { console.error('[WB] saveFeedbackToken error:', err); }
   }
 

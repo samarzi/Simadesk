@@ -633,7 +633,7 @@ export class AnalyticsModule {
     clearOrdersCache();
     clearProductsCache();
     this.render();
-    try { (window as any).app?.toast?.(`✓ Себестоимость ${price.toLocaleString('ru')} ₽ сохранена для «${vendorCode}»`, 'success'); } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
+    try { window.app?.toast?.(`✓ Себестоимость ${price.toLocaleString('ru')} ₽ сохранена для «${vendorCode}»`, 'success'); } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
   }
 
   setTax(storeId: string, field: 'model' | 'rate', value: string): void {

@@ -176,7 +176,7 @@ export class ChatsModule {
     input.value = '';
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) {
-      try { (window as any).app?.toast?.('Файл слишком большой (макс. 10 МБ)', 'error'); } catch (e) { debug.warn('[ChatsModule] swallowed error', e); }
+      try { window.app?.toast?.('Файл слишком большой (макс. 10 МБ)', 'error'); } catch (e) { debug.warn('[ChatsModule] swallowed error', e); }
       return;
     }
     const dataUrl: string = await new Promise((resolve, reject) => {
@@ -536,7 +536,7 @@ export class ChatsModule {
       if (ta) ta.value = '';
       this.pendingAttachment = null;
     } catch (err: any) {
-      try { (window as any).app?.toast?.('Ошибка отправки: ' + (err?.message ?? err), 'error'); } catch (e) { debug.warn('[ChatsModule] swallowed error', e); }
+      try { window.app?.toast?.('Ошибка отправки: ' + (err?.message ?? err), 'error'); } catch (e) { debug.warn('[ChatsModule] swallowed error', e); }
     }
     this.sending = false;
     this.render();

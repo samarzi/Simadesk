@@ -8,8 +8,8 @@ export function showToast(
   ms = 3000,
 ): void {
   // Try delegating to App.toast() if app is already booted
-  if ((window as any).app?.toast) {
-    (window as any).app.toast(msg, type, ms);
+  if (window.app?.toast) {
+    window.app.toast(msg, type, ms);
     return;
   }
 
