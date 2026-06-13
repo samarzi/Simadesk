@@ -713,7 +713,7 @@ export class ReviewsModule {
                 <div style="font-size:14px;font-weight:700;color:#dc2626;margin-bottom:8px">Ошибка загрузки отзывов</div>
                 <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:16px;
                   background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;text-align:left">
-                  ${ae.error.replace(/\n/g, '<br>')}
+                  ${this.esc(ae.error).replace(/\n/g, '<br>')}
                 </div>
                 <button onclick="window.reviewsModule.loadReviews('${this.activeMp}','${this.activeStoreId}')"
                   style="padding:8px 20px;border-radius:8px;border:1px solid var(--border);
