@@ -41,6 +41,16 @@ interface ChartCfg extends ChartState {
   minV: number; maxV: number;
 }
 
+// ── Globals bridging inline SVG/HTML onclick/onmousemove attributes to module state ──
+declare global {
+  interface Window {
+    _an2CB?: (action: string, value?: unknown) => void;
+    _an2CC?: ChartCfg;
+    _an2CM?: (svgEl: SVGSVGElement, evt: MouseEvent) => void;
+    _an2CL?: (svgEl: SVGSVGElement) => void;
+  }
+}
+
 const STORE_KEY = 'an2_chart_state_v1';
 
 const DEFAULT_STATE: ChartState = {
@@ -195,8 +205,8 @@ function ensureHandlers() {
   if (_handlersReady) return;
   _handlersReady = true;
 
-  (window as any)._an2CB = (action: string, value?: any) => {
-    const cfg: ChartCfg | undefined = (window as any)._an2CC;
+  window._an2CB = (action: string, value?: unknown) => {
+    const cfg: ChartCfg | undefined = window._an2CC;
     if (!cfg) return;
     const st: ChartState = {
       type: cfg.type, granularity: cfg.granularity,
@@ -236,7 +246,7 @@ function ensureHandlers() {
     _hoverRaf = 0;
     if (!_hoverLastEvt) return;
     const { svg, cx } = _hoverLastEvt;
-    const cfg: ChartCfg | undefined = (window as any)._an2CC;
+    const cfg: ChartCfg | undefined = window._an2CC;
     if (!cfg || cfg.data.length === 0) return;
     const { data, pl, pr, pt, pb, W, H, minV, maxV } = cfg;
     const iw = W - pl - pr;
@@ -319,12 +329,12 @@ function ensureHandlers() {
   };
 
   // Лёгкий обработчик — только сохраняем координаты, реальная работа в rAF
-  (window as any)._an2CM = (svgEl: SVGSVGElement, evt: MouseEvent) => {
+  window._an2CM = (svgEl: SVGSVGElement, evt: MouseEvent) => {
     _hoverLastEvt = { svg: svgEl, cx: evt.clientX };
     if (!_hoverRaf) _hoverRaf = requestAnimationFrame(flushHover);
   };
 
-  (window as any)._an2CL = (svgEl: SVGSVGElement) => {
+  window._an2CL = (svgEl: SVGSVGElement) => {
     _hoverLastIdx = -1;
     _hoverLastEvt = null;
     if (_hoverRaf) { cancelAnimationFrame(_hoverRaf); _hoverRaf = 0; }
@@ -378,7 +388,7 @@ function renderChartInnerUncached(rawData: TimeseriesPoint[], st: ChartState): s
 
   // cfg.granularity = эффективная (с учётом авто) — нужна для tooltip-форматирования
   const cfg: ChartCfg = { ...st, granularity: effectiveGran, raw: rawData, data, pl, pr, pt, pb, W, H, minV, maxV };
-  (window as any)._an2CC = cfg;
+  window._an2CC = cfg;
 
   const xFor = (i: number) => data.length > 1 ? pl + (i / (data.length - 1)) * iw : pl + iw / 2;
   const yFor = (v: number) => pt + (1 - (v - minV) / rangeEx) * ih;
