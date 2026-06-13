@@ -1,0 +1,636 @@
+/* ============================================================
+   AUTH — Login screen + Company screens
+   ============================================================ */
+
+/* ── Full-screen auth gate overlay ──────────────────────────────────────────── */
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: auth-fade-in 0.3s ease;
+}
+
+.auth-gate.hidden {
+  display: none;
+}
+
+@keyframes auth-fade-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Login card ───────────────────────────────────────────────────────────────  */
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 20px;
+  padding: 40px 36px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  box-shadow: 0 32px 80px rgba(0,0,0,.7);
+}
+
+.auth-logo {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 900;
+  font-size: 22px;
+  letter-spacing: -1px;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.auth-tagline {
+  font-size: 11px;
+  color: var(--text3);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 32px;
+}
+
+.auth-headline {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--text);
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.auth-sub {
+  font-size: 13px;
+  color: var(--text2);
+  text-align: center;
+  line-height: 1.6;
+  margin-bottom: 28px;
+}
+
+/* Telegram widget container */
+.auth-tg-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+/* Dev login button (only in dev mode) */
+.auth-dev-btn {
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px dashed var(--border3);
+  background: transparent;
+  color: var(--text3);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color .2s, border-color .2s;
+  margin-bottom: 12px;
+}
+.auth-dev-btn:hover {
+  color: var(--text2);
+  border-color: var(--text3);
+}
+
+.auth-hint {
+  font-size: 11px;
+  color: var(--text3);
+  text-align: center;
+  line-height: 1.6;
+}
+
+.auth-hint a {
+  color: var(--text2);
+  text-decoration: none;
+}
+
+.auth-error {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--red-dim);
+  border: 1px solid rgba(255,68,68,.2);
+  border-radius: 8px;
+  color: var(--red);
+  font-size: 12px;
+  text-align: center;
+  margin-bottom: 16px;
+  display: none;
+}
+.auth-error.visible { display: block; }
+
+/* ── Company screens ─────────────────────────────────────────────────────────── */
+.company-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 8000;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: auth-fade-in 0.3s ease;
+}
+
+.company-gate.hidden {
+  display: none;
+}
+
+/* Company picker (when user has multiple companies) */
+.company-picker-card {
+  width: 100%;
+  max-width: 480px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 20px;
+  padding: 32px;
+  box-shadow: 0 32px 80px rgba(0,0,0,.7);
+}
+
+.cp-head {
+  margin-bottom: 24px;
+}
+
+.cp-title {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.cp-sub {
+  font-size: 13px;
+  color: var(--text2);
+}
+
+.cp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.cp-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+
+.cp-item:hover {
+  border-color: var(--border2);
+  background: var(--hover);
+}
+
+.cp-item-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'SF Pro Display', 'Outfit', system-ui, sans-serif;
+  font-weight: 900;
+  font-size: 16px;
+  color: #fff;
+  flex-shrink: 0;
+  letter-spacing: -0.5px;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+
+.cp-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.cp-item-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cp-item-role {
+  font-size: 11px;
+  color: var(--text2);
+  margin-top: 1px;
+}
+
+.cp-item-arrow {
+  color: var(--text3);
+  flex-shrink: 0;
+}
+
+.cp-new-btn {
+  width: 100%;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px dashed var(--border3);
+  background: transparent;
+  color: var(--text2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color .2s, border-color .2s, background .2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.cp-new-btn:hover {
+  background: var(--hover);
+  border-color: var(--text3);
+  color: var(--text);
+}
+
+/* ── Company creation form ───────────────────────────────────────────────────── */
+.company-create-card {
+  width: 100%;
+  max-width: 540px;
+  max-height: 90vh;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 32px 80px rgba(0,0,0,.7);
+  display: flex;
+  flex-direction: column;
+}
+
+.cc-head {
+  padding: 28px 28px 0;
+  flex-shrink: 0;
+}
+
+.cc-title {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.cc-sub {
+  font-size: 13px;
+  color: var(--text2);
+  margin-bottom: 24px;
+}
+
+.cc-body {
+  padding: 0 28px 28px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Step indicator */
+.cc-steps {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+
+.cc-step-dot {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border2);
+  flex: 1;
+  transition: background .3s;
+}
+
+.cc-step-dot.active {
+  background: var(--accent);
+}
+
+/* Form fields */
+.cc-field {
+  margin-bottom: 14px;
+}
+
+.cc-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text2);
+  margin-bottom: 5px;
+  letter-spacing: .3px;
+}
+
+.cc-label .req {
+  color: var(--accent);
+  margin-left: 2px;
+}
+
+.cc-input,
+.cc-select {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border2);
+  background: var(--bg3);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color .2s;
+  outline: none;
+}
+
+.cc-input:focus,
+.cc-select:focus {
+  border-color: var(--accent);
+}
+
+.cc-input::placeholder {
+  color: var(--text3);
+}
+
+.cc-select option {
+  background: var(--bg3);
+}
+
+.cc-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.cc-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text3);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin: 20px 0 12px;
+}
+
+/* Color picker */
+.cc-colors {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cc-color-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform .15s, border-color .15s;
+}
+
+.cc-color-btn:hover {
+  transform: scale(1.15);
+}
+
+.cc-color-btn.selected {
+  border-color: #fff;
+  transform: scale(1.1);
+}
+
+/* Footer */
+.cc-foot {
+  padding: 16px 28px 24px;
+  display: flex;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg2);
+}
+
+.cc-btn {
+  flex: 1;
+  padding: 11px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: opacity .2s, transform .1s;
+}
+
+.cc-btn:active {
+  transform: scale(0.98);
+}
+
+.cc-btn-back {
+  background: var(--bg4);
+  color: var(--text2);
+  border: 1px solid var(--border2);
+}
+
+.cc-btn-next {
+  background: var(--accent);
+  color: #0a0a0a;
+  flex: 2;
+}
+
+.cc-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cc-skip {
+  font-size: 12px;
+  color: var(--text3);
+  text-align: center;
+  cursor: pointer;
+  padding: 8px;
+  transition: color .2s;
+}
+
+.cc-skip:hover {
+  color: var(--text2);
+}
+
+/* ── Sidebar company switcher ──────────────────────────────────────────────── */
+.company-switcher {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background .15s;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.company-switcher:hover {
+  background: var(--hover);
+}
+
+.cs-company {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.cs-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'SF Pro Display', 'Outfit', system-ui, sans-serif;
+  font-weight: 900;
+  font-size: 13px;
+  color: #fff;
+  flex-shrink: 0;
+  letter-spacing: -0.5px;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.cs-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.cs-name {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -.2px;
+}
+
+.cs-sub {
+  font-size: 9px;
+  color: var(--text3);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-top: 1px;
+}
+
+.cs-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--text3);
+  flex-shrink: 0;
+  transition: transform .2s;
+}
+
+.company-switcher.open .cs-chevron {
+  transform: rotate(180deg);
+}
+
+/* Dropdown */
+.cs-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 8px;
+  right: 8px;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.6);
+  z-index: 500;
+  overflow: hidden;
+  display: none;
+  animation: cs-drop-in .15s ease;
+}
+
+.cs-dropdown.open {
+  display: block;
+}
+
+@keyframes cs-drop-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.cs-drop-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  transition: background .1s;
+}
+
+.cs-drop-item:hover {
+  background: var(--hover);
+}
+
+.cs-drop-item.active-company {
+  background: rgba(212, 240, 0, 0.06);
+}
+
+.cs-drop-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'SF Pro Display', 'Outfit', system-ui, sans-serif;
+  font-weight: 900;
+  font-size: 11px;
+  color: #fff;
+  letter-spacing: -0.3px;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  flex-shrink: 0;
+}
+
+.cs-drop-name {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cs-drop-check {
+  color: var(--accent);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.cs-drop-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.cs-drop-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+  transition: background .1s;
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.cs-drop-action:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.cs-drop-action.logout {
+  color: var(--red);
+}
+
+.cs-drop-action.logout:hover {
+  background: var(--red-dim);
+}

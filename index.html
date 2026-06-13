@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#080809">
+  <title>SimaDesk — Marketplace Desk</title>
+  <meta name="description" content="Система управления товарными базами под Ozon-шаблоны">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+
+  <!-- Telegram Mini App SDK (загружается только если открыто в Telegram) -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <link rel="stylesheet" href="/src/styles/main.css">
+  <link rel="stylesheet" href="/src/styles/ozon.css">
+  <link rel="stylesheet" href="/src/styles/auth.css">
+</head>
+<body>
+
+<!-- AUTH GATE — shown when user is not logged in (z-index: 9000) -->
+<div class="auth-gate hidden" id="auth-gate"></div>
+
+<!-- COMPANY GATE — shown after login, before app starts (z-index: 8000) -->
+<div class="company-gate hidden" id="company-gate"></div>
+
+<!-- GLOBAL TOP PROGRESS BAR -->
+<div class="global-progress" id="global-progress" role="progressbar" aria-label="Загрузка данных" aria-hidden="true"></div>
+
+<!-- TOAST -->
+<div class="toast-wrap" id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+
+<!-- MOBILE BOTTOM SHEETS BACKDROP -->
+<div class="ms-backdrop" id="ms-backdrop"></div>
+
+<!-- MOBILE BOXES SHEET -->
+<div class="mobile-sheet" id="sheet-boxes">
+  <div class="ms-handle"></div>
+  <div class="ms-head">
+    <div class="ms-title">Группы</div>
+    <button class="ms-close" onclick="window.app.closeMobileSheets()">✕</button>
+  </div>
+  <div class="ms-body">
+    <button class="ms-add-box" onclick="window.app.closeMobileSheets();window.app.openNewBoxModal()">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 1v12M1 7h12"/></svg>
+      Новая группа
+    </button>
+    <div style="height:8px"></div>
+    <div id="mobile-boxes-list"></div>
+  </div>
+</div>
+
+<!-- MOBILE FILTERS SHEET -->
+<div class="mobile-sheet" id="sheet-filters">
+  <div class="ms-handle"></div>
+  <div class="ms-head">
+    <div class="ms-title">Фильтры</div>
+    <button class="ms-close" onclick="window.app.closeMobileSheets()">✕</button>
+  </div>
+  <div class="ms-body">
+    <div class="filter-section">
+      <div class="filter-title">Цена, руб.</div>
+      <div class="range-row">
+        <input class="range-inp" id="mf-price-from" type="number" placeholder="от" oninput="window.app.syncMobileFilters('price-from',this.value)">
+        <span class="range-sep">—</span>
+        <input class="range-inp" id="mf-price-to" type="number" placeholder="до" oninput="window.app.syncMobileFilters('price-to',this.value)">
+      </div>
+      <div class="sort-row">
+        <button class="sort-btn" id="m-sort-asc" onclick="window.app.toggleSort('asc')">↑ Мин</button>
+        <button class="sort-btn" id="m-sort-desc" onclick="window.app.toggleSort('desc')">↓ Макс</button>
+      </div>
+    </div>
+    <div id="mobile-dynamic-filters"></div>
+  </div>
+</div>
+
+<!-- MOBILE BOTTOM NAV -->
+<nav class="mobile-nav">
+  <button class="mn-btn" id="mn-boxes" onclick="window.app.openMobileSheet('boxes')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="M3.27 8 12 13l8.73-5"/><path d="M12 22V13"/></svg>
+    Группы
+  </button>
+  <button class="mn-btn" id="mn-all" onclick="window.app.setView('all');window.app.closeMobileSheets()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    Все
+  </button>
+  <button class="mn-fab" onclick="window.app.openImportModal()" title="Импорт">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+  <button class="mn-btn" id="mn-filters" onclick="window.app.openMobileSheet('filters')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
+    Фильтры
+  </button>
+  <button class="mn-btn" id="mn-export" onclick="window.app.openExportModal()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+    Экспорт
+  </button>
+</nav>
+
+<!-- MAIN OVERLAY (modal) -->
+<div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div class="modal" id="modal">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" id="modal-title"></div>
+        <div class="modal-sub" id="modal-sub"></div>
+      </div>
+      <button class="modal-close" onclick="window.app.closeModal()" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-foot" id="modal-foot"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div class="app">
+  <!-- DOCK (macOS-style bottom bar) -->
+  <nav class="dock" id="app-dock">
+    <!-- Profile -->
+    <div class="dock-profile" id="dock-profile" onclick="window.app.navigateTo('profile')">
+      <div class="dock-profile-avatar" id="dock-profile-avatar">S</div>
+      <span class="dock-label dock-label-company" id="dock-company-name">SimaDesk</span>
+    </div>
+    <!-- Nav items: фиксированная верхняя зона -->
+    <div class="dock-item dock-fixed active" id="nav-home" onclick="window.app.navigateTo('home')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg></div>
+      <span class="dock-label">Главная</span>
+    </div>
+    <div class="dock-divider"></div>
+    <!-- Nav items: основные — всегда видны -->
+    <div class="dock-item" id="nav-products" onclick="window.app.navigateTo('products',{loadAll:true})">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg></div>
+      <span class="dock-label">Товары</span>
+    </div>
+    <div class="dock-item" id="nav-catalog" onclick="window.app.navigateTo('catalog')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+      <span class="dock-label">Каталог</span>
+    </div>
+    <div class="dock-item" id="nav-orders" onclick="window.app.navigateTo('orders')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><path d="M3 6h18M16 10a4 4 0 01-8 0"/></svg></div>
+      <span class="dock-label">Заказы</span>
+    </div>
+    <div class="dock-item" id="nav-stock" onclick="window.app.navigateTo('stock')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg></div>
+      <span class="dock-label">Остатки</span>
+    </div>
+    <div class="dock-item" id="nav-analytics" onclick="window.app.navigateTo('analytics')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg></div>
+      <span class="dock-label">Аналитика</span>
+    </div>
+    <div class="dock-item" id="nav-repricer" onclick="window.app.navigateTo('repricer')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+      <span class="dock-label">Репрайсер</span>
+    </div>
+    <div class="dock-item" id="nav-reviews" onclick="window.app.navigateTo('reviews')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l2.9 5.88 6.49.94-4.7 4.58 1.11 6.46L12 17.27l-5.8 3.05 1.11-6.46-4.7-4.58 6.49-.94z"/></svg></div>
+      <span class="dock-label">Отзывы</span>
+    </div>
+    <div class="dock-item" id="nav-chats" onclick="window.app.navigateTo('chats')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg></div>
+      <span class="dock-label">Чаты</span>
+    </div>
+
+    <!-- Кнопка «Ещё» — разворачивает дополнительные пункты -->
+    <div class="dock-item dock-more-btn" id="dock-more-btn" onclick="window.toggleDockMore()">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></div>
+      <span class="dock-label" id="dock-more-label">Ещё</span>
+    </div>
+
+    <!-- Дополнительные пункты — анимированный враппер, раскрывается кнопкой «Ещё» -->
+    <div class="dock-extras-wrapper" id="dock-extras-wrapper">
+      <div class="dock-item" id="nav-marketplaces" onclick="window.app.navigateTo('marketplaces')">
+        <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg></div>
+        <span class="dock-label">API Маркет</span>
+      </div>
+      <div class="dock-item" id="nav-sku-audit" onclick="window.app.navigateTo('sku-audit')">
+        <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div>
+        <span class="dock-label">Анализ</span>
+      </div>
+      <div class="dock-item" id="nav-automation" onclick="window.app.navigateTo('automation')">
+        <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
+        <span class="dock-label">Скрипты</span>
+      </div>
+      <div class="dock-item" id="nav-logs" onclick="window.app.navigateTo('logs')">
+        <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8M8 9h2"/></svg></div>
+        <span class="dock-label">Логи</span>
+      </div>
+    </div>
+
+    <div class="dock-divider"></div>
+    <!-- Фиксированная нижняя зона -->
+    <div class="dock-item dock-fixed" id="nav-tasks" onclick="window.app.navigateTo('tasks')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/></svg></div>
+      <span class="dock-label">Задачи</span>
+    </div>
+    <div class="dock-item dock-fixed" id="nav-settings" onclick="window.app.navigateTo('settings')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></div>
+      <span class="dock-label">Настройки</span>
+    </div>
+  </nav>
+  <!-- Hidden elements for compatibility -->
+  <div class="company-switcher" id="company-switcher" style="display:none"></div>
+  <div id="nav-group-orders" style="display:none"></div>
+  <div id="nav-group-marketplaces" style="display:none"></div>
+  <div id="nav-ozon" style="display:none"></div>
+  <div id="nav-yandex" style="display:none"></div>
+  <div id="nav-wb" style="display:none"></div>
+  <div id="nav-orders-ozon" style="display:none"></div>
+  <div id="nav-orders-yandex" style="display:none"></div>
+  <div id="nav-orders-wb" style="display:none"></div>
+
+  <div id="sidebar-boxes-section" style="display:none">
+    <div id="boxes-list"></div>
+    <div id="nav-all" onclick="window.app.setView('all')" style="display:none"></div>
+    <button id="add-product-btn" style="display:none" onclick="window.app.addProduct()"></button>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+    <!-- TOPBAR -->
+    <div class="topbar">
+      <div class="search-wrap">
+        <span class="search-ic">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10 10l3 3" stroke-linecap="round"/></svg>
+        </span>
+        <input class="search-input" id="search-inp" placeholder="Поиск по артикулу, названию, любому параметру..."
+          aria-label="Поиск товаров" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="topbar-right">
+        <button class="btn" id="mass-fill-btn" onclick="window.app.openMassFillModal()" style="display:none" title="Заполнить одно поле одинаковым значением для всех товаров">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="3" width="12" height="2" rx="1"/><rect x="2" y="7" width="12" height="2" rx="1"/><rect x="2" y="11" width="8" height="2" rx="1"/></svg>
+          Заполнить колонку
+        </button>
+        <button class="btn" id="xlsx-import-btn" onclick="window.app.openImportModal()" title="xlsx-добавка: дополнить существующие товары данными из файла" style="display:none">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 2v8M4 6l4 4 4-4M2 12v2h12v-2"/></svg>
+          xlsx-добавка
+        </button>
+        <button class="btn" id="export-btn" onclick="window.app.openExportModal()" style="display:none">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 10V2M4 6l4-4 4 4M2 12v2h12v-2"/></svg>
+          Экспорт
+        </button>
+        <button class="btn" id="export-all-btn" onclick="window.app.openExportModalAll()" style="display:none">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2M4 6l4-4 4 4M2 12v2h12v-2"/><path d="M2 9v5h12V9" stroke-dasharray="2 2"/></svg>
+          Экспорт
+        </button>
+      </div>
+    </div>
+
+    <!-- GROUPS BAR (products page) -->
+    <div class="groups-bar" id="groups-bar" style="display:none">
+      <div class="groups-bar-scroll" id="groups-bar-list">
+        <!-- filled dynamically -->
+      </div>
+      <div class="groups-bar-actions">
+        <button class="btn btn-sm" id="mp-sync-btn" onclick="window.app.openMpSyncModal()" title="Синхронизировать с маркетплейсом">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="14" height="14"><path d="M14 8A6 6 0 1 1 8 2"/><polyline points="14 2 14 6 10 6"/></svg>
+          Синхр. с МП
+        </button>
+        <button class="btn btn-sm" id="add-product-inline-btn" onclick="window.app.addProduct()" style="display:none" title="Добавить товар">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="14" height="14"><path d="M8 2v12M2 8h12"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- CONTENT -->
+    <div class="content">
+      <!-- FILTERS -->
+      <div class="filter-panel collapsed" id="filter-panel">
+        <div class="filter-section">
+          <div class="filter-title">Цена, ₽</div>
+          <div class="range-row">
+            <input class="range-inp" id="f-price-from" type="number" placeholder="от" oninput="window.app.applyFilters()">
+            <span class="range-sep">—</span>
+            <input class="range-inp" id="f-price-to" type="number" placeholder="до" oninput="window.app.applyFilters()">
+          </div>
+          <div class="sort-row">
+            <button class="sort-btn" id="sort-asc" onclick="window.app.toggleSort('asc')">↑ Мин</button>
+            <button class="sort-btn" id="sort-desc" onclick="window.app.toggleSort('desc')">↓ Макс</button>
+          </div>
+        </div>
+        <div class="filter-section">
+          <div class="filter-title" style="color:#4ade80">
+            <span style="display:inline-flex;align-items:center;gap:5px">
+              <span style="width:6px;height:6px;border-radius:50%;background:#4ade80"></span>
+              Себестоимость, ₽
+            </span>
+          </div>
+          <div class="range-row">
+            <input class="range-inp" id="f-cost-from" type="number" placeholder="от" oninput="window.app.applyFilters()">
+            <span class="range-sep">—</span>
+            <input class="range-inp" id="f-cost-to" type="number" placeholder="до" oninput="window.app.applyFilters()">
+          </div>
+          <div class="sort-row">
+            <button class="sort-btn" onclick="window.app.toggleCostSort('asc')" id="cost-sort-asc">↑ Мин</button>
+            <button class="sort-btn" onclick="window.app.toggleCostSort('desc')" id="cost-sort-desc">↓ Макс</button>
+          </div>
+        </div>
+        <div id="dynamic-filters"></div>
+      </div>
+
+      <!-- TABLE AREA -->
+      <div class="table-area">
+        <div class="table-header">
+          <button class="filter-toggle collapsed" id="filter-toggle-btn" title="Скрыть/показать фильтры" onclick="window.app.toggleFilterPanel()">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 3h12M3 7h8M5 11h4"/></svg>
+          </button>
+          <div>
+            <div class="result-stat" id="result-stat">— товаров</div>
+            <div class="result-meta" id="result-meta">выберите группу</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="btn" id="col-picker-btn" onclick="window.app.openColPickerModal()" style="display:none;font-size:11px;padding:4px 10px;gap:4px" title="Настроить видимость и порядок столбцов">
+              <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" style="width:12px;height:12px"><path d="M1 3h12M1 7h8M1 11h5"/></svg>
+              Столбцы
+            </button>
+
+            <div class="view-tabs">
+              <button class="view-tab on" id="tab-table" onclick="window.app.setViewMode('table')">Таблица</button>
+              <button class="view-tab" id="tab-cards" onclick="window.app.setViewMode('cards')">Карточки</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="main-content" style="flex:1;overflow:hidden;display:flex;flex-direction:column"></div>
+      </div>
+    </div>
+
+    <!-- OZON SECTION (shown when nav-ozon is active) -->
+    <div id="ozon-content" style="display:none"></div>
+
+    <!-- YANDEX MARKET SECTION -->
+    <div id="yandex-content" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- ALL ORDERS — все заказы со всех маркетплейсов -->
+    <div id="orders-section" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- OZON ORDERS — только заказы Ozon -->
+    <div id="orders-ozon-section" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- YANDEX MARKET ORDERS — только заказы Я.Маркета -->
+    <div id="orders-yandex-section" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- WILDBERRIES — товары -->
+    <div id="wb-content" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- WILDBERRIES ORDERS -->
+    <div id="orders-wb-section" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- MARKETPLACES DASHBOARD -->
+    <div id="marketplaces-dashboard" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- ANALYTICS (Marketplace Finance OS) -->
+    <div id="analytics-section" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- SETTINGS HUB (колонки, формулы цен, импорт/экспорт) -->
+    <div id="settings-hub-section" style="display:none"></div>
+    <div id="profile-section" style="display:none;flex:1;overflow:auto"></div>
+    <div id="settings-section" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- SEO -->
+    <div id="seo-section" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- REPRICER -->
+    <div id="repricer-section" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- SKU AUDIT -->
+    <div id="sku-audit-section" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- REVIEWS (WB + Ozon) -->
+    <div id="reviews-section" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- CHATS (WB + Ozon) -->
+    <div id="chats-section" style="display:none;flex:1;overflow:auto"></div>
+
+    <!-- AUTOMATION -->
+    <div id="automation-section" style="display:none;flex:1;overflow:auto"></div>
+    <div id="tasks-section" style="display:none;flex:1;overflow:auto"></div>
+    <div id="stock-section" style="display:none;flex:1;overflow:auto"></div>
+    <div id="catalog-section" style="display:none;flex:1;overflow:hidden"></div>
+
+    <!-- LOGS -->
+    <div id="logs-section" style="display:none;flex:1;flex-direction:column;overflow:hidden"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // ── Nav item metadata ──────────────────────────────────────────────────────
+  var DOCK_META = {
+    'nav-products':     { label: 'Товары',     fixed: true,  page: 'products' },
+    'nav-catalog':      { label: 'Каталог',    page: 'catalog' },
+    'nav-orders':       { label: 'Заказы',     page: 'orders' },
+    'nav-stock':        { label: 'Остатки',    page: 'stock' },
+    'nav-analytics':    { label: 'Аналитика',  page: 'analytics' },
+    'nav-repricer':     { label: 'Репрайсер',  page: 'repricer' },
+    'nav-reviews':      { label: 'Отзывы',     page: 'reviews' },
+    'nav-chats':        { label: 'Чаты',       page: 'chats' },
+    'nav-marketplaces': { label: 'API Маркет', page: 'marketplaces' },
+    'nav-sku-audit':    { label: 'Анализ',     page: 'sku-audit' },
+    'nav-automation':   { label: 'Скрипты',    page: 'automation' },
+    'nav-logs':         { label: 'Логи',       page: 'logs' },
+  };
+  var DEFAULT_CFG = {
+    main:  ['nav-products','nav-catalog','nav-orders','nav-stock','nav-analytics','nav-repricer','nav-reviews','nav-chats'],
+    extra: ['nav-marketplaces','nav-sku-audit','nav-automation','nav-logs'],
+  };
+
+  function getCfg() {
+    try { return JSON.parse(localStorage.getItem('dock_nav_config') || 'null') || DEFAULT_CFG; }
+    catch { return DEFAULT_CFG; }
+  }
+  function saveCfg(cfg) {
+    try { localStorage.setItem('dock_nav_config', JSON.stringify(cfg)); } catch {}
+  }
+
+  // ── Apply config to DOM (reorder + distribute items) ──────────────────────
+  window.applyDockNavConfig = function () {
+    var dock    = document.getElementById('app-dock');
+    var wrapper = document.getElementById('dock-extras-wrapper');
+    var moreBtn = document.getElementById('dock-more-btn');
+    if (!dock || !wrapper || !moreBtn) return;
+    var cfg = getCfg();
+
+    // Move main items before the more-btn (skip fixed items — they stay in place)
+    cfg.main.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el && el !== moreBtn && !el.classList.contains('dock-fixed')) dock.insertBefore(el, moreBtn);
+    });
+    // Move extra items into the wrapper (skip fixed items)
+    cfg.extra.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el && !el.classList.contains('dock-fixed')) wrapper.appendChild(el);
+    });
+  };
+
+  // ── Toggle item between main / extra ──────────────────────────────────────
+  window.dockNavToggleItem = function (id) {
+    var cfg = getCfg();
+    var inExtra = cfg.extra.indexOf(id) !== -1;
+    if (inExtra) {
+      cfg.extra = cfg.extra.filter(function (x) { return x !== id; });
+      cfg.main.push(id);
+    } else {
+      cfg.main = cfg.main.filter(function (x) { return x !== id; });
+      cfg.extra.push(id);
+    }
+    saveCfg(cfg);
+    window.applyDockNavConfig();
+    // refresh settings panel if open
+    if (window.settingsModule) window.settingsModule.render();
+  };
+
+  // ── Move item up / down within its group ──────────────────────────────────
+  window.dockNavMoveItem = function (id, dir) { // dir: -1 up, +1 down
+    var cfg = getCfg();
+    function move(arr) {
+      var i = arr.indexOf(id);
+      if (i === -1) return arr;
+      var j = i + dir;
+      if (j < 0 || j >= arr.length) return arr;
+      var copy = arr.slice();
+      copy[i] = copy[j]; copy[j] = id;
+      return copy;
+    }
+    cfg.main  = move(cfg.main);
+    cfg.extra = move(cfg.extra);
+    saveCfg(cfg);
+    window.applyDockNavConfig();
+    if (window.settingsModule) window.settingsModule.render();
+  };
+
+  // ── Expose config read for settings renderer ──────────────────────────────
+  window.getDockNavConfig  = getCfg;
+  window.getDockNavMeta    = function () { return DOCK_META; };
+
+  // ── Toggle expand / collapse ──────────────────────────────────────────────
+  window.toggleDockMore = function () {
+    var dock = document.getElementById('app-dock');
+    if (!dock) return;
+    var expanded = dock.classList.toggle('dock-expanded');
+    var lbl = document.getElementById('dock-more-label');
+    if (lbl) lbl.textContent = expanded ? 'Скрыть' : 'Ещё';
+    try { localStorage.setItem('dock_expanded', expanded ? '1' : '0'); } catch {}
+  };
+
+  window.ensureDockExpandedForPage = function (page) {
+    var cfg = getCfg();
+    var extraPages = cfg.extra.map(function (id) {
+      return DOCK_META[id] ? DOCK_META[id].page : null;
+    }).filter(Boolean);
+    if (extraPages.indexOf(page) === -1) return;
+    var dock = document.getElementById('app-dock');
+    if (!dock) return;
+    dock.classList.add('dock-expanded');
+    var lbl = document.getElementById('dock-more-label');
+    if (lbl) lbl.textContent = 'Скрыть';
+    try { localStorage.setItem('dock_expanded', '1'); } catch {}
+  };
+
+  document.addEventListener('DOMContentLoaded', function () {
+    window.applyDockNavConfig();
+    try {
+      if (localStorage.getItem('dock_expanded') === '1') {
+        var dock = document.getElementById('app-dock');
+        if (dock) dock.classList.add('dock-expanded');
+        var lbl = document.getElementById('dock-more-label');
+        if (lbl) lbl.textContent = 'Скрыть';
+      }
+    } catch {}
+  });
+})();
+
+// ── Dock drag-and-drop reorder ────────────────────────────────────────────────
+;(function () {
+  var HOLD_MS = 170;
+  var ds = null;
+
+  function isDraggable(el) {
+    if (!el || !el.classList) return false;
+    if (!el.classList.contains('dock-item')) return false;
+    if (el.classList.contains('dock-more-btn')) return false;
+    if (el.classList.contains('dock-profile')) return false;
+    if (el.classList.contains('dock-fixed')) return false;
+    if (el.id === 'nav-products') return false;
+    if (el.style.display === 'none') return false;
+    return true;
+  }
+
+  function onPointerDown(e) {
+    var item = e.target.closest && e.target.closest('.dock-item');
+    if (!isDraggable(item)) return;
+    e.preventDefault();
+    item.classList.add('dock-holding');
+    var holdTimer = setTimeout(function () { startDrag(item, e); }, HOLD_MS);
+    ds = { holdTimer: holdTimer, item: item, active: false };
+    document.addEventListener('pointermove', onPointerMove, { passive: false });
+    document.addEventListener('pointerup',   onPointerUp);
+    document.addEventListener('pointercancel', onPointerUp);
+  }
+
+  function startDrag(item, e) {
+    var rect = item.getBoundingClientRect();
+    item.classList.remove('dock-holding');
+
+    var ghost = item.cloneNode(true);
+    ghost.removeAttribute('id');
+    ghost.classList.add('dock-ghost');
+    ghost.style.cssText = 'position:fixed;left:' + rect.left + 'px;top:' + rect.top + 'px;'
+      + 'width:' + rect.width + 'px;height:' + rect.height + 'px;'
+      + 'z-index:9999;pointer-events:none;margin:0;transition:none;'
+      + 'transform:scale(1.18);opacity:0.92;';
+    document.body.appendChild(ghost);
+
+    item.classList.add('dock-drag-source');
+
+    var dock = document.getElementById('app-dock');
+    var autoExpanded = !!(dock && !dock.classList.contains('dock-expanded'));
+    if (autoExpanded) {
+      dock.classList.add('dock-expanded');
+      var lbl = document.getElementById('dock-more-label');
+      if (lbl) lbl.textContent = 'Скрыть';
+    }
+
+    ds = { active: true, item: item, ghost: ghost,
+           offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top,
+           autoExpanded: autoExpanded, lastKey: '' };
+  }
+
+  function onPointerMove(e) {
+    if (!ds || !ds.active) return;
+    e.preventDefault();
+    ds.ghost.style.left = (e.clientX - ds.offsetX) + 'px';
+    ds.ghost.style.top  = (e.clientY - ds.offsetY) + 'px';
+    movePlaceholder(e.clientX);
+  }
+
+  function movePlaceholder(cx) {
+    var s       = ds;
+    var dock    = document.getElementById('app-dock');
+    var wrapper = document.getElementById('dock-extras-wrapper');
+    var moreBtn = document.getElementById('dock-more-btn');
+    if (!dock || !wrapper || !moreBtn) return;
+
+    var mbRect  = moreBtn.getBoundingClientRect();
+    var inExtra = cx >= mbRect.left + mbRect.width / 2;
+
+    var container = inExtra ? wrapper : dock;
+    var items = Array.from(container.children).filter(function (el) {
+      return el.classList.contains('dock-item')
+        && !el.classList.contains('dock-more-btn')
+        && !el.classList.contains('dock-profile')
+        && !el.classList.contains('dock-fixed')
+        && el !== s.item
+        && el.style.display !== 'none';
+    });
+
+    var insertBefore = null;
+    for (var i = 0; i < items.length; i++) {
+      var r = items[i].getBoundingClientRect();
+      if (r.width > 0 && cx < r.left + r.width / 2) { insertBefore = items[i]; break; }
+    }
+
+    var key = (inExtra ? 'x' : 'm') + (insertBefore ? insertBefore.id : 'end');
+    if (key === s.lastKey) return;
+    s.lastKey = key;
+
+    if (insertBefore) {
+      container.insertBefore(s.item, insertBefore);
+    } else if (!inExtra) {
+      dock.insertBefore(s.item, moreBtn);
+    } else {
+      wrapper.appendChild(s.item);
+    }
+  }
+
+  function onPointerUp() {
+    document.removeEventListener('pointermove', onPointerMove);
+    document.removeEventListener('pointerup',   onPointerUp);
+    document.removeEventListener('pointercancel', onPointerUp);
+    if (!ds) return;
+    if (ds.holdTimer) clearTimeout(ds.holdTimer);
+    if (ds.item) ds.item.classList.remove('dock-holding');
+    if (ds.active) { finishDrop(); } else { ds = null; }
+  }
+
+  function finishDrop() {
+    var s    = ds;
+    ds       = null;
+    var item = s.item;
+    var rect = item.getBoundingClientRect();
+    var ghost = s.ghost;
+
+    ghost.style.transition = 'left .2s cubic-bezier(.4,0,.2,1),top .2s cubic-bezier(.4,0,.2,1),transform .2s,opacity .2s';
+    ghost.style.left      = rect.left + 'px';
+    ghost.style.top       = rect.top  + 'px';
+    ghost.style.transform = 'scale(1)';
+    ghost.style.opacity   = '0';
+
+    setTimeout(function () {
+      ghost.remove();
+      item.classList.remove('dock-drag-source');
+
+      if (s.autoExpanded) {
+        var wrapper = document.getElementById('dock-extras-wrapper');
+        var hasExtra = wrapper && Array.from(wrapper.children).some(function (el) {
+          return el.classList.contains('dock-item');
+        });
+        if (!hasExtra) {
+          var dock = document.getElementById('app-dock');
+          if (dock) dock.classList.remove('dock-expanded');
+          var lbl = document.getElementById('dock-more-label');
+          if (lbl) lbl.textContent = 'Ещё';
+          try { localStorage.setItem('dock_expanded', '0'); } catch {}
+        }
+      }
+
+      saveConfigFromDom();
+    }, 220);
+  }
+
+  function saveConfigFromDom() {
+    var dock    = document.getElementById('app-dock');
+    var wrapper = document.getElementById('dock-extras-wrapper');
+    if (!dock || !wrapper) return;
+    var mainIds = [], extraIds = [];
+    Array.from(dock.children).forEach(function (el) {
+      if (el.classList.contains('dock-item')
+          && !el.classList.contains('dock-more-btn')
+          && !el.classList.contains('dock-profile')
+          && !el.classList.contains('dock-fixed')
+          && el.style.display !== 'none') { mainIds.push(el.id); }
+    });
+    Array.from(wrapper.children).forEach(function (el) {
+      if (el.classList.contains('dock-item')
+          && !el.classList.contains('dock-fixed')
+          && el.style.display !== 'none') { extraIds.push(el.id); }
+    });
+    try { localStorage.setItem('dock_nav_config', JSON.stringify({ main: mainIds, extra: extraIds })); } catch {}
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    var dock = document.getElementById('app-dock');
+    if (dock) dock.addEventListener('pointerdown', onPointerDown, { passive: false });
+  });
+})();
+</script>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

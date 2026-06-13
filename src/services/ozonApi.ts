@@ -1,0 +1,1075 @@
+import { OzonStore, OzonProduct, OzonWarehouse } from '@/types/ozon';
+import { fromOzon } from './dimensionsUnit';
+
+const PROXY = '/ozon-api';
+type Creds = Pick<OzonStore, 'client_id' | 'api_key'>;
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+// Statuses worth retrying (rate-limit, server overload)
+const RETRYABLE = new Set([429, 500, 502, 503]);
+
+async function ozonGet<T>(
+  endpoint: string,
+  creds: Creds,
+  retries = 3,
+): Promise<T> {
+  let lastErr: Error = new Error('unknown');
+  for (let attempt = 0; attempt < retries; attempt++) {
+    if (attempt > 0) {
+      const delay = Math.min(2000 * Math.pow(2, attempt - 1), 16000);
+      await sleep(delay);
+    }
+    const res = await fetch(`${PROXY}${endpoint}`, {
+      method: 'GET',
+      headers: {
+        'Client-Id': creds.client_id,
+        'Api-Key': creds.api_key,
+      },
+    });
+    if (res.ok) return res.json() as Promise<T>;
+    const text = await res.text();
+    console.error(`[Ozon] ${endpoint} → ${res.status}:`, text.slice(0, 300));
+    lastErr = new Error(`Ozon ${res.status} (${endpoint}): ${text.slice(0, 150)}`);
+    if (!RETRYABLE.has(res.status)) throw lastErr;
+  }
+  throw lastErr;
+}
+
+async function ozonPost<T>(
+  endpoint: string,
+  body: unknown,
+  creds: Creds,
+  retries = 5,
+  quiet = false,
+): Promise<T> {
+  let lastErr: Error = new Error('unknown');
+  for (let attempt = 0; attempt < retries; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff: 2s, 4s, 8s, 16s
+      const delay = Math.min(2000 * Math.pow(2, attempt - 1), 16000);
+      await sleep(delay);
+    }
+    const res = await fetch(`${PROXY}${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Client-Id': creds.client_id,
+        'Api-Key': creds.api_key,
+      },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return res.json() as Promise<T>;
+    const text = await res.text();
+    if (!quiet) console.error(`[Ozon] ${endpoint} → ${res.status}:`, text.slice(0, 300));
+    lastErr = new Error(`Ozon ${res.status} (${endpoint}): ${text.slice(0, 150)}`);
+    if (!RETRYABLE.has(res.status)) throw lastErr;
+  }
+  throw lastErr;
+}
+
+// ── Return type from getProductInfo ─────────────────────────────────────────
+export interface OzonProductInfo {
+  product_id: number;
+  sku: number;                 // Ozon internal FBO/FBS SKU
+  name: string;
+  images: string[];
+  barcode: string;
+  status: string;
+  price: number;
+  old_price: number;
+  min_price: number;
+  fbs: number;
+  fbo: number;
+  type_id: number;
+  description_category_id: number;
+  weight?: number | null;
+  weight_unit?: string;
+  depth?: number | null;
+  width?: number | null;
+  height?: number | null;
+  dimension_unit?: string;
+}
+
+export interface OzonChat {
+  chat_id: string;
+  chat_status: string;       // 'Opened' | 'Closed' | 'AllClosed'...
+  chat_type: string;         // 'Buyer_Seller' | 'Seller_Support'...
+  unread_count: number;
+  last_message_id?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface OzonChatMessage {
+  message_id: string;
+  created_at: string;
+  user_type: string;   // 'Buyer' | 'Seller' | 'CustomerSupport'...
+  text: string;
+  attachments?: { name: string; url: string }[];
+  is_read?: boolean;
+  orderNumber?: string;
+}
+
+// Ozon присылает вложения внутри m.data как markdown-картинки (![](url)) или просто как URL —
+// вытаскиваем их в attachments, а не показываем как текст сообщения.
+const MD_IMAGE_RE = /^!\[([^\]]*)\]\((\S+)\)$/;
+const IMAGE_URL_RE = /\.(jpe?g|png|gif|webp|bmp)(\?|$)/i;
+
+function parseOzonMessageData(data: any[]): { text: string; attachments: { name: string; url: string }[] } {
+  const textLines: string[] = [];
+  const attachments: { name: string; url: string }[] = [];
+  for (const item of data) {
+    if (typeof item !== 'string') continue;
+    const mdMatch = item.match(MD_IMAGE_RE);
+    if (mdMatch) {
+      const url = mdMatch[2];
+      attachments.push({ name: mdMatch[1] || url.split('/').pop() || 'Фото', url });
+      continue;
+    }
+    if (IMAGE_URL_RE.test(item) && /^https?:\/\//.test(item)) {
+      attachments.push({ name: item.split('/').pop() || 'Фото', url: item });
+      continue;
+    }
+    if (item) textLines.push(item);
+  }
+  return { text: textLines.join('\n'), attachments };
+}
+
+export interface OzonReview {
+  uuid: string;
+  created_at: string;
+  rating: number;
+  text: string;
+  author_name: string;
+  product_name: string;
+  product_photo: string;
+  product_sku?: string;
+  order_id?: string;
+  review_photos?: string[];
+  review_video?: string;
+  pros?: string;
+  cons?: string;
+  answer_text: string | null;
+  status: string;
+}
+
+// ── Diagnostic: test a single endpoint and return raw result ─────────────────
+export interface OzonDiagResult {
+  endpoint: string;
+  status: number | null;
+  ok: boolean;
+  body: string;
+  error?: string;
+}
+
+export async function ozonDiagnose(creds: Creds): Promise<OzonDiagResult[]> {
+  const results: OzonDiagResult[] = [];
+
+  // Test 1: list (should work)
+  try {
+    const r1 = await fetch(`${PROXY}/v3/product/list`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Client-Id': creds.client_id, 'Api-Key': creds.api_key },
+      body: JSON.stringify({ filter: {}, limit: 1 }),
+    });
+    const b1 = await r1.text();
+    results.push({ endpoint: '/v3/product/list', status: r1.status, ok: r1.ok, body: b1.slice(0, 300) });
+  } catch (e: any) {
+    results.push({ endpoint: '/v3/product/list', status: null, ok: false, body: '', error: e.message });
+  }
+
+  // Test 2: product info list v3
+  try {
+    const r2 = await fetch(`${PROXY}/v3/product/info/list`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Client-Id': creds.client_id, 'Api-Key': creds.api_key },
+      body: JSON.stringify({ offer_id: ['test-probe'] }),
+    });
+    const b2 = await r2.text();
+    results.push({ endpoint: '/v3/product/info/list', status: r2.status, ok: r2.ok, body: b2.slice(0, 300) });
+  } catch (e: any) {
+    results.push({ endpoint: '/v3/product/info/list', status: null, ok: false, body: '', error: e.message });
+  }
+
+  // Test 3: prices v5
+  try {
+    const r3 = await fetch(`${PROXY}/v5/product/info/prices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Client-Id': creds.client_id, 'Api-Key': creds.api_key },
+      body: JSON.stringify({ filter: {}, limit: 1 }),
+    });
+    const b3 = await r3.text();
+    results.push({ endpoint: '/v5/product/info/prices', status: r3.status, ok: r3.ok, body: b3.slice(0, 300) });
+  } catch (e: any) {
+    results.push({ endpoint: '/v5/product/info/prices', status: null, ok: false, body: '', error: e.message });
+  }
+
+  // Test 4: stocks v4
+  try {
+    const r4 = await fetch(`${PROXY}/v4/product/info/stocks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Client-Id': creds.client_id, 'Api-Key': creds.api_key },
+      body: JSON.stringify({ filter: {}, limit: 1 }),
+    });
+    const b4 = await r4.text();
+    results.push({ endpoint: '/v4/product/info/stocks', status: r4.status, ok: r4.ok, body: b4.slice(0, 300) });
+  } catch (e: any) {
+    results.push({ endpoint: '/v4/product/info/stocks', status: null, ok: false, body: '', error: e.message });
+  }
+
+  return results;
+}
+
+export const ozonApi = {
+
+  // ── Step 1: get all product IDs (pagination via last_id) ──────────────────
+  async getAllProductIds(creds: Creds): Promise<Array<{ product_id: number; offer_id: string }>> {
+    const items: Array<{ product_id: number; offer_id: string }> = [];
+    let lastId = '';
+    let page = 0;
+    do {
+      if (page > 0) await sleep(300);
+      const body: Record<string, unknown> = { filter: { visibility: 'ALL' }, limit: 1000 };
+      if (lastId) body.last_id = lastId;
+      const resp = await ozonPost<any>('/v3/product/list', body, creds);
+      const batch: any[] = resp.result?.items || [];
+      items.push(...batch);
+      lastId = batch.length === 1000 ? (resp.result?.last_id || '') : '';
+      page++;
+    } while (lastId);
+    return items;
+  },
+
+  // ── Step 2: fetch product info via /v3/product/info/list ────────────────────
+  // Accepts items with both product_id and offer_id (from /v3/product/list).
+  // Uses product_id for the request (v3 doesn't filter by offer_id correctly).
+  // Returns a map keyed by offer_id.
+  async getProductInfo(
+    idList: Array<{ product_id: number; offer_id: string }>,
+    creds: Creds,
+    onProgress?: (done: number, total: number) => void,
+    signal?: { aborted: boolean },
+  ): Promise<Map<string, OzonProductInfo>> {
+    const map = new Map<string, OzonProductInfo>();
+    const CHUNK = 50;
+    const total = idList.length;
+    // Build a lookup so we can map product_id back to offer_id
+    const pidToOfferId = new Map(idList.map(i => [i.product_id, i.offer_id]));
+    // Collect ALL SKU variants (sku, fbo_sku, fbs_sku) → offer_id during iteration
+    const allSkuPairs: Array<[string, string]> = [];
+
+    for (let i = 0; i < idList.length; i += CHUNK) {
+      if (signal?.aborted) break;
+      if (i > 0) await sleep(1000);
+      const chunk = idList.slice(i, i + CHUNK);
+      const productIds = chunk.map(c => c.product_id);
+
+      // Retry up to 3 times on 500 (rate-limit)
+      let text = '';
+      let res: Response | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await sleep(5000 * attempt); // 5s, 10s
+        res = await fetch(`${PROXY}/v3/product/info/list`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Client-Id': creds.client_id,
+            'Api-Key': creds.api_key,
+          },
+          body: JSON.stringify({ product_id: productIds }),
+        });
+        text = await res.text();
+        if (res.ok || res.status === 400) break;
+        console.warn(`[Ozon] info/list chunk ${i}: HTTP ${res.status}, attempt ${attempt + 1}/3`);
+      }
+
+      if (!res!.ok) {
+        console.warn(`[Ozon] v3/product/info/list chunk ${i}: HTTP ${res!.status} (после 3 попыток)`, text.slice(0, 150));
+        onProgress?.(Math.min(i + CHUNK, total), total);
+        continue;
+      }
+
+      try {
+        const resp = JSON.parse(text);
+        if (i === 0) {
+          // Log raw response structure to debug field names and data location
+          console.log(`[Ozon] info/list chunk 0 raw:`, text.slice(0, 600));
+          // Log first item's full keys to find SKU field
+          try {
+            const firstItem = (JSON.parse(text).items || [])[0];
+            if (firstItem) {
+              console.log(`[Ozon] info/list item keys:`, Object.keys(firstItem));
+              console.log(`[Ozon] info/list item sku fields:`, {
+                sku: firstItem.sku, fbo_sku: firstItem.fbo_sku, fbs_sku: firstItem.fbs_sku,
+                sources: firstItem.sources?.slice?.(0, 2),
+              });
+            }
+          } catch {}
+        }
+        // v3 returns items at top level: { items: [...] }  (no "result" wrapper)
+        const items: any[] = resp.items || resp.result?.items || [];
+        console.log(`[Ozon] info/list chunk ${i}: ${items.length} items из ${chunk.length}`);
+        for (const item of items) {
+          // offer_id is in the item; fallback to pidToOfferId map
+          const offerId: string = item.offer_id || pidToOfferId.get(item.id) || '';
+          if (!offerId) continue;
+
+          // v3: images are direct URL strings
+          const imgRaw: any[] = item.images || [];
+          const images = imgRaw.filter((img: any) => typeof img === 'string' && img).slice(0, 5);
+
+          // v3: barcodes is an array
+          const barcode = Array.isArray(item.barcodes) ? (item.barcodes[0] || '') : (item.barcode || '');
+
+          // v3: determine status from multiple fields
+          let status = 'processed';
+          if (item.is_archived || item.is_autoarchived) {
+            status = 'archived';
+          } else {
+            // Try to get moderation/state status
+            let rawStatus = '';
+            if (typeof item.status === 'string' && item.status) rawStatus = item.status.toLowerCase();
+            else if (item.status?.state)  rawStatus = String(item.status.state).toLowerCase();
+            else if (typeof item.state === 'string' && item.state) rawStatus = item.state.toLowerCase();
+
+            if (rawStatus === 'failed_moderation' || rawStatus === 'moderating' ||
+                rawStatus === 'not_moderated' || rawStatus === 'banned' || rawStatus === 'blocked' ||
+                rawStatus === 'price_error' || rawStatus === 'sold_out' || rawStatus === 'expired') {
+              status = rawStatus;
+            } else {
+              // Product passed moderation — check visibility
+              const fboVis = item.is_fbo_visible;
+              const fbsVis = item.is_fbs_visible;
+              if (fboVis === false && fbsVis === false) {
+                // Not visible on any channel → seller hid it (disabled/ready for sale)
+                status = 'disabled';
+              } else {
+                // At least one channel visible → actively selling
+                status = 'processed';
+              }
+            }
+          }
+
+          // v3: no stocks in this endpoint — they come from overlayStocks
+          const fbs = 0;
+          const fbo = 0;
+
+          // Ozon internal SKU: item.sku, item.fbo_sku, item.fbs_sku
+          const itemSku = item.sku || item.fbo_sku || item.fbs_sku || 0;
+          // Collect ALL SKU variants for the cache
+          for (const s of [item.sku, item.fbo_sku, item.fbs_sku, item.id]) {
+            if (s) allSkuPairs.push([String(s), offerId]);
+          }
+
+          map.set(offerId, {
+            product_id: item.id || 0,
+            sku: itemSku,
+            name: item.name || '',
+            images,
+            barcode,
+            status,
+            price: parseFloat(item.price || '0') || 0,
+            old_price: parseFloat(item.old_price || '0') || 0,
+            min_price: parseFloat(item.min_price || '0') || 0,
+            fbs,
+            fbo,
+            type_id: item.type_id || 0,
+            description_category_id: item.description_category_id || 0,
+            weight: item.weight ?? null,
+            weight_unit: item.weight_unit || 'g',
+            depth: item.depth ?? null,
+            width: item.width ?? null,
+            height: item.height ?? null,
+            dimension_unit: item.dimension_unit || 'mm',
+          });
+        }
+      } catch (e) {
+        console.warn(`[Ozon] v3/product/info/list chunk ${i}: JSON parse failed`, e);
+      }
+
+      onProgress?.(Math.min(i + CHUNK, total), total);
+    }
+
+    // ── Batch-save ALL Ozon SKU variants → offer_id for analytics mapping ──
+    // Finance transactions use FBO or FBS SKU depending on delivery scheme,
+    // but ozon_products.sku stores only ONE. This localStorage cache fills the gap.
+    try {
+      const skuCache: Record<string, string> = JSON.parse(localStorage.getItem('ozon_sku_map_v1') || '{}');
+      for (const [sku, offerId] of allSkuPairs) {
+        skuCache[sku] = offerId;
+      }
+      localStorage.setItem('ozon_sku_map_v1', JSON.stringify(skuCache));
+      console.log(`[Ozon] ozon_sku_map_v1: ${Object.keys(skuCache).length} total SKU→offer_id mappings cached (${allSkuPairs.length} from this sync)`);
+    } catch {}
+
+    return map;
+  },
+
+  // ── Step 2b: overlay accurate prices from /v5/product/info/prices ───────────
+  // Patches the map in-place with current price/old_price/min_price values.
+  async overlayPrices(
+    map: Map<string, OzonProductInfo>,
+    creds: Creds,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<void> {
+    let lastId = '';
+    let fetched = 0;
+    do {
+      const body: Record<string, unknown> = { filter: { visibility: 'ALL' }, limit: 1000 };
+      if (lastId) body.last_id = lastId;
+      let resp: any;
+      try {
+        resp = await ozonPost<any>('/v5/product/info/prices', body, creds);
+      } catch {
+        break;
+      }
+      const items: any[] = resp.result?.items || [];
+      for (const item of items) {
+        const entry = map.get(item.offer_id);
+        if (entry) {
+          entry.price = parseFloat(item.price?.price || item.selling_price || '0') || entry.price;
+          entry.old_price = parseFloat(item.price?.old_price || '0') || entry.old_price;
+          entry.min_price = parseFloat(item.price?.min_price || '0') || entry.min_price;
+
+          // /v5 also returns visibility — use it to refine status
+          // Only override if status is already "processed" or "disabled" (not archived/moderation)
+          const vis: string = (item.visibility || '').toUpperCase();
+          if (entry.status === 'processed' || entry.status === 'disabled') {
+            if (vis === 'VISIBLE') entry.status = 'processed';
+            else if (vis === 'INVISIBLE') entry.status = 'disabled';
+          }
+        }
+      }
+      fetched += items.length;
+      onProgress?.(fetched, fetched); // we don't know total upfront
+      lastId = items.length === 1000 ? (resp.result?.last_id || '') : '';
+      if (lastId) await sleep(400);
+    } while (lastId);
+  },
+
+  // ── Step 2c: overlay accurate stocks from /v4/product/info/stocks ───────────
+  async overlayStocks(
+    map: Map<string, OzonProductInfo>,
+    creds: Creds,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<void> {
+    let cursor = '';
+    let fetched = 0;
+    const stocksSkuPairs: Array<[string, string]> = [];
+    do {
+      const body: Record<string, unknown> = { filter: { visibility: 'ALL' }, limit: 1000 };
+      if (cursor) body.cursor = cursor;
+      let resp: any;
+      try {
+        resp = await ozonPost<any>('/v4/product/info/stocks', body, creds);
+      } catch {
+        break;
+      }
+      // API v4 returns {items, total, cursor} at top level
+      const items: any[] = resp.items ?? resp.result?.items ?? [];
+      for (const item of items) {
+        const entry = map.get(item.offer_id);
+        if (entry) {
+          const stocks: any[] = item.stocks || [];
+          const fbs = stocks.find((s: any) => s.type === 'fbs')?.present ?? entry.fbs;
+          const fbo = stocks.find((s: any) => s.type === 'fbo')?.present ?? entry.fbo;
+          entry.fbs = fbs;
+          entry.fbo = fbo;
+          const itemSku = item.sku || item.fbo_sku || item.fbs_sku || 0;
+          if (itemSku && (!entry.sku || entry.sku === 0)) {
+            entry.sku = itemSku;
+          }
+        }
+        if (item.offer_id) {
+          for (const s of [item.sku, item.fbo_sku, item.fbs_sku, item.product_id]) {
+            if (s) stocksSkuPairs.push([String(s), item.offer_id]);
+          }
+        }
+      }
+      fetched += items.length;
+      onProgress?.(fetched, fetched);
+      const nextCursor: string = resp.cursor ?? resp.result?.cursor ?? '';
+      if (items.length < 1000 || !nextCursor || nextCursor === cursor) break;
+      cursor = nextCursor;
+      await sleep(400);
+    } while (true);
+    // Batch-save SKU variants from stocks endpoint
+    if (stocksSkuPairs.length) {
+      try {
+        const skuCache: Record<string, string> = JSON.parse(localStorage.getItem('ozon_sku_map_v1') || '{}');
+        for (const [sku, offerId] of stocksSkuPairs) skuCache[sku] = offerId;
+        localStorage.setItem('ozon_sku_map_v1', JSON.stringify(skuCache));
+        console.log(`[Ozon] ozon_sku_map_v1: updated with ${stocksSkuPairs.length} SKUs from stocks`);
+      } catch {}
+    }
+  },
+
+  /**
+   * Резолв финансовых SKU → offer_id через /v3/product/info/list.
+   * Принимает список SKU (number), возвращает Map<sku_string, offer_id>.
+   * Используется в аналитике когда FBO/FBS SKU из транзакций не маппятся на товары.
+   */
+  async resolveSkus(
+    skus: number[],
+    creds: Creds,
+  ): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    const CHUNK = 50;
+    for (let i = 0; i < skus.length; i += CHUNK) {
+      const chunk = skus.slice(i, i + CHUNK);
+      try {
+        // v3/product/info/list принимает product_id, sku, или offer_id
+        const resp = await ozonPost<any>('/v3/product/info/list', { sku: chunk }, creds);
+        const items: any[] = resp?.items || resp?.result?.items || [];
+        for (const item of items) {
+          const offerId: string = item.offer_id || '';
+          if (!offerId) continue;
+          // Маппим все варианты SKU на offer_id
+          for (const s of [item.sku, item.fbo_sku, item.fbs_sku, item.id]) {
+            if (s) result.set(String(s), offerId);
+          }
+        }
+        console.log(`[Ozon] resolveSkus chunk ${i}: ${items.length} items resolved from ${chunk.length} SKUs`);
+      } catch (e) {
+        console.warn(`[Ozon] resolveSkus chunk ${i}:`, (e as Error)?.message?.slice(0, 150));
+      }
+      if (i + CHUNK < skus.length) await sleep(1000);
+    }
+    // Сохраняем в кэш
+    if (result.size > 0) {
+      try {
+        const skuCache: Record<string, string> = JSON.parse(localStorage.getItem('ozon_sku_map_v1') || '{}');
+        for (const [sku, offerId] of result) skuCache[sku] = offerId;
+        localStorage.setItem('ozon_sku_map_v1', JSON.stringify(skuCache));
+        console.log(`[Ozon] resolveSkus: resolved ${result.size} SKU mappings, cache now ${Object.keys(skuCache).length}`);
+      } catch {}
+    }
+    return result;
+  },
+
+  // ── Fetch buyer prices (marketing_price) for specific offer_ids ──────────
+  // /v5/product/info/prices returns the actual price shown to buyer after Ozon discounts.
+  // Used by the MRC auto-scan to detect how much Ozon has discounted.
+  async getMarketingPrices(
+    offerIds: string[],
+    creds: Creds,
+  ): Promise<Map<string, { marketingPrice: number; sellerPrice: number; oldPrice: number }>> {
+    const result = new Map<string, { marketingPrice: number; sellerPrice: number; oldPrice: number }>();
+    if (!offerIds.length) return result;
+    const CHUNK = 1000;
+    for (let i = 0; i < offerIds.length; i += CHUNK) {
+      const chunk = offerIds.slice(i, i + CHUNK);
+      // Paginate within each chunk — Ozon may return fewer items per page even when filtering by offer_id
+      let lastId = '';
+      let page = 0;
+      do {
+        const body: any = { filter: { offer_id: chunk, visibility: 'ALL' }, limit: Math.min(chunk.length, 1000) };
+        if (lastId) body.last_id = lastId;
+        const resp = await ozonPost<any>('/v5/product/info/prices', body, creds);
+        const items: any[] = resp.items || resp.result?.items || [];
+        for (const item of items) {
+          const sellerPrice = parseFloat(item.price?.price || '0') || 0;
+          // old_price — перечёркнутая цена на странице Ozon (база для визуальной скидки).
+          const oldPrice = parseFloat(item.price?.old_price || '0') || 0;
+          // marketing_price — цена покупателя после Ozon-акций. Если отсутствует или 0 → sellerPrice.
+          const rawMarketing = item.price?.marketing_price ?? item.price?.marketing_seller_price;
+          const parsedMarketing = rawMarketing ? parseFloat(String(rawMarketing)) : 0;
+          const marketingPrice = parsedMarketing > 0 ? parsedMarketing : sellerPrice;
+          if (item.offer_id && sellerPrice > 0) {
+            const entry = { marketingPrice, sellerPrice, oldPrice };
+            result.set(item.offer_id, entry);
+            result.set(item.offer_id.toLowerCase(), entry);
+          }
+        }
+        // Stop when we've received all expected items or no more pages
+        const nextLastId: string = resp.last_id ?? resp.result?.last_id ?? '';
+        if (items.length < chunk.length || !nextLastId || nextLastId === lastId || result.size >= chunk.length) break;
+        lastId = nextLastId;
+        page++;
+        if (page > 20) break; // safety guard
+        await sleep(300);
+      } while (true);
+      if (i + CHUNK < offerIds.length) await sleep(400);
+    }
+    return result;
+  },
+
+  // ── Check credentials ────────────────────────────────────────────────────
+  checkToken: async (creds: Creds): Promise<void> => {
+    await ozonPost<any>('/v3/product/list', { filter: {}, limit: 1 }, creds);
+  },
+
+  // ── Update prices ─────────────────────────────────────────────────────────
+  async updatePrices(creds: Creds, prices: Array<{
+    offer_id: string;
+    price: string;
+    old_price?: string;
+    min_price?: string;
+    auto_action_enabled?: 'ENABLED' | 'DISABLED';
+  }>): Promise<void> {
+    for (let i = 0; i < prices.length; i += 100) {
+      const resp = await ozonPost<any>('/v1/product/import/prices', { prices: prices.slice(i, i + 100) }, creds);
+      const items: any[] = resp?.result ?? [];
+      const failed = items.filter((r: any) => r.updated === false && r.errors?.length);
+      if (failed.length) {
+        const details = failed.map((r: any) => {
+          const errs = (r.errors as any[]).map(e =>
+            e?.code ? `${e.code}${e.message ? ': ' + e.message : ''}` : JSON.stringify(e)
+          ).join(', ');
+          return `${r.offer_id}: ${errs}`;
+        }).join('; ');
+        console.error('[Ozon updatePrices] Failed items:', details);
+        throw new Error(`Ozon не принял цены: ${details.slice(0, 300)}`);
+      }
+    }
+  },
+
+  // ── Warehouses ────────────────────────────────────────────────────────────
+  async getWarehouses(creds: Creds): Promise<OzonWarehouse[]> {
+    const resp = await ozonPost<any>('/v2/warehouse/list', {}, creds);
+    return resp.result || [];
+  },
+
+  // ── Archive / Unarchive ───────────────────────────────────────────────────
+  // items: array of Ozon internal product_id numbers
+  async archiveProducts(creds: Creds, productIds: number[]): Promise<void> {
+    const CHUNK = 100;
+    for (let i = 0; i < productIds.length; i += CHUNK) {
+      await ozonPost('/v1/product/archive', {
+        items: productIds.slice(i, i + CHUNK).map(id => ({ product_id: id })),
+      }, creds);
+    }
+  },
+
+  async unarchiveProducts(creds: Creds, productIds: number[]): Promise<void> {
+    const CHUNK = 100;
+    for (let i = 0; i < productIds.length; i += CHUNK) {
+      await ozonPost('/v1/product/unarchive', {
+        items: productIds.slice(i, i + CHUNK).map(id => ({ product_id: id })),
+      }, creds);
+    }
+  },
+
+  // ── Visibility ────────────────────────────────────────────────────────────
+  // visibility: 'VISIBLE' | 'INVISIBLE'
+  async setVisibility(creds: Creds, items: Array<{ product_id: number; visibility: 'VISIBLE' | 'INVISIBLE' }>): Promise<void> {
+    const CHUNK = 100;
+    for (let i = 0; i < items.length; i += CHUNK) {
+      await ozonPost('/v1/product/visibility/set', {
+        items: items.slice(i, i + CHUNK),
+      }, creds);
+    }
+  },
+
+  // ── Get attribute names for a category via /v1/description-category/attribute ──
+  // Returns a Map<attributeId, attributeName> for the given category.
+  async getCategoryAttributeNames(
+    categoryId: number,
+    creds: Creds,
+    typeId?: number,
+  ): Promise<Map<number, string>> {
+    const map = new Map<number, string>();
+    if (!categoryId || categoryId <= 0) return map;
+    try {
+      const body: any = {
+        description_category_id: categoryId,
+        language: 'RU',
+        attribute_type: 'ALL',
+      };
+      if (typeId && typeId > 0) body.type_id = typeId;
+      const resp = await ozonPost<any>('/v1/description-category/attribute', body, creds);
+      const items: any[] = resp.result || [];
+      for (const item of items) {
+        if (item.id && item.name) map.set(item.id, item.name);
+      }
+    } catch {
+      // fallback to built-in dictionary
+    }
+    return map;
+  },
+
+  // ── Get full product attributes via /v4/product/info/attributes ───────────
+  // Returns rich attribute data including all category-specific fields.
+  async getProductAttributes(
+    offerId: string,
+    creds: Creds,
+  ): Promise<any[]> {
+    const resp = await ozonPost<any>('/v4/product/info/attributes', {
+      filter: { offer_id: [offerId], visibility: 'ALL' },
+      limit: 1,
+      sort_dir: 'ASC',
+    }, creds);
+    return resp.result || [];
+  },
+
+  // ── Update product attributes via /v1/product/attributes/update ──────────
+  // attributes: array of { id, complex_id, values: [{ dictionary_value_id, value }] }
+  async updateAttributes(
+    creds: Creds,
+    items: Array<{ offer_id: string; attributes: any[] }>,
+  ): Promise<void> {
+    await ozonPost('/v1/product/attributes/update', { items }, creds);
+  },
+
+  // ── Get full product info (single) via /v3/product/info/list ─────────────
+  async getFullProductInfo(
+    offerId: string,
+    productId: number | null,
+    creds: Creds,
+  ): Promise<any | null> {
+    const body = productId ? { product_id: [productId] } : { offer_id: [offerId] };
+    const resp = await ozonPost<any>('/v3/product/info/list', body, creds);
+    const items: any[] = resp.items || resp.result?.items || [];
+    return items[0] ?? null;
+  },
+
+  // ── Get product description via /v1/product/info/description ─────────────
+  async getProductDescription(
+    offerId: string,
+    productId: number | null,
+    creds: Creds,
+  ): Promise<string> {
+    try {
+      const body = productId ? { product_id: productId } : { offer_id: offerId };
+      const resp = await ozonPost<any>('/v1/product/info/description', body, creds);
+      return resp.result?.description || resp.description || '';
+    } catch {
+      return '';
+    }
+  },
+
+  // ── Update product (upsert) via /v3/product/import ───────────────────────
+  // Used to update name, description, images, dimensions, VAT, attributes.
+  async updateProduct(
+    creds: Creds,
+    item: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await ozonPost('/v3/product/update', { items: [item] }, creds);
+    } catch (e: any) {
+      if (e.message?.includes('404') || e.message?.includes('405') || e.message?.includes('Method Not Allowed')) {
+        await ozonPost('/v3/product/import', { items: [item] }, creds);
+      } else {
+        throw e;
+      }
+    }
+  },
+
+  // ── Reviews ──────────────────────────────────────────────────────────────
+  /**
+   * Ozon Review List API (требует Seller Premium):
+   *   POST /v1/review/list
+   *   { limit: 1..100, sort_dir: "ASC"|"DESC", status: "ALL"|"PROCESSED"|"UNPROCESSED", last_id: "" }
+   *
+   * Возвращает: { reviews: [], last_id, has_next }
+   * Пагинация cursor-based: передаём last_id из предыдущего ответа.
+   */
+  async getReviews(
+    creds: Creds,
+    opts: { status?: 'ALL' | 'NOT_ANSWERED'; page?: number; page_size?: number } = {},
+    _signal?: AbortSignal,
+  ): Promise<{ reviews: OzonReview[]; total: number }> {
+    // Маппинг старого "NOT_ANSWERED" → новый "UNPROCESSED"
+    const apiStatus = opts.status === 'NOT_ANSWERED' ? 'UNPROCESSED' : (opts.status ?? 'ALL');
+    const limit = Math.min(100, Math.max(20, opts.page_size ?? 100));
+
+    const allReviews: any[] = [];
+    let lastId = '';
+    const MAX_PAGES = 10; // защита от бесконечного цикла
+
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const body: any = {
+        limit,
+        sort_dir: 'DESC',
+        status: apiStatus,
+      };
+      if (lastId) body.last_id = lastId;
+
+      const resp = await ozonPost<any>('/v1/review/list', body, creds).catch((err: any) => {
+        const msg = String(err?.message ?? '');
+        if (msg.includes('subscription') || msg.includes('PermissionDenied') || msg.includes('403') || msg.includes('Forbidden') || msg.includes('not available')) {
+          throw new Error('Ozon Review API: доступ запрещён сервером Ozon.\n\nПричины: 1) ваш тариф не включает API отзывов (нужен Premium Plus); 2) API-ключ создан ДО подключения тарифа — пересоздайте его в seller.ozon.ru → Настройки → API-ключи; 3) Premium ещё не активирован полностью (обычно до 24ч).\n\nТочный ответ Ozon: "not available with existing subscription".');
+        }
+        throw err;
+      });
+
+      const pageReviews = resp.reviews ?? [];
+      allReviews.push(...pageReviews);
+
+      // Cursor-based: останавливаемся когда нет следующей страницы
+      if (!resp.has_next || !resp.last_id || resp.last_id === lastId || pageReviews.length === 0) break;
+      lastId = resp.last_id;
+    }
+
+    const reviews: OzonReview[] = allReviews.map((r: any) => ({
+      uuid: r.uuid,
+      created_at: r.created_at,
+      rating: r.rating ?? 0,
+      text: r.text ?? '',
+      author_name: r.author?.name ?? 'Покупатель',
+      product_name: r.product_info?.sku_name ?? r.product_info?.name ?? '',
+      product_photo: r.product_info?.photo_url ?? r.product_info?.image ?? '',
+      product_sku: r.product_info?.sku ? String(r.product_info.sku) : (r.product_info?.offer_id ?? ''),
+      order_id: r.order_number ?? r.order_id ?? '',
+      review_photos: Array.isArray(r.photos)
+        ? r.photos.map((p: any) => p.url ?? p.photo_url ?? p).filter(Boolean)
+        : [],
+      review_video: r.video?.url ?? r.videos?.[0]?.url ?? '',
+      pros: r.advantages ?? r.pros ?? '',
+      cons: r.disadvantages ?? r.cons ?? '',
+      // У Ozon ответ может прийти в разных полях — проверяем оба варианта
+      answer_text: r.comments?.[0]?.text ?? r.answer?.text ?? null,
+      // status: UNPROCESSED / PROCESSED — используется как маркер «отвечен»
+      status: r.status,
+    }));
+    return { reviews, total: reviews.length };
+  },
+
+  /**
+   * Ozon Review Comment Create API:
+   *   POST /v1/review/comment/create
+   *   { review_uuid, text, mark_review_as_processed: true }
+   *
+   * ⚠ Без mark_review_as_processed=true отзыв остаётся в статусе UNPROCESSED
+   * и при перезагрузке выглядит как «без ответа».
+   */
+  async replyReview(
+    creds: Creds,
+    reviewUuid: string,
+    text: string,
+  ): Promise<void> {
+    await ozonPost('/v1/review/comment/create', {
+      review_uuid: reviewUuid,
+      text,
+      mark_review_as_processed: true,   // КЛЮЧЕВОЕ: меняет статус отзыва на PROCESSED
+    }, creds);
+  },
+
+  // ── Чаты с покупателями ───────────────────────────────────────────────────
+  // Документация: https://docs.ozon.ru/api/seller/#operation/ChatAPI_ChatList
+
+  /** POST /v3/chat/list — список чатов (по умолчанию все, кроме закрытых ботом). */
+  async getChatList(
+    creds: Creds,
+    opts: { onlyUnread?: boolean; limit?: number } = {},
+  ): Promise<OzonChat[]> {
+    const limit = Math.min(1000, Math.max(1, opts.limit ?? 100));
+    const allChats: any[] = [];
+    let cursor = '';
+    const MAX_PAGES = 10;
+
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const body: any = {
+        limit,
+        filter: opts.onlyUnread ? { unread_only: true } : {},
+      };
+      if (cursor) body.cursor = cursor;
+
+      const resp = await ozonPost<any>('/v3/chat/list', body, creds);
+      const batch: any[] = resp.chats ?? [];
+      allChats.push(...batch);
+
+      if (!resp.has_next || !resp.cursor || resp.cursor === cursor || batch.length === 0) break;
+      cursor = resp.cursor;
+    }
+
+    return allChats.map((c: any): OzonChat => ({
+      chat_id: c.chat?.chat_id ?? c.chat_id,
+      chat_status: c.chat?.chat_status ?? c.chat_status,
+      chat_type: c.chat?.chat_type ?? c.chat_type,
+      unread_count: c.unread_count ?? 0,
+      last_message_id: c.last_message_id,
+      created_at: c.chat?.created_at ?? c.created_at,
+      updated_at: c.chat?.updated_at ?? c.updated_at,
+    }));
+  },
+
+  /** POST /v3/chat/history — история сообщений чата (последние сначала). */
+  async getChatHistory(
+    creds: Creds,
+    chatId: string,
+    limit = 100,
+  ): Promise<OzonChatMessage[]> {
+    const resp = await ozonPost<any>('/v3/chat/history', {
+      chat_id: chatId,
+      limit: Math.min(1000, Math.max(1, limit)),
+      direction: 'Backward',
+    }, creds);
+
+    const messages: any[] = resp.messages ?? resp.result?.messages ?? [];
+    return messages.map((m: any): OzonChatMessage => {
+      const { text, attachments } = Array.isArray(m.data)
+        ? parseOzonMessageData(m.data)
+        : { text: m.data ?? '', attachments: [] };
+      return {
+        message_id: m.message_id,
+        created_at: m.created_at,
+        user_type: m.user?.type ?? 'Unknown',
+        text,
+        attachments: attachments.length ? attachments : undefined,
+        is_read: m.is_read,
+        orderNumber: m.context?.order_number || undefined,
+      };
+    }).reverse(); // от старых к новым
+  },
+
+  /**
+   * Скачать файл вложения чата (api-seller.ozon.ru/v2/chat/file/...) с авторизацией.
+   * Браузер не может приложить заголовки Client-Id/Api-Key к <img src>, поэтому
+   * картинку нужно скачать через fetch и показать как blob-URL.
+   */
+  async fetchChatFile(creds: Creds, fileUrl: string): Promise<Blob> {
+    const proxied = fileUrl.replace(/^https?:\/\/api-seller\.ozon\.ru/, PROXY);
+    const res = await fetch(proxied, {
+      headers: { 'Client-Id': creds.client_id, 'Api-Key': creds.api_key },
+    });
+    if (!res.ok) throw new Error(`Ozon chat file ${res.status}`);
+    return res.blob();
+  },
+
+  /** POST /v1/chat/send/message — отправить текстовое сообщение в чат. */
+  async sendChatMessage(creds: Creds, chatId: string, text: string): Promise<void> {
+    await ozonPost('/v1/chat/send/message', {
+      chat_id: chatId,
+      text,
+    }, creds);
+  },
+
+  /** POST /v1/chat/send/file — отправить файл (изображение/документ) в чат. */
+  async sendChatFile(creds: Creds, chatId: string, file: { name: string; base64: string }): Promise<void> {
+    await ozonPost('/v1/chat/send/file', {
+      chat_id: chatId,
+      base64_content: file.base64,
+      name: file.name,
+    }, creds);
+  },
+
+  /** POST /v2/chat/read — отметить сообщения чата прочитанными. */
+  async markChatRead(creds: Creds, chatId: string, fromMessageId?: string): Promise<void> {
+    const body: any = { chat_id: chatId };
+    if (fromMessageId) body.from_message_id = fromMessageId;
+    await ozonPost('/v2/chat/read', body, creds, 1, true).catch(() => {});
+  },
+
+  /**
+   * Убрать товары из всех активных акций Ozon.
+   * Используется для MRC-правил: если товар участвует в акции, Ozon снижает цену
+   * ниже МРЦ. Вызывать ДО обновления цены.
+   * productIds — внутренние Ozon product_id (не offer_id).
+   */
+  async removeProductsFromAllPromos(creds: Creds, productIds: number[]): Promise<void> {
+    if (!productIds.length) return;
+    let actions: any[] = [];
+    try {
+      const resp = await ozonGet<any>('/v1/actions', creds);
+      actions = resp.result ?? resp.actions ?? [];
+    } catch (e: any) {
+      console.warn('[Ozon MRC] /v1/actions error:', e?.message);
+      return;
+    }
+    // Ozon отдаёт все акции; убираем товар из каждой (ошибки игнорируем — товар может не участвовать)
+    await Promise.allSettled(
+      actions
+        .filter((a: any) => a.action_id != null)
+        .map((a: any) =>
+          ozonPost('/v1/actions/products/deactivate', {
+            action_id: a.action_id,
+            product_ids: productIds,
+          }, creds).catch(() => {}),
+        ),
+    );
+  },
+};
+
+/** Получить актуальные остатки напрямую из API для конкретного магазина. */
+export async function fetchOzonStocks(
+  store: OzonStore,
+): Promise<{ offer_id: string; fbs: number; fbo: number }[]> {
+  const creds = { client_id: store.client_id, api_key: store.api_key };
+  const result: { offer_id: string; fbs: number; fbo: number }[] = [];
+  let cursor = '';
+  do {
+    const body: Record<string, unknown> = { filter: { visibility: 'ALL' }, limit: 1000 };
+    if (cursor) body.cursor = cursor;
+    let resp: any;
+    try {
+      resp = await ozonPost<any>('/v4/product/info/stocks', body, creds);
+    } catch (e) {
+      console.error('[Ozon] fetchOzonStocks API error:', e);
+      break;
+    }
+    // API v4 returns {items, total, cursor} at top level (not nested under result)
+    const items: any[] = resp.items ?? resp.result?.items ?? [];
+    for (const item of items) {
+      const stocks: any[] = item.stocks || [];
+      result.push({
+        offer_id: item.offer_id,
+        fbs: stocks.find((s: any) => s.type === 'fbs')?.present ?? 0,
+        fbo: stocks.find((s: any) => s.type === 'fbo')?.present ?? 0,
+      });
+    }
+    const nextCursor: string = resp.cursor ?? resp.result?.cursor ?? '';
+    if (items.length < 1000 || !nextCursor || nextCursor === cursor) break;
+    cursor = nextCursor;
+    await sleep(400);
+  } while (true);
+  return result;
+}
+
+/** Обновить FBS-остатки на складе Ozon. */
+export async function updateOzonFbsStock(
+  store: OzonStore,
+  items: { offer_id: string; stock: number; warehouse_id: number }[],
+): Promise<{ offer_id: string; updated: boolean; errors: string[] }[]> {
+  const creds = { client_id: store.client_id, api_key: store.api_key };
+  const CHUNK = 100;
+  const out: { offer_id: string; updated: boolean; errors: string[] }[] = [];
+  for (let i = 0; i < items.length; i += CHUNK) {
+    const resp = await ozonPost<any>('/v1/products/stocks', { stocks: items.slice(i, i + CHUNK) }, creds);
+    for (const r of resp.result ?? []) {
+      out.push({ offer_id: r.offer_id, updated: r.updated ?? false, errors: r.errors ?? [] });
+    }
+  }
+  return out;
+}
+
+export async function fetchAllOzonProducts(
+  store: OzonStore,
+): Promise<Omit<OzonProduct, 'id'>[]> {
+  const creds = { client_id: store.client_id, api_key: store.api_key };
+  const ids = await ozonApi.getAllProductIds(creds);
+  if (!ids.length) return [];
+  const map = await ozonApi.getProductInfo(ids, creds);
+  await ozonApi.overlayPrices(map, creds);
+  await ozonApi.overlayStocks(map, creds);
+  const now = new Date().toISOString();
+  return Array.from(map.entries()).map(([offerId, info]) => {
+    const dims = fromOzon({
+      weight: info.weight, weight_unit: info.weight_unit,
+      depth: info.depth, width: info.width, height: info.height,
+      dimension_unit: info.dimension_unit,
+    });
+    return {
+      store_id: store.id,
+      offer_id: offerId,
+      product_id: info.product_id,
+      sku: info.sku || null,
+      name: info.name,
+      price: info.price,
+      old_price: info.old_price,
+      min_price: info.min_price,
+      stock_fbs: info.fbs,
+      stock_fbo: info.fbo,
+      category: '',
+      images: info.images,
+      barcode: info.barcode,
+      status: info.status,
+      synced_at: now,
+      weight_kg: dims.weight_g != null ? +(dims.weight_g / 1000).toFixed(3) : null,
+      length_cm: dims.length_mm != null ? +(dims.length_mm / 10).toFixed(1) : null,
+      width_cm:  dims.width_mm  != null ? +(dims.width_mm  / 10).toFixed(1) : null,
+      height_cm: dims.height_mm != null ? +(dims.height_mm / 10).toFixed(1) : null,
+    };
+  });
+}

@@ -1,0 +1,20 @@
+# ── Marketplace API proxies ────────────────────────────────────────────────────
+# Этот файл попадает в dist/_redirects и работает при ЛЮБОМ способе деплоя на Netlify
+# (drag-and-drop, CLI upload, Git CI/CD).
+#
+# Как работает: браузер делает запрос к sabatov.netlify.app/yandex-api/...
+# Netlify Edge перехватывает и проксирует запрос к реальному API на своей стороне.
+# Браузер получает ответ как от того же домена → CORS не нужен.
+# Все заголовки (Api-Key, Authorization, Client-Id) пробрасываются.
+
+/ozon-api/*       https://api-seller.ozon.ru/:splat              200
+/yandex-api/*     https://api.partner.market.yandex.ru/:splat    200
+/wb-content/*     https://content-api.wildberries.ru/:splat      200
+/wb-marketplace/* https://marketplace-api.wildberries.ru/:splat  200
+/wb-stats/*       https://statistics-api.wildberries.ru/:splat   200
+/wb-common/*      https://common-api.wildberries.ru/:splat       200
+/wb-prices/*      https://discounts-prices-api.wildberries.ru/:splat  200
+/wb-feedback/*    https://feedbacks-api.wildberries.ru/:splat    200
+
+# SPA catch-all — ОБЯЗАТЕЛЬНО последним
+/*                /index.html                                     200

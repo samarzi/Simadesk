@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Логи
+*.log
+delivery_*.log
+progress_*.json
+
+# Временные файлы
+тт
+tmp*
+temp*
+
+# Профили браузера
+browser_profile*
+profiles/
+profiles/browser_profile_*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDoubleUp
+.AppleDB
+.LSOverride
+
+# Окружение
+.env
+.venv/
+venv/
+
+# Старые отчеты
+Анализ_*.xlsx

@@ -1,0 +1,838 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Analytics v2 — компактная современная аналитика.
+   Используется фон приложения (var(--bg)) — без своих хардкод-цветов.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.an2 {
+  --an-accent: var(--accent);
+  --an-accent-dim: var(--accent-dim);
+  --an-green: var(--green);
+  --an-red:   var(--red);
+  --an-blue:  #60a5fa;
+  --an-amber: #fbbf24;
+  --an-violet:#a78bfa;
+  --an-pink:  #f472b6;
+  --an-cyan:  #22d3ee;
+  --an-card-bg: var(--bg2);
+  --an-card-bg-hover: var(--bg3);
+  --an-card-border: var(--border);
+  --an-card-border-hover: var(--border2);
+  --an-shadow-soft: 0 1px 0 rgba(255,255,255,.02), 0 8px 24px rgba(0,0,0,.18);
+  --an-glow: 0 0 0 1px var(--accent-dim), 0 6px 24px var(--accent-dim);
+
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  animation: an-page-in .35s cubic-bezier(.22,.61,.36,1);
+}
+html.light .an2 {
+  --an-card-bg: var(--bg2);
+  --an-card-bg-hover: var(--bg);
+}
+
+/* ── Компактная шапка (одна строка) ───────────────────────────────────── */
+.an2-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--bg2) 0%, var(--bg) 100%);
+  position: sticky; top: 0; z-index: 5;
+  backdrop-filter: blur(8px);
+  flex-wrap: wrap;
+}
+.an2-title {
+  font-size: 14px; font-weight: 800; letter-spacing: .3px;
+  text-transform: uppercase;
+  display: flex; align-items: center; gap: 8px;
+  color: var(--text);
+}
+.an2-title-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent), 0 0 16px var(--accent-dim);
+  animation: an-pulse-dot 2.2s ease-in-out infinite;
+}
+.an2-tabs {
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.an2-tab {
+  padding: 6px 14px;
+  font-size: 12px; font-weight: 700;
+  color: var(--text2);
+  background: transparent; border: 0; cursor: pointer;
+  border-radius: 8px; transition: all .18s ease;
+  display: flex; align-items: center; gap: 6px;
+  position: relative;
+}
+.an2-tab:hover { color: var(--text); background: var(--hover); }
+.an2-tab.active {
+  color: var(--bg);
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-dim), 0 4px 14px var(--accent-dim);
+}
+.an2-tab .an2-tab-count {
+  font-size: 10px; font-weight: 800; padding: 1px 6px;
+  border-radius: 999px; background: rgba(0,0,0,.16); color: inherit;
+}
+.an2-spacer { flex: 1; }
+
+/* Period picker pills */
+.an2-period {
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.an2-period-btn {
+  font-size: 11px; font-weight: 700; padding: 5px 10px;
+  color: var(--text2); background: transparent; border: 0; cursor: pointer;
+  border-radius: 8px; transition: all .15s ease;
+}
+.an2-period-btn:hover { color: var(--text); background: var(--hover); }
+.an2-period-btn.active {
+  color: var(--bg); background: var(--text);
+}
+.an2-period-custom {
+  display: flex; gap: 4px; align-items: center;
+  padding: 3px 6px;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 10px;
+  font-size: 11px;
+}
+.an2-period-custom input {
+  background: transparent; border: 0; color: var(--text);
+  font-size: 11px; font-family: inherit; outline: none;
+  padding: 3px 4px; width: 105px;
+}
+.an2-period-custom input::-webkit-calendar-picker-indicator { filter: invert(0.6); cursor: pointer; }
+
+/* Icon button (refresh, settings, sync) */
+.an2-icon-btn {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 9px; color: var(--text2); cursor: pointer;
+  transition: all .15s ease;
+}
+.an2-icon-btn:hover { color: var(--text); border-color: var(--border2); transform: translateY(-1px); }
+.an2-icon-btn:active { transform: translateY(0); }
+.an2-icon-btn.spinning svg { animation: an-spin .8s linear infinite; }
+
+/* Store filter chips */
+.an2-filter-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; font-size: 11px; font-weight: 600;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 999px; cursor: pointer; color: var(--text2);
+  transition: all .15s ease;
+}
+.an2-filter-chip:hover { color: var(--text); border-color: var(--border2); }
+.an2-filter-chip.on {
+  color: var(--bg); background: var(--accent); border-color: transparent;
+}
+.an2-filter-chip .dot {
+  width: 6px; height: 6px; border-radius: 50%; display: inline-block;
+}
+
+/* ── Тело ────────────────────────────────────────────────────────────────── */
+.an2-body {
+  flex: 1; overflow-y: auto; min-height: 0;
+  padding: 16px;
+  /* Изоляция от шапки — при перерисовке тела не пересчитывается layout шапки */
+  contain: layout style;
+}
+.an2-body::-webkit-scrollbar { width: 8px; }
+.an2-body::-webkit-scrollbar-track { background: transparent; }
+.an2-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+/* ── KPI Grid ───────────────────────────────────────────────────────────── */
+.an2-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.an2-kpi {
+  position: relative;
+  background: var(--an-card-bg);
+  border: 1px solid var(--an-card-border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  overflow: hidden;
+  transition: all .25s cubic-bezier(.22,.61,.36,1);
+  cursor: pointer;
+  animation: an-card-in .4s cubic-bezier(.22,.61,.36,1) backwards;
+}
+.an2-kpi::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(circle at top left, var(--an-tint, var(--accent-dim)), transparent 65%);
+  opacity: .35; pointer-events: none; transition: opacity .25s;
+}
+.an2-kpi:hover { border-color: var(--an-card-border-hover); transform: translateY(-2px); box-shadow: var(--an-shadow-soft); }
+.an2-kpi:hover::before { opacity: .55; }
+.an2-kpi:nth-child(1) { animation-delay: 0ms; }
+.an2-kpi:nth-child(2) { animation-delay: 50ms; }
+.an2-kpi:nth-child(3) { animation-delay: 100ms; }
+.an2-kpi:nth-child(4) { animation-delay: 150ms; }
+.an2-kpi:nth-child(5) { animation-delay: 200ms; }
+.an2-kpi-label {
+  font-size: 10px; font-weight: 800;
+  letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--text3);
+  display: flex; align-items: center; gap: 6px;
+}
+.an2-kpi-value {
+  font-size: 24px; font-weight: 800;
+  margin-top: 6px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.4px;
+  display: flex; align-items: baseline; gap: 6px;
+}
+.an2-kpi-value .ruble { font-size: 14px; color: var(--text3); font-weight: 600; }
+.an2-kpi-delta {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10px; font-weight: 800;
+  padding: 2px 7px; border-radius: 999px;
+  margin-top: 6px;
+}
+.an2-kpi-delta.up   { background: rgba(34,197,94,.14);  color: #22c55e; }
+.an2-kpi-delta.down { background: rgba(248,113,113,.14);color: #f87171; }
+.an2-kpi-spark {
+  position: absolute; right: 10px; bottom: 8px; opacity: .65;
+  width: 90px; height: 32px; pointer-events: none;
+}
+
+/* Source indicator (зелёная/жёлтая/красная точка) */
+.an2-src {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  vertical-align: middle; margin-right: 5px;
+}
+.an2-src.real      { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,.65); }
+.an2-src.estimated { background: #fbbf24; box-shadow: 0 0 6px rgba(251,191,36,.55); }
+.an2-src.missing   { background: #f87171; box-shadow: 0 0 6px rgba(248,113,113,.55); }
+
+/* ── Сards / Sections ────────────────────────────────────────────────────── */
+.an2-card {
+  background: var(--an-card-bg);
+  border: 1px solid var(--an-card-border);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 12px;
+  animation: an-card-in .4s cubic-bezier(.22,.61,.36,1) backwards;
+}
+.an2-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.an2-card-title {
+  font-size: 12px; font-weight: 800;
+  letter-spacing: .8px; text-transform: uppercase;
+  color: var(--text2);
+}
+
+/* ── PnL Waterfall ──────────────────────────────────────────────────────── */
+.an2-pnl { display: flex; flex-direction: column; gap: 4px; }
+.an2-pnl-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.an2-pnl-row:hover { background: var(--hover); }
+.an2-pnl-row.total {
+  background: linear-gradient(90deg, var(--accent-dim), transparent);
+  border: 1px solid var(--accent-dim);
+  margin: 4px 0;
+}
+.an2-pnl-row.negative .an2-pnl-amount { color: var(--red); }
+.an2-pnl-row.positive .an2-pnl-amount { color: var(--green); }
+.an2-pnl-icon {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px; background: var(--bg3);
+  font-size: 14px;
+}
+.an2-pnl-label { font-size: 12px; font-weight: 600; color: var(--text); }
+.an2-pnl-bar {
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(90deg, var(--an-tint, var(--accent)), transparent);
+  margin-top: 4px;
+  animation: an-bar-grow .6s cubic-bezier(.22,.61,.36,1);
+}
+.an2-pnl-amount {
+  font-weight: 800; font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.an2-pnl-share {
+  font-size: 10px; color: var(--text3);
+  min-width: 48px; text-align: right;
+}
+
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+.an2-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: fixed;   /* browser не пересчитывает ширину на каждую ячейку */
+  contain: layout style; /* изолируем layout, не влияет на внешние элементы */
+  will-change: auto;
+}
+.an2-table th {
+  text-align: left; padding: 8px 10px;
+  font-size: 10px; font-weight: 800;
+  letter-spacing: .8px; text-transform: uppercase;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--an-card-bg); z-index: 1;
+}
+.an2-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  color: var(--text);
+}
+.an2-table tr { transition: background .12s ease; }
+.an2-table tbody tr:hover { background: var(--hover); cursor: pointer; }
+.an2-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.an2-table .num.pos { color: var(--green); }
+.an2-table .num.neg { color: var(--red); }
+.an2-table .mp-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10px; font-weight: 700; padding: 2px 7px;
+  border-radius: 999px; background: var(--bg3); color: var(--text2);
+}
+.an2-table .mp-badge .mp-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+.an2-status-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10px; font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+.an2-status-pill .dot { width: 6px; height: 6px; border-radius: 50%; }
+
+.an2-row-img {
+  width: 32px; height: 32px; border-radius: 6px;
+  object-fit: cover; background: var(--bg3);
+  border: 1px solid var(--border);
+}
+
+/* ── Empty / Loader ─────────────────────────────────────────────────────── */
+.an2-empty {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 8px;
+  padding: 80px 16px; color: var(--text2);
+  text-align: center;
+}
+.an2-empty .emoji { font-size: 36px; opacity: .6; }
+.an2-empty h3 { font-size: 14px; font-weight: 800; margin: 0; color: var(--text); }
+.an2-empty p { font-size: 12px; max-width: 360px; margin: 0; }
+
+.an2-loader {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 14px;
+  padding: 80px 16px;
+}
+.an2-loader-ring {
+  width: 36px; height: 36px;
+  border: 3px solid var(--border2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: an-spin .9s linear infinite;
+}
+.an2-loader-text { font-size: 11px; color: var(--text2); letter-spacing: .5px; }
+
+/* Top progress-bar при подгрузке (когда данные уже есть на экране) */
+.an2-topbar {
+  position: absolute; left: 0; right: 0; top: 0;
+  height: 2px; overflow: hidden; pointer-events: none;
+  z-index: 10;
+}
+.an2-topbar::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0; width: 40%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: an-topbar-slide 1.1s ease-in-out infinite;
+}
+@keyframes an-topbar-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+/* Затемнение body при подгрузке (без полного скрытия контента) */
+.an2-body.is-loading {
+  opacity: 0.55;
+  pointer-events: none;
+  transition: opacity .15s ease;
+}
+
+/* Skeleton-плейсхолдер */
+.an2-skel {
+  background: linear-gradient(90deg, var(--bg2) 0%, var(--bg3) 50%, var(--bg2) 100%);
+  background-size: 200% 100%;
+  animation: an-skel-shimmer 1.3s ease-in-out infinite;
+  border-radius: 8px;
+}
+@keyframes an-skel-shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Пульсация на title-dot при синке */
+.an2-title-dot.busy {
+  background: var(--accent);
+  animation: an-pulse-dot-fast .8s ease-in-out infinite;
+}
+@keyframes an-pulse-dot-fast {
+  0%,100% { transform: scale(1); box-shadow: 0 0 0 0 var(--accent-dim); }
+  50%     { transform: scale(1.4); box-shadow: 0 0 0 8px transparent; }
+}
+
+/* ── Drawer (карточка заказа справа) ────────────────────────────────────── */
+.an2-drawer-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.4);
+  backdrop-filter: blur(2px);
+  z-index: 1000;
+  animation: an-fade-in .2s ease;
+}
+.an2-drawer {
+  position: fixed; right: 0; top: 0; bottom: 0;
+  width: 520px; max-width: 100vw;
+  background: var(--bg);
+  border-left: 1px solid var(--border2);
+  display: flex; flex-direction: column;
+  z-index: 1001;
+  box-shadow: -10px 0 40px rgba(0,0,0,.4);
+  animation: an-drawer-in .35s cubic-bezier(.22,.61,.36,1);
+}
+.an2-drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+}
+.an2-drawer-title {
+  display: flex; flex-direction: column; gap: 2px;
+}
+.an2-drawer-title .id {
+  font-size: 13px; font-weight: 800; color: var(--text);
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+}
+.an2-drawer-title .sub {
+  font-size: 11px; color: var(--text2);
+}
+.an2-drawer-close {
+  width: 28px; height: 28px; border: 0; background: transparent;
+  color: var(--text2); cursor: pointer; border-radius: 8px;
+  transition: background .12s;
+}
+.an2-drawer-close:hover { background: var(--hover); color: var(--text); }
+.an2-drawer-body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+.an2-drawer-section {
+  margin-bottom: 18px;
+  animation: an-card-in .35s cubic-bezier(.22,.61,.36,1) backwards;
+}
+.an2-drawer-section h4 {
+  font-size: 10px; font-weight: 800;
+  letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--text3); margin: 0 0 8px;
+}
+
+.an2-drawer-item {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  gap: 10px;
+  padding: 10px;
+  background: var(--bg2); border-radius: 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+}
+.an2-drawer-item-img {
+  width: 44px; height: 44px; border-radius: 8px;
+  background: var(--bg3); object-fit: cover;
+}
+.an2-drawer-item-info .name {
+  font-size: 12px; font-weight: 700; color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.an2-drawer-item-info .meta {
+  font-size: 10px; color: var(--text3); margin-top: 3px;
+}
+.an2-drawer-item-num {
+  text-align: right; font-size: 11px; line-height: 1.5;
+}
+.an2-drawer-item-num .price { font-weight: 700; color: var(--text); }
+.an2-drawer-item-num .profit.pos { color: var(--green); }
+.an2-drawer-item-num .profit.neg { color: var(--red); }
+
+.an2-fee-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 7px 10px; font-size: 12px;
+  border-bottom: 1px dashed var(--border);
+}
+.an2-fee-row:last-child { border-bottom: 0; }
+.an2-fee-row .label { color: var(--text2); display: flex; align-items: center; gap: 6px; }
+.an2-fee-row .amount { font-weight: 700; color: var(--red); font-variant-numeric: tabular-nums; }
+.an2-fee-row.income .amount { color: var(--green); }
+.an2-fee-row.total {
+  background: var(--bg2); border-radius: 8px; margin-top: 8px;
+  border-bottom: 0; padding: 10px;
+}
+.an2-fee-row.total .label, .an2-fee-row.total .amount {
+  font-size: 13px; font-weight: 900; color: var(--text);
+}
+
+/* ── Chart ──────────────────────────────────────────────────────────────── */
+.an2-chart-wrap {
+  position: relative; padding: 8px 0 0;
+  /* Изолируем layout/paint графика от остальной страницы.
+     Снижает caps на reflow когда график пересоздаётся. */
+  contain: layout style paint;
+}
+.an2-chart-wrap svg {
+  width: 100%; height: auto;
+  max-height: 460px;
+  min-height: 320px;
+  /* will-change намекает браузеру создать отдельный compositing layer */
+  will-change: transform;
+}
+/* Hover-элементы (точки, кросхейр, тултип) не пересчитывают layout */
+#_an2cc, #_an2dr, #_an2dp, #_an2de, #_an2ct { will-change: opacity, transform; }
+
+/* Line draw animation (uses SVG pathLength="1") */
+.an2-cl {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: an-chart-draw .9s cubic-bezier(.42,0,.58,1) forwards;
+}
+@keyframes an-chart-draw { to { stroke-dashoffset: 0; } }
+
+/* Area fade-in */
+.an2-ca {
+  opacity: 0;
+  animation: an-chart-area .7s ease .15s forwards;
+}
+@keyframes an-chart-area { to { opacity: 1; } }
+
+/* Hover tooltip */
+.an2-chart-tip {
+  position: absolute;
+  top: 6px;
+  pointer-events: none;
+  z-index: 8;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  padding: 9px 13px;
+  min-width: 180px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.28), 0 1px 0 rgba(255,255,255,.04);
+  animation: an-fade-in .08s ease;
+}
+.an2-ct-date {
+  font-size: 10px; font-weight: 800; letter-spacing: .6px;
+  text-transform: uppercase; color: var(--text3);
+  margin-bottom: 7px;
+}
+.an2-ct-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 2px 0; font-size: 11px; color: var(--text2);
+  justify-content: space-between;
+}
+.an2-ct-row strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.an2-ct-row.neg strong { color: var(--red); }
+.an2-ct-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Chart control panel ─────────────────────────────────────────────────── */
+.an2-chart-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 4px 2px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+  animation: an-fade-in .25s ease;
+}
+.an2-ctrl-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.an2-series-group {
+  background: transparent;
+  border: none;
+  padding: 0;
+  gap: 6px;
+}
+
+.an2-ctrl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text3);
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color .15s, background .15s, transform .1s;
+  padding: 0;
+}
+.an2-ctrl-btn:hover { color: var(--text2); background: var(--bg4, var(--bg2)); }
+.an2-ctrl-btn.on    { color: var(--text); background: var(--bg); box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+.an2-ctrl-btn:active { transform: scale(.94); }
+
+.an2-ctrl-pill {
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text3);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 10.5px;
+  font-weight: 600;
+  font-family: inherit;
+  letter-spacing: .2px;
+  white-space: nowrap;
+  transition: color .15s, background .15s, transform .1s;
+}
+.an2-ctrl-pill:hover { color: var(--text2); }
+.an2-ctrl-pill.on    { color: var(--text); background: var(--bg); box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+.an2-ctrl-pill:active { transform: scale(.96); }
+
+.an2-series-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border: 1px solid var(--border2);
+  background: transparent;
+  color: var(--text3);
+  border-radius: 16px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  transition: all .18s cubic-bezier(.4,0,.2,1);
+  position: relative;
+}
+.an2-series-chip:hover { border-color: var(--border3); color: var(--text2); }
+.an2-series-chip.on { font-weight: 700; }
+.an2-series-chip:not(.on) { opacity: .55; }
+.an2-series-chip:not(.on):hover { opacity: .85; }
+.an2-series-chip:active { transform: scale(.95); }
+.an2-series-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  transition: background .2s;
+  box-shadow: 0 0 0 0 currentColor;
+}
+.an2-series-chip.on .an2-series-dot { box-shadow: 0 0 8px 0 currentColor; }
+
+/* ── Bar chart animation ─────────────────────────────────────────────────── */
+.an2-bar {
+  transform-box: fill-box;
+  transform-origin: bottom center;
+  animation: an-bar-grow .55s cubic-bezier(.34,1.56,.64,1) backwards;
+}
+@keyframes an-bar-grow {
+  from { transform: scaleY(0); opacity: 0; }
+  to   { transform: scaleY(1); opacity: 1; }
+}
+
+/* ── Avg line ─────────────────────────────────────────────────────────────── */
+.an2-avg-line {
+  stroke-dasharray: 4 4;
+  animation: an-avg-fade .5s ease forwards;
+  opacity: 0;
+}
+@keyframes an-avg-fade { to { opacity: 1; } }
+
+/* ── Last-point pulse ─────────────────────────────────────────────────────
+   Только 6 пульсаций → стоп. Бесконечная анимация постоянно держит GPU layer
+   активным; ограничение убирает фон-нагрузку после привлечения внимания. */
+.an2-pulse-dot {
+  animation: an-pulse-dot 2s ease-in-out 6;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+@keyframes an-pulse-dot {
+  0%, 100% { transform: scale(1);   opacity: 1; }
+  50%      { transform: scale(1.5); opacity: .65; }
+}
+
+/* Mini-spinner для inline-индикатора авто-синхронизации */
+.an2-mini-spinner {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: an-spin .8s linear infinite;
+}
+@keyframes an-spin { to { transform: rotate(360deg); } }
+
+/* Reduced motion: уважаем системные настройки + снижает CPU */
+@media (prefers-reduced-motion: reduce) {
+  .an2-cl, .an2-ca, .an2-bar, .an2-pulse-dot, .an2-avg-line { animation: none !important; }
+  .an2-card { animation: none !important; }
+}
+
+/* ── Animations ─────────────────────────────────────────────────────────── */
+@keyframes an-page-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes an-card-in {
+  from { opacity: 0; transform: translateY(8px) scale(.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes an-drawer-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes an-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes an-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes an-pulse-dot {
+  0%,100% { transform: scale(1); opacity: 1; }
+  50%     { transform: scale(1.3); opacity: .65; }
+}
+@keyframes an-bar-grow {
+  from { transform: scaleX(0); transform-origin: left; }
+  to   { transform: scaleX(1); transform-origin: left; }
+}
+@keyframes an-count-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.an2-anim-count { animation: an-count-up .5s cubic-bezier(.22,.61,.36,1); }
+
+/* ── Settings drawer ────────────────────────────────────────────────────── */
+.an2-settings-row {
+  display: grid; grid-template-columns: 1fr 110px 80px auto;
+  gap: 8px; align-items: center; padding: 8px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.an2-settings-row select, .an2-settings-row input {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 8px;
+  color: var(--text); font-size: 12px; outline: none;
+  font-family: inherit;
+}
+.an2-settings-row select:focus, .an2-settings-row input:focus {
+  border-color: var(--accent);
+}
+.an2-btn {
+  background: var(--accent); color: var(--bg);
+  border: 0; padding: 7px 14px; border-radius: 9px;
+  font-size: 12px; font-weight: 800; cursor: pointer;
+  transition: all .15s ease;
+}
+.an2-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 14px var(--accent-dim); }
+.an2-btn.ghost {
+  background: transparent; color: var(--text2);
+  border: 1px solid var(--border);
+}
+.an2-btn.ghost:hover { color: var(--text); border-color: var(--border2); }
+.an2-btn.danger {
+  background: rgba(248,113,113,.14); color: var(--red); border: 1px solid rgba(248,113,113,.2);
+}
+
+/* ── Missing COGS list ───────────────────────────────────────────────────── */
+.an2-missing-cogs-list {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 220px; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--border2) transparent;
+}
+.an2-missing-cogs-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px; border-radius: 6px;
+  font-size: 11px;
+  transition: background .1s;
+}
+.an2-missing-cogs-row:hover { background: var(--hover); }
+.an2-missing-vc {
+  flex: 1; font-family: 'JetBrains Mono','SF Mono',monospace;
+  font-size: 11px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.an2-missing-cnt {
+  font-size: 10px; font-weight: 700;
+  color: rgba(251,191,36,.9);
+  flex-shrink: 0;
+}
+
+/* ── Orders table helpers ────────────────────────────────────────────────── */
+.an2-col-date { color: var(--text2); font-size: 11px; white-space: nowrap; }
+.an2-col-goods {
+  max-width: 200px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 11px; color: var(--text2);
+}
+
+/* Order ID cell with copy button */
+.an2-order-id-cell {
+  display: flex; align-items: center; gap: 4px;
+}
+.an2-order-id-text {
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 11px; color: var(--text);
+}
+.an2-copy-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0;
+  background: transparent; border: 1px solid transparent;
+  border-radius: 5px; color: var(--text3);
+  cursor: pointer; flex-shrink: 0;
+  opacity: 0; transition: opacity .12s, color .12s, border-color .12s;
+}
+.an2-order-id-cell:hover .an2-copy-btn,
+tr:hover .an2-copy-btn { opacity: 1; }
+.an2-copy-btn:hover { color: var(--text); border-color: var(--border); background: var(--bg3); }
+
+/* Date separator row */
+.an2-date-sep-row td {
+  padding: 12px 10px 4px !important;
+  border-bottom: 0 !important;
+  background: transparent !important;
+  cursor: default !important;
+}
+.an2-date-sep-row:hover td { background: transparent !important; }
+.an2-date-sep-label {
+  font-size: 10px; font-weight: 800;
+  letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text3);
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.an2-date-sep-label::after {
+  content: '';
+  display: inline-block; height: 1px; width: 60px;
+  background: var(--border);
+  vertical-align: middle;
+}
+
+/* Mobile */
+@media (max-width: 720px) {
+  .an2-head { padding: 8px 10px; gap: 6px; }
+  .an2-body { padding: 10px; }
+  .an2-kpi-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .an2-kpi { padding: 10px 12px; }
+  .an2-kpi-value { font-size: 18px; }
+  .an2-drawer { width: 100vw; }
+}

@@ -1,0 +1,105 @@
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+[build.environment]
+  NODE_VERSION = "18"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# ── Marketplace API proxies ────────────────────────────────────────────────────
+# ВАЖНО: эти правила должны быть ДО catch-all "/*" — Netlify берёт первое совпадение.
+#
+# Как это работает (status = 200 + внешний URL = transparent proxy):
+#   1. Браузер запрашивает  GET sabatov.netlify.app/ozon-api/v3/product/list
+#   2. Netlify Edge перехватывает и САМА обращается к api-seller.ozon.ru/v3/product/list
+#   3. Все заголовки (Client-Id, Api-Key, Authorization) пробрасываются через Edge
+#   4. Браузер получает ответ как будто от sabatov.netlify.app → CORS не нужен
+#   5. Код обрабатывает JSON как обычно
+
+[[redirects]]
+  from = "/ozon-api/*"
+  to   = "https://api-seller.ozon.ru/:splat"
+  status = 200
+  force  = true
+
+[[redirects]]
+  from = "/yandex-api/*"
+  to   = "https://api.partner.market.yandex.ru/:splat"
+  status = 200
+  force  = true
+
+[[redirects]]
+  from = "/wb-content/*"
+  to   = "https://content-api.wildberries.ru/:splat"
+  status = 200
+  force  = true
+
+[[redirects]]
+  from = "/wb-marketplace/*"
+  to   = "https://marketplace-api.wildberries.ru/:splat"
+  status = 200
+  force  = true
+
+[[redirects]]
+  from = "/wb-stats/*"
+  to   = "https://statistics-api.wildberries.ru/:splat"
+  status = 200
+  force  = true
+
+[[redirects]]
+  from = "/wb-common/*"
+  to   = "https://common-api.wildberries.ru/:splat"
+  status = 200
+  force  = true
+
+# ── WB Prices API (цены и скидки) ─────────────────────────────────────────────
+[[redirects]]
+  from = "/wb-prices/*"
+  to   = "https://discounts-prices-api.wildberries.ru/:splat"
+  status = 200
+  force  = true
+
+# ── WB Feedbacks API (отзывы) — отдельный хост ────────────────────────────────
+[[redirects]]
+  from = "/wb-feedback/*"
+  to   = "https://feedbacks-api.wildberries.ru/:splat"
+  status = 200
+  force  = true
+
+# ── WB Card API (публичные карточки товаров, реальная цена покупателя с СПП) ──
+[[redirects]]
+  from = "/wb-card/*"
+  to   = "https://card.wb.ru/:splat"
+  status = 200
+  force  = true
+
+# ── SPA catch-all (должен быть ПОСЛЕДНИМ) ─────────────────────────────────────
+[[redirects]]
+  from = "/*"
+  to   = "/index.html"
+  status = 200
+
+[context.production.environment]
+  VITE_SUPA_URL        = "https://rdqwzojrsmbdxiczqjci.supabase.co"
+  VITE_SUPA_KEY        = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJkcXd6b2pyc21iZHhpY3pxamNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0OTAwNjEsImV4cCI6MjA5MzA2NjA2MX0.lw9aXynPfMo0hy6J_E3BBlqd6W4MTIVM3BrVdjkBaNE"
+  VITE_TG_BOT_USERNAME = "simadesk_bot"
+  VITE_DEV_AUTH        = "false"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options        = "DENY"
+    X-XSS-Protection       = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy        = "strict-origin-when-cross-origin"
+    Permissions-Policy     = "camera=(), microphone=(), geolocation=()"
+
+# index.html не должен кэшироваться — иначе браузер/Telegram WebView
+# подолгу держит старый бандл и новые деплои "не применяются".
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
