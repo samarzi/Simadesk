@@ -69,7 +69,7 @@ export class NavigationModule {
       const el = document.getElementById(id);
       if (el) el.style.display = 'none';
     }
-    const w: any = window;
+    const w = window;
     w.ozonModule?.hide();
     w.yandexModule?.hide();
     w.wbModule?.hide();
@@ -128,7 +128,7 @@ export class NavigationModule {
     const topbarEl             = document.querySelector<HTMLElement>('.topbar');
     const content              = document.querySelector<HTMLElement>('.content');
     const sideboxes            = document.getElementById('sidebar-boxes-section');
-    const w: any = window;
+    const w = window;
 
     const isModulePage =
       page === 'marketplaces' || page === 'ozon' || page === 'yandex' || page === 'wb' ||
@@ -248,7 +248,7 @@ export class NavigationModule {
     this.resetNavActive();
     document.getElementById('nav-home')?.classList.toggle('active', page === 'home');
     document.getElementById('nav-products')?.classList.toggle('active', page === 'products');
-    (window as any).ensureDockExpandedForPage?.(page);
+    window.ensureDockExpandedForPage?.(page);
 
     const sb = document.getElementById('sidebar-boxes-section');
     const filterPanel = document.getElementById('filter-panel');

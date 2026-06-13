@@ -252,8 +252,8 @@ export class AutomationModule {
     }
 
     // Проверяем через window event (расширение могло установить маркер)
-    if ((window as any).__SIMADESK_EXTENSION_ID) {
-      const id = (window as any).__SIMADESK_EXTENSION_ID;
+    if (window.__SIMADESK_EXTENSION_ID) {
+      const id = window.__SIMADESK_EXTENSION_ID;
       this.extensionConnected = await tryId(id);
       if (this.extensionConnected) this.detectedExtensionId = id;
       return;

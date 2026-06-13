@@ -139,4 +139,4 @@ function showMetricTip(id: string): void {
 }
 
 // Expose globally for inline onclick
-(window as any).__showMetricTip = showMetricTip;
+window.__showMetricTip = showMetricTip;

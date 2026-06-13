@@ -157,5 +157,9 @@ declare global {
     settingsModule: import('./modules/SettingsModule').SettingsModule;
     stockModule: import('./modules/StockModule').StockModule;
     catalogMpModule: import('./modules/CatalogMpModule').CatalogMpModule;
+    taskManagerModule: import('./modules/TaskManagerModule').TaskManagerModule;
+    ensureDockExpandedForPage?: (page: string) => void;
+    __showMetricTip?: (id: string) => void;
+    __SIMADESK_EXTENSION_ID?: string;
   }
 }
