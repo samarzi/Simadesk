@@ -12,6 +12,7 @@
  *   WB FBS:        Подтвердить, Стикер PDF, Отменить
  */
 
+import { debug } from '@/utils/debug';
 import { OzonPosting, OzonStore, DeliveryScheme } from '@/types/ozon';
 import { YandexOrder, YandexStore } from '@/types/yandex';
 import { WbOrder, WbStore } from '@/types/wb';
@@ -226,7 +227,7 @@ export class AllOrdersModule {
         yandexDb.getStores(),
         wbDb.getStores(),
       ]);
-      this._ensureProductCache().catch(() => {});
+      this._ensureProductCache().catch((e) => debug.warn('[AllOrdersModule] swallowed error', e));
     } catch (err) {
       console.error('[AllOrders] init err:', err);
     }
@@ -448,7 +449,7 @@ export class AllOrdersModule {
   }
 
   copyText(s: string, el?: HTMLElement): void {
-    navigator.clipboard?.writeText(String(s)).catch(() => {});
+    navigator.clipboard?.writeText(String(s)).catch((e) => debug.warn('[AllOrdersModule] swallowed error', e));
     if (el) {
       el.classList.add('oz-sku-chip-copied');
       setTimeout(() => el.classList.remove('oz-sku-chip-copied'), 1200);
@@ -902,21 +903,21 @@ export class AllOrdersModule {
         if (p.images?.[0]) this._productImageCache.set(`ozon|${p.offer_id}`, p.images[0]);
         if (p.name) this._productNameCache.set(`ozon|${p.offer_id}`, p.name);
       }
-    } catch {}
+    } catch (e) { debug.warn('[AllOrdersModule] swallowed error', e); }
     try {
       const ymPr = await yandexDb.getProducts();
       for (const p of ymPr) {
         if (p.pictures?.[0]) this._productImageCache.set(`yandex|${p.offer_id}`, p.pictures[0]);
         if (p.name) this._productNameCache.set(`yandex|${p.offer_id}`, p.name);
       }
-    } catch {}
+    } catch (e) { debug.warn('[AllOrdersModule] swallowed error', e); }
     try {
       const wbPr = await wbDb.getProducts();
       for (const p of wbPr) {
         if (p.pictures?.[0]) this._productImageCache.set(`wb|${p.vendor_code}`, p.pictures[0]);
         if (p.title) this._productNameCache.set(`wb|${p.vendor_code}`, p.title);
       }
-    } catch {}
+    } catch (e) { debug.warn('[AllOrdersModule] swallowed error', e); }
   }
 
   private getProductImageFor(mp: string, offerId: string): string | null {

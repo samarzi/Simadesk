@@ -11,6 +11,7 @@
  *  Если миграция add_cost_prices.sql не применена — fallback на чистый localStorage.
  */
 
+import { debug } from '@/utils/debug';
 import { supaFetch } from './supabaseClient';
 import { companyService } from './companyService';
 
@@ -37,7 +38,7 @@ function loadCache(): Record<string, CostEntry> {
   try { return JSON.parse(localStorage.getItem(getCacheKey()) || '{}'); } catch { return {}; }
 }
 function saveCache(): void {
-  try { localStorage.setItem(getCacheKey(), JSON.stringify(cache)); } catch {}
+  try { localStorage.setItem(getCacheKey(), JSON.stringify(cache)); } catch (e) { debug.warn('[costPriceDb] swallowed error', e); }
 }
 const norm = (s: string) => String(s ?? '').trim().toLowerCase();
 
@@ -273,7 +274,7 @@ export const costPriceDb = {
 // Авто-загрузка при изменении компании
 companyService.onChange?.(() => {
   cacheCompanyId = null;
-  refreshFromServer().then(() => costPriceDb.syncFromCustomColumns()).catch(() => {});
+  refreshFromServer().then(() => costPriceDb.syncFromCustomColumns()).catch((e) => debug.warn('[costPriceDb] swallowed error', e));
 });
 
 // Авто-загрузка при старте — ждём появления токена, потом загружаем
@@ -284,6 +285,6 @@ companyService.onChange?.(() => {
     if (!token && attempt < 5) { tryLoad(attempt + 1); return; }
     refreshFromServer()
       .then(() => costPriceDb.syncFromCustomColumns())
-      .catch(() => {});
+      .catch((e) => debug.warn('[costPriceDb] swallowed error', e));
   }, delay);
 })();

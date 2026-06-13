@@ -11,6 +11,8 @@
  * Все значения хранятся per-offer_id в localStorage и могут быть импортированы/
  * экспортированы через XLSX.
  */
+import { debug } from '@/utils/debug';
+
 
 export type ColumnDataType = 'number' | 'text';
 
@@ -186,7 +188,7 @@ export const customColumnsDb = {
         } else {
           costPriceDb.remove(offerId);
         }
-      }).catch(() => {});
+      }).catch((e) => debug.warn('[customColumnsDb] swallowed error', e));
     }
   },
 
@@ -213,7 +215,7 @@ export const customColumnsDb = {
     if (costItems.length > 0) {
       import('./costPriceDb').then(({ costPriceDb }) => {
         costPriceDb.bulkSet(costItems);
-      }).catch(() => {});
+      }).catch((e) => debug.warn('[customColumnsDb] swallowed error', e));
     }
   },
 

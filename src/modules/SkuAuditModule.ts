@@ -5,6 +5,7 @@
  * Yandex Market: оценивает pictures, name, vendor, basic_price.
  */
 
+import { debug } from '@/utils/debug';
 import { wbDb } from '@/services/wbDb';
 import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
@@ -317,9 +318,9 @@ export class SkuAuditModule {
     this.render();
     try {
       // Триггерим повторную синхронизацию каждого МП-модуля (если они подключены)
-      try { await (window as any).ozonModule?.syncAll?.(); } catch {}
-      try { await (window as any).wbModule?.syncAll?.(); } catch {}
-      try { await (window as any).yandexModule?.syncAll?.(); } catch {}
+      try { await (window as any).ozonModule?.syncAll?.(); } catch (e) { debug.warn('[SkuAuditModule] swallowed error', e); }
+      try { await (window as any).wbModule?.syncAll?.(); } catch (e) { debug.warn('[SkuAuditModule] swallowed error', e); }
+      try { await (window as any).yandexModule?.syncAll?.(); } catch (e) { debug.warn('[SkuAuditModule] swallowed error', e); }
     } catch (e) {
       console.warn('[SkuAudit] reload sync:', e);
     }
@@ -806,7 +807,7 @@ export class SkuAuditModule {
       // Перерисовываем чтобы показать бейдж «на модерации»
       setTimeout(() => this.render(), 800);
     } catch (e: any) {
-      try { skuEditLog.recordError(logEntry, e.message || String(e)); } catch {}
+      try { skuEditLog.recordError(logEntry, e.message || String(e)); } catch (e) { debug.warn('[SkuAuditModule] swallowed error', e); }
       setStatus(`✗ ${e.message}`, false, true);
     }
   }

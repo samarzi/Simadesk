@@ -1,3 +1,4 @@
+import { debug } from '@/utils/debug';
 import { boxes, boxActions } from '../stores/appStore';
 import { apiService } from '../services/api';
 import { idbCache } from '../services/idbCache';
@@ -239,7 +240,7 @@ export class BoxModalsModule {
       const co: Record<string, string[]> = {};
       for (const [bid, cls] of this.app.columnOrder) co[bid] = cls;
       localStorage.setItem('app_column_order', JSON.stringify(co));
-    } catch {}
+    } catch (e) { debug.warn('[BoxModalsModule] swallowed error', e); }
     this.app.toast('Порядок столбцов сброшен', 'success');
     this.app.buildColumns();
     this.openBoxSettings(boxId);
@@ -399,7 +400,7 @@ export class BoxModalsModule {
     try {
       await apiService.deleteProduct(prodId);
       this.app.cache.delete(boxId);
-      idbCache.remove(boxId).catch(() => {});
+      idbCache.remove(boxId).catch((e) => debug.warn('[BoxModalsModule] swallowed error', e));
       this.app.toast('Товар удалён', 'success');
       this.app.closeModal();
       if (this.app.activeBoxId === boxId) await this.app.loadBoxProducts();
@@ -433,7 +434,7 @@ export class BoxModalsModule {
       for (const s of (sheets || [])) await apiService.deleteSheet(s.id);
       await apiService.deleteBox(id);
       this.app.cache.delete(id);
-      idbCache.remove(id).catch(() => {});
+      idbCache.remove(id).catch((e) => debug.warn('[BoxModalsModule] swallowed error', e));
       boxActions.removeBox(id);
       if (this.app.activeBoxId === id) {
         this.app.activeBoxId = null;

@@ -6,6 +6,8 @@
  *
  * Данные для API хранятся в скрытых полях _ozon_ и _ym_ в product.data.
  */
+import { debug } from '@/utils/debug';
+
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -98,7 +100,7 @@ export async function pushToOzon(
       const stores = await ozonDb.getStores();
       const store = (stores as any[]).find((s: any) => s.id === storeId);
       if (store) creds = { client_id: store.client_id, api_key: store.api_key };
-    } catch {}
+    } catch (e) { debug.warn('[mpProductPush] swallowed error', e); }
   }
   if (!creds) { result.errors.push('Нет данных магазина Ozon'); return result; }
 
@@ -106,7 +108,7 @@ export async function pushToOzon(
   let attrMeta: Record<string, { attribute_id: number; dictionary_value_id?: number; is_collection: boolean }> = {};
   try {
     if (data['_ozon_attr_meta']) attrMeta = JSON.parse(data['_ozon_attr_meta']);
-  } catch {}
+  } catch (e) { debug.warn('[mpProductPush] swallowed error', e); }
 
   // ── 1. Цена ────────────────────────────────────────────────────────────────
   const priceNew  = String(data['Цена, руб.*'] || '').trim();
@@ -162,7 +164,7 @@ export async function pushToOzon(
           result.errors.push(`«${fieldName}»: значение «${newVal}» не найдено в словаре Ozon`);
           continue;
         }
-      } catch {}
+      } catch (e) { debug.warn('[mpProductPush] swallowed error', e); }
     }
 
     changedAttrs.push({

@@ -615,7 +615,7 @@ export class YandexOrdersModule {
   }
 
   copyText(s: string, el?: HTMLElement): void {
-    navigator.clipboard?.writeText(String(s)).catch(() => {});
+    navigator.clipboard?.writeText(String(s)).catch((e) => debug.warn('[YandexOrdersModule] swallowed error', e));
     if (el) {
       el.classList.add('oz-sku-chip-copied');
       setTimeout(() => el.classList.remove('oz-sku-chip-copied'), 1200);

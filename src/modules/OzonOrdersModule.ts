@@ -983,7 +983,7 @@ export class OzonOrdersModule {
       // Возвраты — параллельно и без блокировки
       ozonOrdersApi.getRfbsReturns(creds, 50, 0, signal)
         .then(rets => { allReturns.push(...rets); this.returns.set('fbs', [...allReturns]); })
-        .catch(() => {});
+        .catch((e) => debug.warn('[OzonOrdersModule] swallowed error', e));
     }));
     this.postings.set('fbs', allFbs.sort((a, b) =>
       (b.created_at ?? '').localeCompare(a.created_at ?? '')));
@@ -1303,7 +1303,7 @@ export class OzonOrdersModule {
       ta.style.opacity = '0';
       document.body.appendChild(ta);
       ta.select();
-      try { document.execCommand('copy'); } catch {}
+      try { document.execCommand('copy'); } catch (e) { debug.warn('[OzonOrdersModule] swallowed error', e); }
       document.body.removeChild(ta);
     };
 

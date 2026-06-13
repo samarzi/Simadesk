@@ -6,6 +6,7 @@
  * Обновляется ТОЛЬКО вручную (кнопка "Синхронизировать" в Каталоге).
  */
 
+import { debug } from '@/utils/debug';
 import { fetchAllOzonProducts }   from './ozonApi';
 import { fetchAllWbProducts }     from './wbApi';
 import { fetchAllYandexProducts } from './yandexApi';
@@ -74,7 +75,7 @@ export const catalogCache = {
     const existing = cache.products.find(p => p.vendorCode.trim().toLowerCase() === key);
     if (existing) existing.photos = photos;
     else cache.products.push({ vendorCode, mpId: '', weight_g: null, length_mm: null, width_mm: null, height_mm: null, photos, description: '', barcode: '' });
-    try { localStorage.setItem(PREFIX + storeId, JSON.stringify(cache)); } catch {}
+    try { localStorage.setItem(PREFIX + storeId, JSON.stringify(cache)); } catch (e) { debug.warn('[catalogCache] swallowed error', e); }
   },
 
   clear(storeId: string): void {

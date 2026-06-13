@@ -306,7 +306,7 @@ export const ozonApi = {
                 sources: firstItem.sources?.slice?.(0, 2),
               });
             }
-          } catch {}
+          } catch (e) { debug.warn('[ozonApi] swallowed error', e); }
         }
         // v3 returns items at top level: { items: [...] }  (no "result" wrapper)
         const items: any[] = resp.items || resp.result?.items || [];
@@ -402,7 +402,7 @@ export const ozonApi = {
       }
       localStorage.setItem('ozon_sku_map_v1', JSON.stringify(skuCache));
       debug.log(`[Ozon] ozon_sku_map_v1: ${Object.keys(skuCache).length} total SKU→offer_id mappings cached (${allSkuPairs.length} from this sync)`);
-    } catch {}
+    } catch (e) { debug.warn('[ozonApi] swallowed error', e); }
 
     return map;
   },
@@ -502,7 +502,7 @@ export const ozonApi = {
         for (const [sku, offerId] of stocksSkuPairs) skuCache[sku] = offerId;
         localStorage.setItem('ozon_sku_map_v1', JSON.stringify(skuCache));
         debug.log(`[Ozon] ozon_sku_map_v1: updated with ${stocksSkuPairs.length} SKUs from stocks`);
-      } catch {}
+      } catch (e) { debug.warn('[ozonApi] swallowed error', e); }
     }
   },
 
@@ -544,7 +544,7 @@ export const ozonApi = {
         for (const [sku, offerId] of result) skuCache[sku] = offerId;
         localStorage.setItem('ozon_sku_map_v1', JSON.stringify(skuCache));
         debug.log(`[Ozon] resolveSkus: resolved ${result.size} SKU mappings, cache now ${Object.keys(skuCache).length}`);
-      } catch {}
+      } catch (e) { debug.warn('[ozonApi] swallowed error', e); }
     }
     return result;
   },
@@ -950,7 +950,7 @@ export const ozonApi = {
   async markChatRead(creds: Creds, chatId: string, fromMessageId?: string): Promise<void> {
     const body: any = { chat_id: chatId };
     if (fromMessageId) body.from_message_id = fromMessageId;
-    await ozonPost('/v2/chat/read', body, creds, 1, true).catch(() => {});
+    await ozonPost('/v2/chat/read', body, creds, 1, true).catch((e) => debug.warn('[ozonApi] swallowed error', e));
   },
 
   /**
@@ -977,7 +977,7 @@ export const ozonApi = {
           ozonPost('/v1/actions/products/deactivate', {
             action_id: a.action_id,
             product_ids: productIds,
-          }, creds).catch(() => {}),
+          }, creds).catch((e) => debug.warn('[ozonApi] swallowed error', e)),
         ),
     );
   },

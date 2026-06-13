@@ -3,6 +3,7 @@
  * Если Storage не настроен — возвращает data:URL для локального превью.
  */
 
+import { debug } from '@/utils/debug';
 import { getAuthHeaders } from './supabaseClient';
 
 const SUPA_URL = (import.meta.env.VITE_SUPA_URL as string) || '';
@@ -55,7 +56,7 @@ async function createBucket(): Promise<void> {
       headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: BUCKET, name: BUCKET, public: true }),
     });
-  } catch {}
+  } catch (e) { debug.warn('[photoUpload] swallowed error', e); }
 }
 
 function fileToDataUrl(file: File): Promise<string> {

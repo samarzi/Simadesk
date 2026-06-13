@@ -1,3 +1,4 @@
+import { debug } from '@/utils/debug';
 import { apiService } from '../services/api';
 import { idbCache } from '../services/idbCache';
 import { esc as escHtml } from '../utils/format';
@@ -46,7 +47,7 @@ export class TableInteractionsModule {
 
     if (this.app.activeBoxId) {
       this.app.cache.set(this.app.activeBoxId, this.app.allProducts);
-      idbCache.set(this.app.activeBoxId, this.app.allProducts).catch(() => {});
+      idbCache.set(this.app.activeBoxId, this.app.allProducts).catch((e) => debug.warn('[TableInteractionsModule] swallowed error', e));
     }
 
     this.app.applyFilters();
@@ -172,7 +173,7 @@ export class TableInteractionsModule {
 
       this.app.allProducts.unshift(newProd);
       this.app.cache.set(this.app.activeBoxId, this.app.allProducts);
-      idbCache.set(this.app.activeBoxId, this.app.allProducts).catch(() => {});
+      idbCache.set(this.app.activeBoxId, this.app.allProducts).catch((e) => debug.warn('[TableInteractionsModule] swallowed error', e));
 
       this.app.buildColumns();
       this.app.applyFilters();

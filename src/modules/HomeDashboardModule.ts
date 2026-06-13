@@ -1,3 +1,4 @@
+import { debug } from '@/utils/debug';
 import { authService } from '../services/authService';
 import { esc as escHtml } from '../utils/format';
 import type { App } from '../App';
@@ -91,7 +92,7 @@ export class HomeDashboardModule {
         this.dashboardRefreshTimer = null;
         return;
       }
-      this.populateLiveCommandCenter().catch(() => {});
+      this.populateLiveCommandCenter().catch((e) => debug.warn('[HomeDashboardModule] swallowed error', e));
     }, 30000);
   }
 
@@ -112,7 +113,7 @@ export class HomeDashboardModule {
   }
 
   refreshDashboard(): void {
-    this.populateLiveCommandCenter().catch(() => {});
+    this.populateLiveCommandCenter().catch((e) => debug.warn('[HomeDashboardModule] swallowed error', e));
   }
 
   // ── Widget management ────────────────────────────────────────────

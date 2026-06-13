@@ -2,6 +2,8 @@
  * LogsModule — журнал всех изменений в системе.
  * Хранится в localStorage, пишется через changeLog.add().
  */
+import { debug } from '@/utils/debug';
+
 
 export interface ChangeLogEntry {
   id: string;
@@ -28,7 +30,7 @@ function load(): ChangeLogEntry[] {
 function save(entries: ChangeLogEntry[]): void {
   const cutoff = Date.now() - RETENTION_DAYS * 86_400_000;
   const fresh = entries.filter(e => new Date(e.ts).getTime() >= cutoff).slice(0, MAX);
-  try { localStorage.setItem(KEY, JSON.stringify(fresh)); } catch {}
+  try { localStorage.setItem(KEY, JSON.stringify(fresh)); } catch (e) { debug.warn('[LogsModule] swallowed error', e); }
 }
 
 export const changeLog = {

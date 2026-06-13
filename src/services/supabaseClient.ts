@@ -5,6 +5,8 @@
  * Auth: after Telegram login the access_token is stored in localStorage (sb_access_token).
  * Every request uses that token for RLS to work. Falls back to anon key when not logged in.
  */
+import { debug } from '@/utils/debug';
+
 
 const SUPA_URL = import.meta.env.VITE_SUPA_URL as string;
 const SUPA_KEY = import.meta.env.VITE_SUPA_KEY as string;
@@ -75,7 +77,7 @@ export async function supaFetch<T>(
           },
         });
       }
-    } catch {}
+    } catch (e) { debug.warn('[supabaseClient] swallowed error', e); }
   }
   const text = await res.text();
   if (!res.ok) {

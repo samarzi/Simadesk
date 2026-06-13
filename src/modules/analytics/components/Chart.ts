@@ -14,6 +14,7 @@
  * Состояние сохраняется в localStorage чтобы пользователь не терял настройки.
  */
 
+import { debug } from '@/utils/debug';
 import { TimeseriesPoint } from '../types';
 
 type ChartType = 'line' | 'area' | 'bar';
@@ -70,12 +71,12 @@ function loadState(): ChartState {
         series: { ...DEFAULT_STATE.series, ...(s.series ?? {}) },
       };
     }
-  } catch {}
+  } catch (e) { debug.warn('[Chart] swallowed error', e); }
   return { ...DEFAULT_STATE, series: { ...DEFAULT_STATE.series } };
 }
 
 function saveState(s: ChartState): void {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch {}
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) { debug.warn('[Chart] swallowed error', e); }
 }
 
 // ── Data transforms ─────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import { debug } from '@/utils/debug';
 import { boxes, boxActions } from '../stores/appStore';
 import { apiService } from '../services/api';
 import { idbCache } from '../services/idbCache';
@@ -100,7 +101,7 @@ export class BoxMpLinkModule {
       }
 
       this.app.cache.delete(boxId);
-      idbCache.remove(boxId).catch(() => {});
+      idbCache.remove(boxId).catch((e) => debug.warn('[BoxMpLinkModule] swallowed error', e));
       if (this.app.activeBoxId === boxId) await this.app.loadBoxProducts();
       this.showMpSyncReport(results, box.name || boxId, 'Яндекс Маркет', '#fc3f1d');
     } catch (e: any) {
@@ -201,7 +202,7 @@ export class BoxMpLinkModule {
       }
 
       this.app.cache.delete(boxId);
-      idbCache.remove(boxId).catch(() => {});
+      idbCache.remove(boxId).catch((e) => debug.warn('[BoxMpLinkModule] swallowed error', e));
       if (this.app.activeBoxId === boxId) await this.app.loadBoxProducts();
       this.showMpSyncReport(results, box.name || boxId, 'Wildberries', '#cb11ab');
     } catch (e: any) {
@@ -219,7 +220,7 @@ export class BoxMpLinkModule {
         const store: Record<string, any> = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
         store[boxId] = { ...(store[boxId] || {}), ...updates };
         localStorage.setItem(LS_KEY, JSON.stringify(store));
-      } catch {}
+      } catch (e) { debug.warn('[BoxMpLinkModule] swallowed error', e); }
     });
     // Применяем к локальному стору немедленно
     boxActions.updateBox(boxId, updates as any);
@@ -478,7 +479,7 @@ export class BoxMpLinkModule {
       }
 
       this.app.cache.delete(boxId);
-      idbCache.remove(boxId).catch(() => {});
+      idbCache.remove(boxId).catch((e) => debug.warn('[BoxMpLinkModule] swallowed error', e));
       if (this.app.activeBoxId === boxId) await this.app.loadBoxProducts();
 
       this.showSyncReport(results, colMap, box.name || boxId);

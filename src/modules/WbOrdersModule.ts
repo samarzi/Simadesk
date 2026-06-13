@@ -2,6 +2,7 @@
  * WbOrdersModule — заказы Wildberries.
  */
 
+import { debug } from '@/utils/debug';
 import { WbStore, WbProduct, WbOrder, WbOrderStatus } from '@/types/wb';
 import { wbDb } from '@/services/wbDb';
 import { fetchAllWbOrders, wbApi, isWbCoolingDown, wbCooldownRemaining } from '@/services/wbApi';
@@ -461,7 +462,7 @@ export class WbOrdersModule {
   }
 
   copyText(s: string, el?: HTMLElement): void {
-    navigator.clipboard?.writeText(String(s)).catch(() => {});
+    navigator.clipboard?.writeText(String(s)).catch((e) => debug.warn('[WbOrdersModule] swallowed error', e));
     if (el) {
       el.classList.add('oz-sku-chip-copied');
       setTimeout(() => el.classList.remove('oz-sku-chip-copied'), 1200);

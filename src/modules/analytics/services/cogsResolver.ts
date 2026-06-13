@@ -5,6 +5,7 @@
  *   3) null — себестоимость не задана
  */
 
+import { debug } from '@/utils/debug';
 import { costPriceDb } from '@/services/costPriceDb';
 import { customColumnsDb } from '@/services/customColumnsDb';
 
@@ -26,7 +27,7 @@ export function buildCogsResolver(): CogsResolver {
         cache.set(e.vendorCode.toLowerCase(), e.cost);
       }
     }
-  } catch {}
+  } catch (e) { debug.warn('[cogsResolver] swallowed error', e); }
 
   try {
     const allValues = customColumnsDb.getAllValues();
@@ -38,7 +39,7 @@ export function buildCogsResolver(): CogsResolver {
         if (isFinite(n) && n > 0) cache.set(offerId, n);
       }
     }
-  } catch {}
+  } catch (e) { debug.warn('[cogsResolver] swallowed error', e); }
 
   const get = (vendorCode: string, sku?: string): number | null => {
     if (vendorCode) {

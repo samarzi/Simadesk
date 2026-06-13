@@ -48,7 +48,7 @@ function addRepliedCache(reviewId: string, text: string): void {
   cache.set(reviewId, { text, ts: Date.now() });
   try {
     localStorage.setItem(REPLIED_CACHE_KEY, JSON.stringify([...cache.entries()]));
-  } catch {}
+  } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
 }
 function isRepliedCached(reviewId: string): { text: string } | null {
   const cache = getRepliedCache();
@@ -289,7 +289,7 @@ export class ReviewsModule {
     e.loading = false;
     this.render();
     // Авто-ответы после загрузки — пробуем ответить на новые отзывы
-    if (e.loaded && !e.error) this.runAutoReply(e).catch(() => {});
+    if (e.loaded && !e.error) this.runAutoReply(e).catch((e) => debug.warn('[ReviewsModule] swallowed error', e));
   }
 
   /** Применяет авто-ответы к неотвеченным отзывам, используя случайный шаблон. */
@@ -338,12 +338,12 @@ export class ReviewsModule {
     if (count > 0) {
       e.countUnanswered = e.reviews.filter(r => !r.answered).length;
       this.render();
-      try { (window as any).app?.toast?.(`🤖 Авто-ответы отправлены на ${count} отзыв(ов)${errors > 0 ? `, ошибок: ${errors}` : ''}`, 'success'); } catch {}
-      setTimeout(() => { this.loadReviews(e.mp, e.storeId).catch(() => {}); }, 3000);
+      try { (window as any).app?.toast?.(`🤖 Авто-ответы отправлены на ${count} отзыв(ов)${errors > 0 ? `, ошибок: ${errors}` : ''}`, 'success'); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
+      setTimeout(() => { this.loadReviews(e.mp, e.storeId).catch((e) => debug.warn('[ReviewsModule] swallowed error', e)); }, 3000);
     } else if (errors > 0 && lastError) {
       // НИ ОДНОГО успеха — показываем причину в toast и в e.error
       const shortMsg = lastError.length > 250 ? lastError.slice(0, 250) + '…' : lastError;
-      try { (window as any).app?.toast?.(`❌ Авто-ответ ${MP_LABEL[e.mp]}: ${shortMsg.split('\\n')[0]}`, 'error', 8000); } catch {}
+      try { (window as any).app?.toast?.(`❌ Авто-ответ ${MP_LABEL[e.mp]}: ${shortMsg.split('\\n')[0]}`, 'error', 8000); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
       e.error = `Авто-ответ не удался для ${errors} отзыв(ов):\n${shortMsg}`;
       this.render();
     }
@@ -470,7 +470,7 @@ export class ReviewsModule {
     const text = ta?.value.trim();
     if (!text) { alert('Сначала введите текст ответа'); return; }
     autoReplyDb.addTemplate({ ratings: [rating], text });
-    try { (window as any).app?.toast?.(`✓ Шаблон сохранён для ${rating}★`, 'success'); } catch {}
+    try { (window as any).app?.toast?.(`✓ Шаблон сохранён для ${rating}★`, 'success'); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
     this.render();
   }
 
@@ -502,7 +502,7 @@ export class ReviewsModule {
         if (rev) { rev.answered = true; rev.answerText = this.replyText.trim(); e.countUnanswered = Math.max(0, e.countUnanswered - 1); addRepliedCache(reviewId, this.replyText.trim()); }
         // Перезагружаем данные через 2 секунды чтобы получить актуальный статус
         const _mp = this.activeMp; const _sid = this.activeStoreId;
-        if (_sid) setTimeout(() => { this.loadReviews(_mp, _sid).catch(() => {}); }, 2000);
+        if (_sid) setTimeout(() => { this.loadReviews(_mp, _sid).catch((e) => debug.warn('[ReviewsModule] swallowed error', e)); }, 2000);
       }
       this.replyingId = null; this.replyText = '';
     } catch (err: any) {
@@ -1197,7 +1197,7 @@ export class ReviewsModule {
       // Немедленно запускаем авто-ответ для всех уже загруженных магазинов
       for (const entry of this.entries) {
         if (entry.loaded && !entry.loading && !entry.error) {
-          this.runAutoReply(entry).catch(() => {});
+          this.runAutoReply(entry).catch((e) => debug.warn('[ReviewsModule] swallowed error', e));
         }
       }
       // При включении — показываем что сейчас пройдёт по всем без ответа

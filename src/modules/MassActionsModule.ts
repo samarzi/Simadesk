@@ -1,3 +1,4 @@
+import { debug } from '@/utils/debug';
 import { boxes, boxActions } from '../stores/appStore';
 import { apiService } from '../services/api';
 import { esc as escHtml } from '../utils/format';
@@ -258,7 +259,7 @@ export class MassActionsModule {
               </button>
             </div>`;
           }
-        } catch {}
+        } catch (e) { debug.warn('[MassActionsModule] swallowed error', e); }
       }
 
       return `

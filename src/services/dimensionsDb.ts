@@ -11,6 +11,7 @@
  * для синхронизации между устройствами.
  */
 
+import { debug } from '@/utils/debug';
 import { Dimensions, emptyDimensions } from './dimensionsUnit';
 import { companyService } from './companyService';
 
@@ -70,7 +71,7 @@ export const dimensionsDb = {
 
   /** Очистить все. */
   clear(): void {
-    try { localStorage.removeItem(getKey()); } catch {}
+    try { localStorage.removeItem(getKey()); } catch (e) { debug.warn('[dimensionsDb] swallowed error', e); }
   },
 
   emptyEntry(): Dimensions { return emptyDimensions(); },

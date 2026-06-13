@@ -1,3 +1,4 @@
+import { debug } from '@/utils/debug';
 import { boxes } from '../stores/appStore';
 import { apiService } from '../services/api';
 import { idbCache } from '../services/idbCache';
@@ -88,7 +89,7 @@ export class ProductModalModule {
 
     // Парсим attr meta для словарных подсказок
     let attrMeta: Record<string, any> = {};
-    try { if (d['_ozon_attr_meta']) attrMeta = JSON.parse(String(d['_ozon_attr_meta'])); } catch {}
+    try { if (d['_ozon_attr_meta']) attrMeta = JSON.parse(String(d['_ozon_attr_meta'])); } catch (e) { debug.warn('[ProductModalModule] swallowed error', e); }
 
     const isMpSynced = !!(d['_ozon_store_id'] || d['_ym_store_id']);
     const mpLabel = d['_ozon_store_id'] ? 'Ozon' : d['_ym_store_id'] ? 'Яндекс Маркет' : '';
@@ -590,7 +591,7 @@ export class ProductModalModule {
         });
       } else if (box?.ozon_store_id) {
         // Старые группы с ручной привязкой Ozon — только цена+название
-        this.pushProductToOzon(id, data, box).catch(() => {});
+        this.pushProductToOzon(id, data, box).catch((e) => debug.warn('[ProductModalModule] swallowed error', e));
       }
     } catch (e: any) { this.app.toast('Ошибка: ' + e.message, 'error'); }
   }
@@ -664,7 +665,7 @@ export class ProductModalModule {
       this.app.allProducts = this.app.allProducts.filter(p => p.id !== id);
       if (this.app.activeBoxId) {
         this.app.cache.set(this.app.activeBoxId, this.app.allProducts);
-        idbCache.set(this.app.activeBoxId, this.app.allProducts).catch(() => {});
+        idbCache.set(this.app.activeBoxId, this.app.allProducts).catch((e) => debug.warn('[ProductModalModule] swallowed error', e));
       }
       this.app.toast('Товар удалён', 'success');
       this.app.closeModal();

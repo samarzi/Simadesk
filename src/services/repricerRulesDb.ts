@@ -12,6 +12,7 @@
  *  - Если миграция add_repricer_rules.sql не применена — fallback на localStorage
  */
 
+import { debug } from '@/utils/debug';
 import { supaFetch } from './supabaseClient';
 import { companyService } from './companyService';
 
@@ -32,7 +33,7 @@ function loadCache(): Record<string, any> {
   try { return JSON.parse(localStorage.getItem(getCacheKey()) || '{}'); } catch { return {}; }
 }
 function saveCache(): void {
-  try { localStorage.setItem(getCacheKey(), JSON.stringify(cache)); } catch {}
+  try { localStorage.setItem(getCacheKey(), JSON.stringify(cache)); } catch (e) { debug.warn('[repricerRulesDb] swallowed error', e); }
 }
 
 function loadLegacy(): any[] {
@@ -78,8 +79,8 @@ async function refreshFromServer(): Promise<void> {
         }
       }
       // Удаляем старый ключ и ставим флаг — больше никогда не трогаем legacy.
-      try { localStorage.removeItem(LEGACY_KEY); } catch {}
-      try { localStorage.setItem(migratedKey, '1'); } catch {}
+      try { localStorage.removeItem(LEGACY_KEY); } catch (e) { debug.warn('[repricerRulesDb] swallowed error', e); }
+      try { localStorage.setItem(migratedKey, '1'); } catch (e) { debug.warn('[repricerRulesDb] swallowed error', e); }
     }
 
     cacheCompanyId = cid;
@@ -95,7 +96,7 @@ async function refreshFromServer(): Promise<void> {
       if (Object.keys(cache).length === 0) {
         for (const rule of loadLegacy()) cache[rule.id] = rule;
         saveCache(); // persist to company-scoped key
-        try { localStorage.removeItem(LEGACY_KEY); } catch {} // remove shared key so other companies don't inherit these rules
+        try { localStorage.removeItem(LEGACY_KEY); } catch (e) { debug.warn('[repricerRulesDb] swallowed error', e); } // remove shared key so other companies don't inherit these rules
       }
       cacheCompanyId = cid;
     } else {

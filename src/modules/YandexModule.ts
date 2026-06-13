@@ -5,6 +5,7 @@
  * фильтрация, поиск, синхронизация с API Я.Маркета.
  */
 
+import { debug } from '@/utils/debug';
 import { YandexStore, YandexProduct } from '@/types/yandex';
 import { yandexDb } from '@/services/yandexDb';
 import { yandexApi, fetchAllYandexProducts } from '@/services/yandexApi';
@@ -494,7 +495,7 @@ export class YandexModule {
   }
 
   copyText(s: string, el?: HTMLElement): void {
-    navigator.clipboard?.writeText(String(s)).catch(() => {});
+    navigator.clipboard?.writeText(String(s)).catch((e) => debug.warn('[YandexModule] swallowed error', e));
     if (el) {
       el.classList.add('oz-sku-chip-copied');
       setTimeout(() => el.classList.remove('oz-sku-chip-copied'), 1200);

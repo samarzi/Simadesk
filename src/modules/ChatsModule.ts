@@ -6,6 +6,7 @@
  * Локально храним только in-memory кеш на время открытой вкладки.
  */
 
+import { debug } from '@/utils/debug';
 import { wbDb } from '@/services/wbDb';
 import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
@@ -175,7 +176,7 @@ export class ChatsModule {
     input.value = '';
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) {
-      try { (window as any).app?.toast?.('Файл слишком большой (макс. 10 МБ)', 'error'); } catch {}
+      try { (window as any).app?.toast?.('Файл слишком большой (макс. 10 МБ)', 'error'); } catch (e) { debug.warn('[ChatsModule] swallowed error', e); }
       return;
     }
     const dataUrl: string = await new Promise((resolve, reject) => {
@@ -462,7 +463,7 @@ export class ChatsModule {
         // Ozon не отдаёт имя покупателя — если в истории есть номер заказа, используем его как заголовок чата.
         const orderNumber = msgs.find(m => m.orderNumber)?.orderNumber;
         if (orderNumber) chat.title = `Заказ ${orderNumber}`;
-        ozonApi.markChatRead(creds, chatId).catch(() => {});
+        ozonApi.markChatRead(creds, chatId).catch((e) => debug.warn('[ChatsModule] swallowed error', e));
       } else {
         const store = (await yandexDb.getStores()).find(s => s.id === e.storeId);
         if (!store) throw new Error('Магазин не найден');
@@ -535,7 +536,7 @@ export class ChatsModule {
       if (ta) ta.value = '';
       this.pendingAttachment = null;
     } catch (err: any) {
-      try { (window as any).app?.toast?.('Ошибка отправки: ' + (err?.message ?? err), 'error'); } catch {}
+      try { (window as any).app?.toast?.('Ошибка отправки: ' + (err?.message ?? err), 'error'); } catch (e) { debug.warn('[ChatsModule] swallowed error', e); }
     }
     this.sending = false;
     this.render();

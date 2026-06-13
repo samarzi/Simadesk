@@ -6,6 +6,7 @@
  * Вызывается из переключателя компаний (кнопка "Профиль").
  */
 
+import { debug } from '@/utils/debug';
 import { authService, AuthUser } from '@/services/authService';
 import { supaFetch } from '@/services/supabaseClient';
 import { showToast } from '@/utils/toast';
@@ -157,7 +158,7 @@ export class UserProfileModule {
 
     // Копировать Telegram ID
     document.getElementById('profile-tg-id')?.addEventListener('click', () => {
-      navigator.clipboard.writeText(String(telegramId)).catch(() => {});
+      navigator.clipboard.writeText(String(telegramId)).catch((e) => debug.warn('[UserProfileModule] swallowed error', e));
       showToast('Telegram ID скопирован', 'success', 1500);
     });
 

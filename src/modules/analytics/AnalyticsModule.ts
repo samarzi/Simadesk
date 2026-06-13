@@ -5,6 +5,7 @@
  * Себестоимость — costPriceDb (вручную). Налог — settings + store.
  */
 
+import { debug } from '@/utils/debug';
 import { Mp, MP_LABEL, MP_COLOR, Order, KPI, TimeseriesPoint, PeriodPreset, StoreInfo, TaxModel } from './types';
 import { aggregateOrders, ProductMap } from './services/orderAggregator';
 import { buildCogsResolver } from './services/cogsResolver';
@@ -38,13 +39,16 @@ export class AnalyticsModule {
   private customTo = '';
 
   private stores: StoreInfo[] = [];
+  /** Выбранный магазин (один или «все» = null). Single-select внутри МП. */
+  private selectedStore: string | null = null;
+  /** @deprecated use selectedStore */
   private selectedStores = new Set<string>();
   /** Активный маркетплейс. Всегда ровно один — «все МП» больше нельзя. */
   private selectedMp: Mp = (() => {
     try {
       const saved = localStorage.getItem('an2_selected_mp');
       if (saved === 'ozon' || saved === 'wb' || saved === 'yandex') return saved;
-    } catch {}
+    } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
     return 'ozon';
   })();
 
@@ -57,6 +61,15 @@ export class AnalyticsModule {
   private loading = false;
   private syncing = false;
   private dataLoaded = false;
+
+  // ── «С начала» — поиск даты и подтверждение ─────────────────────────
+  /** idle → seeking → confirming → syncing → loaded */
+  private _allState: 'idle' | 'seeking' | 'confirming' | 'syncing' | 'loaded' = 'idle';
+  private _allFrom: Date | null = null;
+  /** Текущий прогресс синхронизации (показывается во время 'syncing'). */
+  private _allSyncMsg  = '';
+  private _allSyncStep = 0;
+  private _allSyncTotal = 0;
   /** Авто-синхронизация: per-period antispam (ключ = period+stores hash → timestamp).
    *  Не дёргаем sync чаще раза в 10 минут для одного и того же среза. */
   /** Один срез синкаем максимум один раз за сессию — защита от рекурсии. */
@@ -104,9 +117,16 @@ export class AnalyticsModule {
       const end   = new Date(this.customTo   + 'T23:59:59.999Z');
       return { start, end };
     }
-    const days = parseInt(this.period) || 30;
     const now = new Date();
     const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+    if (this.period === 'all') {
+      const start = this._allFrom
+        ? new Date(this._allFrom)
+        : new Date(Date.UTC(now.getUTCFullYear() - 1, 0, 1));
+      start.setUTCHours(0, 0, 0, 0);
+      return { start, end };
+    }
+    const days = parseInt(this.period) || 30;
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (days - 1)));
     return { start, end };
   }
@@ -121,9 +141,8 @@ export class AnalyticsModule {
   }
 
   private getFilteredStoreIds(): Set<string> {
-    let pool = this.stores;
-    pool = pool.filter(s => s.mp === this.selectedMp);
-    if (this.selectedStores.size > 0) pool = pool.filter(s => this.selectedStores.has(s.id));
+    let pool = this.stores.filter(s => s.mp === this.selectedMp);
+    if (this.selectedStore) pool = pool.filter(s => s.id === this.selectedStore);
     return new Set(pool.map(s => s.id));
   }
 
@@ -248,7 +267,7 @@ export class AnalyticsModule {
       // GC: оставляем только последние 50 записей
       const entries = Object.entries(cache).sort((a, b) => b[1] - a[1]).slice(0, 50);
       localStorage.setItem(lsKey, JSON.stringify(Object.fromEntries(entries)));
-    } catch {}
+    } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
 
     this._autoSyncing = true;
     this.render();
@@ -296,9 +315,135 @@ export class AnalyticsModule {
   }
 
   setPeriod(p: string): void {
+    if (p !== 'all') {
+      // Сбрасываем состояние «С начала» при переходе на другой период
+      this._allState = 'idle';
+      this._allFrom  = null;
+    }
     this.period = p as PeriodPreset;
+    if (p === 'all') {
+      if (this._allState === 'idle') {
+        this._seekAllFrom(); // ищем дату — не вызываем refresh сразу
+      } else if (this._allState === 'loaded') {
+        this.refresh();
+      } else {
+        this.render(); // 'seeking' или 'confirming' — просто рендерим текущее состояние
+      }
+      return;
+    }
     if (p !== 'custom') this.refresh();
     else this.render();
+  }
+
+  /** Ищем самую раннюю дату для «С начала»: min(store.created_at, first transaction). */
+  private async _seekAllFrom(): Promise<void> {
+    this._allState = 'seeking';
+    this.render();
+    try {
+      const store = this.stores.find(s => s.id === this.selectedStore);
+      let earliest: Date | null = null;
+
+      // 1. Дата создания магазина
+      if (store?.created_at) {
+        const d = new Date(store.created_at);
+        if (!isNaN(d.getTime())) earliest = d;
+      }
+
+      // 2. Дата первой транзакции
+      const storeIds = [...this.getFilteredStoreIds()];
+      const { mpTransactionsDb } = await import('@/services/mpTransactionsDb');
+      for (const id of storeIds) {
+        try {
+          const txDate = await mpTransactionsDb.getEarliestDate(id);
+          if (txDate) {
+            const d = new Date(txDate);
+            if (!isNaN(d.getTime()) && (!earliest || d < earliest)) earliest = d;
+          }
+        } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
+      }
+
+      if (earliest) { earliest.setUTCHours(0, 0, 0, 0); }
+      this._allFrom  = earliest;
+      this._allState = 'confirming';
+    } catch (e) {
+      console.warn('[Analytics] _seekAllFrom:', e);
+      this._allState = 'confirming'; // покажем диалог с дефолтной датой
+    }
+    this.render();
+  }
+
+  /** Пользователь подтвердил загрузку истории — запускаем полный синк финотчёта. */
+  async confirmAllPeriodLoad(): Promise<void> {
+    if (!this._allFrom) { this._allState = 'loaded'; this.refresh(); return; }
+
+    this._allState = 'syncing';
+    this._allSyncMsg  = 'Начинаем синхронизацию…';
+    this._allSyncStep = 0;
+    this.render();
+
+    const start = new Date(this._allFrom);
+    const end   = new Date();
+    end.setUTCHours(23, 59, 59, 999);
+
+    // Батчи по 90 дней — финансовые отчёты МП обычно доступны за 3+ года
+    const BATCH_MS = 90 * 86_400_000;
+    const batches: Array<{ s: Date; e: Date }> = [];
+    let s = new Date(start);
+    while (s < end) {
+      const e = new Date(Math.min(s.getTime() + BATCH_MS, end.getTime()));
+      batches.push({ s: new Date(s), e });
+      s = new Date(e.getTime() + 1);
+    }
+    this._allSyncTotal = batches.length;
+
+    for (let i = 0; i < batches.length; i++) {
+      const { s: bs, e: be } = batches[i];
+      this._allSyncStep = i + 1;
+      const label = bs.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+      this._allSyncMsg = `Синхронизируем ${label}…`;
+      this.render();
+      try {
+        await financeSync.syncAll(bs.toISOString(), be.toISOString());
+      } catch (e) {
+        console.warn('[Analytics] syncAll batch failed:', e);
+      }
+    }
+
+    // После синка перечитываем реальную дату начала из mp_transactions
+    // (до синка таблица была пустой и дата была неточной)
+    this._allSyncMsg = 'Определяем период…';
+    this.render();
+    try {
+      const { mpTransactionsDb } = await import('@/services/mpTransactionsDb');
+      const storeIds = [...this.getFilteredStoreIds()];
+      let earliest: Date | null = null;
+      for (const id of storeIds) {
+        const txDate = await mpTransactionsDb.getEarliestDate(id).catch(() => null);
+        if (txDate) {
+          const d = new Date(txDate);
+          if (!isNaN(d.getTime()) && (!earliest || d < earliest)) earliest = d;
+        }
+      }
+      if (earliest) {
+        earliest.setUTCHours(0, 0, 0, 0);
+        this._allFrom = earliest;
+      }
+    } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
+
+    this._allState    = 'loaded';
+    this._allSyncMsg  = '';
+    this._allSyncStep = 0;
+    this._allSyncTotal = 0;
+    this.dataLoaded   = false;
+    await this.refresh();
+  }
+
+  /** Пользователь отменил — возвращаем на 30д. */
+  cancelAllPeriod(): void {
+    this._allState = 'idle';
+    this._allFrom  = null;
+    this.period    = '30';
+    this.refresh();
   }
 
   setCustomDate(which: 'from' | 'to', val: string): void {
@@ -306,11 +451,17 @@ export class AnalyticsModule {
     if (this.customFrom && this.customTo) this.refresh();
   }
 
-  toggleStore(id: string): void {
-    if (this.selectedStores.has(id)) this.selectedStores.delete(id);
-    else this.selectedStores.add(id);
+  /** Выбрать магазин (обязательный single-select). Повторный клик игнорируется — магазин всегда должен быть выбран. */
+  selectStore(id: string): void {
+    if (!id || this.selectedStore === id) return;
+    this.selectedStore = id;
+    this._allState = 'idle';
+    this._allFrom  = null;
     this.refresh();
   }
+
+  /** @deprecated use selectStore */
+  toggleStore(id: string): void { this.selectStore(id); }
 
   toggleMp(mp: Mp): void { this.selectMp(mp); }
 
@@ -318,11 +469,13 @@ export class AnalyticsModule {
    *  Параметр 'all' игнорируем — режима «все МП» больше нет. */
   selectMp(mp: Mp | 'all'): void {
     if (mp === 'all') return;
-    if (this.selectedMp === mp) return; // уже выбран — игнор повторного клика
+    if (this.selectedMp === mp) return;
     this.selectedMp = mp;
-    try { localStorage.setItem('an2_selected_mp', mp); } catch {}
-    // При смене МП сбрасываем выбор магазинов чужого МП
+    try { localStorage.setItem('an2_selected_mp', mp); } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
+    this.selectedStore = null;
     this.selectedStores.clear();
+    this._allState = 'idle';
+    this._allFrom  = null;
     this.refresh();
   }
 
@@ -480,7 +633,7 @@ export class AnalyticsModule {
     clearOrdersCache();
     clearProductsCache();
     this.render();
-    try { (window as any).app?.toast?.(`✓ Себестоимость ${price.toLocaleString('ru')} ₽ сохранена для «${vendorCode}»`, 'success'); } catch {}
+    try { (window as any).app?.toast?.(`✓ Себестоимость ${price.toLocaleString('ru')} ₽ сохранена для «${vendorCode}»`, 'success'); } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
   }
 
   setTax(storeId: string, field: 'model' | 'rate', value: string): void {
@@ -587,7 +740,7 @@ export class AnalyticsModule {
 
   private renderHeader(): string {
     const periods: Array<[PeriodPreset, string]> = [
-      ['7', '7д'], ['30', '30д'], ['90', '90д'], ['180', '6м'], ['365', '12м'],
+      ['7', '7д'], ['30', '30д'], ['90', '90д'], ['180', '6м'], ['365', '12м'], ['all', 'С начала'],
     ];
 
     const mps: Mp[] = ['ozon', 'wb', 'yandex'];
@@ -633,6 +786,8 @@ export class AnalyticsModule {
           `).join('')}
         </div>
 
+        ${this._renderStoreSelector()}
+
         <div class="an2-spacer"></div>
 
         <button class="an2-icon-btn ${this.syncing || this._autoSyncing ? 'spinning' : ''}"
@@ -652,15 +807,103 @@ export class AnalyticsModule {
     `;
   }
 
+  /** Чипы выбора магазина (обязательный single-select, без «Все»). */
+  private _renderStoreSelector(): string {
+    const mpStores = this.stores.filter(s => s.mp === this.selectedMp);
+    if (mpStores.length <= 1) return ''; // 0 или 1 магазин — фильтр не нужен
+    // Авто-выбор первого магазина если ничего не выбрано
+    if (!this.selectedStore || !mpStores.find(s => s.id === this.selectedStore)) {
+      Promise.resolve().then(() => {
+        if (!this.selectedStore || !this.stores.find(s => s.id === this.selectedStore && s.mp === this.selectedMp)) {
+          this.selectedStore = mpStores[0].id;
+          this.refresh();
+        }
+      });
+    }
+    return `
+      <div class="an2-store-selector" title="Выберите магазин для анализа">
+        ${mpStores.map(s => `
+          <button
+            class="an2-filter-chip ${this.selectedStore === s.id ? 'on' : ''}"
+            onclick="window.analyticsModule?.selectStore('${s.id}')"
+            title="${s.name}"
+          >${s.name}</button>
+        `).join('')}
+      </div>
+    `;
+  }
+
   private renderBody(): string {
     const busy = this.loading || this.syncing;
     return `<div class="an2-body${busy ? ' is-loading' : ''}">${this._tabContent()}</div>`;
   }
 
   private _tabContent(): string {
+    if (this.period === 'all') {
+      if (this._allState === 'seeking' || this._allState === 'confirming') return this._renderAllConfirm();
+      if (this._allState === 'syncing') return this._renderAllSyncing();
+    }
     if (this.loading && !this.dataLoaded) return this.renderLoader();
     if (!this.dataLoaded || !this.kpi)    return this.renderEmpty();
     return this.renderTab();
+  }
+
+  private _renderAllConfirm(): string {
+    if (this._allState === 'seeking') {
+      return `
+        <div class="an2-all-confirm">
+          <div class="an2-loader-ring" style="width:32px;height:32px;margin:0 auto 16px"></div>
+          <p style="color:var(--text2);margin:0">Ищем начало истории магазина…</p>
+        </div>`;
+    }
+
+    const store = this.stores.find(s => s.id === this.selectedStore);
+    const storeName = store?.name ?? 'магазина';
+
+    const from = this._allFrom;
+    const fromStr = from
+      ? from.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
+      : 'неизвестной даты';
+    const days = from ? Math.round((Date.now() - from.getTime()) / 86_400_000) : 0;
+
+    return `
+      <div class="an2-all-confirm">
+        <div class="an2-all-confirm-icon">📦</div>
+        <h3>Загрузить всю историю «${storeName}»?</h3>
+        <p>
+          Найдена дата начала: <strong>${fromStr}</strong>
+          ${days ? `<span class="an2-all-confirm-days">${days} дней</span>` : ''}
+        </p>
+        <p class="an2-all-confirm-hint">
+          Первая загрузка может занять несколько минут.<br>
+          После этого данные сохранятся в базе — все периоды будут открываться мгновенно.
+        </p>
+        <div class="an2-all-confirm-btns">
+          <button class="an2-btn primary" onclick="window.analyticsModule?.confirmAllPeriodLoad()">
+            Загрузить историю
+          </button>
+          <button class="an2-btn ghost" onclick="window.analyticsModule?.cancelAllPeriod()">
+            Отмена
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  private _renderAllSyncing(): string {
+    const total = this._allSyncTotal;
+    const step  = this._allSyncStep;
+    const pct   = total > 0 ? Math.round((step / total) * 100) : 0;
+    return `
+      <div class="an2-all-confirm">
+        <div class="an2-loader-ring" style="width:40px;height:40px;margin:0 auto 16px"></div>
+        <h3 style="margin:0 0 8px">Загружаем историю…</h3>
+        <p style="margin:0 0 4px;color:var(--text2)">${this._allSyncMsg}</p>
+        <p style="margin:0 0 12px;font-size:12px;color:var(--text3)">Шаг ${step} из ${total} &bull; ${pct}%</p>
+        <div class="an2-sync-bar"><div class="an2-sync-bar-fill" style="width:${pct}%"></div></div>
+        <p class="an2-all-confirm-hint">Не закрывайте страницу. После завершения все периоды будут открываться мгновенно.</p>
+      </div>
+    `;
   }
 
   private renderTab(): string {

@@ -803,7 +803,7 @@ export class ExportImportModule {
 
       this.app.toast(`Импортировано: ${newRows.length} новых, ${updateRows.length} обновлено`, 'success', 4000);
       this.app.cache.delete(boxId);
-      idbCache.remove(boxId).catch(() => {});
+      idbCache.remove(boxId).catch((e) => debug.warn('[ExportImportModule] swallowed error', e));
       // Сбрасываем сохранённый порядок столбцов — при следующем рендере применится новый приоритет
       this.app.columnOrder.delete(boxId);
 
@@ -821,14 +821,14 @@ export class ExportImportModule {
         if (emptyCols.size > 0) {
           const visibleSet = new Set(importedHeaders.filter(h => !emptyCols.has(h)));
           this.app.visibleCols = visibleSet.size > 0 ? visibleSet : null;
-          try { localStorage.setItem(`vis_cols_${boxId}`, JSON.stringify([...visibleSet])); } catch {}
+          try { localStorage.setItem(`vis_cols_${boxId}`, JSON.stringify([...visibleSet])); } catch (e) { debug.warn('[ExportImportModule] swallowed error', e); }
         }
       }
       try {
         const co: Record<string, string[]> = {};
         for (const [bid, cls] of this.app.columnOrder) co[bid] = cls;
         localStorage.setItem('app_column_order', JSON.stringify(co));
-      } catch {}
+      } catch (e) { debug.warn('[ExportImportModule] swallowed error', e); }
       this.app.closeModal();
       this.app.loadBoxCount(boxId);
       if (this.app.activeBoxId === boxId) await this.app.loadBoxProducts();

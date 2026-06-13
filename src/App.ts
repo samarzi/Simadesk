@@ -1,3 +1,4 @@
+import { debug } from '@/utils/debug';
 import { Product } from './types';
 import { boxes, boxActions } from './stores/appStore';
 import { apiService } from './services/api';
@@ -102,26 +103,26 @@ export class App {
       for (const [bid, ids] of Object.entries(hr)) {
         this.hiddenRows.set(bid, new Set(ids as string[]));
       }
-    } catch {}
+    } catch (e) { debug.warn('[App] swallowed error', e); }
     // Restore visible cols from localStorage
     try {
       const vc = JSON.parse(localStorage.getItem('app_visible_cols') || 'null');
       if (Array.isArray(vc)) this.visibleCols = new Set(vc);
-    } catch {}
+    } catch (e) { debug.warn('[App] swallowed error', e); }
     // Restore column order from localStorage
     try {
       const co = JSON.parse(localStorage.getItem('app_column_order') || '{}');
       for (const [bid, cols] of Object.entries(co)) {
         this.columnOrder.set(bid, cols as string[]);
       }
-    } catch {}
+    } catch (e) { debug.warn('[App] swallowed error', e); }
 
     const list = document.getElementById('boxes-list');
     if (list) list.innerHTML = this.skeletonBoxes(4);
     // Open IDB (non-blocking, failures are ignored)
-    idbCache.open().catch(() => {});
+    idbCache.open().catch((e) => debug.warn('[App] swallowed error', e));
     // Pre-fill repricer rules cache so product cards show correct rule status
-    repricerRulesDb.refresh().catch(() => {});
+    repricerRulesDb.refresh().catch((e) => debug.warn('[App] swallowed error', e));
 
     try {
       await boxActions.loadBoxes();
@@ -424,7 +425,7 @@ export class App {
       const count = await apiService.getBoxCount(boxId);
       const el = document.getElementById(`bc-${boxId}`);
       if (el) el.textContent = `${count} товар${this.suf(count)}`;
-    } catch {}
+    } catch (e) { debug.warn('[App] swallowed error', e); }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -502,7 +503,7 @@ export class App {
     this.renderBoxes();
     this.closeMobileSheets();
     await this.loadBoxProducts();
-    this.refreshMpPresence().catch(() => {});
+    this.refreshMpPresence().catch((e) => debug.warn('[App] swallowed error', e));
 
     // Авто-обновление API-групп если прошло >30 минут с последней синхронизации
     const box = boxes.get().find(b => b.id === id);
@@ -511,7 +512,7 @@ export class App {
       const thirtyMin = 30 * 60 * 1000;
       if (Date.now() - lastSync > thirtyMin) {
         // Фоновое обновление без блокировки UI
-        setTimeout(() => this.refreshMpBox(id).catch(() => {}), 800);
+        setTimeout(() => this.refreshMpBox(id).catch((e) => debug.warn('[App] swallowed error', e)), 800);
       }
     }
   }
@@ -597,7 +598,7 @@ export class App {
       await apiService.streamProducts(id, handleBatch, sig);
       if (token !== this.loadToken) return;
       this.cache.set(id, accumulated);
-      idbCache.set(id, accumulated).catch(() => {});
+      idbCache.set(id, accumulated).catch((e) => debug.warn('[App] swallowed error', e));
       this.renderGroupsBar();
     } catch (e: any) {
       if (token !== this.loadToken) return;
@@ -617,7 +618,7 @@ export class App {
         const el = document.getElementById(`bc-${id}`);
         if (el) el.textContent = `${acc.length} товар${this.suf(acc.length)}`;
       }
-    }, sig).catch(() => {});
+    }, sig).catch((e) => debug.warn('[App] swallowed error', e));
   }
 
   // Load IDB cache into memory, then silently refresh all boxes from network
@@ -648,14 +649,14 @@ export class App {
       }, sig).then(() => {
         if (acc.length === 0) return;
         this.cache.set(b.id, acc);
-        idbCache.set(b.id, acc).catch(() => {});
+        idbCache.set(b.id, acc).catch((e) => debug.warn('[App] swallowed error', e));
         const el = document.getElementById(`bc-${b.id}`);
         if (el) el.textContent = `${acc.length} товар${this.suf(acc.length)}`;
         // Refresh dashboard again after network data arrives
         if (this.currentPage === 'home') {
           this.renderDashboard();
         }
-      }).catch(() => {});
+      }).catch((e) => debug.warn('[App] swallowed error', e));
     });
   }
 
@@ -693,7 +694,7 @@ export class App {
     }
     // Сохраняем в БД в фоне
     if (toSave.length) {
-      Promise.all(toSave.map(p => apiService.updateProduct(p.id, { data: p.data }))).catch(() => {});
+      Promise.all(toSave.map(p => apiService.updateProduct(p.id, { data: p.data }))).catch((e) => debug.warn('[App] swallowed error', e));
     }
   }
 
@@ -754,7 +755,7 @@ export class App {
             const co: Record<string, string[]> = {};
             for (const [bid, cls] of this.columnOrder) co[bid] = cls;
             localStorage.setItem('app_column_order', JSON.stringify(co));
-          } catch {}
+          } catch (e) { debug.warn('[App] swallowed error', e); }
         }
       }
     }
@@ -1497,7 +1498,7 @@ export class App {
       if (isSynced) {
         const mappedStr = d['_ozon_mapped_cols'] as string | undefined;
         if (mappedStr) {
-          try { ozonMappedCols = new Set(JSON.parse(mappedStr)); } catch {}
+          try { ozonMappedCols = new Set(JSON.parse(mappedStr)); } catch (e) { debug.warn('[App] swallowed error', e); }
         } else {
           // Fallback для товаров синхронизированных до этого обновления
           ozonMappedCols = new Set(['Цена, руб.*', 'Цена до скидки, руб.', 'Мин. цена, руб.', 'Название товара', 'Штрихкод', 'Бренд*', 'Ширина упаковки, мм*', 'Высота упаковки, мм*', 'Длина упаковки, мм*', 'Вес в упаковке, г*']);

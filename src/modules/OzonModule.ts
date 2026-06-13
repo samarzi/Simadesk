@@ -1,3 +1,4 @@
+import { debug } from '@/utils/debug';
 import { OzonStore, OzonProduct } from '@/types/ozon';
 import { ozonApi, fetchAllOzonProducts } from '@/services/ozonApi';
 import { ozonDb } from '@/services/ozonDb';
@@ -450,7 +451,7 @@ export class OzonModule {
   }
 
   copyText(s: string, el?: HTMLElement): void {
-    navigator.clipboard?.writeText(String(s)).catch(() => {});
+    navigator.clipboard?.writeText(String(s)).catch((e) => debug.warn('[OzonModule] swallowed error', e));
     if (el) {
       el.classList.add('oz-sku-chip-copied');
       setTimeout(() => el.classList.remove('oz-sku-chip-copied'), 1200);

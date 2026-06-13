@@ -6,6 +6,7 @@
  * который WB не блокирует (в отличие от Netlify datacenter IP).
  */
 
+import { debug } from '@/utils/debug';
 import { WbStore, WbProduct, WbOrder, WbOrderItem, WbOrderStatus } from '@/types/wb';
 import { wbDb } from './wbDb';
 
@@ -31,7 +32,7 @@ function readCooldowns(): Record<string, number> {
   try { return JSON.parse(localStorage.getItem(WB_COOLDOWN_KEY) || '{}') || {}; } catch { return {}; }
 }
 function writeCooldowns(map: Record<string, number>): void {
-  try { localStorage.setItem(WB_COOLDOWN_KEY, JSON.stringify(map)); } catch {}
+  try { localStorage.setItem(WB_COOLDOWN_KEY, JSON.stringify(map)); } catch (e) { debug.warn('[wbApi] swallowed error', e); }
 }
 let wbCooldowns: Record<string, number> = readCooldowns();
 
@@ -63,7 +64,7 @@ export function wbCooldownRemaining(prefix = 'wb-stats'): number {
 /** Сбросить блокировку WB (после ручного подтверждения пользователя). */
 export function clearWbCooldown(): void {
   wbCooldowns = {};
-  try { localStorage.removeItem(WB_COOLDOWN_KEY); } catch {}
+  try { localStorage.removeItem(WB_COOLDOWN_KEY); } catch (e) { debug.warn('[wbApi] swallowed error', e); }
 }
 
 const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>

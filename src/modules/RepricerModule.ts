@@ -2445,7 +2445,7 @@ export class RepricerModule {
               .then(() => debug.log('[YM MRC scan] Товары вне промо:', allOfferIds))
               .catch(e => console.warn('[YM MRC scan] removeFromPromos error:', e?.message));
           }
-        }).catch(() => {});
+        }).catch((e) => debug.warn('[RepricerModule] swallowed error', e));
       }
     }
 
@@ -3853,7 +3853,7 @@ export class RepricerModule {
           return;
         }
       }
-    } catch {}
+    } catch (e) { debug.warn('[RepricerModule] swallowed error', e); }
 
     this.analyticsLoading = true;
     this.analyticsErrors = [];
@@ -3959,7 +3959,7 @@ export class RepricerModule {
     this.analyticsLoaded = true;
     try {
       localStorage.setItem(cacheKey, JSON.stringify({ orders, ts: Date.now(), days: this.analyticsDays }));
-    } catch {}
+    } catch (e) { debug.warn('[RepricerModule] swallowed error', e); }
     this.analyticsLoading = false;
     this.render();
   }
@@ -4536,7 +4536,7 @@ export class RepricerModule {
     if (!confirm(`Удалить ${toDelete.length} записей себестоимости для артикулов, которые нигде не встречаются?`)) return;
     for (const e of toDelete) costPriceDb.remove(e.vendorCode);
     this.render();
-    try { (window as any).app?.toast?.(`🗑 Удалено ${toDelete.length} записей`, 'success'); } catch {}
+    try { (window as any).app?.toast?.(`🗑 Удалено ${toDelete.length} записей`, 'success'); } catch (e) { debug.warn('[RepricerModule] swallowed error', e); }
   }
 
   /** Сохранить себестоимость одного товара */
@@ -4564,7 +4564,7 @@ export class RepricerModule {
     if (vcInput) vcInput.value = '';
     if (costInput) costInput.value = '';
     this.render();
-    try { (window as any).app?.toast?.(`✓ Себестоимость ${cost.toLocaleString('ru')} ₽ сохранена для «${vc}»`, 'success'); } catch {}
+    try { (window as any).app?.toast?.(`✓ Себестоимость ${cost.toLocaleString('ru')} ₽ сохранена для «${vc}»`, 'success'); } catch (e) { debug.warn('[RepricerModule] swallowed error', e); }
   }
 
   /** Применить массовое значение ко всем выбранным */
@@ -4585,7 +4585,7 @@ export class RepricerModule {
     const saved = costPriceDb.setMany(realCodes, val);
     this.costsBulkValue = val;
     this.render();
-    try { (window as any).app?.toast?.(`✓ Установлено ${val.toLocaleString('ru')} ₽ для ${saved} товара(ов)`, 'success'); } catch {}
+    try { (window as any).app?.toast?.(`✓ Установлено ${val.toLocaleString('ru')} ₽ для ${saved} товара(ов)`, 'success'); } catch (e) { debug.warn('[RepricerModule] swallowed error', e); }
   }
 
   /** Скачать xlsx с артикулами и пустым полем cost */
@@ -4604,7 +4604,7 @@ export class RepricerModule {
     XLSX.utils.book_append_sheet(wb, ws, 'Себестоимость');
     const fname = `cost_prices_${new Date().toISOString().slice(0, 10)}.xlsx`;
     XLSX.writeFile(wb, fname);
-    try { (window as any).app?.toast?.(`📥 Скачан шаблон с ${products.length} товарами`, 'success'); } catch {}
+    try { (window as any).app?.toast?.(`📥 Скачан шаблон с ${products.length} товарами`, 'success'); } catch (e) { debug.warn('[RepricerModule] swallowed error', e); }
   }
 
   /** Импорт xlsx-файла с себестоимостью */
@@ -4637,7 +4637,7 @@ export class RepricerModule {
           items.push({ vendorCode: vc, cost });
         }
         const { saved, skipped } = costPriceDb.bulkSet(items);
-        try { (window as any).app?.toast?.(`✓ Импортировано: ${saved}. Пропущено: ${skipped}.`, 'success', 4000); } catch {}
+        try { (window as any).app?.toast?.(`✓ Импортировано: ${saved}. Пропущено: ${skipped}.`, 'success', 4000); } catch (e) { debug.warn('[RepricerModule] swallowed error', e); }
         this.render();
       } catch (err: any) {
         alert('Ошибка чтения файла: ' + (err?.message ?? err));

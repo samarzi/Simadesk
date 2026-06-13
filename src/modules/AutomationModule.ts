@@ -11,6 +11,7 @@
  *   - Локальный сервер (fallback) — server.py на порту 8899
  */
 
+import { debug } from '@/utils/debug';
 import { warehouseScanDb, WarehouseScanRecord } from '../services/warehouseScanDb';
 import { automationReportDb } from '../services/automationReportDb';
 
@@ -1782,11 +1783,11 @@ export class AutomationModule {
         chrome.runtime.sendMessage(this.detectedExtensionId, {
           type: 'stop-task', taskId: st.taskId
         });
-      } catch {}
+      } catch (e) { debug.warn('[AutomationModule] swallowed error', e); }
     } else {
       try {
         await fetch(`${SERVER_URL}/api/tasks/${st.taskId}/stop`, { method: 'POST' });
-      } catch {}
+      } catch (e) { debug.warn('[AutomationModule] swallowed error', e); }
     }
 
     if (st.pollTimer) { clearInterval(st.pollTimer); st.pollTimer = null; }
