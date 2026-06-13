@@ -1951,7 +1951,7 @@ export class TaskManagerModule {
     this.resetModalFlags();
     this.render();
     // Navigate to products section and apply search filter
-    const app = (window as any).app;
+    const app = window.app;
     if (!app) return;
     // navigateTo is the correct method name in App.ts
     if (typeof app.navigateTo === 'function') {

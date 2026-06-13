@@ -338,12 +338,12 @@ export class ReviewsModule {
     if (count > 0) {
       e.countUnanswered = e.reviews.filter(r => !r.answered).length;
       this.render();
-      try { (window as any).app?.toast?.(`🤖 Авто-ответы отправлены на ${count} отзыв(ов)${errors > 0 ? `, ошибок: ${errors}` : ''}`, 'success'); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
+      try { window.app?.toast?.(`🤖 Авто-ответы отправлены на ${count} отзыв(ов)${errors > 0 ? `, ошибок: ${errors}` : ''}`, 'success'); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
       setTimeout(() => { this.loadReviews(e.mp, e.storeId).catch((e) => debug.warn('[ReviewsModule] swallowed error', e)); }, 3000);
     } else if (errors > 0 && lastError) {
       // НИ ОДНОГО успеха — показываем причину в toast и в e.error
       const shortMsg = lastError.length > 250 ? lastError.slice(0, 250) + '…' : lastError;
-      try { (window as any).app?.toast?.(`❌ Авто-ответ ${MP_LABEL[e.mp]}: ${shortMsg.split('\\n')[0]}`, 'error', 8000); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
+      try { window.app?.toast?.(`❌ Авто-ответ ${MP_LABEL[e.mp]}: ${shortMsg.split('\\n')[0]}`, 'error', 8000); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
       e.error = `Авто-ответ не удался для ${errors} отзыв(ов):\n${shortMsg}`;
       this.render();
     }
@@ -470,7 +470,7 @@ export class ReviewsModule {
     const text = ta?.value.trim();
     if (!text) { alert('Сначала введите текст ответа'); return; }
     autoReplyDb.addTemplate({ ratings: [rating], text });
-    try { (window as any).app?.toast?.(`✓ Шаблон сохранён для ${rating}★`, 'success'); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
+    try { window.app?.toast?.(`✓ Шаблон сохранён для ${rating}★`, 'success'); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
     this.render();
   }
 
