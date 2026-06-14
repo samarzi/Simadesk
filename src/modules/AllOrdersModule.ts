@@ -23,6 +23,7 @@ import { yandexApi, fetchAllYandexOrders } from '@/services/yandexApi';
 import { wbDb } from '@/services/wbDb';
 import { wbApi, fetchAllWbOrders, isWbCoolingDown } from '@/services/wbApi';
 import { helpBtn } from '@/services/helpModal';
+import { I } from '@/utils/icons';
 
 type Marketplace = 'ozon' | 'yandex' | 'wb';
 type Scheme = 'FBO' | 'FBS' | 'DBS' | 'FBY' | 'WB' | '';
@@ -780,8 +781,8 @@ export class AllOrdersModule {
           const imgUrl = this.getProductImageFor(o.marketplace, p.offer_id);
           const name = p.name || this.getProductNameFor(o.marketplace, p.offer_id) || 'Без названия';
           const thumb = imgUrl
-            ? `<a href="${this.esc(imgUrl)}" target="_blank" rel="noopener" class="ozo-prod-thumb"><img src="${this.esc(imgUrl)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='📦'"></a>`
-            : `<div class="ozo-prod-thumb ozo-prod-thumb-empty">📦</div>`;
+            ? `<a href="${this.esc(imgUrl)}" target="_blank" rel="noopener" class="ozo-prod-thumb"><img src="${this.esc(imgUrl)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='${I.package('',14)}'"></a>`
+            : `<div class="ozo-prod-thumb ozo-prod-thumb-empty">${I.package('',14)}</div>`;
           return `<div class="ozo-prod-card">
             ${thumb}
             <div class="ozo-prod-info">

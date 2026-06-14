@@ -12,6 +12,7 @@ import { companyService, Company } from '@/services/companyService';
 import { authService } from '@/services/authService';
 import { showToast } from '@/utils/toast';
 import { userProfileModule } from '@/modules/UserProfileModule';
+import { I } from '@/utils/icons';
 
 const COMPANY_GRADIENTS = [
   'linear-gradient(135deg,#005bff 0%,#4b3fff 100%)',
@@ -443,7 +444,7 @@ export class CompanyModule {
 
       this.hidGate();
       this.renderSwitcher();
-      showToast('Компания создана 🎉', 'success');
+      showToast(`Компания создана ${I.partyPopper('', 16)}`, 'success');
       this.onReady();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Ошибка создания';
@@ -714,7 +715,7 @@ export class CompanyModule {
           ${isCreator ? `
             ${showDeleteConfirm ? `
               <div style="padding:14px;background:color-mix(in srgb,#ef4444 8%,var(--bg));border:1px solid color-mix(in srgb,#ef4444 30%,transparent);border-radius:10px">
-                <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:8px">⚠ Удаление компании</div>
+                <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:8px">${I.alertTriangle('', 14)} Удаление компании</div>
                 <div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">
                   Это действие <b>необратимо</b>. Введите <b>подтверждаю</b>:
                 </div>
@@ -729,7 +730,7 @@ export class CompanyModule {
               </div>
             ` : `
               <div style="padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
-                <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.6px">⚠ Опасная зона</div>
+                <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.6px">${I.alertTriangle('', 11)} Опасная зона</div>
                 <button class="btn btn-danger" id="cs-delete-company-btn" style="font-size:12px;padding:7px 14px">
                   <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="width:11px;height:11px"><path d="M2 4h10M5 4V2h4v2M4 4l1 9h4l1-9"/></svg>
                   Удалить компанию «${this.esc(company.name)}»

@@ -1,4 +1,5 @@
 import { debug } from '@/utils/debug';
+import { I } from '@/utils/icons';
 import { OzonStore, OzonProduct } from '@/types/ozon';
 import { ozonApi, fetchAllOzonProducts } from '@/services/ozonApi';
 import { ozonDb } from '@/services/ozonDb';
@@ -160,7 +161,7 @@ export class OzonModule {
                     style="width:50px;height:50px;border-radius:6px;object-fit:cover;border:1px solid var(--border);cursor:zoom-in"
                     onerror="this.style.display='none'">
                 </a>`
-              : `<div style="width:50px;height:50px;border-radius:6px;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:18px">📦</div>`
+              : `<div style="width:50px;height:50px;border-radius:6px;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:18px">${I.package('',18)}</div>`
             }
           </td>
           <td>
@@ -239,7 +240,7 @@ export class OzonModule {
 
           ${this.stores.length === 0
             ? `<div class="ym-empty">
-                <div class="ym-empty-icon">🔵</div>
+                <div class="ym-empty-icon">${I.ozon('',14)}</div>
                 <div class="ym-empty-title">Магазины Ozon не подключены</div>
                 <div class="ym-empty-sub">Добавь Client ID и Api Key выше</div>
               </div>`
@@ -387,7 +388,10 @@ export class OzonModule {
     this.render();
     try {
       const products = await fetchAllOzonProducts(store);
-      await ozonDb.replaceStoreProducts(storeId, products);
+      // If API returned empty (rate-limit, 429) — keep existing data in DB
+      if (products.length > 0) {
+        await ozonDb.replaceStoreProducts(storeId, products);
+      }
       this.products = await ozonDb.getProducts();
     } catch (err: any) {
       this.lastError = `Синхронизация «${store.name}»: ${err.message ?? err}`;

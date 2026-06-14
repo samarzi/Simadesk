@@ -21,13 +21,33 @@ const SUPA_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const YANDEX_PRICE_BRIDGE = `${SUPA_URL}/functions/v1/yandex-price-bridge`;
 const yandexPriceTabs = new Map(); // tabId → { marketSku, offerId, timeoutId }
 
+// ── Supabase: сбор реальных цен покупателя на Wildberries ──────────────────
+
+const WB_PRICE_BRIDGE = `${SUPA_URL}/functions/v1/wb-price-bridge`;
+const wbPriceTabs = new Map(); // tabId → { nmId, vendorCode, timeoutId }
+
+// ── Supabase: сбор реальных цен покупателя на Ozon ─────────────────────────
+
+const OZON_PRICE_BRIDGE = `${SUPA_URL}/functions/v1/ozon-price-bridge`;
+const ozonPriceTabs = new Map(); // tabId → { productId, offerId, timeoutId }
+
 // ── Keep-alive через chrome.alarms (надёжнее setInterval в MV3) ───────────
 
 chrome.alarms.create('sd-keepalive', { periodInMinutes: 0.4 }); // каждые ~24 сек
 chrome.alarms.create('sd-yandex-price-scan', { periodInMinutes: 20, delayInMinutes: 1 });
+chrome.alarms.create('sd-wb-price-scan', { periodInMinutes: 20, delayInMinutes: 2 });
+chrome.alarms.create('sd-ozon-price-scan', { periodInMinutes: 20, delayInMinutes: 3 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'sd-yandex-price-scan') {
     scanYandexPrices().catch(() => {});
+    return;
+  }
+  if (alarm.name === 'sd-wb-price-scan') {
+    scanWbPrices().catch(() => {});
+    return;
+  }
+  if (alarm.name === 'sd-ozon-price-scan') {
+    scanOzonPrices().catch(() => {});
     return;
   }
   if (alarm.name !== 'sd-keepalive') return;
@@ -154,6 +174,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (pending) {
       clearTimeout(pending.timeoutId);
       yandexPriceTabs.delete(tabId);
+      chrome.tabs.remove(tabId).catch(() => {});
+      pending.resolve();
+    }
+    return;
+  }
+
+  // Найдена цена покупателя на wildberries.ru
+  if (msg.type === 'wb-price-found') {
+    const tabId = sender.tab?.id;
+    const pending = tabId != null ? wbPriceTabs.get(tabId) : null;
+    const vendorCode = pending?.vendorCode;
+    reportWbPrice({ ...msg, vendorCode });
+    if (pending) {
+      clearTimeout(pending.timeoutId);
+      wbPriceTabs.delete(tabId);
+      chrome.tabs.remove(tabId).catch(() => {});
+      pending.resolve();
+    }
+    return;
+  }
+
+  // Найдена цена покупателя на ozon.ru
+  if (msg.type === 'ozon-price-found') {
+    const tabId = sender.tab?.id;
+    const pending = tabId != null ? ozonPriceTabs.get(tabId) : null;
+    const offerId = pending?.offerId;
+    reportOzonPrice({ ...msg, offerId });
+    if (pending) {
+      clearTimeout(pending.timeoutId);
+      ozonPriceTabs.delete(tabId);
       chrome.tabs.remove(tabId).catch(() => {});
       pending.resolve();
     }
@@ -569,6 +619,128 @@ async function reportYandexPrice(detail) {
   } catch {}
 }
 
+// ── Сбор реальных цен покупателя на Wildberries (через расширение) ────────
+
+async function scanWbPrices() {
+  let targets;
+  try {
+    const resp = await fetch(`${WB_PRICE_BRIDGE}?action=targets`, {
+      headers: {
+        apikey: SUPA_ANON_KEY,
+        Authorization: `Bearer ${SUPA_ANON_KEY}`,
+      },
+    });
+    const data = await resp.json();
+    targets = data.targets || [];
+  } catch {
+    return;
+  }
+
+  for (const target of targets) {
+    try {
+      await openWbPriceTab(target);
+    } catch {}
+    await new Promise(r => setTimeout(r, 3000));
+  }
+}
+
+function openWbPriceTab({ nmId, vendorCode, productTitle }) {
+  return new Promise((resolve) => {
+    chrome.tabs.create({
+      url: `https://www.wildberries.ru/catalog/${nmId}/detail.aspx`,
+      active: false,
+    }, (tab) => {
+      const timeoutId = setTimeout(() => {
+        wbPriceTabs.delete(tab.id);
+        chrome.tabs.remove(tab.id).catch(() => {});
+        resolve();
+      }, 20000);
+      wbPriceTabs.set(tab.id, { nmId, vendorCode, productTitle, timeoutId, resolve });
+    });
+  });
+}
+
+async function reportWbPrice(detail) {
+  try {
+    await fetch(WB_PRICE_BRIDGE, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPA_ANON_KEY,
+        Authorization: `Bearer ${SUPA_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        action: 'report',
+        nmId: detail.nmId,
+        vendorCode: detail.vendorCode,
+        buyerPrice: detail.buyerPrice,
+        productTitle: detail.productTitle,
+      }),
+    });
+  } catch {}
+}
+
+// ── Сбор реальных цен покупателя на Ozon (через расширение) ───────────────
+
+async function scanOzonPrices() {
+  let targets;
+  try {
+    const resp = await fetch(`${OZON_PRICE_BRIDGE}?action=targets`, {
+      headers: {
+        apikey: SUPA_ANON_KEY,
+        Authorization: `Bearer ${SUPA_ANON_KEY}`,
+      },
+    });
+    const data = await resp.json();
+    targets = data.targets || [];
+  } catch {
+    return;
+  }
+
+  for (const target of targets) {
+    try {
+      await openOzonPriceTab(target);
+    } catch {}
+    await new Promise(r => setTimeout(r, 3000));
+  }
+}
+
+function openOzonPriceTab({ productId, offerId, productTitle }) {
+  return new Promise((resolve) => {
+    chrome.tabs.create({
+      url: `https://www.ozon.ru/product/${productId}/`,
+      active: false,
+    }, (tab) => {
+      const timeoutId = setTimeout(() => {
+        ozonPriceTabs.delete(tab.id);
+        chrome.tabs.remove(tab.id).catch(() => {});
+        resolve();
+      }, 20000);
+      ozonPriceTabs.set(tab.id, { productId, offerId, productTitle, timeoutId, resolve });
+    });
+  });
+}
+
+async function reportOzonPrice(detail) {
+  try {
+    await fetch(OZON_PRICE_BRIDGE, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPA_ANON_KEY,
+        Authorization: `Bearer ${SUPA_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        action: 'report',
+        productId: detail.productId,
+        offerId: detail.offerId,
+        buyerPrice: detail.buyerPrice,
+        productTitle: detail.productTitle,
+      }),
+    });
+  } catch {}
+}
+
 // ── Запуск задачи ─────────────────────────────────────────────────────────
 
 async function handleStartTask(msg) {
@@ -817,6 +989,20 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     clearTimeout(pending.timeoutId);
     yandexPriceTabs.delete(tabId);
     pending.resolve();
+  }
+
+  const pendingWb = wbPriceTabs.get(tabId);
+  if (pendingWb) {
+    clearTimeout(pendingWb.timeoutId);
+    wbPriceTabs.delete(tabId);
+    pendingWb.resolve();
+  }
+
+  const pendingOzon = ozonPriceTabs.get(tabId);
+  if (pendingOzon) {
+    clearTimeout(pendingOzon.timeoutId);
+    ozonPriceTabs.delete(tabId);
+    pendingOzon.resolve();
   }
 
   const task = Object.values(tasks).find(t => t.tabId === tabId);

@@ -36,12 +36,15 @@
 .rpr-tab:hover { color:var(--text) }
 .rpr-tab.active { font-weight:700;color:#22c55e;border-bottom-color:#22c55e }
 .rpr-tab.active.violet { color:#7c3aed;border-bottom-color:#7c3aed }
+.rpr-tab.amber:not(.active) { color:var(--text2) }
+.rpr-tab.active.amber { color:#f59e0b;border-bottom-color:#f59e0b }
 .rpr-tab-badge {
   margin-left:5px;font-size:10px;font-weight:700;padding:1px 6px;border-radius:20px;
   background:var(--bg3);color:var(--text3)
 }
 .rpr-tab.active .rpr-tab-badge { background:rgba(34,197,94,.15);color:#22c55e }
 .rpr-tab.active.violet .rpr-tab-badge { background:rgba(124,58,237,.12);color:#7c3aed }
+.rpr-tab.active.amber .rpr-tab-badge { background:rgba(245,158,11,.12);color:#f59e0b }
 
 /* ── Buttons ─────────────────────────────────────────────────────── */
 .rpr-btn {
@@ -178,6 +181,7 @@
 /* ── Animations ──────────────────────────────────────────────────── */
 @keyframes rpr-fade-in { from{opacity:0;transform:scale(.98)} to{opacity:1;transform:scale(1)} }
 @keyframes rpr-slide-down { from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:translateY(0)} }
+@keyframes rpr-pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(1.5)} }
 
 .rpr { animation:rpr-fade-in .18s ease }
 .rpr-form-panel { animation:rpr-slide-down .15s ease }

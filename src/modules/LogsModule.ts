@@ -3,6 +3,7 @@
  * Хранится в localStorage, пишется через changeLog.add().
  */
 import { debug } from '@/utils/debug';
+import { I } from '@/utils/icons';
 
 
 export interface ChangeLogEntry {
@@ -64,15 +65,15 @@ export const changeLog = {
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
-  product: '📦 Товар',
-  price: '💰 Цена',
-  group: '📁 Группа',
-  import: '📥 Импорт',
-  rule: '⚙️ Правило',
-  settings: '🔧 Настройки',
-  sync: '🔄 Синхронизация',
-  column: '📊 Колонка',
-  other: '📝 Прочее',
+  product: `${I.package('',14)} Товар`,
+  price: `${I.dollarSign('',14)} Цена`,
+  group: `${I.folder('',14)} Группа`,
+  import: `${I.download('',14)} Импорт`,
+  rule: `${I.settings('',14)} Правило`,
+  settings: `${I.settings('',14)} Настройки`,
+  sync: `${I.refresh('',14)} Синхронизация`,
+  column: `${I.chart('',14)} Колонка`,
+  other: `${I.type('',14)} Прочее`,
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -148,12 +149,12 @@ export class LogsModule {
           <div style="display:flex;gap:8px">
             <button onclick="window.logsModule.exportCsv()"
               style="padding:7px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);color:var(--text);cursor:pointer;font-size:12px">
-              📥 Экспорт CSV
+              ${I.download('',14)} Экспорт CSV
             </button>
             ${all.length > 0 ? `
               <button onclick="if(confirm('Очистить весь журнал?')){window.logsModule.clearAll()}"
                 style="padding:7px 14px;border-radius:8px;border:1px solid #fecaca;background:#fff5f5;color:#dc2626;cursor:pointer;font-size:12px">
-                🗑 Очистить
+                ${I.trash('',14)} Очистить
               </button>` : ''}
           </div>
         </div>
@@ -186,7 +187,7 @@ export class LogsModule {
         <div style="flex:1;overflow:auto;padding-bottom:90px">
           ${pageEntries.length === 0 ? `
             <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;color:var(--text-2);padding:40px">
-              <div style="font-size:40px">📋</div>
+              <div style="font-size:40px">${I.clipboard('',40)}</div>
               <div style="font-size:16px;font-weight:600;color:var(--text)">${all.length === 0 ? 'Журнал пуст' : 'Ничего не найдено'}</div>
               <div style="font-size:13px;opacity:.65;text-align:center;max-width:320px">
                 ${all.length === 0

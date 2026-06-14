@@ -6,6 +6,7 @@ import { debug } from '@/utils/debug';
 import { WbStore, WbProduct, WbOrder, WbOrderStatus } from '@/types/wb';
 import { wbDb } from '@/services/wbDb';
 import { fetchAllWbOrders, wbApi, isWbCoolingDown, wbCooldownRemaining } from '@/services/wbApi';
+import { I } from '@/utils/icons';
 
 const STATUS_LABELS: Record<WbOrderStatus, string> = {
   new:         'Новый',
@@ -223,7 +224,7 @@ export class WbOrdersModule {
         const offset = i * 16;
         const cell = img
           ? `<img src="${this.esc(img)}" loading="lazy" style="width:36px;height:36px;border-radius:6px;object-fit:cover;border:1px solid var(--border)" onerror="this.style.display='none'">`
-          : `<div style="width:36px;height:36px;border-radius:6px;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:14px">📦</div>`;
+          : `<div style="width:36px;height:36px;border-radius:6px;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:14px">${I.package('',14)}</div>`;
         return `<div style="position:absolute;left:${offset}px;top:0;z-index:${10 - i}">${cell}</div>`;
       }).join('');
       const thumbsCount = Math.min(o.items.length, 3);
@@ -327,9 +328,9 @@ export class WbOrdersModule {
           const name = it.name || this.getProductName(it.vendor_code) || 'Без названия';
           const thumb = imgUrl
             ? `<a href="${this.esc(imgUrl)}" target="_blank" rel="noopener" class="ozo-prod-thumb">
-                <img src="${this.esc(imgUrl)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='📦'">
+                <img src="${this.esc(imgUrl)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='${I.package('',14)}'">
               </a>`
-            : `<div class="ozo-prod-thumb ozo-prod-thumb-empty">📦</div>`;
+            : `<div class="ozo-prod-thumb ozo-prod-thumb-empty">${I.package('',14)}</div>`;
           return `<div class="ozo-prod-card">
             ${thumb}
             <div class="ozo-prod-info">

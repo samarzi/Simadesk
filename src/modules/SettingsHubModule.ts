@@ -17,6 +17,7 @@ import { companyService, CompanyRole } from '@/services/companyService';
 import { OzonStore } from '@/types/ozon';
 import { YandexStore } from '@/types/yandex';
 import { WbStore } from '@/types/wb';
+import { I } from '@/utils/icons';
 
 type Page = 'group' | 'columns' | 'formulas' | 'import-export' | 'team' | 'appearance';
 type AnyStore = (OzonStore & { _mp: 'ozon' }) | (YandexStore & { _mp: 'yandex' }) | (WbStore & { _mp: 'wb' });
@@ -96,7 +97,7 @@ export class SettingsHubModule {
           </div>
           <div class="sh-card" style="border-color:#f59e0b;background:color-mix(in srgb,#fbbf24 6%,var(--bg))">
             <div style="display:flex;align-items:center;gap:14px">
-              <span style="font-size:28px">📦</span>
+              <span style="font-size:28px">${I.package('', 28)}</span>
               <div style="flex:1">
                 <div style="font-size:14px;font-weight:700;margin-bottom:4px">Группа не выбрана</div>
                 <div style="font-size:12px;color:var(--muted)">Выбери группу в разделе «Товары», затем вернись сюда</div>
@@ -341,8 +342,8 @@ export class SettingsHubModule {
           <div class="sh-page-title">Колонки товаров</div>
           <div class="sh-page-sub">
             ${groupName
-              ? `<span class="sh-context-tag">📦 Группа: ${this.esc(groupName)}</span>`
-              : '<span class="sh-context-tag" style="background:color-mix(in srgb,#94a3b8 16%,transparent);color:#64748b">⚠ Группа не выбрана</span>'}
+              ? `<span class="sh-context-tag">${I.package('', 14)} Группа: ${this.esc(groupName)}</span>`
+              : `<span class="sh-context-tag" style="background:color-mix(in srgb,#94a3b8 16%,transparent);color:#64748b">${I.alertTriangle('', 14)} Группа не выбрана</span>`}
             <br>Добавляй индивидуальные поля для текущей группы: артикул производителя, размеры, материалы и т.п.
             <b>Себестоимость</b> — общая системная колонка для всех групп.
             Пользовательские колонки <b>привязаны только к выбранной группе</b>.
@@ -350,7 +351,7 @@ export class SettingsHubModule {
         </div>${boxId ? '' : `
         <div class="sh-card" style="border-color:#f59e0b;background:color-mix(in srgb,#fbbf24 8%,var(--bg))">
           <div style="display:flex;align-items:center;gap:10px;font-size:13px">
-            <span style="font-size:18px">⚠</span>
+            <span style="font-size:18px">${I.alertTriangle('', 18)}</span>
             <span>Открой группу в разделе «Товары», чтобы добавлять кастомные колонки именно для неё.</span>
           </div>
         </div>`}
@@ -395,7 +396,7 @@ export class SettingsHubModule {
         ondragover="event.preventDefault();this.classList.add('drag-over')"
         ondragleave="this.classList.remove('drag-over')"
         ondrop="event.preventDefault();this.classList.remove('drag-over');window.settingsHub.onColDrop(event,'${this.esc(c.id)}')">
-        <div class="sh-col-drag" title="${c.system ? 'Системная — нельзя двигать' : 'Перетащи'}">${c.system ? '🔒' : '⠿'}</div>
+        <div class="sh-col-drag" title="${c.system ? 'Системная — нельзя двигать' : 'Перетащи'}">${c.system ? I.lock('', 14) : '⠿'}</div>
         <div class="sh-col-info">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span style="font-weight:700;font-size:13px">${this.esc(c.label)}</span>
@@ -403,7 +404,7 @@ export class SettingsHubModule {
             <span style="font-size:10px;color:var(--muted);font-family:monospace">${this.esc(c.id.slice(0, 8))}…</span>
           </div>
           <div style="font-size:11px;color:var(--muted);margin-top:3px">
-            ${c.data_type === 'number' ? '🔢 Число' : '🅰️ Текст'} · Заполнено: <b>${filled}</b>
+            ${c.data_type === 'number' ? `${I.hash('', 14)} Число` : '🅰️ Текст'} · Заполнено: <b>${filled}</b>
             ${c.description ? ` · ${this.esc(c.description)}` : ''}
           </div>
         </div>
@@ -508,7 +509,7 @@ export class SettingsHubModule {
         <!-- Тест-цена для предпросмотра -->
         <div class="sh-card">
           <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg2);border-radius:8px">
-            <span style="font-size:12px;color:var(--muted);font-weight:600">🧪 Тестовая себестоимость:</span>
+            <span style="font-size:12px;color:var(--muted);font-weight:600">${I.brain('', 14)} Тестовая себестоимость:</span>
             <input id="test-cost" class="ym-input" type="number" value="${testCost}" style="max-width:140px" oninput="window.settingsHub.refreshFormulaPreview()">
             <span style="font-size:11px;color:var(--muted)">для предпросмотра результатов</span>
           </div>
@@ -632,14 +633,14 @@ export class SettingsHubModule {
           <div class="sh-page-title">Шаблоны заполнения</div>
           <div class="sh-page-sub">
             <b>Контекст:</b> ${groupName
-              ? `<span class="sh-context-tag">📦 ${this.esc(groupName)} · ${offersCount} товаров</span>`
-              : `<span class="sh-context-tag">📦 Все группы · ${offersCount} товаров</span>`}
+              ? `<span class="sh-context-tag">${I.package('', 14)} ${this.esc(groupName)} · ${offersCount} товаров</span>`
+              : `<span class="sh-context-tag">${I.package('', 14)} Все группы · ${offersCount} товаров</span>`}
             <br>Шаблон будет содержать <b>только артикулы выбранной группы</b> и колонки для заполнения (Себестоимость + кастомные). Чтобы переключиться — открой нужную группу в разделе «Товары».
           </div>
         </div>
 
         <div class="sh-card">
-          <div class="sh-card-title">📥 Экспорт</div>
+          <div class="sh-card-title">${I.download('', 16)} Экспорт</div>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <button class="btn btn-primary" onclick="window.settingsHub.exportTemplate()">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="width:13px;height:13px"><path d="M8 2v8M5 7l3 3 3-3M2 13h12"/></svg>
@@ -656,7 +657,7 @@ export class SettingsHubModule {
         </div>
 
         <div class="sh-card">
-          <div class="sh-card-title">📤 Импорт</div>
+          <div class="sh-card-title">${I.upload('', 16)} Импорт</div>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <input type="file" id="import-file" accept=".xlsx,.xls" style="font-size:12px"
               onchange="window.settingsHub.previewImport(this.files)">
@@ -683,7 +684,7 @@ export class SettingsHubModule {
 
         ${p.unknown > 0 ? `
           <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:#ef444415;border:1px solid #ef444430;border-radius:8px;margin-bottom:10px;font-size:12px">
-            <span style="font-size:14px;flex-shrink:0">⚠️</span>
+            <span style="font-size:14px;flex-shrink:0">${I.alertTriangle('', 14)}</span>
             <div>
               <b style="color:#ef4444">${p.unknown} артикул(ов) из файла не найдено в этой группе</b> — они будут пропущены и <b>не добавлены</b>.
               <br>
@@ -694,7 +695,7 @@ export class SettingsHubModule {
 
         ${p.willUpdate.length > 0 ? `
           <details style="margin-bottom:10px">
-            <summary style="cursor:pointer;font-size:12px;color:var(--muted);user-select:none">⚠ Артикулы с существующими значениями (${p.willUpdate.length}) — будут перезаписаны</summary>
+            <summary style="cursor:pointer;font-size:12px;color:var(--muted);user-select:none">${I.alertTriangle('', 12)} Артикулы с существующими значениями (${p.willUpdate.length}) — будут перезаписаны</summary>
             <div style="max-height:200px;overflow:auto;margin-top:8px;font-size:11px;font-family:monospace">
               ${p.willUpdate.slice(0, 100).map(u => `
                 <div style="padding:4px 0;border-bottom:1px solid var(--border)">

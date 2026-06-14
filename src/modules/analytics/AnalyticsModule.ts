@@ -6,6 +6,7 @@
  */
 
 import { debug } from '@/utils/debug';
+import { I } from '@/utils/icons';
 import { Mp, MP_LABEL, MP_COLOR, Order, KPI, TimeseriesPoint, PeriodPreset, StoreInfo, TaxModel } from './types';
 import { aggregateOrders, ProductMap } from './services/orderAggregator';
 import { buildCogsResolver } from './services/cogsResolver';
@@ -18,6 +19,7 @@ import { costPriceDb } from '@/services/costPriceDb';
 import { renderSummaryTab, clearSummaryCache } from './tabs/SummaryTab';
 import { renderOrdersTab, OrdersFilters, clearOrdersCache } from './tabs/OrdersTab';
 import { renderProductsTab, ProductsFilters, clearProductsCache } from './tabs/ProductsTab';
+import { renderActivityTab, ActivitySubTab } from './tabs/ActivityTab';
 import { renderOrderDrawer } from './components/OrderDetailDrawer';
 import { renderSettingsDrawer } from './components/SettingsDrawer';
 import { fmtNum } from './components/format';
@@ -28,7 +30,7 @@ function escapeHtmlJson(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-type Tab = 'summary' | 'orders' | 'products';
+type Tab = 'summary' | 'orders' | 'products' | 'activity';
 
 export class AnalyticsModule {
   private container: HTMLElement;
@@ -90,6 +92,7 @@ export class AnalyticsModule {
 
   private ordersFilters: OrdersFilters = { status: 'all', mp: 'all', search: '', page: 0 };
   private productsFilters: ProductsFilters = { sort: 'profit', search: '' };
+  private activitySubTab: ActivitySubTab = 'heatmap';
 
   private openedOrderId: string | null = null;
   private settingsOpen = false;
@@ -499,6 +502,11 @@ export class AnalyticsModule {
     this._scheduleBodyOnly();
   }
 
+  setActivitySubTab(t: ActivitySubTab): void {
+    this.activitySubTab = t;
+    this._scheduleBodyOnly();
+  }
+
   openOrder(id: string): void {
     this.openedOrderId = id;
     this._mountOrderDrawer();
@@ -574,7 +582,7 @@ export class AnalyticsModule {
           pre{margin:0;white-space:pre-wrap;word-break:break-word}
           .k{color:#79c0ff}.s{color:#a5d6ff}.n{color:#ff7b72}.b{color:#ffa657}
         </style></head><body>
-        <h2>📊 Транзакции по заказу ${orderId}</h2>
+        <h2>${I.chart()} Транзакции по заказу ${orderId}</h2>
         <pre>${escapeHtmlJson(JSON.stringify(summary, null, 2))}</pre>
         </body></html>
       `);
@@ -762,6 +770,7 @@ export class AnalyticsModule {
           ${tabBtn('summary',  'Сводка')}
           ${tabBtn('orders',   'Заказы',  this.orders.length || undefined)}
           ${tabBtn('products', 'Товары')}
+          ${tabBtn('activity', 'Активность')}
         </div>
 
         <div class="an2-period">
@@ -868,7 +877,7 @@ export class AnalyticsModule {
 
     return `
       <div class="an2-all-confirm">
-        <div class="an2-all-confirm-icon">📦</div>
+        <div class="an2-all-confirm-icon">${I.package()}</div>
         <h3>Загрузить всю историю «${storeName}»?</h3>
         <p>
           Найдена дата начала: <strong>${fromStr}</strong>
@@ -912,6 +921,7 @@ export class AnalyticsModule {
       case 'summary':  return renderSummaryTab(this.kpi, this.orders, this.ts, this.prevKpi, this.missingCogs);
       case 'orders':   return renderOrdersTab(this.orders, this.ordersFilters);
       case 'products': return renderProductsTab(this.orders, this.productsFilters);
+      case 'activity': return renderActivityTab(this.orders, this.activitySubTab);
     }
   }
 
@@ -928,7 +938,7 @@ export class AnalyticsModule {
     if (this.stores.length === 0) {
       return `
         <div class="an2-empty">
-          <div class="emoji">🏪</div>
+          <div class="emoji">${I.store()}</div>
           <h3>Нет подключённых магазинов</h3>
           <p>Чтобы видеть аналитику — подключи хотя бы один магазин Ozon / WB / Я.Маркет в разделе «Маркетплейсы».</p>
         </div>
@@ -936,7 +946,7 @@ export class AnalyticsModule {
     }
     return `
       <div class="an2-empty">
-        <div class="emoji">📊</div>
+        <div class="emoji">${I.chart()}</div>
         <h3>Нет заказов за период</h3>
         <p>Попробуй сменить период или нажать «Подтянуть финотчёт».</p>
       </div>

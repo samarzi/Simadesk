@@ -36,6 +36,7 @@ import { ProfileModule } from './modules/ProfileModule';
 import { SettingsModule } from './modules/SettingsModule';
 import { StockModule } from './modules/StockModule';
 import { CatalogMpModule } from './modules/CatalogMpModule';
+import { ProducersModule } from './modules/ProducersModule';
 
 // ── Helper: register a section module ─────────────────────────────────────────
 const init = <T>(id: string, factory: (el: HTMLElement) => T, key: string): void => {
@@ -77,6 +78,7 @@ function bootApp(): void {
   init('settings-section',       (el) => new SettingsModule(el),        'settingsModule');
   init('stock-section',          (el) => new StockModule(el),           'stockModule');
   init('catalog-section',        (el) => new CatalogMpModule(el),       'catalogMpModule');
+  init('producers-section',      (el) => new ProducersModule(el),       'producersModule');
 
   // Apply dock autohide setting on boot
   if (localStorage.getItem('settings_dock_autohide') === 'on') {
@@ -157,6 +159,7 @@ declare global {
     settingsModule: import('./modules/SettingsModule').SettingsModule;
     stockModule: import('./modules/StockModule').StockModule;
     catalogMpModule: import('./modules/CatalogMpModule').CatalogMpModule;
+    producersModule: import('./modules/ProducersModule').ProducersModule;
     taskManagerModule: import('./modules/TaskManagerModule').TaskManagerModule;
     ensureDockExpandedForPage?: (page: string) => void;
     __showMetricTip?: (id: string) => void;

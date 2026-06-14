@@ -174,6 +174,24 @@ export const yandexApi = {
   },
 
   /**
+   * POST /v2/businesses/{businessId}/offer-mappings — карточка одного оффера по offerId
+   * (для ленивой подгрузки описания/штрихкодов в редакторе).
+   */
+  async getOfferMapping(
+    apiKey: string,
+    businessId: number,
+    offerId: string,
+    signal?: AbortSignal,
+  ): Promise<any | null> {
+    const resp = await yandexFetch<any>(
+      `/v2/businesses/${businessId}/offer-mappings?limit=1`,
+      'POST', apiKey, { offerIds: [offerId] }, signal,
+    );
+    const offers = resp.result?.offerMappings ?? [];
+    return offers[0]?.offer ?? null;
+  },
+
+  /**
    * POST /v2/businesses/{businessId}/offer-mappings — список товаров.
    * Cursor-пагинация через result.paging.nextPageToken.
    */
@@ -409,8 +427,7 @@ export const yandexApi = {
 
   /**
    * Убрать товары из всех активных промо-акций на Яндекс.Маркете.
-   * Используется для MRC-правил: если товар участвует в промо, ЯМ снижает basicPrice
-   * и она становится зачёркнутой — покупатель видит цену ниже МРЦ.
+
    * Вызывать ДО/ПОСЛЕ обновления цены через updateOfferPrices.
    */
   async removeOffersFromAllPromos(
@@ -689,7 +706,7 @@ export const yandexApi = {
     const numericChatId = Number(chatId) || chatId;
     await yandexFetch<any>(
       `/v2/businesses/${businessId}/chats/message?chatId=${numericChatId}`,
-      'POST', apiKey, { chatId: numericChatId, message: text }, signal, 1,
+      'POST', apiKey, { message: { text } }, signal, 1,
     );
   },
 };

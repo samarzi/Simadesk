@@ -1,4 +1,5 @@
 import { KPI, Order, TimeseriesPoint, MP_SHORT, MP_COLOR, SkuPerformance } from '../types';
+import { I } from '@/utils/icons';
 import { renderKpiCard } from '../components/KpiCard';
 import { renderPnL } from '../components/PnLWaterfall';
 import { renderChart } from '../components/Chart';
@@ -136,7 +137,7 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
   const longPeriodInfoHtml = isLongPeriod ? `
     <div class="an2-card" style="background:linear-gradient(90deg,rgba(124,58,237,.05),transparent);border-color:rgba(124,58,237,.2);padding:9px 14px;margin-bottom:10px">
       <div style="display:flex;gap:10px;align-items:center">
-        <div style="font-size:14px;color:#a78bfa">⚡</div>
+        <div style="font-size:14px;color:#a78bfa">${I.zap('', 14)}</div>
         <div style="flex:1;font-size:11px;color:var(--text2);line-height:1.5">
           Длинный период (${periodSpanDays} дн.) — заказы за последние <strong style="color:var(--text)">60 дней</strong> из live API маркетплейсов, более ранние — только из <strong style="color:var(--text)">финотчёта</strong> (mp_transactions).
           Это <strong style="color:#a78bfa">правильный режим</strong>: live API маркетплейсов на исторических периодах ломается и теряет заказы.

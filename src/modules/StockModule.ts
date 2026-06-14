@@ -3,6 +3,7 @@
  */
 
 import { debug } from '@/utils/debug';
+import { I } from '@/utils/icons';
 import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
 import { wbDb } from '@/services/wbDb';
@@ -166,7 +167,10 @@ export class StockModule {
             debug.log(`[Stock] Ozon slow-path: ${products.length} products for store ${store.id}`);
             this.syncStatus = `Ozon: ${store.name} — сохраняем ${products.length}…`;
             this.render();
-            await ozonDb.replaceStoreProducts(store.id, products);
+            // If API returned empty (rate-limit, 429) — keep existing data in DB
+            if (products.length > 0) {
+              await ozonDb.replaceStoreProducts(store.id, products);
+            }
           } else {
             // Быстрый путь: обновляем только stock_fbs / stock_fbo
             this.syncStatus = `Ozon: ${store.name} — остатки…`;
@@ -201,7 +205,10 @@ export class StockModule {
             const products = await fetchAllWbProducts(store);
             this.syncStatus = `WB: ${store.name} — сохраняем ${products.length}…`;
             this.render();
-            await wbDb.replaceStoreProducts(store.id, products);
+            // If API returned empty (rate-limit, 429) — keep existing data in DB
+            if (products.length > 0) {
+              await wbDb.replaceStoreProducts(store.id, products);
+            }
           } else {
             this.syncStatus = `WB: ${store.name} — остатки…`;
             this.render();
@@ -239,7 +246,10 @@ export class StockModule {
             const products = await fetchAllYandexProducts(store);
             this.syncStatus = `ЯМ: ${store.name} — сохраняем ${products.length}…`;
             this.render();
-            await yandexDb.replaceStoreProducts(store.id, products);
+            // If API returned empty (rate-limit, 429) — keep existing data in DB
+            if (products.length > 0) {
+              await yandexDb.replaceStoreProducts(store.id, products);
+            }
           } else {
             this.syncStatus = `ЯМ: ${store.name} — остатки…`;
             this.render();
@@ -644,7 +654,7 @@ export class StockModule {
             ${filtered.length === 0 ? `
               <div style="text-align:center;padding:60px 20px;color:var(--text-2)">
                 ${total === 0 ? `
-                  <div style="font-size:36px;margin-bottom:12px">📦</div>
+                  <div style="font-size:36px;margin-bottom:12px">${I.package('',36)}</div>
                   <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px">Нет данных об остатках</div>
                   <div style="font-size:12px;margin-bottom:18px">Нажмите «Синхр. из API» чтобы загрузить актуальные остатки,<br>или синхронизируйте магазины в разделе API Маркет</div>
                   <button onclick="window.stockModule.syncStocksFromApi()"
@@ -665,7 +675,7 @@ export class StockModule {
                         <th style="${thStyle}">Артикул</th>
                         ${thBtn('name',  'Название')}
                         ${thBtn('stock', 'Всего')}
-                        <th style="${thStyle}">FBS ✏️</th>
+                        <th style="${thStyle}">FBS ${I.edit()}</th>
                         <th style="${thStyle}">FBO</th>
                         ${thBtn('price', 'Цена')}
                         <th style="${thStyle}">Магазин</th>

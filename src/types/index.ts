@@ -1,3 +1,11 @@
+/** Все страницы/разделы приложения, доступные через navigateTo(). */
+export type AppPage =
+  | 'home' | 'products' | 'analytics' | 'settings-hub' | 'settings' | 'profile' | 'orders' | 'marketplaces'
+  | 'ozon' | 'yandex' | 'wb'
+  | 'orders-ozon' | 'orders-yandex' | 'orders-wb'
+  | 'repricer' | 'stock' | 'catalog' | 'producers'
+  | 'sku-audit' | 'reviews' | 'chats' | 'logs' | 'automation' | 'tasks';
+
 export interface Box {
   id: string;
   name: string;

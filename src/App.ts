@@ -1,5 +1,6 @@
+import { I } from '@/utils/icons';
 import { debug } from '@/utils/debug';
-import { Product } from './types';
+import { Product, AppPage } from './types';
 import { boxes, boxActions } from './stores/appStore';
 import { apiService } from './services/api';
 import { idbCache } from './services/idbCache';
@@ -45,7 +46,7 @@ export class App {
   activeBoxId: string | null = null;
   private loadToken = 0;
   viewMode: 'table' | 'cards' = 'table';
-  currentPage: 'home' | 'products' | 'orders' | 'ozon' = 'home';
+  currentPage: AppPage = 'home';
 
   // ── Скрытые строки (товары) ───────────────────────────────────────────────
   // Map<boxId, Set<productId>>
@@ -152,7 +153,7 @@ export class App {
     const backdrop = document.getElementById('ms-backdrop');
     if (backdrop) backdrop.addEventListener('click', () => this.closeMobileSheets());
 
-    const lastPage = (localStorage.getItem('last_page') as any) ?? 'home';
+    const lastPage = (localStorage.getItem('last_page') as AppPage | null) ?? 'home';
     await this.navigateTo(lastPage, { loadAll: lastPage === 'products' });
     // Восстанавливаем выбранную группу товаров после обновления страницы
     if (lastPage === 'products') {
@@ -355,10 +356,10 @@ export class App {
     };
 
     el.innerHTML = [
-      renderSection('Ozon', mpColor.ozon, '🟠', ozonBoxes),
-      renderSection('Яндекс Маркет', mpColor.ym, '🟡', ymBoxes),
-      renderSection('Wildberries', mpColor.wb, '🟣', wbBoxes),
-      manualBoxes.length ? renderSection('Ручные', mpColor.manual, '📦', manualBoxes) : '',
+      renderSection('Ozon', mpColor.ozon, I.ozon('', 14), ozonBoxes),
+      renderSection('Яндекс Маркет', mpColor.ym, I.yandex('', 14), ymBoxes),
+      renderSection('Wildberries', mpColor.wb, I.wb('', 14), wbBoxes),
+      manualBoxes.length ? renderSection('Ручные', mpColor.manual, I.box('', 14), manualBoxes) : '',
     ].join('');
 
     boxList.forEach(b => this.loadBoxCount(b.id));
@@ -386,17 +387,17 @@ export class App {
       if (box.mp_source === 'ozon') {
         const { ozonDb } = await import('./services/ozonDb');
         const stores = await ozonDb.getStores();
-        const store = (stores as any[]).find((s: any) => s.id === box.mp_store_id);
+        const store = stores.find(s => s.id === box.mp_store_id);
         if (store) await syncOzonStore(store, progress);
       } else if (box.mp_source === 'ym') {
         const { yandexDb } = await import('./services/yandexDb');
         const stores = await yandexDb.getStores();
-        const store = (stores as any[]).find((s: any) => s.id === box.mp_store_id);
+        const store = stores.find(s => s.id === box.mp_store_id);
         if (store) await syncYandexStore(store, progress);
       } else if ((box.mp_source as string) === 'wb') {
         const { wbDb } = await import('./services/wbDb');
         const stores = await wbDb.getStores();
-        const store = (stores as any[]).find((s: any) => s.id === box.mp_store_id);
+        const store = stores.find(s => s.id === box.mp_store_id);
         if (store) await syncWbStore(store, progress);
       }
       await boxActions.loadBoxes();
@@ -405,7 +406,7 @@ export class App {
         this.cache.delete(boxId);
         await this.selectBox(boxId);
       }
-      this.toast('✅ Обновлено', 'success', 3000);
+      this.toast(`${I.checkCircle('', 16)} Обновлено`, 'success', 3000);
     } catch (e: any) {
       this.toast('Ошибка обновления: ' + e.message, 'error');
     } finally {
@@ -545,8 +546,8 @@ export class App {
         }
       };
       for (const p of ozProds) add(p.offer_id, 'ozon', p.store_id, ozStoreMap.get(p.store_id) ?? 'Ozon', '#005bff');
-      for (const p of ymProds) add(p.offer_id || (p as any).vendor_code, 'yandex', p.store_id, ymStoreMap.get(p.store_id) ?? 'ЯМ', '#fc3f1d');
-      for (const p of wbProds) add((p as any).vendor_code, 'wb', p.store_id, wbStoreMap.get(p.store_id) ?? 'WB', '#cb11ab');
+      for (const p of ymProds) add(p.offer_id || p.vendor_code || '', 'yandex', p.store_id, ymStoreMap.get(p.store_id) ?? 'ЯМ', '#fc3f1d');
+      for (const p of wbProds) add(p.vendor_code, 'wb', p.store_id, wbStoreMap.get(p.store_id) ?? 'WB', '#cb11ab');
       this.mpPresence = map;
       // Триггерим перерисовку таблицы если она открыта
       if (this.currentPage === 'products' || this.currentPage === 'home') this.applyFilters();
@@ -1064,7 +1065,7 @@ export class App {
     // ── Секция 1: Кастомные поля ────────────────────────────────────────────
     const customRows = customCols.map(c => {
       const isSystem = c.system;
-      const typeLabel = c.data_type === 'number' ? '🔢' : '📝';
+      const typeLabel = c.data_type === 'number' ? I.hash('', 12) : I.type('', 12);
       return `
         <div class="sh-col-row" style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)"
           draggable="${!isSystem}"
@@ -1074,7 +1075,7 @@ export class App {
           ondragleave="this.classList.remove('drag-over')"
           ondrop="event.preventDefault();this.classList.remove('drag-over');window.app.onColDrop(event,${customCols.indexOf(c)})">
           <div style="cursor:${isSystem ? 'default' : 'grab'};font-size:14px;flex-shrink:0;color:var(--muted)" title="${isSystem ? 'Системная колонка' : 'Перетащить для изменения порядка'}">
-            ${isSystem ? '🔒' : '⠿'}
+            ${isSystem ? I.lock('', 14) : '⠿'}
           </div>
           <div style="flex:1;min-width:0">
             <div style="font-weight:600;font-size:13px">${this.esc(c.label)}</div>
@@ -1250,7 +1251,7 @@ export class App {
 
     const hiddenCount = this.activeBoxId ? (this.hiddenRows.get(this.activeBoxId)?.size ?? 0) : 0;
     const hiddenHint = hiddenCount > 0
-      ? ` · <button class="btn-link-sm ${this.showHiddenRows ? 'on' : ''}" onclick="window.app.toggleShowHidden()">${this.showHiddenRows ? '👁 Скрыто показано' : `👁 Скрыто: ${hiddenCount}`}</button>`
+      ? ` · <button class="btn-link-sm ${this.showHiddenRows ? 'on' : ''}" onclick="window.app.toggleShowHidden()">${this.showHiddenRows ? `${I.eye('', 14)} Скрыто показано` : `${I.eye('', 14)} Скрыто: ${hiddenCount}`}</button>`
       : '';
 
     // Индикаторы синхронизации
@@ -1283,7 +1284,7 @@ export class App {
   private renderEmpty() {
     const content = document.getElementById('main-content');
     if (content) content.innerHTML = `<div class="empty">
-      <div class="empty-icon">📦</div>
+      <div class="empty-icon">${I.box('', 32)}</div>
       <div class="empty-title">Выберите группу</div>
       <div class="empty-sub">Нажмите на группу в сайдбаре или используйте глобальный поиск</div>
     </div>`;
@@ -1310,20 +1311,20 @@ export class App {
       const box = this.activeBoxId ? boxes.get().find(b => b.id === this.activeBoxId) : null;
       const isMpBox = !!box?.mp_source;
       content.innerHTML = `<div class="empty">
-        <div class="empty-icon">${isMpBox ? '🔄' : '📋'}</div>
+        <div class="empty-icon">${isMpBox ? I.refresh('', 32) : I.clipboard('', 32)}</div>
         <div class="empty-title">${isMpBox ? 'Загружаем товары...' : 'Нет товаров'}</div>
         <div class="empty-sub">${isMpBox
           ? 'Идёт синхронизация с маркетплейсом'
           : 'Нажмите «Синхронизировать с МП» чтобы подключить маркетплейс, или используйте xlsx-добавку для WB'}</div>
         ${isMpBox
           ? `<button class="btn btn-primary" onclick="window.app.refreshMpBox('${box!.id}')" style="margin-top:4px">↻ Обновить из МП</button>`
-          : `<button class="btn btn-primary" onclick="window.app.openMpSyncModal()" style="margin-top:4px">🔄 Синхронизировать с МП</button>`}
+          : `<button class="btn btn-primary" onclick="window.app.openMpSyncModal()" style="margin-top:4px">${I.refresh('', 14)} Синхронизировать с МП</button>`}
       </div>`;
       return;
     }
     if (!this.filtered.length) {
       content.innerHTML = `<div class="empty">
-        <div class="empty-icon">🔍</div>
+        <div class="empty-icon">${I.search('', 32)}</div>
         <div class="empty-title">Ничего не найдено</div>
         <div class="empty-sub">Попробуйте изменить фильтры или поисковый запрос</div>
       </div>`;
@@ -1589,21 +1590,9 @@ export class App {
           suffix = `<button class="copy-btn" title="Копировать артикул" onclick="event.stopPropagation();window.app.copyToClipboard('${this.esc(artVal)}')">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1"/><path d="M3.5 10.5V3.5h7"/></svg>
           </button>`;
-          // Точки магазинов у артикула
+          // Точка синхронизации у артикула
           if (isSynced) {
-            const ozonModule = (window as any).ozonModule;
-            const ozonByOfferId = ozonModule?.groups || new Map();
-            const group = ozonByOfferId.get(artVal);
-            if (group && group.stores && group.stores.size > 0) {
-              const dots = [...group.stores.keys()].map(sid => {
-                const sName = ozonModule.stores?.find((s:any)=>s.id === sid)?.name || sid;
-                const col = ozonModule.color(sid);
-                return `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${col};margin-right:2px;flex-shrink:0;vertical-align:middle" title="Товар есть в магазине: ${this.esc(sName)}"></span>`;
-              }).join('');
-              prefix = `<div style="display:inline-flex;align-items:center;margin-right:5px;gap:1px">${dots}</div>`;
-            } else {
-              prefix = `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${ozColor};margin-right:5px;flex-shrink:0;vertical-align:middle" title="${this.esc(ozTip)}"></span>`;
-            }
+            prefix = `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${ozColor};margin-right:5px;flex-shrink:0;vertical-align:middle" title="${this.esc(ozTip)}"></span>`;
           }
         } else if (c === 'Название товара') {
           cls = 'td-name';
@@ -1707,7 +1696,7 @@ export class App {
           ? `<img class="card-photo" src="${this.esc(photo)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
           : ''
         }
-        <div class="card-photo-placeholder" style="${photo ? 'display:none' : ''}">📦</div>
+        <div class="card-photo-placeholder" style="${photo ? 'display:none' : ''}">${I.box('', 24)}</div>
         <div class="card-body">
           <div style="position:absolute;top:10px;right:14px;z-index:2">
              <div class="chk ${isSelected ? 'on' : ''}" onclick="event.stopPropagation(); window.app.toggleProductSelection('${p.id}')" style="background:var(--bg);border-radius:4px;padding:2px">
@@ -1795,8 +1784,8 @@ export class App {
       <div style="width:1px;height:24px;background:var(--border)"></div>
       <button class="btn btn-primary" onclick="window.app.openMassEditModal()">Редактировать</button>
       <button class="btn" onclick="window.app.openExportModal(true)">Экспорт</button>
-      ${hasVisible ? `<button class="btn" onclick="window.app.massHideProducts(true)">👁 Скрыть</button>` : ''}
-      ${hasHidden ? `<button class="btn" onclick="window.app.massHideProducts(false)">👁 Показать</button>` : ''}
+      ${hasVisible ? `<button class="btn" onclick="window.app.massHideProducts(true)">${I.eye('', 14)} Скрыть</button>` : ''}
+      ${hasHidden ? `<button class="btn" onclick="window.app.massHideProducts(false)">${I.eye('', 14)} Показать</button>` : ''}
       <button class="btn" onclick="window.app.massMoveProducts()">Переместить</button>
       <button class="btn" onclick="window.app.massDeleteProducts()" style="color:var(--red)">Удалить</button>
       <button class="btn" onclick="window.app.selectedProducts.clear(); window.app.renderActionBar(); window.app.renderDashboard()" style="margin-left:auto;border:none;background:transparent">✕ Снять</button>
@@ -1937,7 +1926,7 @@ export class App {
     const boxList = boxes.get();
     el.innerHTML = boxList.map(b => `
       <div class="box-item ${b.id === this.activeBoxId ? 'active' : ''}" onclick="window.app.selectBox('${b.id}')" onmouseenter="window.app.preloadBox('${b.id}')">
-        <div class="box-emoji" style="font-size:24px;width:32px">${this.esc(b.sticker || '📦')}</div>
+        <div class="box-emoji" style="font-size:24px;width:32px">${b.sticker ? this.esc(b.sticker) : I.box('', 24)}</div>
         <div class="box-meta">
           <div class="box-name" style="font-size:15px;font-weight:500">${this.esc(b.name)}</div>
           <div class="box-count" id="mbc-${b.id}" style="font-size:12px;margin-top:2px">...</div>
@@ -2015,14 +2004,7 @@ export class App {
   getActiveGroupName(): string | null { return this.navigation.getActiveGroupName(); }
   toggleMarketplaces() { return this.navigation.toggleMarketplaces(); }
   toggleOrders() { return this.navigation.toggleOrders(); }
-  async navigateTo(
-    page: 'home' | 'products' | 'analytics' | 'settings-hub' | 'settings' | 'profile' | 'orders' | 'marketplaces'
-        | 'ozon' | 'yandex' | 'wb'
-        | 'orders-ozon' | 'orders-yandex' | 'orders-wb'
-        | 'repricer' | 'stock' | 'catalog'
-        | 'sku-audit' | 'reviews' | 'chats' | 'logs' | 'automation' | 'tasks',
-    opts: { loadAll?: boolean } = {},
-  ) { return this.navigation.navigateTo(page, opts); }
+  async navigateTo(page: AppPage, opts: { loadAll?: boolean } = {}) { return this.navigation.navigateTo(page, opts); }
 
 
   // ── HOME DASHBOARD (delegates -> modules/HomeDashboardModule.ts) ─────────

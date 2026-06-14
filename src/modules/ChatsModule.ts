@@ -18,6 +18,7 @@ import { WbStore } from '@/types/wb';
 import { OzonStore } from '@/types/ozon';
 import { YandexStore } from '@/types/yandex';
 import { esc } from '@/utils/format';
+import { I } from '@/utils/icons';
 
 type Mp = 'wb' | 'ozon' | 'yandex';
 
@@ -366,7 +367,7 @@ export class ChatsModule {
           const msgs = await ozonApi.getChatHistory(creds, chat.id, 1);
           const last = msgs[msgs.length - 1];
           if (last) {
-            chat.lastMessage = last.text || (last.attachments?.length ? '📎 Фото' : '');
+            chat.lastMessage = last.text || (last.attachments?.length ? `${I.paperclip('', 14)} Фото` : '');
             if (!chat.lastTime && last.created_at) chat.lastTime = last.created_at;
           }
           // Ozon создаёт чат автоматически на каждый заказ — показываем его только
@@ -400,7 +401,7 @@ export class ChatsModule {
           const msgs = await yandexApi.getChatHistory(apiKey, campaignId, chat.id, undefined, 1);
           const last = msgs[msgs.length - 1];
           if (last) {
-            chat.lastMessage = last.text || (last.attachments?.length ? '📎 Фото' : '');
+            chat.lastMessage = last.text || (last.attachments?.length ? `${I.paperclip('', 14)} Фото` : '');
             if (!chat.lastTime && last.createdAt) chat.lastTime = last.createdAt;
           }
           // Показываем чат, только если нашли настоящее сообщение — иначе он
@@ -751,7 +752,7 @@ export class ChatsModule {
           </div>
         ` : ae.error ? `
           <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;text-align:center">
-            <div style="font-size:32px">⚠️</div>
+            <div style="font-size:32px">${I.alertTriangle('', 32)}</div>
             <div style="font-size:14px;font-weight:600;color:var(--text)">Не удалось загрузить чаты</div>
             <div style="font-size:12px;color:var(--text2);max-width:480px;white-space:pre-wrap">${esc(ae.error)}</div>
             ${ae.mp === 'wb' ? `
@@ -891,7 +892,7 @@ export class ChatsModule {
 
     if (this.messagesError) return `
       <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px;text-align:center">
-        <div style="font-size:28px">⚠️</div>
+        <div style="font-size:28px">${I.alertTriangle('', 28)}</div>
         <div style="font-size:13px;color:var(--text2);max-width:420px;white-space:pre-wrap">${esc(this.messagesError)}</div>
         <button onclick="window.chatsModule.openChat('${this.activeChatId}')"
           style="margin-top:6px;padding:7px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;font-size:12px">
@@ -914,7 +915,7 @@ export class ChatsModule {
       if (!atts || atts.length === 0) return '';
       const items = atts.map(a => {
         if (!IMG_RE.test(a.url) && !IMG_RE.test(a.name) && !DATA_IMG_RE.test(a.url)) {
-          return `<a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;background:rgba(0,0,0,.06);font-size:12px;color:inherit;text-decoration:none">📎 ${esc(a.name || 'Файл')}</a>`;
+          return `<a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;background:rgba(0,0,0,.06);font-size:12px;color:inherit;text-decoration:none">${I.paperclip('', 12)} ${esc(a.name || 'Файл')}</a>`;
         }
         if (OZON_FILE_RE.test(a.url)) {
           // Без авторизованного запроса картинка по прямому URL не загрузится — показываем
@@ -1024,7 +1025,7 @@ export class ChatsModule {
           style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;flex-shrink:0;
             border:1px solid ${isOn ? STATUS_COLOR[status] : 'var(--border)'};border-radius:50%;
             background:${isOn ? STATUS_COLOR[status] + '22' : 'var(--bg)'};color:${STATUS_COLOR[status]};cursor:pointer;font-size:14px">
-          ${status === 'yellow' ? '🟡' : '🔴'}
+          ${status === 'yellow' ? I.yandex('', 14) : I.alertCircle('', 14)}
         </button>
       `;
     };
@@ -1083,7 +1084,7 @@ export class ChatsModule {
           <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--border);border-radius:10px;background:var(--bg2);max-width:280px">
             ${this.pendingAttachment.mime.startsWith('image/')
               ? `<img src="${esc(this.pendingAttachment.dataUrl)}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;flex-shrink:0">`
-              : `<span style="font-size:16px;flex-shrink:0">📎</span>`}
+              : `<span style="font-size:16px;flex-shrink:0">${I.paperclip('', 16)}</span>`}
             <span style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1">${esc(this.pendingAttachment.name)}</span>
             <button onclick="window.chatsModule.clearAttachment()" title="Убрать вложение"
               style="display:flex;align-items:center;justify-content:center;width:20px;height:20px;flex-shrink:0;

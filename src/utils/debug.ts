@@ -46,23 +46,23 @@ class DebugLogger {
   }
 
   log(message: string, data?: unknown): void {
-    this.out('log', '🔍 [DEBUG]', message, data);
+    this.out('log', '[DEBUG]', message, data);
   }
 
   error(message: string, error?: unknown): void {
-    this.out('error', '❌ [ERROR]', message, error);
+    this.out('error', '[ERROR]', message, error);
   }
 
   warn(message: string, data?: unknown): void {
-    this.out('warn', '⚠️ [WARN]', message, data);
+    this.out('warn', '[WARN]', message, data);
   }
 
   api(method: string, endpoint: string, data?: unknown): void {
-    this.out('log', '🌐 [API]', `${method} ${endpoint}`, data);
+    this.out('log', '[API]', `${method} ${endpoint}`, data);
   }
 
   state(action: string, data?: unknown): void {
-    this.out('log', '📦 [STATE]', action, data);
+    this.out('log', '[STATE]', action, data);
   }
 
   /**
@@ -75,11 +75,11 @@ class DebugLogger {
     try {
       const result = await fn();
       const ms = (performance.now() - start).toFixed(1);
-      console.log(`⚡ [PERF] ${label}: ${ms}ms`);
+      console.log(`[PERF] ${label}: ${ms}ms`);
       return result;
     } catch (e) {
       const ms = (performance.now() - start).toFixed(1);
-      console.error(`⚡ [PERF] ${label} FAILED after ${ms}ms`, e);
+      console.error(`[PERF] ${label} FAILED after ${ms}ms`, e);
       throw e;
     }
   }
@@ -89,10 +89,10 @@ class DebugLogger {
     if (!this._enabled) return 0;
     if (startTime !== undefined) {
       const duration = performance.now() - startTime;
-      console.log(`⚡ [PERF] ${label}: ${duration.toFixed(2)}ms`);
+      console.log(`[PERF] ${label}: ${duration.toFixed(2)}ms`);
       return 0;
     }
-    console.log(`⚡ [PERF] Starting ${label}...`);
+    console.log(`[PERF] Starting ${label}...`);
     return performance.now();
   }
 }

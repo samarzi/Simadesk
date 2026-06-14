@@ -12,6 +12,7 @@ import { ozonApi } from '@/services/ozonApi';
 import { helpBtn } from '@/services/helpModal';
 import { yandexApi } from '@/services/yandexApi';
 import { autoReplyDb } from '@/services/autoReplyDb';
+import { I } from '@/utils/icons';
 import { WbStore } from '@/types/wb';
 import { OzonStore } from '@/types/ozon';
 import { YandexStore } from '@/types/yandex';
@@ -31,7 +32,7 @@ const MP_LABEL: Record<Mp, string>  = { wb: 'WB', ozon: 'Ozon', yandex: 'ЯМ' }
  * Запись хранится 7 дней, потом API точно подхватит ответ.
  */
 const REPLIED_CACHE_KEY = 'reviews_replied_ids';
-const REPLIED_TTL_MS = 7 * 24 * 3600_000; // 7 дней
+const REPLIED_TTL_MS = 30 * 24 * 3600_000; // 30 дней
 
 function getRepliedCache(): Map<string, { text: string; ts: number }> {
   try {
@@ -338,12 +339,12 @@ export class ReviewsModule {
     if (count > 0) {
       e.countUnanswered = e.reviews.filter(r => !r.answered).length;
       this.render();
-      try { window.app?.toast?.(`🤖 Авто-ответы отправлены на ${count} отзыв(ов)${errors > 0 ? `, ошибок: ${errors}` : ''}`, 'success'); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
+      try { window.app?.toast?.(`${I.bot()} Авто-ответы отправлены на ${count} отзыв(ов)${errors > 0 ? `, ошибок: ${errors}` : ''}`, 'success'); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
       setTimeout(() => { this.loadReviews(e.mp, e.storeId).catch((e) => debug.warn('[ReviewsModule] swallowed error', e)); }, 3000);
     } else if (errors > 0 && lastError) {
       // НИ ОДНОГО успеха — показываем причину в toast и в e.error
       const shortMsg = lastError.length > 250 ? lastError.slice(0, 250) + '…' : lastError;
-      try { window.app?.toast?.(`❌ Авто-ответ ${MP_LABEL[e.mp]}: ${shortMsg.split('\\n')[0]}`, 'error', 8000); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
+      try { window.app?.toast?.(`${I.xCircle('', 16)} Авто-ответ ${MP_LABEL[e.mp]}: ${shortMsg.split('\\n')[0]}`, 'error', 8000); } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
       e.error = `Авто-ответ не удался для ${errors} отзыв(ов):\n${shortMsg}`;
       this.render();
     }
@@ -576,7 +577,7 @@ export class ReviewsModule {
               style="display:flex;align-items:center;gap:6px;padding:7px 14px;border:1px solid var(--border);
                 border-radius:8px;background:${autoReplyDb.getSettings().enabled ? '#16a34a18' : 'var(--bg)'};
                 color:${autoReplyDb.getSettings().enabled ? '#16a34a' : 'var(--text)'};cursor:pointer;font-size:13px;font-weight:600">
-              <span style="font-size:13px">🤖</span> Авто-ответы
+              ${I.bot('', 13)} Авто-ответы
               ${autoReplyDb.getSettings().enabled ? '<span style="font-size:9px;background:#16a34a;color:#fff;padding:1px 6px;border-radius:8px;font-weight:700">ВКЛ</span>' : ''}
             </button>
             ${ae && !ae.loading ? `
@@ -667,7 +668,7 @@ export class ReviewsModule {
           <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:32px 24px">
             ${ae.mp === 'wb' && (ae.error.includes('нет доступа') || ae.error.includes('401') || ae.error.includes('403') || ae.error.includes('проверьте')) ? `
               <div style="max-width:480px;text-align:center">
-                <div style="font-size:40px;margin-bottom:12px">🔑</div>
+                <div style="font-size:40px;margin-bottom:12px">${I.key('', 40)}</div>
                 <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px">WB: нужен специальный токен для отзывов</div>
                 <div style="font-size:13px;color:var(--text2);line-height:1.7;margin-bottom:16px">
                   Wildberries использует <b>отдельный API-токен</b> для доступа к отзывам.<br>
@@ -691,14 +692,14 @@ export class ReviewsModule {
                   </button>
                 </div>
               </div>
-            ` : ae.error.includes('Seller Premium') || ae.error.includes('тарифным планом') || ae.error.includes('Ozon Review API') || ae.error.includes('not available with existing') || ae.error.includes('Premium Plus') ? `
+            ` : ae.error.includes('Seller Premium') || ae.error.includes('тарифным планом') || ae.error.includes('Ozon Review API') || ae.error.includes('not available with existing') || ae.error.includes('Premium Plus') || ae.error.includes('Premium Pro') ? `
               <div style="max-width:420px;text-align:center">
-                <div style="font-size:40px;margin-bottom:12px">🔒</div>
+                <div style="font-size:40px;margin-bottom:12px">${I.lock('', 40)}</div>
                 <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:8px">
                   API отзывов недоступен
                 </div>
                 <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:16px">
-                  API отзывов Ozon доступен только на тарифе <b>Premium Plus</b>.<br>
+                  API отзывов Ozon доступен только на тарифе <b>Premium Pro</b>.<br>
                   Перейдите в кабинет Ozon → Настройки → API-ключи и пересоздайте ключ после подключения тарифа.
                 </div>
                 <div style="font-size:12px;color:var(--text2);background:var(--bg);border:1px solid var(--border);
@@ -709,7 +710,7 @@ export class ReviewsModule {
               </div>
             ` : `
               <div style="max-width:400px;text-align:center">
-                <div style="font-size:36px;margin-bottom:12px">⚠️</div>
+                <div style="font-size:36px;margin-bottom:12px">${I.alertTriangle('', 36)}</div>
                 <div style="font-size:14px;font-weight:700;color:#dc2626;margin-bottom:8px">Ошибка загрузки отзывов</div>
                 <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:16px;
                   background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;text-align:left">
@@ -833,7 +834,7 @@ export class ReviewsModule {
                   border:1px solid var(--border);background:var(--bg)">
             ` : `
               <div style="width:36px;height:36px;border-radius:7px;flex-shrink:0;display:flex;align-items:center;
-                justify-content:center;background:var(--bg3);font-size:14px">📦</div>
+                justify-content:center;background:var(--bg3);font-size:14px">${I.package('', 14)}</div>
             `}
             <div style="flex:1;min-width:0">
               <div style="font-size:12.5px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;
@@ -922,7 +923,7 @@ export class ReviewsModule {
                     </div>
                     <button onclick="window.reviewsModule.openTemplatesQuick(${r.rating})"
                       style="padding:3px 8px;border:1px solid var(--border);background:var(--bg2);color:var(--text);
-                        border-radius:5px;cursor:pointer;font-size:10px;font-weight:600">⚙ Управление</button>
+                        border-radius:5px;cursor:pointer;font-size:10px;font-weight:600">${I.settings('', 10)} Управление</button>
                   </div>
                   ${matching.length > 0 ? `
                     <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:5px">
@@ -932,7 +933,7 @@ export class ReviewsModule {
                           style="padding:5px 11px;border-radius:6px;border:1px solid ${MP_COLOR[r.mp]}40;
                             background:${MP_COLOR[r.mp]}10;cursor:pointer;font-size:11.5px;color:var(--text);max-width:240px;
                             overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500">
-                          💬 ${this.esc(t.text.slice(0, 35))}${t.text.length > 35 ? '…' : ''}
+                          ${I.messageCircle('', 12)} ${this.esc(t.text.slice(0, 35))}${t.text.length > 35 ? '…' : ''}
                         </button>
                       `).join('')}
                     </div>` : `
@@ -968,19 +969,19 @@ export class ReviewsModule {
                 oninput="window.reviewsModule.updateReplyText('${r.id}',this.value)"
               >${this.replyText}</textarea>
               ${this.replyError ? `
-                <div style="font-size:12px;color:#dc2626;margin-top:5px">⚠ ${this.replyError}</div>` : ''}
+                <div style="font-size:12px;color:#dc2626;margin-top:5px">${I.alertTriangle('', 12)} ${this.replyError}</div>` : ''}
               <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
                 <button onclick="window.reviewsModule.submitReply('${r.mp}','${r.storeId}','${r.id}',${r.campaignId ?? 'undefined'})"
                   ${this.replying ? 'disabled' : ''}
                   style="padding:8px 18px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;
                     background:${MP_COLOR[r.mp]};color:#fff;opacity:${this.replying ? '.6' : '1'}">
-                  ${this.replying ? 'Отправка…' : '📤 Отправить'}
+                  ${this.replying ? 'Отправка…' : `${I.upload('', 13)} Отправить`}
                 </button>
                 <button onclick="window.reviewsModule.saveAsTemplate('${r.id}',${r.rating})"
                   style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);
                     cursor:pointer;font-size:12px;background:var(--bg2);color:var(--text);font-weight:500"
                   title="Сохранить текущий текст как шаблон для ${r.rating}★">
-                  💾 В шаблоны
+                  ${I.save('', 12)} В шаблоны
                 </button>
                 <button onclick="window.reviewsModule.cancelReply()"
                   style="padding:8px 14px;border-radius:8px;border:1px solid var(--border);
@@ -992,7 +993,7 @@ export class ReviewsModule {
               <button onclick="window.reviewsModule.openReply('${r.id}')"
                 style="padding:7px 16px;border-radius:8px;border:1.5px solid #f97316;
                   cursor:pointer;font-size:12px;font-weight:600;color:#f97316;background:#f9731620">
-                💬 Ответить
+                ${I.messageCircle('', 12)} Ответить
               </button>
             `}
           </div>
@@ -1012,153 +1013,249 @@ export class ReviewsModule {
 
     const modal = document.createElement('div');
     modal.id = 'autoreply-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)';
     modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
 
-    const ratingsRow = (tpl: { ratings: number[] }) =>
-      [1,2,3,4,5].map(r => `<span style="font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;
-        background:${tpl.ratings.includes(r) ? '#f59e0b' : 'var(--bg2)'};
-        color:${tpl.ratings.includes(r) ? '#fff' : 'var(--text2)'}">${r}★</span>`).join(' ');
+    const ratingColor = (r: number) => r >= 4 ? '#16a34a' : r === 3 ? '#d97706' : '#dc2626';
+
+    const tplRatingBadges = (tpl: { ratings: number[] }) =>
+      [1,2,3,4,5].map(r => {
+        const active = tpl.ratings.includes(r);
+        const c = ratingColor(r);
+        return `<span style="display:inline-flex;align-items:center;justify-content:center;
+          width:28px;height:22px;border-radius:5px;font-size:11px;font-weight:700;
+          background:${active ? c : 'var(--bg3,var(--bg2))'};
+          color:${active ? '#fff' : 'var(--text2)'};
+          border:1.5px solid ${active ? c : 'transparent'}">${r}★</span>`;
+      }).join('');
 
     modal.innerHTML = `
-      <div style="background:var(--bg);border-radius:16px;width:100%;max-width:680px;max-height:92vh;
-        overflow:auto;padding:24px;box-shadow:0 24px 64px rgba(0,0,0,.3)">
+      <div style="background:var(--bg);border-radius:20px;width:100%;max-width:700px;max-height:90vh;
+        overflow:hidden;display:flex;flex-direction:column;box-shadow:0 32px 80px rgba(0,0,0,.35)">
 
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
-          <div>
-            <div style="font-size:18px;font-weight:700">🤖 Авто-ответы на отзывы</div>
-            <div style="font-size:12px;color:var(--text2);margin-top:3px">
-              Шаблоны автоматически отправляются после загрузки отзывов · выбирается случайный из подходящих
+        <!-- HEADER -->
+        <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);
+          display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="width:42px;height:42px;border-radius:12px;
+              background:linear-gradient(135deg,#16a34a,#22c55e);
+              display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">${I.bot('', 22)}</div>
+            <div>
+              <div style="font-size:17px;font-weight:700;color:var(--text)">Авто-ответы на отзывы</div>
+              <div style="font-size:12px;color:var(--text2);margin-top:2px">
+                Автоматически отвечает на новые отзывы при загрузке страницы
+              </div>
             </div>
           </div>
           <button onclick="document.getElementById('autoreply-modal').remove()"
-            style="width:32px;height:32px;border:none;background:var(--bg2);color:var(--text);border-radius:8px;cursor:pointer;font-size:16px">✕</button>
+            style="width:34px;height:34px;border:none;background:var(--bg2);color:var(--text2);
+              border-radius:9px;cursor:pointer;font-size:18px;display:flex;align-items:center;
+              justify-content:center;flex-shrink:0;transition:background .15s"
+            onmouseover="this.style.background='var(--bg3,#e5e7eb)'"
+            onmouseout="this.style.background='var(--bg2)'">✕</button>
         </div>
 
-        <!-- MASTER SWITCH -->
-        <div style="padding:14px 16px;background:var(--bg2);border-radius:12px;margin-bottom:10px;
-          display:flex;align-items:center;justify-content:space-between">
-          <div>
-            <div style="font-size:14px;font-weight:600">Включить авто-ответы</div>
-            <div style="font-size:11px;color:var(--text2);margin-top:2px">Главный выключатель — действует после нажатия «Сохранить»</div>
-          </div>
-          <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer">
-            <input type="checkbox" id="ar-master" ${settings.enabled ? 'checked' : ''}
-              style="opacity:0;width:0;height:0"
-              onchange="
-                const track=this.nextElementSibling;
-                const circle=track.firstElementChild;
-                track.style.background=this.checked?'#16a34a':'#cbd5e1';
-                circle.style.left=this.checked?'23px':'3px';
-                const w=document.getElementById('ar-warning');
-                if(w)w.style.display=this.checked?'flex':'none';
-              ">
-            <span style="position:absolute;inset:0;background:${settings.enabled ? '#16a34a' : '#cbd5e1'};border-radius:24px;transition:background .2s">
-              <span style="position:absolute;height:18px;width:18px;left:${settings.enabled ? '23px' : '3px'};top:3px;background:#fff;border-radius:50%;transition:left .2s"></span>
-            </span>
-          </label>
-        </div>
+        <!-- SCROLLABLE BODY -->
+        <div style="flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px">
 
-        <!-- Предупреждение при включении -->
-        <div id="ar-warning" style="display:${!settings.enabled ? 'none' : 'none'};align-items:flex-start;gap:8px;
-          padding:10px 14px;background:#f59e0b18;border:1px solid #f59e0b40;border-radius:10px;margin-bottom:10px;font-size:12px">
-          <span style="font-size:16px;flex-shrink:0">⚠️</span>
-          <div>
-            <b>Авто-ответ будет применён и к уже существующим отзывам без ответа</b> в текущем списке.
-            Это произойдёт при следующей загрузке отзывов. Убедитесь что шаблоны настроены правильно перед сохранением.
-          </div>
-        </div>
-
-        <!-- API статусы -->
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;padding:8px 12px;background:var(--bg2);border-radius:10px;font-size:11px">
-          <span style="color:var(--muted)">Статус API:</span>
-          <span style="color:#f59e0b">🟡 WB — API отзывов требует тарифа с доступом (часто недоступен)</span>
-          <span style="color:#f97316">🟠 Ozon — требует Seller Premium для авто-ответов</span>
-          <span style="color:#16a34a">🟢 ЯМ — работает через API</span>
-        </div>
-
-        <!-- RATING TOGGLES -->
-        <div style="margin-bottom:14px">
-          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">
-            Отвечать на отзывы с рейтингом:
-          </div>
-          <div style="display:flex;gap:6px">
-            ${[1,2,3,4,5].map(r => `
-              <label style="flex:1;cursor:pointer">
-                <input type="checkbox" data-rating="${r}" ${settings.enabledByRating[r] ? 'checked' : ''}
-                  style="display:none"
-                  onchange="this.closest('label').querySelector('div').style.border='2px solid '+(this.checked?'#f59e0b':'var(--border)')">
-                <div style="padding:10px;border:2px solid ${settings.enabledByRating[r] ? '#f59e0b' : 'var(--border)'};
-                  border-radius:10px;text-align:center;background:${settings.enabledByRating[r] ? '#fff7ed' : 'var(--bg)'};
-                  transition:.15s">
-                  <div style="font-size:18px;font-weight:800;color:${settings.enabledByRating[r] ? '#f59e0b' : 'var(--text2)'}">${r}★</div>
-                </div>
-              </label>
-            `).join('')}
-          </div>
-        </div>
-
-        <!-- MP TOGGLES -->
-        <div style="margin-bottom:18px">
-          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">
-            Маркетплейсы:
-          </div>
-          <div style="display:flex;gap:6px">
-            ${(['wb','ozon','yandex'] as Mp[]).map(mp => `
-              <label style="flex:1;cursor:pointer">
-                <input type="checkbox" data-mp="${mp}" ${settings.enabledByMp[mp] ? 'checked' : ''}
-                  style="display:none"
-                  onchange="this.closest('label').querySelector('div').style.border='2px solid '+(this.checked?'${MP_COLOR[mp]}':'var(--border)')">
-                <div style="padding:10px;border:2px solid ${settings.enabledByMp[mp] ? MP_COLOR[mp] : 'var(--border)'};
-                  border-radius:10px;text-align:center;background:${settings.enabledByMp[mp] ? MP_BG[mp] : 'var(--bg)'};
-                  font-weight:600;color:${settings.enabledByMp[mp] ? MP_COLOR[mp] : 'var(--text2)'}">
-                  ${mp === 'wb' ? 'Wildberries' : mp === 'ozon' ? 'Ozon' : 'Яндекс Маркет'}
-                </div>
-              </label>
-            `).join('')}
-          </div>
-        </div>
-
-        <!-- TEMPLATES LIST -->
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">
-            Шаблоны ответов (${templates.length})
-          </div>
-          <button onclick="window.reviewsModule.addTemplate()"
-            style="padding:6px 12px;border:1px solid var(--accent);background:var(--accent);color:#000;
-              border-radius:8px;cursor:pointer;font-size:12px;font-weight:600">+ Новый шаблон</button>
-        </div>
-        <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.5">
-          💡 Добавляйте несколько шаблонов для одного рейтинга — система случайным образом выберет один из них при ответе.
-          Это позволит избежать одинаковых ответов под разными отзывами.
-        </div>
-
-        <div id="ar-templates-list" style="display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;padding-right:4px">
-          ${templates.length === 0 ? `
-            <div style="padding:30px;text-align:center;color:var(--text2);font-size:13px">
-              Шаблонов пока нет. Добавьте первый, чтобы система могла отвечать автоматически.
+          <!-- MASTER SWITCH -->
+          <div id="ar-master-card" style="padding:16px 18px;border-radius:14px;
+            background:${settings.enabled ? '#f0fdf4' : 'var(--bg2)'};
+            border:2px solid ${settings.enabled ? '#16a34a40' : 'var(--border)'};
+            display:flex;align-items:center;justify-content:space-between;gap:16px;transition:.2s">
+            <div>
+              <div id="ar-master-title" style="font-size:14px;font-weight:700;
+                color:${settings.enabled ? '#16a34a' : 'var(--text)'}">
+                ${settings.enabled ? `${I.checkCircle('', 14)} Авто-ответы включены` : `${I.circleDot('', 14)} Авто-ответы выключены`}
+              </div>
+              <div style="font-size:12px;color:var(--text2);margin-top:3px;line-height:1.4">
+                ${settings.enabled
+                  ? 'Система отвечает на новые отзывы автоматически'
+                  : 'Включите, чтобы система автоматически отвечала на новые отзывы'}
+              </div>
             </div>
-          ` : templates.map(t => `
-            <div style="padding:12px 14px;background:var(--bg2);border-radius:10px;border:1px solid var(--border)">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px">
-                <div style="display:flex;gap:3px;align-items:center">${ratingsRow(t)}</div>
-                <div style="display:flex;gap:4px">
-                  <button onclick="window.reviewsModule.editTemplate('${t.id}')"
-                    style="padding:4px 10px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:6px;cursor:pointer;font-size:11px">✎ Изм.</button>
-                  <button onclick="window.reviewsModule.deleteTemplate('${t.id}')"
-                    style="padding:4px 10px;border:1px solid #fecaca;background:#fef2f2;color:#dc2626;border-radius:6px;cursor:pointer;font-size:11px">✕ Уд.</button>
+            <label style="position:relative;display:inline-block;width:52px;height:28px;cursor:pointer;flex-shrink:0">
+              <input type="checkbox" id="ar-master" ${settings.enabled ? 'checked' : ''}
+                style="opacity:0;width:0;height:0"
+                onchange="
+                  const on=this.checked;
+                  const track=this.nextElementSibling;
+                  const circle=track.firstElementChild;
+                  track.style.background=on?'#16a34a':'#94a3b8';
+                  circle.style.left=on?'27px':'3px';
+                  const card=document.getElementById('ar-master-card');
+                  const title=document.getElementById('ar-master-title');
+                  if(card){card.style.background=on?'#f0fdf4':'var(--bg2)';card.style.borderColor=on?'#16a34a40':'var(--border)';}
+                  if(title){title.style.color=on?'#16a34a':'var(--text)';title.innerHTML=on?'${I.checkCircle('', 14)} Авто-ответы включены':'${I.circleDot('', 14)} Авто-ответы выключены';}
+                ">
+              <span style="position:absolute;inset:0;background:${settings.enabled ? '#16a34a' : '#94a3b8'};
+                border-radius:28px;transition:background .2s">
+                <span style="position:absolute;height:22px;width:22px;
+                  left:${settings.enabled ? '27px' : '3px'};top:3px;
+                  background:#fff;border-radius:50%;transition:left .2s;
+                  box-shadow:0 2px 5px rgba(0,0,0,.25)"></span>
+              </span>
+            </label>
+          </div>
+
+          <!-- RATINGS + MARKETPLACES ROW -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+
+            <!-- Ratings -->
+            <div style="background:var(--bg2);border-radius:14px;padding:16px">
+              <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:10px;
+                text-transform:uppercase;letter-spacing:.6px">Отвечать на рейтинги</div>
+              <div style="display:flex;gap:5px">
+                ${[1,2,3,4,5].map(r => {
+                  const c = ratingColor(r);
+                  const on = settings.enabledByRating[r];
+                  return `
+                    <label style="flex:1;cursor:pointer;text-align:center">
+                      <input type="checkbox" data-rating="${r}" ${on ? 'checked' : ''}
+                        style="display:none"
+                        onchange="
+                          const on=this.checked;
+                          const c='${c}';
+                          const d=this.parentElement.querySelector('div');
+                          d.style.border='2px solid '+(on?c:'var(--border)');
+                          d.style.background=on?c+'18':'var(--bg)';
+                          d.style.color=on?c:'var(--text2)';
+                        ">
+                      <div style="padding:9px 4px;border:2px solid ${on ? c : 'var(--border)'};
+                        border-radius:9px;background:${on ? c + '18' : 'var(--bg)'};
+                        color:${on ? c : 'var(--text2)'};font-weight:800;font-size:14px;
+                        transition:.15s;user-select:none;line-height:1">${r}★</div>
+                    </label>`;
+                }).join('')}
+              </div>
+            </div>
+
+            <!-- Marketplaces -->
+            <div style="background:var(--bg2);border-radius:14px;padding:16px">
+              <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:10px;
+                text-transform:uppercase;letter-spacing:.6px">Маркетплейсы</div>
+              <div style="display:flex;flex-direction:column;gap:6px">
+                ${(['wb','ozon','yandex'] as Mp[]).map(mp => {
+                  const on = settings.enabledByMp[mp];
+                  return `
+                    <label style="cursor:pointer;display:flex;align-items:center;gap:8px;
+                      padding:7px 10px;border:1.5px solid ${on ? MP_COLOR[mp] : 'var(--border)'};
+                      border-radius:9px;background:${on ? MP_BG[mp] : 'var(--bg)'};transition:.15s">
+                      <input type="checkbox" data-mp="${mp}" ${on ? 'checked' : ''}
+                        style="display:none"
+                        onchange="
+                          const on=this.checked;
+                          const c='${MP_COLOR[mp]}';const bg='${MP_BG[mp]}';
+                          const lbl=this.parentElement;
+                          lbl.style.borderColor=on?c:'var(--border)';
+                          lbl.style.background=on?bg:'var(--bg)';
+                          const nm=lbl.querySelector('[data-nm]');const st=lbl.querySelector('[data-st]');
+                          if(nm)nm.style.color=on?c:'var(--text)';
+                          if(st){st.textContent=on?'ВКЛ':'ВЫКЛ';st.style.background=on?c:'var(--bg3,#e5e7eb)';st.style.color=on?'#fff':'var(--text2)';}
+                        ">
+                      <span style="display:inline-flex;align-items:center;justify-content:center;
+                        width:22px;height:22px;border-radius:6px;background:${MP_COLOR[mp]};
+                        font-size:8px;font-weight:900;color:#fff;font-family:Arial;flex-shrink:0">${MP_LABEL[mp]}</span>
+                      <span data-nm style="font-size:13px;font-weight:600;
+                        color:${on ? MP_COLOR[mp] : 'var(--text)'};flex:1">
+                        ${mp === 'wb' ? 'Wildberries' : mp === 'ozon' ? 'Ozon' : 'Яндекс Маркет'}
+                      </span>
+                      <span data-st style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;
+                        background:${on ? MP_COLOR[mp] : 'var(--bg3,#e5e7eb)'};
+                        color:${on ? '#fff' : 'var(--text2)'}">
+                        ${on ? 'ВКЛ' : 'ВЫКЛ'}
+                      </span>
+                    </label>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+
+          <!-- TEMPLATES -->
+          <div style="background:var(--bg2);border-radius:14px;padding:16px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+              <div>
+                <div style="font-size:13px;font-weight:700;color:var(--text)">
+                  Шаблоны ответов
+                  <span style="font-size:12px;font-weight:500;color:var(--text2);margin-left:5px">${templates.length} шт.</span>
+                </div>
+                <div style="font-size:11px;color:var(--text2);margin-top:2px">
+                  При авто-ответе выбирается случайный подходящий шаблон
                 </div>
               </div>
-              <div style="font-size:12.5px;color:var(--text);line-height:1.5;white-space:pre-wrap">${this.esc(t.text)}</div>
+              <button onclick="window.reviewsModule.addTemplate()"
+                style="display:flex;align-items:center;gap:5px;padding:7px 14px;border:none;
+                  background:#16a34a;color:#fff;border-radius:9px;cursor:pointer;
+                  font-size:12px;font-weight:600;flex-shrink:0;transition:opacity .15s"
+                onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Добавить
+              </button>
             </div>
-          `).join('')}
+
+            <div id="ar-templates-list"
+              style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;
+                margin-top:12px;padding-right:2px">
+              ${templates.length === 0 ? `
+                <div style="padding:28px 20px;text-align:center;background:var(--bg);border-radius:10px;
+                  border:2px dashed var(--border)">
+                  <div style="font-size:28px;margin-bottom:6px">${I.messageCircle('', 28)}</div>
+                  <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px">Шаблонов нет</div>
+                  <div style="font-size:12px;color:var(--text2)">
+                    Добавьте хотя бы один шаблон — и система сможет отвечать автоматически
+                  </div>
+                </div>
+              ` : templates.map(t => `
+                <div style="padding:11px 13px;background:var(--bg);border-radius:10px;
+                  border:1px solid var(--border);display:flex;gap:10px;align-items:flex-start">
+                  <div style="flex:1;min-width:0">
+                    <div style="display:flex;gap:3px;margin-bottom:7px;flex-wrap:wrap">
+                      ${tplRatingBadges(t)}
+                    </div>
+                    <div style="font-size:12.5px;color:var(--text);line-height:1.5;
+                      display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">
+                      ${this.esc(t.text)}
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:4px;flex-shrink:0;margin-top:1px">
+                    <button onclick="window.reviewsModule.editTemplate('${t.id}')"
+                      style="width:30px;height:30px;border:1px solid var(--border);background:var(--bg2);
+                        color:var(--text2);border-radius:7px;cursor:pointer;font-size:14px;
+                        display:flex;align-items:center;justify-content:center"
+                      title="Редактировать">✎</button>
+                    <button onclick="window.reviewsModule.deleteTemplate('${t.id}')"
+                      style="width:30px;height:30px;border:1px solid #fecaca;background:#fef2f2;
+                        color:#dc2626;border-radius:7px;cursor:pointer;font-size:14px;
+                        display:flex;align-items:center;justify-content:center"
+                      title="Удалить">✕</button>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
         </div>
 
-        <div style="margin-top:18px;display:flex;justify-content:flex-end;gap:8px">
-          <button onclick="document.getElementById('autoreply-modal').remove()"
-            style="padding:8px 16px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:8px;cursor:pointer">Отмена</button>
-          <button onclick="window.reviewsModule.saveAutoReplySettings()"
-            style="padding:8px 20px;border:none;background:#16a34a;color:#fff;border-radius:8px;cursor:pointer;font-weight:600">💾 Сохранить</button>
+        <!-- FOOTER -->
+        <div style="padding:14px 24px;border-top:1px solid var(--border);
+          display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:var(--bg)">
+          <div style="font-size:11px;color:var(--text2)">
+            ${I.lightbulb('', 11)} Несколько шаблонов для одного рейтинга — выбирается случайный
+          </div>
+          <div style="display:flex;gap:8px">
+            <button onclick="document.getElementById('autoreply-modal').remove()"
+              style="padding:8px 18px;border:1px solid var(--border);background:var(--bg);
+                color:var(--text);border-radius:9px;cursor:pointer;font-size:13px">
+              Отмена
+            </button>
+            <button onclick="window.reviewsModule.saveAutoReplySettings()"
+              style="padding:8px 24px;border:none;background:#16a34a;color:#fff;
+                border-radius:9px;cursor:pointer;font-weight:600;font-size:13px">
+              ${I.save('', 13)} Сохранить
+            </button>
+          </div>
         </div>
       </div>
     `;
@@ -1200,23 +1297,7 @@ export class ReviewsModule {
           this.runAutoReply(entry).catch((e) => debug.warn('[ReviewsModule] swallowed error', e));
         }
       }
-      // При включении — показываем что сейчас пройдёт по всем без ответа
-      setTimeout(() => {
-        const unanswered = this.allReviews().filter(r => !r.answered).length;
-        if (unanswered > 0) {
-          // Небольшое уведомление
-          const toast = document.createElement('div');
-          toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:10px 20px;background:#1f2937;color:#fff;border-radius:10px;font-size:13px;z-index:9999;max-width:400px;text-align:center';
-          toast.textContent = `✅ Авто-ответ включён. Будет применён к ${unanswered} отзывам без ответа при следующей загрузке.`;
-          document.body.appendChild(toast);
-          setTimeout(() => toast.remove(), 4000);
-        }
-      }, 300);
     }
-  }
-
-  private allReviews(): UnifiedReview[] {
-    return this.entries.flatMap(e => e.reviews || []);
   }
 
   addTemplate(): void {
@@ -1266,7 +1347,7 @@ export class ReviewsModule {
             style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;
               background:var(--bg);color:var(--text);font-size:13px;line-height:1.5;resize:vertical;box-sizing:border-box">${existing ? this.esc(existing.text) : ''}</textarea>
           <div style="font-size:11px;color:var(--text2);margin-top:4px">
-            💡 Совет: создайте 3–4 разных шаблона для одного рейтинга — будут отправляться по очереди случайным образом.
+            ${I.lightbulb('', 11)} Совет: создайте 3–4 разных шаблона для одного рейтинга — будут отправляться по очереди случайным образом.
           </div>
         </div>
 

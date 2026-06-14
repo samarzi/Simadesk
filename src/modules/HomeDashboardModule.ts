@@ -1,4 +1,5 @@
 import { debug } from '@/utils/debug';
+import { I } from '@/utils/icons';
 import { authService } from '../services/authService';
 import { esc as escHtml } from '../utils/format';
 import type { App } from '../App';
@@ -357,6 +358,7 @@ export class HomeDashboardModule {
 
     const btn = document.getElementById('cmd-refresh-btn');
     btn?.classList.add('spinning');
+    try {
 
     const { ozonDb } = await import('../services/ozonDb');
     const { yandexDb } = await import('../services/yandexDb');
@@ -418,7 +420,7 @@ export class HomeDashboardModule {
       // Нет магазинов
       const html = `
         <div class="cmd-empty-state">
-          <div class="cmd-empty-icon">🔌</div>
+          <div class="cmd-empty-icon">${I.plug('',24)}</div>
           <div class="cmd-empty-title">Магазины не подключены</div>
           <div class="cmd-empty-sub">Подключи Ozon, Яндекс Маркет или Wildberries — и здесь появится вся важная инфа в реальном времени.</div>
           <button class="btn btn-primary" onclick="window.app.navigateTo('marketplaces')" style="margin-top:16px">Подключить →</button>
@@ -675,7 +677,7 @@ export class HomeDashboardModule {
         ? '<div class="cmd-empty-small" style="color:#16a34a">✓ Все заказы в работе</div>'
         : `
           <div class="cmd-urgent-summary">
-            ⚡ <b>${urgent.length}</b> заказ${urgent.length === 1 ? '' : urgent.length < 5 ? 'а' : 'ов'} требуют отгрузки
+            ${I.zap('', 16)} <b>${urgent.length}</b> заказ${urgent.length === 1 ? '' : urgent.length < 5 ? 'а' : 'ов'} требуют отгрузки
           </div>
           ${urgent.map(o => `
             <div class="cmd-action-item" onclick="window.app.navigateTo('orders-${o.mp === 'ozon' ? 'ozon' : o.mp === 'yandex' ? 'yandex' : 'wb'}')">
@@ -804,15 +806,16 @@ export class HomeDashboardModule {
     // Update timestamp
     const ts = document.getElementById('cmd-last-update');
     if (ts) ts.textContent = 'только что';
-    btn?.classList.remove('spinning');
-    this._liveDataFetching = false;
-    this._liveDataCache = true; // Mark cache as valid
+    this._liveDataCache = true;
     this._liveDataCacheTime = Date.now();
-    // Cycle "X сек назад" каждые 10 сек
     setTimeout(() => {
       const el = document.getElementById('cmd-last-update');
       if (el && this.app.currentPage === 'home') el.textContent = '10 сек назад';
     }, 10000);
+    } finally {
+      btn?.classList.remove('spinning');
+      this._liveDataFetching = false;
+    }
   }
 
   /** Применяет кэшированные live-данные (KPI обновление без сетевых запросов) */

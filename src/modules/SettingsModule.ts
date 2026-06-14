@@ -109,7 +109,7 @@ export class SettingsModule {
               </div>
               <div class="settings-row-desc">
                 Расширение для Chrome нужно для автоматизации складов/тарифов на WB, Ozon, Яндекс Маркете,
-                а также для сбора реальной цены покупателя на Яндекс Маркете (МРЦ-репрайсер).
+
               </div>
             </div>
             <a href="/simadesk-extension.zip" download class="btn btn-primary" style="text-decoration:none;white-space:nowrap">

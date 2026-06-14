@@ -39,19 +39,29 @@ interface StoreCache {
 
 const PREFIX = 'cat_cache_v2_';
 
+// In-memory cache of parsed localStorage entries — getProduct()/resolveDims() are called
+// once per (store × product) during buildUnified, which would otherwise re-parse the
+// entire store blob from localStorage thousands of times and noticeably lag the UI.
+const memCache = new Map<string, StoreCache | null>();
+
 // ── Core cache operations ─────────────────────────────────────────────────────
 
 export const catalogCache = {
   get(storeId: string): StoreCache | null {
+    if (memCache.has(storeId)) return memCache.get(storeId)!;
+    let parsed: StoreCache | null = null;
     try {
       const raw = localStorage.getItem(PREFIX + storeId);
-      return raw ? (JSON.parse(raw) as StoreCache) : null;
-    } catch { return null; }
+      parsed = raw ? (JSON.parse(raw) as StoreCache) : null;
+    } catch { parsed = null; }
+    memCache.set(storeId, parsed);
+    return parsed;
   },
 
   set(storeId: string, products: CachedProduct[]): void {
+    const entry: StoreCache = { storeId, syncedAt: new Date().toISOString(), products };
+    memCache.set(storeId, entry);
     try {
-      const entry: StoreCache = { storeId, syncedAt: new Date().toISOString(), products };
       localStorage.setItem(PREFIX + storeId, JSON.stringify(entry));
     } catch (e) { console.warn('[catalogCache] set:', e); }
   },
@@ -75,10 +85,12 @@ export const catalogCache = {
     const existing = cache.products.find(p => p.vendorCode.trim().toLowerCase() === key);
     if (existing) existing.photos = photos;
     else cache.products.push({ vendorCode, mpId: '', weight_g: null, length_mm: null, width_mm: null, height_mm: null, photos, description: '', barcode: '' });
+    memCache.set(storeId, cache);
     try { localStorage.setItem(PREFIX + storeId, JSON.stringify(cache)); } catch (e) { debug.warn('[catalogCache] swallowed error', e); }
   },
 
   clear(storeId: string): void {
+    memCache.delete(storeId);
     localStorage.removeItem(PREFIX + storeId);
   },
 };
@@ -91,7 +103,8 @@ export async function syncOzonStore(
 ): Promise<void> {
   // Fetch full product info with dimensions (same as Товары sync)
   const dbProducts = await fetchAllOzonProducts(store);
-  if (!dbProducts.length) { catalogCache.set(store.id, []); return; }
+  // If API returned empty (rate-limit, 429, network error) — keep existing cache
+  if (!dbProducts.length) return;
 
   onProgress?.(dbProducts.length / 2, dbProducts.length);
 
@@ -123,7 +136,8 @@ export async function syncYmStore(
 
   // Fetch full product info with dimensions (same as Товары sync)
   const dbProducts = await fetchAllYandexProducts(store);
-  if (!dbProducts.length) { catalogCache.set(store.id, []); return; }
+  // If API returned empty (rate-limit, 429, network error) — keep existing cache
+  if (!dbProducts.length) return;
 
   onProgress?.(dbProducts.length / 2, dbProducts.length);
 
@@ -153,7 +167,8 @@ export async function syncWbStore(
 ): Promise<void> {
   // Fetch full WB products with dimensions (same as Товары sync)
   const dbProducts = await fetchAllWbProducts(store);
-  if (!dbProducts.length) { catalogCache.set(store.id, []); return; }
+  // If API returned empty (rate-limit, 429, network error) — keep existing cache
+  if (!dbProducts.length) return;
 
   try { await wbDb.replaceStoreProducts(store.id, dbProducts); } catch (e) { console.warn('[catalogCache] wb DB save failed:', e); }
 

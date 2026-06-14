@@ -60,7 +60,13 @@ async function ozonPost<T>(
       },
       body: JSON.stringify(body),
     });
-    if (res.ok) return res.json() as Promise<T>;
+    if (res.ok) {
+      const ct = res.headers.get('content-type') ?? '';
+      if (res.status === 204 || !ct.includes('application/json')) {
+        try { return await res.json() as T; } catch { return undefined as T; }
+      }
+      return res.json() as Promise<T>;
+    }
     const text = await res.text();
     if (!quiet) console.error(`[Ozon] ${endpoint} → ${res.status}:`, text.slice(0, 300));
     lastErr = new Error(`Ozon ${res.status} (${endpoint}): ${text.slice(0, 150)}`);
@@ -422,7 +428,8 @@ export const ozonApi = {
       let resp: any;
       try {
         resp = await ozonPost<any>('/v5/product/info/prices', body, creds);
-      } catch {
+      } catch (e: any) {
+        console.error('[Ozon] overlayPrices /v5/product/info/prices error:', e?.message ?? e);
         break;
       }
       const items: any[] = resp.result?.items || [];
@@ -464,7 +471,8 @@ export const ozonApi = {
       let resp: any;
       try {
         resp = await ozonPost<any>('/v4/product/info/stocks', body, creds);
-      } catch {
+      } catch (e: any) {
+        console.error('[Ozon] overlayStocks /v4/product/info/stocks error:', e?.message ?? e);
         break;
       }
       // API v4 returns {items, total, cursor} at top level
@@ -551,7 +559,6 @@ export const ozonApi = {
 
   // ── Fetch buyer prices (marketing_price) for specific offer_ids ──────────
   // /v5/product/info/prices returns the actual price shown to buyer after Ozon discounts.
-  // Used by the MRC auto-scan to detect how much Ozon has discounted.
   async getMarketingPrices(
     offerIds: string[],
     creds: Creds,
@@ -757,6 +764,15 @@ export const ozonApi = {
     }
   },
 
+  // ── Update product barcode via /v1/product/update/barcodes ───────────────
+  async updateBarcode(creds: Creds, sku: number, barcode: string): Promise<void> {
+    const resp = await ozonPost<any>('/v1/product/update/barcodes', {
+      barcodes: [{ sku, barcode }],
+    }, creds);
+    const errors: any[] = resp?.errors ?? [];
+    if (errors.length) throw new Error(errors.map((e: any) => e.error ?? e.message ?? String(e)).join('; '));
+  },
+
   // ── Reviews ──────────────────────────────────────────────────────────────
   /**
    * Ozon Review List API (требует Seller Premium):
@@ -790,7 +806,7 @@ export const ozonApi = {
       const resp = await ozonPost<any>('/v1/review/list', body, creds).catch((err: any) => {
         const msg = String(err?.message ?? '');
         if (msg.includes('subscription') || msg.includes('PermissionDenied') || msg.includes('403') || msg.includes('Forbidden') || msg.includes('not available')) {
-          throw new Error('Ozon Review API: доступ запрещён сервером Ozon.\n\nПричины: 1) ваш тариф не включает API отзывов (нужен Premium Plus); 2) API-ключ создан ДО подключения тарифа — пересоздайте его в seller.ozon.ru → Настройки → API-ключи; 3) Premium ещё не активирован полностью (обычно до 24ч).\n\nТочный ответ Ozon: "not available with existing subscription".');
+          throw new Error('Ozon Review API: доступ запрещён сервером Ozon.\n\nПричины: 1) ваш тариф не включает API отзывов (нужен Premium Pro); 2) API-ключ создан ДО подключения тарифа — пересоздайте его в seller.ozon.ru → Настройки → API-ключи; 3) Premium ещё не активирован полностью (обычно до 24ч).\n\nТочный ответ Ozon: "not available with existing subscription".');
         }
         throw err;
       });
@@ -955,8 +971,7 @@ export const ozonApi = {
 
   /**
    * Убрать товары из всех активных акций Ozon.
-   * Используется для MRC-правил: если товар участвует в акции, Ozon снижает цену
-   * ниже МРЦ. Вызывать ДО обновления цены.
+
    * productIds — внутренние Ozon product_id (не offer_id).
    */
   async removeProductsFromAllPromos(creds: Creds, productIds: number[]): Promise<void> {

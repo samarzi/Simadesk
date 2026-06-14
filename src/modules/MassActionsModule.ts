@@ -3,6 +3,7 @@ import { boxes, boxActions } from '../stores/appStore';
 import { apiService } from '../services/api';
 import { esc as escHtml } from '../utils/format';
 import { App } from '../App';
+import { I } from '@/utils/icons';
 
 /** Массовые операции с товарами, синхронизация каталога с МП, массовое заполнение колонки. */
 export class MassActionsModule {
@@ -222,7 +223,7 @@ export class MassActionsModule {
 
     if (!ozonStores.length && !ymStores.length && !wbStores.length) {
       this.app.openModal(
-        '🔄 Синхронизация с маркетплейсом',
+        `${I.refresh('', 16)} Синхронизация с маркетплейсом`,
         'Нет подключённых магазинов',
         `<div style="padding:20px 0;text-align:center;color:var(--muted);font-size:13px">
           Сначала подключите магазин в разделе <b>Настройки → Маркетплейсы</b>.
@@ -251,8 +252,8 @@ export class MassActionsModule {
           const secLeft = Math.ceil((until - Date.now()) / 1000);
           if (secLeft > 0) {
             const minLeft = Math.ceil(secLeft / 60);
-            cooldownBanner = `<div style="font-size:11px;color:#b45309;background:#fef9c3;border:1px solid #fde68a;border-radius:6px;padding:4px 8px;margin-top:4px">
-              ⏳ WB заблокировал запросы ещё ~${minLeft} мин.
+            cooldownBanner =           `<div style="font-size:11px;color:#b45309;background:#fef9c3;border:1px solid #fde68a;border-radius:6px;padding:4px 8px;margin-top:4px">
+              ${I.hourglass('', 14)} WB заблокировал запросы ещё ~${minLeft} мин.
               <button onclick="event.stopPropagation();window.app.clearWbCooldownAndSync('wb','${s.id}',this.closest('.mp-sync-row').querySelector('button.btn-primary'))"
                 style="margin-left:8px;padding:2px 8px;border:1px solid #b45309;background:transparent;color:#b45309;border-radius:5px;cursor:pointer;font-size:11px;font-weight:600">
                 Сбросить и попробовать
@@ -278,13 +279,13 @@ export class MassActionsModule {
     };
 
     const storeRows = [
-      ...ozonStores.map((s: any) => renderRow('🟠', 'Ozon', 'ozon', s)),
-      ...ymStores.map((s: any)   => renderRow('🟡', 'ЯМ',   'ym',   s)),
-      ...wbStores.map((s: any)   => renderRow('🟣', 'WB',   'wb',   s)),
+      ...ozonStores.map((s: any) => renderRow(I.ozon('', 16), 'Ozon', 'ozon', s)),
+      ...ymStores.map((s: any)   => renderRow(I.yandex('', 16), 'ЯМ',   'ym',   s)),
+      ...wbStores.map((s: any)   => renderRow(I.wb('', 16), 'WB',   'wb',   s)),
     ].join('');
 
     this.app.openModal(
-      '🔄 Синхронизация с маркетплейсом',
+      `${I.refresh('', 16)} Синхронизация с маркетплейсом`,
       'Загружает все товары со всеми атрибутами — как импорт шаблона, но автоматически',
       `<div>
         ${storeRows}
@@ -308,7 +309,7 @@ export class MassActionsModule {
   async runMpSync(source: 'ozon' | 'ym' | 'wb', storeId: string, btn: HTMLButtonElement) {
     // Блокируем все кнопки на время синхронизации
     document.querySelectorAll<HTMLButtonElement>('.mp-sync-row button').forEach(b => { b.disabled = true; });
-    btn.textContent = '⏳ Загружаем...';
+    btn.innerHTML = `${I.hourglass('', 14)} Загружаем...`;
 
     const progressEl = document.getElementById('mp-sync-progress');
     const stageEl = document.getElementById('mp-sync-stage');
@@ -346,7 +347,7 @@ export class MassActionsModule {
         result = await syncWbStore(store, onProgress);
       }
 
-      if (stageEl) stageEl.textContent = '✅ Синхронизация завершена!';
+      if (stageEl) stageEl.innerHTML = `${I.checkCircle('', 16)} Синхронизация завершена!`;
       if (barEl) barEl.style.width = '100%';
       if (countEl) countEl.textContent = `Добавлено: ${result.created}, обновлено: ${result.updated}`;
 
@@ -354,7 +355,7 @@ export class MassActionsModule {
       await boxActions.loadBoxes();
       this.app.renderBoxes();
 
-      this.app.toast(`✅ ${result.boxName}: ${result.created} добавлено, ${result.updated} обновлено`, 'success', 5000);
+      this.app.toast(`${I.checkCircle('', 16)} ${result.boxName}: ${result.created} добавлено, ${result.updated} обновлено`, 'success', 5000);
 
       // Переходим в синхронизированную группу
       if (result.boxId) {
@@ -367,15 +368,15 @@ export class MassActionsModule {
       const isRateLimit = /429|rate.?limit|rate-limited/i.test(e.message ?? '');
       if (stageEl) {
         if (isRateLimit && source === 'wb') {
-          stageEl.innerHTML = `❌ WB заблокировал запросы (лимит 429). Подождите пару минут или сбросьте блокировку.<br>
+          stageEl.innerHTML = `${I.xCircle('', 16)} WB заблокировал запросы (лимит 429). Подождите пару минут или сбросьте блокировку.<br>
             <button id="wb-clear-cooldown-btn" style="margin-top:8px;padding:6px 14px;border:1.5px solid var(--accent);background:var(--accent-pale,#fff8e1);color:var(--text);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600">
-              🔓 Сбросить блокировку и повторить
+              ${I.lock} Сбросить блокировку и повторить
             </button>`;
           document.getElementById('wb-clear-cooldown-btn')?.addEventListener('click', () => {
             this.clearWbCooldownAndSync(source, storeId, btn);
           });
         } else {
-          stageEl.textContent = `❌ Ошибка: ${e.message}`;
+          stageEl.innerHTML = `${I.xCircle('', 16)} Ошибка: ${e.message}`;
         }
       }
       if (barEl) barEl.style.color = 'var(--red)';
@@ -389,7 +390,7 @@ export class MassActionsModule {
     const { clearWbCooldown } = await import('../services/wbApi');
     clearWbCooldown();
     const stageEl = document.getElementById('mp-sync-stage');
-    if (stageEl) stageEl.textContent = '🔓 Блокировка снята. Запускаем синхронизацию...';
+    if (stageEl) stageEl.innerHTML = `${I.lock('', 16)} Блокировка снята. Запускаем синхронизацию...`;
     await this.runMpSync(source, storeId, btn);
   }
 
@@ -472,7 +473,7 @@ export class MassActionsModule {
     if (!targets.length) { this.app.toast('Нет подходящих товаров', 'info'); return; }
 
     const btn = document.querySelector<HTMLButtonElement>('.btn.btn-primary');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Применяем...'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = `${I.hourglass('', 14)} Применяем...`; }
 
     let done = 0;
     const CHUNK = 50;
@@ -486,7 +487,7 @@ export class MassActionsModule {
       }));
     }
 
-    this.app.toast(`✅ Заполнено ${done} товаров: «${col.replace('*','')}» = «${value}»`, 'success', 5000);
+    this.app.toast(`${I.checkCircle('', 16)} Заполнено ${done} товаров: «${col.replace('*','')}» = «${value}»`, 'success', 5000);
     this.app.closeModal();
     this.app.buildColumns();
     this.app.applyFilters();

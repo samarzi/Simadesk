@@ -1,4 +1,5 @@
 import { Order, MP_SHORT, MP_COLOR } from '../types';
+import { I } from '@/utils/icons';
 import { computeSkuPerformance } from '../services/kpiAggregator';
 import { fmtMoney, fmtNum, escapeHtml } from '../components/format';
 
@@ -63,7 +64,7 @@ function _renderProductsTabUncached(orders: Order[], f: ProductsFilters): string
     <div class="an2-card" style="padding:0;overflow:hidden">
       ${skus.length === 0 ? `
         <div class="an2-empty">
-          <div class="emoji">📦</div>
+          <div class="emoji">${I.package('',24)}</div>
           <h3>Нет товаров</h3>
           <p>За выбранный период не было продаж — или фильтр слишком жёсткий.</p>
         </div>

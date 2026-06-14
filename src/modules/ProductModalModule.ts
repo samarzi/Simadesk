@@ -7,6 +7,7 @@ import { costPriceDb } from '../services/costPriceDb';
 import { dimensionsDb } from '../services/dimensionsDb';
 import { repricerRulesDb } from '../services/repricerRulesDb';
 import type { App } from '../App';
+import { I } from '@/utils/icons';
 
 /** Просмотр/редактирование/удаление товара, push изменений на Ozon (см. App.ts). */
 export class ProductModalModule {
@@ -72,7 +73,7 @@ export class ProductModalModule {
       <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px">
         ${mpInfo.map((info: any) => `
           <div style="display:flex;align-items:center;gap:4px;padding:3px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:10px">
-            <span>${info.mp === 'ozon' ? '🟠' : info.mp === 'ym' || info.mp === 'yandex' ? '🟡' : '🟣'}</span>
+            <span>${info.mp === 'ozon' ? I.ozon : info.mp === 'ym' || info.mp === 'yandex' ? I.yandex : I.wb}</span>
             <span style="font-weight:600">${escHtml(info.storeName || info.mp)}</span>
             ${info.fulfillment ? `<span style="opacity:.6">${info.fulfillment}</span>` : ''}
           </div>`).join('')}
@@ -118,7 +119,7 @@ export class ProductModalModule {
       const costVal = costPriceDb.get(art);
       const repricerSection = `
         <div style="padding:10px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-bottom:10px">
-          <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">💰 Репрайсер</div>
+          <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">${I.dollarSign} Репрайсер</div>
           <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
             <div>
               <div style="font-size:10px;color:var(--muted);margin-bottom:2px">Себестоимость</div>
@@ -148,7 +149,7 @@ export class ProductModalModule {
 
       const fboBanner = isFBO ? `
         <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;font-size:11px;color:var(--muted)">
-          <span>🏭</span> FBO — остатки управляются маркетплейсом
+          <span>${I.server}</span> FBO — остатки управляются маркетплейсом
         </div>` : '';
 
       // Разбиваем на секции для лучшей читаемости
@@ -168,7 +169,7 @@ export class ProductModalModule {
       const fmtCm = (mm: number|null) => mm != null ? `${(mm/10).toFixed(1).replace('.0','')} см` : '—';
       const dimsSection = dims && (dims.weight_g != null || dims.length_mm != null) ? `
         <div style="padding:10px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-bottom:10px">
-          <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📦 Габариты и вес</div>
+          <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">${I.package} Габариты и вес</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px">
             <div>
               <div style="font-size:10px;color:var(--muted);margin-bottom:2px">Вес</div>
@@ -185,7 +186,7 @@ export class ProductModalModule {
         </div>
       ` : `
         <div style="padding:10px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-bottom:10px">
-          <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">📦 Габариты и вес</div>
+          <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${I.package} Габариты и вес</div>
           <div style="font-size:12px;color:var(--muted)">Не задано — нажми «Редактировать» чтобы указать вес и размеры</div>
         </div>
       `;
@@ -256,7 +257,7 @@ export class ProductModalModule {
 
       let inputHtml: string;
       if (locked) {
-        const reason = isRepricerLocked ? '💚 репрайсер' : isFboLocked ? '🏭 FBO' : 'только чтение';
+        const reason = isRepricerLocked ? `${I.heart} репрайсер` : isFboLocked ? `${I.server} FBO` : 'только чтение';
         inputHtml = `<div style="display:flex;align-items:center;gap:6px">
           <div style="flex:1;padding:5px 8px;background:${isRepricerLocked ? '#16a34a10' : 'var(--bg3)'};border-radius:6px;border:1px solid ${isRepricerLocked ? '#16a34a30' : 'var(--border)'};font-size:12px;color:var(--text2)">${escHtml(String(v??''))}</div>
           <span style="font-size:10px;color:var(--muted)">${reason}</span>
@@ -311,7 +312,7 @@ export class ProductModalModule {
             ${photoFields.map((pf, idx) => `
               <div class="edit-photo-row" style="display:flex;align-items:center;gap:8px" data-photo-idx="${idx}">
                 <div style="width:44px;height:44px;border-radius:6px;background:var(--bg3);flex-shrink:0;overflow:hidden;border:1px solid var(--border)">
-                  ${pf.url ? `<img src="${escHtml(pf.url)}" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">` : `<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:16px;color:var(--muted)">${idx === 0 ? '🖼' : '+'}</div>`}
+                  ${pf.url ? `<img src="${escHtml(pf.url)}" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">` : `<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:16px;color:var(--muted)">${idx === 0 ? I.image : '+'}</div>`}
                 </div>
                 <input class="edit-photo-inp" data-photo-slot="${idx}" value="${escHtml(pf.url)}"
                   placeholder="${idx === 0 ? 'Главное фото — URL' : `Доп. фото ${idx} — URL`}"
@@ -374,7 +375,7 @@ export class ProductModalModule {
     const costForEdit = costPriceDb.get(art);
     const repricerEditSection = `
       <div style="margin-bottom:14px">
-        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">💰 Репрайсер</div>
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${I.dollarSign} Репрайсер</div>
         <div style="display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
           <div style="font-size:11px;color:var(--text2);padding-top:2px">Себестоимость</div>
           <div style="display:flex;align-items:center;gap:6px">
@@ -394,7 +395,7 @@ export class ProductModalModule {
     const dimsForEdit = dimensionsDb.get(art);
     const dimsEditSection = `
       <div style="margin-bottom:14px">
-        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">📦 Габариты и вес (Ozon: мм + г)</div>
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${I.package} Габариты и вес (Ozon: мм + г)</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div>
             <div style="font-size:10px;color:var(--muted);margin-bottom:3px">Вес, г</div>
@@ -427,9 +428,9 @@ export class ProductModalModule {
       ${photoSection}
       ${repricerEditSection}
       ${dimsEditSection}
-      ${section('Основные данные', mainEntries, '📋')}
-      ${section('Характеристики', extraEntries, '🏷')}
-      ${section('Описание', descEntries, '📝')}
+      ${section('Основные данные', mainEntries, I.clipboard('', 16))}
+      ${section('Характеристики', extraEntries, I.tag('', 16))}
+      ${section('Описание', descEntries, I.type('', 16))}
       ${addFieldSection}
     `;
 
@@ -440,7 +441,7 @@ export class ProductModalModule {
       </div>`,
       editBody,
       `<button class="btn" onclick="window.app.viewProduct('${id}','view')">✗ Отмена</button>
-       <button class="btn btn-primary" onclick="window.app.saveProduct('${id}')" style="margin-left:auto">💾 Сохранить</button>`
+       <button class="btn btn-primary" onclick="window.app.saveProduct('${id}')" style="margin-left:auto">${I.save} Сохранить</button>`
     );
   }
 
@@ -453,7 +454,7 @@ export class ProductModalModule {
     const url = inp.value.trim();
     imgWrap.innerHTML = url
       ? `<img src="${escHtml(url)}" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`
-      : `<div style="display:flex;align-items:center;justify-content:height:100%;font-size:16px;color:var(--muted)">${idx === 0 ? '🖼' : '+'}</div>`;
+      : `<div style="display:flex;align-items:center;justify-content:height:100%;font-size:16px;color:var(--muted)">${idx === 0 ? I.image : '+'}</div>`;
   }
 
   /** Загрузка фото с ПК */
@@ -479,7 +480,7 @@ export class ProductModalModule {
       if (url.startsWith('data:')) {
         this.app.toast('⚠ Storage недоступен — фото сохранено локально. Для синхронизации с МП нужен URL.', 'info', 5000);
       } else {
-        this.app.toast('✅ Фото загружено', 'success', 2000);
+        this.app.toast(`${I.checkCircle('', 16)} Фото загружено`, 'success', 2000);
       }
     } catch (e: any) {
       this.app.toast('Ошибка загрузки фото: ' + e.message, 'error');
@@ -574,13 +575,13 @@ export class ProductModalModule {
 
       if (isMpSynced) {
         // Новые авто-синхронизированные группы — полный push всех атрибутов
-        this.app.toast('⏳ Отправляем изменения на маркетплейс...', 'info', 2000);
+        this.app.toast(`${I.hourglass('', 16)} Отправляем изменения на маркетплейс...`, 'info', 2000);
         import('../services/mpProductPush').then(async ({ pushProductChanges }) => {
           try {
             const res = await pushProductChanges(data, prevData);
             if (!res) return;
             if (res.ok) {
-              this.app.toast(`✅ Изменения сохранены на ${res.mp === 'ozon' ? 'Ozon' : 'Яндекс Маркет'}`, 'success', 4000);
+              this.app.toast(`${I.checkCircle('', 16)} Изменения сохранены на ${res.mp === 'ozon' ? 'Ozon' : 'Яндекс Маркет'}`, 'success', 4000);
             } else {
               const errMsg = res.errors.slice(0, 2).join(' | ');
               this.app.toast(`⚠ МП: ${errMsg}`, 'error', 6000);

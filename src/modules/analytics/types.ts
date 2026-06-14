@@ -210,6 +210,7 @@ export interface StoreInfo {
   tax_model: TaxModel;
   tax_rate: number;
   fulfillment: string | null;
+  created_at?: string; // ISO — дата добавления магазина в систему
 }
 
 /** Один диапазон дат. */
@@ -219,4 +220,4 @@ export interface DateRange {
 }
 
 /** Период с пресетами. */
-export type PeriodPreset = '7' | '30' | '90' | '180' | '365' | 'custom';
+export type PeriodPreset = '7' | '30' | '90' | '180' | '365' | 'all' | 'custom';

@@ -15,9 +15,10 @@ export interface Task {
   description: string;
   status: 'todo' | 'in_progress' | 'done';
   priority: 'none' | 'blue' | 'yellow' | 'red';
-  due_date: string | null;   // YYYY-MM-DD
-  due_time: string | null;   // HH:MM (start time)
-  end_time: string | null;   // HH:MM (end time)
+  scheduled_date: string | null; // YYYY-MM-DD — когда планирую сделать
+  due_date: string | null;       // YYYY-MM-DD — дедлайн (крайний срок)
+  due_time: string | null;       // HH:MM (start time)
+  end_time: string | null;       // HH:MM (end time)
   all_day: boolean;
   tags: string;              // comma-separated
   sort_order: number;

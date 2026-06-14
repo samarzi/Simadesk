@@ -146,6 +146,10 @@
       <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg></div>
       <span class="dock-label">Остатки</span>
     </div>
+    <div class="dock-item" id="nav-producers" onclick="window.app.navigateTo('producers')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20V8l5 3V8l5 3V8l5 3V4h3v16"/><path d="M2 20h20"/><path d="M6 16h2M11 16h2M16 16h2"/></svg></div>
+      <span class="dock-label">Производители</span>
+    </div>
     <div class="dock-item" id="nav-analytics" onclick="window.app.navigateTo('analytics')">
       <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg></div>
       <span class="dock-label">Аналитика</span>
@@ -379,6 +383,7 @@
     <div id="tasks-section" style="display:none;flex:1;overflow:auto"></div>
     <div id="stock-section" style="display:none;flex:1;overflow:auto"></div>
     <div id="catalog-section" style="display:none;flex:1;overflow:hidden"></div>
+    <div id="producers-section" style="display:none;flex:1;overflow:hidden"></div>
 
     <!-- LOGS -->
     <div id="logs-section" style="display:none;flex:1;flex-direction:column;overflow:hidden"></div>
@@ -393,6 +398,7 @@
     'nav-catalog':      { label: 'Каталог',    page: 'catalog' },
     'nav-orders':       { label: 'Заказы',     page: 'orders' },
     'nav-stock':        { label: 'Остатки',    page: 'stock' },
+    'nav-producers':    { label: 'Производители', page: 'producers' },
     'nav-analytics':    { label: 'Аналитика',  page: 'analytics' },
     'nav-repricer':     { label: 'Репрайсер',  page: 'repricer' },
     'nav-reviews':      { label: 'Отзывы',     page: 'reviews' },
@@ -403,7 +409,7 @@
     'nav-logs':         { label: 'Логи',       page: 'logs' },
   };
   var DEFAULT_CFG = {
-    main:  ['nav-products','nav-catalog','nav-orders','nav-stock','nav-analytics','nav-repricer','nav-reviews','nav-chats'],
+    main:  ['nav-products','nav-catalog','nav-orders','nav-stock','nav-producers','nav-analytics','nav-repricer','nav-reviews','nav-chats'],
     extra: ['nav-marketplaces','nav-sku-audit','nav-automation','nav-logs'],
   };
 

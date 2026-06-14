@@ -14,14 +14,12 @@ const SUPA_URL  = import.meta.env.VITE_SUPA_URL as string;
 const SUPA_KEY  = import.meta.env.VITE_SUPA_KEY as string;
 const WB_PROXY  = `${SUPA_URL}/functions/v1/wb-proxy`;
 
-// 429 не входит в RETRYABLE — не нужно ретраить rate limit
 const RETRYABLE = new Set([500, 502, 503, 504]);
 
-// После 429 блокируем запросы к ЭТОМУ конкретному WB-хосту (у каждого свой rate-limit бакет:
-// stats-api, buyer-chat-api, feedbacks-api, content-api и т.д. — независимы друг от друга).
-// Кулдаун хранится в localStorage по префиксу пути, чтобы пережить reload.
+// Кулдаун — только если все ретраи исчерпаны. WB сам говорит сколько ждать через заголовки,
+// поэтому держим короткий fallback (60 сек) вместо 10 минут.
 const WB_COOLDOWN_KEY = 'wb_cooldown_until_v2';
-const WB_COOLDOWN_MS = 10 * 60_000; // 10 минут — WB блокирует агрессивно
+const WB_COOLDOWN_MS = 60_000; // 1 минута — fallback если заголовки WB не пришли
 
 /** Префикс пути вида "/wb-stats/..." → "wb-stats". */
 function prefixOf(path: string): string {
@@ -83,7 +81,7 @@ async function wbFetch<T>(
   apiKey: string,
   body?: unknown,
   signal?: AbortSignal,
-  retries = 5,
+  retries = 8,
 ): Promise<T> {
   // Быстрый фейл если мы в кулдауне после 429 (для этого конкретного хоста)
   const prefix = prefixOf(path);
@@ -121,6 +119,8 @@ async function wbFetch<T>(
     }
 
     if (res.ok) {
+      // Успешный ответ — сбрасываем кулдаун для этого префикса
+      if (wbCooldowns[prefix]) { delete wbCooldowns[prefix]; writeCooldowns(wbCooldowns); }
       const text = await res.text();
       try { return text ? JSON.parse(text) : ({} as T); }
       catch { return text as any; }
@@ -129,8 +129,22 @@ async function wbFetch<T>(
     const text = await res.text();
 
     if (res.status === 429) {
-      setCooldown(prefix); // persistent cooldown в localStorage на 10 минут (только для этого хоста)
-      lastErr = new Error(`WB 429: rate-limited на 10 мин`);
+      // WB сообщает точное время ожидания в заголовках:
+      // X-Ratelimit-Retry — через сколько секунд можно слать следующий запрос
+      // X-Ratelimit-Reset  — через сколько секунд лимит восстановится полностью
+      const retryAfter = Number(
+        res.headers.get('x-ratelimit-retry') ??
+        res.headers.get('retry-after') ??
+        (attempt === 0 ? 5 : attempt === 1 ? 10 : attempt === 2 ? 20 : 40),
+      );
+      console.warn(`[WB API] 429 на ${path} — жду ${retryAfter} сек (попытка ${attempt + 1}/${retries})`);
+      lastErr = new Error(`WB 429: повтор через ${retryAfter} сек`);
+      if (attempt < retries - 1) {
+        await sleep(retryAfter * 1000, signal);
+        continue;
+      }
+      // Все ретраи исчерпаны — короткий кулдаун как last resort
+      setCooldown(prefix);
       throw lastErr;
     }
 
@@ -261,6 +275,9 @@ export const wbApi = {
     updates: {
       dimensions?: { length: number; width: number; height: number };
       photos?: string[];
+      title?: string;
+      brand?: string;
+      description?: string;
     },
   ): Promise<void> {
     // Fetch current card
@@ -282,8 +299,21 @@ export const wbApi = {
         url, mediaType: 'image/jpeg',
       }));
     }
+    if (updates.title !== undefined) updated.title = updates.title;
+    if (updates.brand !== undefined) updated.brand = updates.brand;
+    if (updates.description !== undefined) updated.description = updates.description;
 
     await wbFetch<any>('/wb-content/content/v2/cards/update', 'POST', apiKey, [updated]);
+  },
+
+  /** Получить title/brand/description карточки по nm_id (для ленивой загрузки в редакторе). */
+  async getCardDetails(apiKey: string, nmID: number, signal?: AbortSignal): Promise<{ title: string; brand: string; description: string } | null> {
+    const resp = await wbFetch<any>('/wb-content/content/v2/get/cards/list', 'POST', apiKey, {
+      settings: { cursor: { limit: 1, nmID }, filter: { withPhoto: -1 } },
+    }, signal, 3);
+    const card: any = (resp.cards ?? [])[0];
+    if (!card) return null;
+    return { title: card.title ?? '', brand: card.brand ?? '', description: card.description ?? '' };
   },
 
   /** PUT /api/v3/stocks/{warehouseId} — установить FBS-остатки (по баркодам). */
@@ -386,9 +416,6 @@ export const wbApi = {
     opts: { isAnswered?: boolean; take?: number; skip?: number } = {},
     _signal?: AbortSignal,
   ): Promise<{ feedbacks: WbFeedback[]; countUnanswered: number }> {
-    const take = String(Math.min(opts.take ?? 100, 100)); // WB лимитирует — не больше 100
-    const skip = String(opts.skip ?? 0);
-
     // 1) Сначала проверяем cooldown для wb-feedback (если этот хост уже вернул 429)
     if (isWbCoolingDown('wb-feedback')) {
       const sec = wbCooldownRemaining('wb-feedback');
@@ -396,35 +423,46 @@ export const wbApi = {
     }
 
     // 2) Кэш на 5 минут — защита от повторных кликов и повторных рендеров
-    const cacheKey = `wb_fb_${apiKey.slice(-8)}_${opts.isAnswered}_${take}_${skip}`;
+    const cacheKey = `wb_fb_${apiKey.slice(-8)}_${opts.isAnswered ?? 'all'}`;
     const now = Date.now();
     const cached = wbFeedbackCache.get(cacheKey);
     if (cached && now - cached.ts < 5 * 60_000) {
       return { feedbacks: cached.feedbacks, countUnanswered: cached.countUnanswered };
     }
 
-    const fetchOne = async (isAnswered: boolean): Promise<WbFeedback[]> => {
-      const params = new URLSearchParams({ take, skip, isAnswered: String(isAnswered) });
-      const res = await fetch(`/wb-feedback/api/v1/feedbacks?${params}`, {
-        headers: { 'Authorization': apiKey, 'Accept': 'application/json' },
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        if (res.status === 429) {
-          setCooldown('wb-feedback'); // persistent — переживёт reload страницы
-          throw new Error('WB feedbacks API: лимит запросов исчерпан. Заблокировано на 10 минут.');
+    // Пагинация: WB ограничивает take=100, используем skip для обхода всех страниц
+    const fetchAllPages = async (isAnswered: boolean): Promise<WbFeedback[]> => {
+      const all: WbFeedback[] = [];
+      let pageSkip = opts.skip ?? 0;
+      const MAX_PAGES = 5; // до 500 отзывов на тип (500 без ответа + 500 с ответом = 1000)
+      for (let i = 0; i < MAX_PAGES; i++) {
+        const params = new URLSearchParams({ take: '100', skip: String(pageSkip), isAnswered: String(isAnswered) });
+        const res = await fetch(`/wb-feedback/api/v1/feedbacks?${params}`, {
+          headers: { 'Authorization': apiKey, 'Accept': 'application/json' },
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          if (res.status === 429) {
+            setCooldown('wb-feedback');
+            throw new Error('WB feedbacks API: лимит запросов исчерпан. Заблокировано на 1 минуту.');
+          }
+          if (res.status === 401 || res.status === 403) {
+            throw new Error('WB отзывы: проверьте API-ключ магазина (нет доступа к /feedbacks).');
+          }
+          throw new Error(`WB ${res.status}: ${text || 'нет ответа'}`);
         }
-        if (res.status === 401 || res.status === 403) {
-          throw new Error('WB отзывы: проверьте API-ключ магазина (нет доступа к /feedbacks).');
-        }
-        throw new Error(`WB ${res.status}: ${text || 'нет ответа'}`);
+        const resp = await res.json();
+        const page: WbFeedback[] = resp?.data?.feedbacks ?? resp?.feedbacks ?? [];
+        all.push(...page);
+        if (page.length < 100 || opts.skip !== undefined) break; // один конкретный skip — не пагинируем
+        pageSkip += 100;
+        if (i < MAX_PAGES - 1) await new Promise(r => setTimeout(r, 1000));
       }
-      const resp = await res.json();
-      return resp?.data?.feedbacks ?? resp?.feedbacks ?? [];
+      return all;
     };
 
     if (opts.isAnswered !== undefined) {
-      const feedbacks = await fetchOne(opts.isAnswered);
+      const feedbacks = await fetchAllPages(opts.isAnswered);
       const result = { feedbacks, countUnanswered: feedbacks.filter(f => !f.answer).length };
       wbFeedbackCache.set(cacheKey, { ts: now, ...result });
       return result;
@@ -435,15 +473,14 @@ export const wbApi = {
     let answered: WbFeedback[] = [];
     let firstError: any = null;
     try {
-      unanswered = await fetchOne(false);
+      unanswered = await fetchAllPages(false);
     } catch (e) {
       firstError = e;
-      // Если первый запрос дал 429 — cooldown для wb-feedback активен, второй смысла делать НЕТ
       if (isWbCoolingDown('wb-feedback')) throw e;
     }
     await new Promise(r => setTimeout(r, 1500));
     try {
-      answered = await fetchOne(true);
+      answered = await fetchAllPages(true);
     } catch (e) { if (!firstError) firstError = e; }
     if (unanswered.length === 0 && answered.length === 0 && firstError) throw firstError;
 
@@ -759,7 +796,7 @@ export async function fetchAllWbProducts(
       if (!isFinite(nm)) continue;
       stocksMap.set(nm, (stocksMap.get(nm) ?? 0) + (Number(s.quantity) || 0));
     }
-  } catch { /* остатки опциональны */ }
+  } catch (err: any) { console.error('[WB Stocks] fetch failed:', err?.message ?? err); /* остатки опциональны */ }
 
   // Цены и скидки — отдельный API (discounts-prices), в cards/list их нет
   let pricesMap = new Map<number, { price: number; discount: number; priceWithDisc: number }>();

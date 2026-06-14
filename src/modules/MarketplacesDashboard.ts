@@ -4,6 +4,7 @@
  */
 
 import { ozonDb } from '@/services/ozonDb';
+import { I } from '@/utils/icons';
 import { yandexDb } from '@/services/yandexDb';
 import { wbDb } from '@/services/wbDb';
 import { helpBtn } from '@/services/helpModal';
@@ -182,7 +183,10 @@ export class MarketplacesDashboard {
           const products = await fetchAllOzonProducts(store);
           entry.stage = `Сохраняем ${products.length} товаров...`;
           this.renderSyncPanel();
-          await ozonDb.replaceStoreProducts(store.id, products);
+          // If API returned empty (rate-limit, 429) — keep existing data in DB
+          if (products.length > 0) {
+            await ozonDb.replaceStoreProducts(store.id, products);
+          }
           entry.status = 'done';
           entry.total = products.length;
         } catch (e: any) {
@@ -203,7 +207,10 @@ export class MarketplacesDashboard {
           const products = await fetchAllWbProducts(store);
           entry.stage = `Сохраняем ${products.length} товаров...`;
           this.renderSyncPanel();
-          await wbDb.replaceStoreProducts(store.id, products);
+          // If API returned empty (rate-limit, 429) — keep existing data in DB
+          if (products.length > 0) {
+            await wbDb.replaceStoreProducts(store.id, products);
+          }
           entry.status = 'done';
           entry.total = products.length;
         } catch (e: any) {
@@ -224,7 +231,10 @@ export class MarketplacesDashboard {
           const products = await fetchAllYandexProducts(store);
           entry.stage = `Сохраняем ${products.length} товаров...`;
           this.renderSyncPanel();
-          await yandexDb.replaceStoreProducts(store.id, products);
+          // If API returned empty (rate-limit, 429) — keep existing data in DB
+          if (products.length > 0) {
+            await yandexDb.replaceStoreProducts(store.id, products);
+          }
           entry.status = 'done';
           entry.total = products.length;
         } catch (e: any) {
@@ -260,7 +270,7 @@ export class MarketplacesDashboard {
           try {
             const products = await fetchAllOzonProducts(stores[i]);
             entry.stage = `Сохраняем ${products.length} товаров...`; this.renderSyncPanel();
-            await ozonDb.replaceStoreProducts(stores[i].id, products);
+            if (products.length > 0) await ozonDb.replaceStoreProducts(stores[i].id, products);
             entry.status = 'done'; entry.total = products.length;
           } catch (e: any) { entry.status = 'error'; entry.error = e?.message || String(e); }
           this.render();
@@ -275,7 +285,7 @@ export class MarketplacesDashboard {
           try {
             const products = await fetchAllYandexProducts(stores[i]);
             entry.stage = `Сохраняем ${products.length} товаров...`; this.renderSyncPanel();
-            await yandexDb.replaceStoreProducts(stores[i].id, products);
+            if (products.length > 0) await yandexDb.replaceStoreProducts(stores[i].id, products);
             entry.status = 'done'; entry.total = products.length;
           } catch (e: any) { entry.status = 'error'; entry.error = e?.message || String(e); }
           this.render();
@@ -290,7 +300,7 @@ export class MarketplacesDashboard {
           try {
             const products = await fetchAllWbProducts(stores[i]);
             entry.stage = `Сохраняем ${products.length} товаров...`; this.renderSyncPanel();
-            await wbDb.replaceStoreProducts(stores[i].id, products);
+            if (products.length > 0) await wbDb.replaceStoreProducts(stores[i].id, products);
             entry.status = 'done'; entry.total = products.length;
           } catch (e: any) { entry.status = 'error'; entry.error = e?.message || String(e); }
           this.render();
@@ -324,7 +334,7 @@ export class MarketplacesDashboard {
       </div>
       <div style="display:flex;flex-direction:column;gap:4px">
         ${this.syncLog.map(l => {
-          const icon = l.status === 'done' ? '✅' : l.status === 'error' ? '❌' : l.status === 'syncing' ? '⏳' : '⬜';
+          const icon = l.status === 'done' ? I.checkCircle('', 14) : l.status === 'error' ? I.xCircle('', 14) : l.status === 'syncing' ? I.hourglass('', 14) : '';
           const detail = l.status === 'done'
             ? `<span style="color:var(--text-2);font-size:10px;margin-left:6px">${l.total ?? 0} товаров</span>`
             : l.status === 'error'
@@ -520,7 +530,7 @@ export class MarketplacesDashboard {
           ${isEmpty ? `
             <!-- Пустое состояние -->
             <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 0;gap:10px;text-align:center">
-              <div style="width:48px;height:48px;border-radius:12px;background:rgba(128,128,128,.1);display:flex;align-items:center;justify-content:center;font-size:22px">🔌</div>
+              <div style="width:48px;height:48px;border-radius:12px;background:rgba(128,128,128,.1);display:flex;align-items:center;justify-content:center;font-size:22px">${I.plug('',22)}</div>
               <div style="font-size:13px;font-weight:700;color:var(--text)">Не подключено</div>
               <div style="font-size:12px;color:var(--text-2);max-width:220px;line-height:1.4">Добавьте первый магазин ${m.name} чтобы начать работу</div>
               <button onclick="window.app.navigateTo('${m.page}')"

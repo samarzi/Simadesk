@@ -679,7 +679,7 @@ export class AutomationModule {
             ${warehouses.map((w: any, i: number) => {
               const zoneOk = !isYandex ? (w.zonesCount > 0 ? w.zones.length >= w.zonesCount : true) : true;
               const zoneInfo = !isYandex && w.zonesCount !== undefined ? ` (${w.zones.length}/${w.zonesCount} зон)` : '';
-              const marker = !isYandex && !zoneOk ? ' ⚠' : '';
+              const marker = !isYandex && !zoneOk ? ' [!]' : '';
               return `
               <option value="${i}" ${selectedIdx === i ? 'selected' : ''}>
                 ${marker}${this.esc(w.name)}${isYandex && w.address ? ` — ${this.esc(w.address.substring(0, 60))}` : ''}${zoneInfo}
@@ -695,7 +695,7 @@ export class AutomationModule {
 
           ${!isYandex && selectedIdx >= 0 ? (() => {
             const wh = (warehouses as any[])[selectedIdx];
-            if (!wh || !wh.zones || wh.zones.length === 0) return '<div style="margin-top:8px;font-size:11px;color:#ef4444;font-weight:600">⚠ У этого склада не найдено зон. Попробуйте пересканировать — страница могла не успеть загрузиться.</div>';
+            if (!wh || !wh.zones || wh.zones.length === 0) return '<div style="margin-top:8px;font-size:11px;color:#ef4444;font-weight:600">[!] У этого склада не найдено зон. Попробуйте пересканировать — страница могла не успеть загрузиться.</div>';
             const zoneMissing = wh.zonesCount > 0 && wh.zones.length < wh.zonesCount;
             return `
               ${zoneMissing ? `
@@ -765,7 +765,7 @@ export class AutomationModule {
                 style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;
                   background:var(--bg);color:var(--text);outline:none"/>
               <button id="auto-save-scan-confirm"
-                style="padding:8px 16px;border-radius:6px;border:none;background:#22c55e;color:#fff;
+                style="padding:8px 16px;border-radius:6px;border:none;background:var(--accent);color:#fff;
                   font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">
                 Сохранить
               </button>
@@ -1188,7 +1188,7 @@ export class AutomationModule {
                 <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`}
           <span>Диагностика зон: ${allOk
             ? `✓ Все ${totalZonesFound} зон у ${totalWh} складов найдены`
-            : `⚠ ${problemWh} из ${totalWh} складов — не все зоны открыты (${totalZonesFound}/${totalZonesExpected})`}</span>
+            : `[!] ${problemWh} из ${totalWh} складов — не все зоны открыты (${totalZonesFound}/${totalZonesExpected})`}</span>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             style="width:14px;height:14px;margin-left:auto;transition:transform .2s;
               ${st.ozonShowDiag ? 'transform:rotate(180deg)' : ''}">

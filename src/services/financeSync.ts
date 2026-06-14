@@ -318,7 +318,7 @@ export const financeSync = {
       } catch (e: any) {
         if (e?.name === 'AbortError') throw e;
         const errMsg = e?.message ?? String(e);
-        console.error(`[Ozon Sync] ❌ ${store.name}: ${errMsg}`);
+        console.error(`[Ozon Sync] ${store.name}: ${errMsg}`);
         // Диагностика: частые причины ошибок Ozon Finance API
         if (errMsg.includes('401') || errMsg.includes('Unauthorized')) {
           console.error('[Ozon Sync] Причина: неверный Client-Id или Api-Key, либо ключ не имеет доступа к Finance API. Создайте новый ключ с разрешением "Финансы".');

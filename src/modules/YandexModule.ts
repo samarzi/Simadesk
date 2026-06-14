@@ -6,6 +6,7 @@
  */
 
 import { debug } from '@/utils/debug';
+import { I } from '@/utils/icons';
 import { YandexStore, YandexProduct } from '@/types/yandex';
 import { yandexDb } from '@/services/yandexDb';
 import { yandexApi, fetchAllYandexProducts } from '@/services/yandexApi';
@@ -173,7 +174,7 @@ export class YandexModule {
                     style="width:50px;height:50px;border-radius:6px;object-fit:cover;border:1px solid var(--border);cursor:zoom-in"
                     onerror="this.style.display='none'">
                 </a>`
-              : `<div style="width:50px;height:50px;border-radius:6px;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:18px">📦</div>`
+              : `<div style="width:50px;height:50px;border-radius:6px;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:18px">${I.package('',18)}</div>`
             }
           </td>
           <td>
@@ -254,7 +255,7 @@ export class YandexModule {
 
           ${this.stores.length === 0
             ? `<div class="ym-empty">
-                <div class="ym-empty-icon">🏪</div>
+                <div class="ym-empty-icon">${I.store('',14)}</div>
                 <div class="ym-empty-title">Магазины не подключены</div>
                 <div class="ym-empty-sub">Добавь первый магазин выше</div>
               </div>`
@@ -417,7 +418,10 @@ export class YandexModule {
     this.render();
     try {
       const products = await fetchAllYandexProducts(store);
-      await yandexDb.replaceStoreProducts(storeId, products);
+      // If API returned empty (rate-limit, 429) — keep existing data in DB
+      if (products.length > 0) {
+        await yandexDb.replaceStoreProducts(storeId, products);
+      }
       this.products = await yandexDb.getProducts();
     } catch (err: any) {
       this.lastError = `Синхронизация «${store.name}»: ${err.message ?? err}`;

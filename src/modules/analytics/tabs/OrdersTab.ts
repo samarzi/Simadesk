@@ -1,4 +1,5 @@
 import { Order, OrderStatus, STATUS_LABEL, STATUS_COLOR, MP_SHORT, MP_COLOR } from '../types';
+import { I } from '@/utils/icons';
 import { fmtMoney, fmtDate, fmtNum, escapeHtml } from '../components/format';
 
 export interface OrdersFilters {
@@ -167,7 +168,7 @@ function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
     <div class="an2-card" style="padding:0;overflow:hidden">
       ${filtered.length === 0 ? `
         <div class="an2-empty">
-          <div class="emoji">🔍</div>
+          <div class="emoji">${I.search('',24)}</div>
           <h3>Ничего не найдено</h3>
           <p>Попробуй изменить фильтр или период.</p>
         </div>

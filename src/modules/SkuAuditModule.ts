@@ -6,6 +6,7 @@
  */
 
 import { debug } from '@/utils/debug';
+import { I } from '@/utils/icons';
 import { wbDb } from '@/services/wbDb';
 import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
@@ -358,7 +359,7 @@ export class SkuAuditModule {
               const st = skuEditLog.stats();
               if (st.submitted + st.synced + st.error === 0) return '';
               return `<div style="display:flex;gap:5px;align-items:center;margin-right:8px">
-                ${st.submitted > 0 ? `<span style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:14px;background:#f59e0b18;color:#f59e0b">⏳ ${st.submitted} на модерации</span>` : ''}
+                ${st.submitted > 0 ? `<span style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:14px;background:#f59e0b18;color:#f59e0b">${I.hourglass('', 12)} ${st.submitted} на модерации</span>` : ''}
                 ${st.synced > 0 ? `<span style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:14px;background:#16a34a18;color:#16a34a">✓ ${st.synced} обновлено</span>` : ''}
                 ${st.error > 0 ? `<span style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:14px;background:#dc262618;color:#dc2626">⚠ ${st.error} ошибок</span>` : ''}
               </div>`;
@@ -457,7 +458,7 @@ export class SkuAuditModule {
       return `<span style="display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;padding:2px 7px;border-radius:10px;background:#16a34a18;color:#16a34a" title="Изменения применены ${date}">✓ Обновлено</span>`;
     }
     if (submittedCount > 0) {
-      return `<span style="display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;padding:2px 7px;border-radius:10px;background:#f59e0b18;color:#f59e0b" title="${submittedCount} изм. ожидает модерации МП">⏳ На модерации</span>`;
+      return `<span style="display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;padding:2px 7px;border-radius:10px;background:#f59e0b18;color:#f59e0b" title="${submittedCount} изм. ожидает модерации МП">${I.hourglass('', 10)} На модерации</span>`;
     }
     return '';
   }
@@ -476,7 +477,7 @@ export class SkuAuditModule {
           <div style="display:flex;align-items:center;gap:10px">
             ${item.thumb
               ? `<img src="${item.thumb}" style="width:38px;height:38px;object-fit:cover;border-radius:6px;flex-shrink:0" loading="lazy">`
-              : `<div style="width:38px;height:38px;border-radius:6px;background:var(--bg-2);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px">📷</div>`}
+              : `<div style="width:38px;height:38px;border-radius:6px;background:var(--bg-2);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px">${I.camera('',16)}</div>`}
             <div style="min-width:0;flex:1">
               <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
                 <div style="font-weight:500;font-size:13px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.title}</div>
@@ -561,7 +562,7 @@ export class SkuAuditModule {
             <div style="font-size:12px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">История правок</div>
             ${pending.length > 0 ? `
               <div style="font-size:12px;padding:8px 10px;background:#f59e0b15;border-radius:6px;margin-bottom:5px;color:#f59e0b">
-                ⏳ ${pending.length} изм. отправлено в МП и ждёт модерации.
+                ${I.hourglass('', 12)} ${pending.length} изм. отправлено в МП и ждёт модерации.
                 Нажмите <b>«↻ Обновить из МП»</b> в шапке чтобы проверить применение.
               </div>` : ''}
             ${synced.length > 0 ? `
@@ -601,18 +602,18 @@ export class SkuAuditModule {
 
         ${item.tips.length > 0 ? `
           <div style="margin-bottom:16px">
-            <div style="font-weight:600;font-size:13px;margin-bottom:6px;color:#2563eb">💡 Рекомендации</div>
+            <div style="font-weight:600;font-size:13px;margin-bottom:6px;color:#2563eb">${I.lightbulb('',14)} Рекомендации</div>
             ${item.tips.map(t => `<div style="font-size:13px;padding:5px 10px;background:#2563eb10;border-radius:6px;margin-bottom:4px">• ${t}</div>`).join('')}
           </div>
         ` : ''}
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;margin-bottom:20px">
-          <div style="padding:8px 12px;background:var(--bg-2);border-radius:8px">📷 Фото: <b>${item.photoCount}</b></div>
-          <div style="padding:8px 12px;background:var(--bg-2);border-radius:8px">📝 Название: <b>${item.title.length} симв.</b></div>
-          <div style="padding:8px 12px;background:var(--bg-2);border-radius:8px">🏷 Бренд: <b>${item.brand || '—'}</b></div>
-          <div style="padding:8px 12px;background:var(--bg-2);border-radius:8px">💰 Цена: <b>${item.price ? item.price.toLocaleString('ru') + ' ₽' : '—'}</b></div>
-          <div style="padding:8px 12px;background:var(--bg-2);border-radius:8px">📦 Остаток: <b>${item.stock.toLocaleString('ru')} шт.</b></div>
-          <div style="padding:8px 12px;background:var(--bg-2);border-radius:8px">📂 Категория: <b>${item.category || '—'}</b></div>
+          <div style="padding:8px 12px;background:var(--bg-2);border-radius:8px">${I.camera('',12)} Фото: <b>${item.photoCount}</b></div>
+          <div style="padding:8px 12px;background:var(--bg-2);border-radius:8px">${I.type('',12)} Название: <b>${item.title.length} симв.</b></div>
+          <div style="padding:8px 12px;background:var(--bg-2);border-radius:8px">${I.tag('',12)} Бренд: <b>${item.brand || '—'}</b></div>
+          <div style="padding:8px 12px;background:var(--bg-2);border-radius:8px">${I.dollarSign('',12)} Цена: <b>${item.price ? item.price.toLocaleString('ru') + ' ₽' : '—'}</b></div>
+          <div style="padding:8px 12px;background:var(--bg-2);border-radius:8px">${I.package('',12)} Остаток: <b>${item.stock.toLocaleString('ru')} шт.</b></div>
+          <div style="padding:8px 12px;background:var(--bg-2);border-radius:8px">${I.folder('',12)} Категория: <b>${item.category || '—'}</b></div>
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px">
           ${cabinetUrl ? `<a href="${cabinetUrl}" target="_blank" class="btn">↗ Открыть в личном кабинете</a>` : ''}
@@ -821,7 +822,7 @@ export class SkuAuditModule {
     const preview  = document.getElementById(`ief-${productId}-photo-preview`);
     const statusEl = document.getElementById(`ief-${productId}-status`);
 
-    if (statusEl) statusEl.innerHTML = `<span style="color:var(--muted)">⏳ Загружаем ${files.length} фото...</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--muted)">${I.hourglass('', 12)} Загружаем ${files.length} фото...</span>`;
 
     const { uploadPhoto } = await import('@/services/photoUpload');
     const uploadedUrls: string[] = [];

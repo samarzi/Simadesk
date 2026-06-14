@@ -1,4 +1,5 @@
 import { debug } from '@/utils/debug';
+import { I, QUICK_STICKERS } from '@/utils/icons';
 import { boxes, boxActions } from '../stores/appStore';
 import { apiService } from '../services/api';
 import { idbCache } from '../services/idbCache';
@@ -7,6 +8,10 @@ import type { App } from '../App';
 
 export class BoxModalsModule {
   constructor(private app: App) {}
+
+  private stickerToHtml(val: string, size = 16): string {
+    return (I as any)[val]?.('', size) ?? val;
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // BOX MODALS — CREATE
@@ -57,7 +62,7 @@ export class BoxModalsModule {
             style="width:56px;height:56px;border-radius:12px;background:var(--bg2);border:2px solid var(--border);
                    display:flex;align-items:center;justify-content:center;font-size:28px;cursor:pointer;user-select:none"
             onclick="window.app.openNativeEmojiPicker()"
-            title="Нажмите чтобы выбрать эмодзи устройства">${escHtml(current)}</div>
+            title="Нажмите чтобы выбрать эмодзи устройства">${this.stickerToHtml(current, 28)}</div>
           <button class="btn" style="font-size:10px;padding:3px 8px;gap:3px" onclick="window.app.openNativeEmojiPicker()">
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" style="width:10px;height:10px"><circle cx="7" cy="7" r="5.5"/><path d="M4.5 8.5s.8 1.5 2.5 1.5 2.5-1.5 2.5-1.5M5 5.5h.01M9 5.5h.01"/></svg>
             Выбрать
@@ -155,7 +160,7 @@ export class BoxModalsModule {
 
     // API-синхронизированная группа — упрощённый просмотр
     if (box.mp_source) {
-      const mpLabel = box.mp_source === 'ozon' ? '🟠 Ozon' : box.mp_source === 'ym' ? '🟡 Яндекс Маркет' : '🟣 WB';
+      const mpLabel = box.mp_source === 'ozon' ? I.ozon('', 16) + ' Ozon' : box.mp_source === 'ym' ? I.yandex('', 16) + ' Яндекс Маркет' : I.wb('', 16) + ' WB';
       const lastSync = box.mp_last_sync
         ? new Date(box.mp_last_sync).toLocaleString('ru', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
         : 'ещё не синхронизировано';
@@ -188,7 +193,7 @@ export class BoxModalsModule {
     }
 
     // Ручная группа — компактные настройки
-    const quick = ['📦','🎁','🛒','🛍️','📁','🗂️','📋','💼','🏠','🚚','🌟','💎','🔥','🎯','🎨','📱','💻','🎮','⚽','🍔'];
+    const quick = QUICK_STICKERS;
     const current = box.sticker || '📦';
     this.app.openModal(
       'Настройки группы', '',
@@ -205,7 +210,7 @@ export class BoxModalsModule {
           </div>
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:6px">
-          ${quick.map(e => `<button class="rb-quick-btn ${current === e ? 'active' : ''}" onclick="window.app.selectSticker('${e}')">${e}</button>`).join('')}
+          ${quick.map(s => `<button class="rb-quick-btn ${current === s.key ? 'active' : ''}" data-emoji="${s.key}" onclick="window.app.selectSticker('${s.key}')">${s.icon('', 16)}</button>`).join('')}
         </div>
       </div>`,
       `<button class="btn btn-danger" style="margin-right:auto" onclick="window.app.deleteBox('${id}','${escHtml(box.name)}')">Удалить</button>
@@ -417,7 +422,7 @@ export class BoxModalsModule {
   deleteBox(id: string, name: string) {
     this.app.openModal('Удалить группу?', `«${escHtml(name)}»`,
       `<div style="background:var(--red-dim);border:1px solid rgba(255,68,68,0.2);border-radius:8px;padding:14px 16px;margin-bottom:4px">
-        <div style="font-size:13px;color:var(--red);font-weight:500;margin-bottom:6px">⚠ Внимание — это нельзя отменить</div>
+        <div style="font-size:13px;color:var(--red);font-weight:500;margin-bottom:6px">${I.alertTriangle('', 14)} Внимание — это нельзя отменить</div>
         <div style="font-size:12.5px;color:var(--text2);line-height:1.6">Будут удалены все товары и листы внутри группы «${escHtml(name)}».</div>
       </div>`,
       `<button class="btn" onclick="window.app.closeModal()">Отмена</button>

@@ -9,6 +9,7 @@ import {
 } from '@/types/ozon';
 import { ozonDb } from '@/services/ozonDb';
 import { ozonOrdersApi, fetchAllPages, fetchAllPagesByCursor } from '@/services/ozonOrdersApi';
+import { I } from '@/utils/icons';
 
 // ── Статусы заказов ──────────────────────────────────────────────────────────
 
@@ -526,7 +527,7 @@ export class OzonOrdersModule {
         style="width:${size}px;height:${size}px;border-radius:6px;object-fit:cover;border:1px solid var(--border);background:var(--bg2)"
         onerror="this.style.display='none'">`;
     }
-    return `<div style="width:${size}px;height:${size}px;border-radius:6px;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:14px">📦</div>`;
+    return `<div style="width:${size}px;height:${size}px;border-radius:6px;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:14px">${I.package('',16)}</div>`;
   }
 
   private buildRow(p: OzonPosting, scheme: DeliveryScheme): string {
@@ -800,9 +801,9 @@ export class OzonOrdersModule {
           const imgUrl = this.getProductImage(pr.offer_id);
           const thumb = imgUrl
             ? `<a href="${this.esc(imgUrl)}" target="_blank" rel="noopener" class="ozo-prod-thumb">
-                 <img src="${this.esc(imgUrl)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='📦'">
+                 <img src="${this.esc(imgUrl)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='${I.package('',16)}'">
                </a>`
-            : `<div class="ozo-prod-thumb ozo-prod-thumb-empty">📦</div>`;
+            : `<div class="ozo-prod-thumb ozo-prod-thumb-empty">${I.package('',16)}</div>`;
           return `<div class="ozo-prod-card">
             ${thumb}
             <div class="ozo-prod-info">

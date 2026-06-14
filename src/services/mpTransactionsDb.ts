@@ -62,7 +62,9 @@ export const mpTransactionsDb = {
    *  Postgres statement timeout на больших магазинах (десятки тысяч tx). */
   async getByStores(storeIds: string[], dateFrom: string, dateTo: string): Promise<MpTransaction[]> {
     if (!storeIds.length) return [];
-    const CHUNK_DAYS = 30;
+    // authenticated role has statement_timeout=8s — keep chunks small (7 days)
+    // so each chunk has ~300-2500 rows and fits within the timeout
+    const CHUNK_DAYS = 7;
     const start = new Date(dateFrom).getTime();
     const end   = new Date(dateTo).getTime();
     const spanMs = end - start;
@@ -72,7 +74,7 @@ export const mpTransactionsDb = {
       return this._fetchPage(storeIds, dateFrom, dateTo);
     }
 
-    // Длинный период — разбиваем на чанки и идём параллельно (max 3 одновременно)
+    // Длинный период — разбиваем на 7-дневные чанки, параллельно max 4
     const chunks: Array<{ from: string; to: string }> = [];
     let cs = start;
     while (cs < end) {
@@ -82,7 +84,7 @@ export const mpTransactionsDb = {
     }
 
     const results: MpTransaction[][] = [];
-    const CONCURRENCY = 3;
+    const CONCURRENCY = 4;
     for (let i = 0; i < chunks.length; i += CONCURRENCY) {
       const slice = chunks.slice(i, i + CONCURRENCY);
       const batch = await Promise.all(slice.map(c => this._fetchPage(storeIds, c.from, c.to)));

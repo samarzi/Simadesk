@@ -1,4 +1,5 @@
 import { esc } from '@/utils/format';
+import { I } from '@/utils/icons';
 import { ozonDb } from '@/services/ozonDb';
 import { wbDb } from '@/services/wbDb';
 import { yandexDb } from '@/services/yandexDb';
@@ -15,6 +16,22 @@ import { repricerRulesDb } from '@/services/repricerRulesDb';
 import type { OzonStore } from '@/types/ozon';
 import type { WbStore } from '@/types/wb';
 import type { YandexStore } from '@/types/yandex';
+
+// ─────────────────────────────── Constants ───────────────────────────────────
+
+const OZON_STATUS_LABELS: Record<string, string> = {
+  processed: 'В продаже',
+  archived: 'В архиве',
+  disabled: 'Скрыт продавцом',
+  failed_moderation: 'Не прошёл модерацию',
+  moderating: 'На модерации',
+  not_moderated: 'Ожидает модерации',
+  banned: 'Заблокирован',
+  blocked: 'Заблокирован',
+  price_error: 'Ошибка цены',
+  sold_out: 'Распродан',
+  expired: 'Истёк срок',
+};
 
 // ─────────────────────────────── Interfaces ──────────────────────────────────
 
@@ -60,6 +77,20 @@ interface StoreEdit {
   price: string; discount: string; photos: string[];
   priceLocked: boolean;
   saving: boolean; saveError: string;
+  name: string; brand: string; barcode: string; description: string; vat: string;
+  extraLoaded: boolean; extraLoading: boolean;
+}
+
+interface MassEditState {
+  priceMode: 'set' | 'percent' | 'delta';
+  price: string;
+  weight_kg: string; length_cm: string; width_cm: string; height_cm: string;
+  discount: string;
+  brand: string;
+  vat: string;
+  saving: boolean;
+  error: string;
+  progress: string;
 }
 
 // ─────────────────────────────── Module ──────────────────────────────────────
@@ -99,6 +130,16 @@ export class CatalogMpModule {
   private editState  = new Map<string, StoreEdit>();
   private lightboxUrl: string | null = null;
 
+  // ── Mass selection / edit
+  private selected = new Set<string>();
+  private massEditOpen = false;
+  private massEdit: MassEditState = {
+    priceMode: 'set', price: '',
+    weight_kg: '', length_cm: '', width_cm: '', height_cm: '',
+    discount: '', brand: '', vat: '',
+    saving: false, error: '', progress: '',
+  };
+
   // ── Photo-add panel
   private photoAddStoreId:  string | null = null;
   private photoAddMode:     'url' | 'file' = 'url';
@@ -106,6 +147,10 @@ export class CatalogMpModule {
 
   // ── Repricer locked codes
   private lockedCodes = new Set<string>();
+
+  // ── Cache for "Карточка" extra data (VAT/description) keyed by `${storeId}:${vendorCode}`,
+  // so reopening a product or switching tabs doesn't re-fire live API calls every time.
+  private extraDataCache = new Map<string, { vat?: string; description?: string }>();
 
   // ── Infinite scroll
   private observer: IntersectionObserver | null = null;
@@ -154,16 +199,25 @@ export class CatalogMpModule {
 
   // ─────────────────────────── Data loading ────────────────────────────────
 
-  private async load(): Promise<void> {
-    this.loading = true;
-    this.loadError = '';
-    this.renderShell();
+  /**
+   * `silent`: используется после синка одного магазина — не показывает полноэкранный
+   * лоадер (список и скролл остаются на месте) и не перечитывает правила репрайсера
+   * (они не меняются от синка с маркетплейсом).
+   */
+  private async load(opts: { silent?: boolean } = {}): Promise<void> {
+    if (!opts.silent) {
+      this.loading = true;
+      this.loadError = '';
+      this.renderShell();
+    }
     try {
-      await repricerRulesDb.refresh();
-      const rules = repricerRulesDb.all();
-      this.lockedCodes = new Set(
-        rules.map((r: any) => (r.vendorCode ?? r.offer_id ?? '').toLowerCase()).filter(Boolean),
-      );
+      if (!opts.silent) {
+        await repricerRulesDb.refresh();
+        const rules = repricerRulesDb.all();
+        this.lockedCodes = new Set(
+          rules.map((r: any) => (r.vendorCode ?? r.offer_id ?? '').toLowerCase()).filter(Boolean),
+        );
+      }
 
       const [
         [ozStores, ozRows],
@@ -182,10 +236,13 @@ export class CatalogMpModule {
       this.products = this.buildUnified(ozRows, wbRows, ymRows);
       this.applyFilters();
     } catch (e: any) {
+      if (opts.silent) throw e;
       this.loadError = e?.message ?? 'Ошибка загрузки данных';
     } finally {
-      this.loading = false;
-      this.renderShell();
+      if (!opts.silent) {
+        this.loading = false;
+        this.renderShell();
+      }
     }
   }
 
@@ -258,18 +315,20 @@ export class CatalogMpModule {
       const photoSets: PhotoSet[] = [];
       for (const e of ozon) {
         const cached = catalogCache.getProduct(e.store.id, vendorCode);
-        const photos = cached?.photos?.length ? cached.photos : (e.product.images ?? []);
+        const dbPhotos: string[] = (e.product.images ?? []);
+        const photos = dbPhotos.length ? dbPhotos : (cached?.photos ?? []);
         if (photos.length) photoSets.push({ storeId: e.store.id, storeName: e.store.name ?? 'Ozon', mp: 'ozon', photos });
       }
       for (const e of wb) {
         const cached = catalogCache.getProduct(e.store.id, vendorCode);
         const dbPhotos: string[] = (e.product.pictures ?? []);
-        const photos = cached?.photos?.length ? cached.photos : dbPhotos;
+        const photos = dbPhotos.length ? dbPhotos : (cached?.photos ?? []);
         if (photos.length) photoSets.push({ storeId: e.store.id, storeName: e.store.name ?? 'WB', mp: 'wb', photos });
       }
       for (const e of ym) {
         const cached = catalogCache.getProduct(e.store.id, vendorCode);
-        const photos = cached?.photos?.length ? cached.photos : (e.product.pictures ?? []);
+        const dbPhotos: string[] = (e.product.pictures ?? []);
+        const photos = dbPhotos.length ? dbPhotos : (cached?.photos ?? []);
         if (photos.length) photoSets.push({ storeId: e.store.id, storeName: e.store.name ?? 'Яндекс', mp: 'yandex', photos });
       }
 
@@ -287,33 +346,40 @@ export class CatalogMpModule {
     return results;
   }
 
-  private resolveDims(vc: string, ozon: OzonEntry[], wb: WbEntry[], ym: YmEntry[]): Dimensions {
-    const fromDbDims = (p: any): Dimensions | null => {
-      if (!p.weight_kg && !p.length_cm) return null;
-      return {
-        weight_g:  p.weight_kg ? Math.round(p.weight_kg * 1000) : 0,
-        length_mm: p.length_cm ? Math.round(p.length_cm * 10)   : 0,
-        width_mm:  p.width_cm  ? Math.round(p.width_cm  * 10)   : 0,
-        height_mm: p.height_cm ? Math.round(p.height_cm * 10)   : 0,
-      };
+  /** Габариты из строки товара БД (weight_kg/length_cm/...), или null если не заполнены. */
+  private dimsFromProductRow(p: any): Dimensions | null {
+    if (!p?.weight_kg && !p?.length_cm) return null;
+    return {
+      weight_g:  Math.round((p.weight_kg ?? 0) * 1000),
+      length_mm: Math.round((p.length_cm ?? 0) * 10),
+      width_mm:  Math.round((p.width_cm  ?? 0) * 10),
+      height_mm: Math.round((p.height_cm ?? 0) * 10),
     };
-    const fromCache = (storeId: string): Dimensions | null => {
-      const c = catalogCache.getProduct(storeId, vc);
-      if (c?.weight_g == null) return null;
-      return { weight_g: c.weight_g!, length_mm: c.length_mm ?? 0, width_mm: c.width_mm ?? 0, height_mm: c.height_mm ?? 0 };
-    };
+  }
 
-    // Priority: cache > DB (all three MPs)
+  /** Габариты из ручного кэша синхронизации (catalogCache), или null если не записаны. */
+  private dimsFromCache(storeId: string, vc: string): Dimensions | null {
+    const c = catalogCache.getProduct(storeId, vc);
+    if (c?.weight_g == null) return null;
+    return { weight_g: c.weight_g, length_mm: c.length_mm ?? 0, width_mm: c.width_mm ?? 0, height_mm: c.height_mm ?? 0 };
+  }
+
+  /** Габариты для одного магазина: БД (свежее) > ручной кэш (для старых записей без габаритов в БД). */
+  private resolveEntryDims(p: any, storeId: string, vc: string): Dimensions | null {
+    return this.dimsFromProductRow(p) ?? this.dimsFromCache(storeId, vc);
+  }
+
+  private resolveDims(vc: string, ozon: OzonEntry[], wb: WbEntry[], ym: YmEntry[]): Dimensions {
     for (const e of ozon) {
-      const d = fromCache(e.store.id) ?? fromDbDims(e.product);
+      const d = this.resolveEntryDims(e.product, e.store.id, vc);
       if (d) return d;
     }
     for (const e of wb) {
-      const d = fromCache(e.store.id) ?? fromDbDims(e.product);
+      const d = this.resolveEntryDims(e.product, e.store.id, vc);
       if (d) return d;
     }
     for (const e of ym) {
-      const d = fromCache(e.store.id) ?? fromDbDims(e.product);
+      const d = this.resolveEntryDims(e.product, e.store.id, vc);
       if (d) return d;
     }
     return { weight_g: 0, length_mm: 0, width_mm: 0, height_mm: 0 };
@@ -322,15 +388,7 @@ export class CatalogMpModule {
   private detectConflict(vc: string, ozon: OzonEntry[], wb: WbEntry[], ym: YmEntry[]): boolean {
     const dimsList: Dimensions[] = [];
     const push = (p: any, storeId: string) => {
-      const c = catalogCache.getProduct(storeId, vc);
-      const d = c?.weight_g != null
-        ? { weight_g: c.weight_g!, length_mm: c.length_mm ?? 0, width_mm: c.width_mm ?? 0, height_mm: c.height_mm ?? 0 }
-        : (p.weight_kg || p.length_cm ? {
-            weight_g: Math.round((p.weight_kg ?? 0) * 1000),
-            length_mm: Math.round((p.length_cm ?? 0) * 10),
-            width_mm:  Math.round((p.width_cm  ?? 0) * 10),
-            height_mm: Math.round((p.height_cm ?? 0) * 10),
-          } : null);
+      const d = this.resolveEntryDims(p, storeId, vc);
       if (d) dimsList.push(d);
     };
     for (const e of ozon) push(e.product, e.store.id);
@@ -400,6 +458,7 @@ export class CatalogMpModule {
     this.setupInfiniteScroll();
     if (this.openKey) this.renderModal();
     if (this.lightboxUrl) this.renderLightbox();
+    if (this.massEditOpen) this.renderMassEditModal();
   }
 
   private tplShell(): string {
@@ -459,6 +518,8 @@ export class CatalogMpModule {
   </div>
 
   <div class="cmp-sync-bar" id="cmp-sync-bar">${this.tplSyncBar()}</div>
+
+  <div class="cmp-select-bar" id="cmp-select-bar">${this.tplSelectBar()}</div>
 
   <div class="cmp-list-wrap" id="cmp-list-wrap">
     ${this.loading ? this.tplLoading() : this.loadError ? this.tplError() : ''}
@@ -556,14 +617,18 @@ export class CatalogMpModule {
   }
 
   private fmtPrice(p: UnifiedProduct): string {
-    if (!p.priceRange.min) return '—';
-    if (p.priceRange.min === p.priceRange.max) return `${p.priceRange.min!.toLocaleString('ru')} ₽`;
-    return `${p.priceRange.min!.toLocaleString('ru')} – ${p.priceRange.max!.toLocaleString('ru')} ₽`;
+    if (p.priceRange.min == null) return '—';
+    if (p.priceRange.min === p.priceRange.max) return `${p.priceRange.min.toLocaleString('ru')} ₽`;
+    return `${p.priceRange.min.toLocaleString('ru')} – ${p.priceRange.max!.toLocaleString('ru')} ₽`;
   }
 
   private tplRow(p: UnifiedProduct): string {
+    const checked = this.selected.has(p.key);
     return `
-    <div class="cmp-row${p.hasConflict?' cmp-row--conflict':''}" data-action="open-product" data-key="${esc(p.key)}">
+    <div class="cmp-row${p.hasConflict?' cmp-row--conflict':''}${checked?' cmp-row--selected':''}" data-action="open-product" data-key="${esc(p.key)}">
+      <div class="cmp-row-check" data-action="toggle-select" data-key="${esc(p.key)}">
+        <input type="checkbox" ${checked?'checked':''} tabindex="-1" readonly>
+      </div>
       <div class="cmp-row-thumb">
         ${p.cover ? `<img src="${esc(p.cover)}" loading="lazy" alt="">` : '<div class="cmp-row-no-img"></div>'}
       </div>
@@ -581,9 +646,13 @@ export class CatalogMpModule {
   }
 
   private tplCard(p: UnifiedProduct): string {
+    const checked = this.selected.has(p.key);
     return `
-    <div class="cmp-card-item${p.hasConflict?' cmp-card-item--conflict':''}" data-action="open-product" data-key="${esc(p.key)}">
+    <div class="cmp-card-item${p.hasConflict?' cmp-card-item--conflict':''}${checked?' cmp-card-item--selected':''}" data-action="open-product" data-key="${esc(p.key)}">
       <div class="cmp-card-photo">
+        <div class="cmp-card-check" data-action="toggle-select" data-key="${esc(p.key)}">
+          <input type="checkbox" ${checked?'checked':''} tabindex="-1" readonly>
+        </div>
         ${p.cover ? `<img src="${esc(p.cover)}" loading="lazy" alt="">` : '<div class="cmp-card-no-img"></div>'}
       </div>
       <div class="cmp-card-body">
@@ -621,27 +690,39 @@ export class CatalogMpModule {
     const locked = this.lockedCodes.has(p.vendorCode.toLowerCase());
     for (const e of p.ozon) {
       const d = dimsFromProduct(e.product);
+      const pr = e.product as any;
+      const cached = this.extraDataCache.get(`${e.store.id}:${p.vendorCode}`);
       this.editState.set(e.store.id, {
         ...d, price: e.price != null ? String(e.price) : '', discount: '',
         photos: [...(p.photoSets.find(s=>s.storeId===e.store.id)?.photos??[])],
         priceLocked: locked, saving: false, saveError: '',
+        name: pr?.name ?? '', brand: '', barcode: pr?.barcode ?? '', description: '', vat: cached?.vat ?? '',
+        extraLoaded: !!cached, extraLoading: false,
       });
     }
     for (const e of p.wb) {
       const d = dimsFromProduct(e.product);
+      const pr = e.product as any;
+      const cached = this.extraDataCache.get(`${e.store.id}:${p.vendorCode}`);
       this.editState.set(e.store.id, {
         ...d, price: e.price != null ? String(e.price) : '',
-        discount: (e.product as any).discount != null ? String((e.product as any).discount) : '',
+        discount: pr.discount != null ? String(pr.discount) : '',
         photos: [...(p.photoSets.find(s=>s.storeId===e.store.id)?.photos??[])],
         priceLocked: locked, saving: false, saveError: '',
+        name: pr?.title ?? '', brand: pr?.brand ?? '', barcode: '', description: cached?.description ?? '', vat: '',
+        extraLoaded: !!cached, extraLoading: false,
       });
     }
     for (const e of p.ym) {
       const d = dimsFromProduct(e.product);
+      const pr = e.product as any;
+      const cached = this.extraDataCache.get(`${e.store.id}:${p.vendorCode}`);
       this.editState.set(e.store.id, {
         ...d, price: e.price != null ? String(e.price) : '', discount: '',
         photos: [...(p.photoSets.find(s=>s.storeId===e.store.id)?.photos??[])],
         priceLocked: locked, saving: false, saveError: '',
+        name: pr?.name ?? '', brand: pr?.vendor ?? '', barcode: '', description: cached?.description ?? '', vat: '',
+        extraLoaded: !!cached, extraLoading: false,
       });
     }
 
@@ -720,25 +801,53 @@ export class CatalogMpModule {
     ];
 
     const dimSources: { label: string; dims: Dimensions }[] = [];
-    const dimsFromDb = (pr: any): Dimensions | null => {
-      if (!pr?.weight_kg && !pr?.length_cm) return null;
-      return { weight_g: Math.round((pr.weight_kg??0)*1000), length_mm: Math.round((pr.length_cm??0)*10), width_mm: Math.round((pr.width_cm??0)*10), height_mm: Math.round((pr.height_cm??0)*10) };
-    };
     for (const e of p.ozon) {
-      const c = catalogCache.getProduct(e.store.id, p.vendorCode);
-      const d = (c?.weight_g != null ? { weight_g: c.weight_g!, length_mm: c.length_mm??0, width_mm: c.width_mm??0, height_mm: c.height_mm??0 } : null) ?? dimsFromDb(e.product);
+      const d = this.resolveEntryDims(e.product, e.store.id, p.vendorCode);
       if (d) dimSources.push({ label: `Ozon · ${e.store.name}`, dims: d });
     }
     for (const e of p.wb) {
-      const c = catalogCache.getProduct(e.store.id, p.vendorCode);
-      const d = (c?.weight_g != null ? { weight_g: c.weight_g!, length_mm: c.length_mm??0, width_mm: c.width_mm??0, height_mm: c.height_mm??0 } : null) ?? dimsFromDb(e.product);
+      const d = this.resolveEntryDims(e.product, e.store.id, p.vendorCode);
       if (d) dimSources.push({ label: `WB · ${e.store.name}`, dims: d });
     }
     for (const e of p.ym) {
-      const c = catalogCache.getProduct(e.store.id, p.vendorCode);
-      const d = (c?.weight_g != null ? { weight_g: c.weight_g!, length_mm: c.length_mm??0, width_mm: c.width_mm??0, height_mm: c.height_mm??0 } : null) ?? dimsFromDb(e.product);
+      const d = this.resolveEntryDims(e.product, e.store.id, p.vendorCode);
       if (d) dimSources.push({ label: `ЯМ · ${e.store.name}`, dims: d });
     }
+
+    const stockRows: { mpLabel: string; mp: string; storeName: string; text: string; low: boolean }[] = [
+      ...p.ozon.map(e => {
+        const pr = e.product as any;
+        const fbo = pr.stock_fbo ?? 0;
+        const fbs = pr.stock_fbs ?? 0;
+        const total = fbo + fbs;
+        const statusLabel = OZON_STATUS_LABELS[pr.status] ?? pr.status ?? '';
+        return {
+          mpLabel: 'OZ', mp: 'ozon', storeName: e.store.name ?? 'Ozon',
+          text: `FBO: ${fbo} · FBS: ${fbs}${statusLabel ? ' · ' + statusLabel : ''}`,
+          low: total === 0,
+        };
+      }),
+      ...p.wb.map(e => {
+        const pr = e.product as any;
+        const total = pr.stock_total ?? 0;
+        return {
+          mpLabel: 'WB', mp: 'wb', storeName: e.store.name ?? 'WB',
+          text: `Остаток: ${total}`,
+          low: total === 0,
+        };
+      }),
+      ...p.ym.map(e => {
+        const pr = e.product as any;
+        const total = pr.stock_total ?? 0;
+        const available = pr.stock_available ?? 0;
+        const archived = !!pr.archived;
+        return {
+          mpLabel: 'ЯМ', mp: 'yandex', storeName: e.store.name ?? 'Яндекс',
+          text: `Доступно: ${available} · Всего: ${total}${archived ? ' · В архиве' : ''}`,
+          low: available === 0,
+        };
+      }),
+    ];
 
     return `
     <div class="cmp-ov">
@@ -750,6 +859,18 @@ export class CatalogMpModule {
             <span class="cmp-ov-store">${esc(e.storeName)}</span>
             <span class="cmp-ov-val">${e.price ? e.price.toLocaleString('ru') + ' ₽' : '—'}</span>
           </div>`).join('')}
+      </div>
+
+      <div class="cmp-ov-block">
+        <div class="cmp-ov-head">Остатки и статус</div>
+        ${stockRows.length
+          ? stockRows.map(s => `
+            <div class="cmp-ov-row">
+              <span class="cmp-mp-badge cmp-mp-badge--${s.mp}">${s.mpLabel}</span>
+              <span class="cmp-ov-store">${esc(s.storeName)}</span>
+              <span class="cmp-ov-val${s.low ? ' cmp-ov-val--low' : ''}">${esc(s.text)}</span>
+            </div>`).join('')
+          : `<div class="cmp-ov-hint">Данных нет. Нажмите «Обновить» в строке синхронизации.</div>`}
       </div>
 
       <div class="cmp-ov-block">
@@ -770,6 +891,10 @@ export class CatalogMpModule {
       const st = this.editState.get(storeId);
       if (!st) return '';
       const mpLabel = mp === 'ozon' ? 'OZ' : mp === 'wb' ? 'WB' : 'ЯМ';
+      const showBrand = mp === 'wb' || mp === 'yandex';
+      const showBarcode = mp === 'ozon';
+      const showDescription = mp === 'wb' || mp === 'yandex';
+      const showVat = mp === 'ozon';
       return `
       <div class="cmp-edit-section">
         <div class="cmp-edit-head">
@@ -777,10 +902,33 @@ export class CatalogMpModule {
           <span class="cmp-edit-store">${esc(storeName)}</span>
         </div>
         <div class="cmp-edit-grid">
+          <label class="cmp-edit-field cmp-edit-field--wide">
+            <span class="cmp-edit-label">Название</span>
+            <input type="text" class="cmp-edit-input" data-field="name" data-store-id="${storeId}"
+              value="${esc(st.name)}" placeholder="—">
+          </label>
+          ${showBrand ? `<label class="cmp-edit-field">
+            <span class="cmp-edit-label">Бренд</span>
+            <input type="text" class="cmp-edit-input" data-field="brand" data-store-id="${storeId}"
+              value="${esc(st.brand)}" placeholder="—">
+          </label>` : ''}
+          ${showBarcode ? `<label class="cmp-edit-field">
+            <span class="cmp-edit-label">Штрихкод</span>
+            <input type="text" class="cmp-edit-input" data-field="barcode" data-store-id="${storeId}"
+              value="${esc(st.barcode)}" placeholder="—">
+          </label>` : ''}
+          ${showVat ? `<label class="cmp-edit-field">
+            <span class="cmp-edit-label">НДС</span>
+            <select class="cmp-edit-input" data-field="vat" data-store-id="${storeId}" ${st.extraLoading?'disabled':''}>
+              <option value="0"    ${st.vat==='0'?'selected':''}>Без НДС</option>
+              <option value="0.1"  ${st.vat==='0.1'?'selected':''}>10%</option>
+              <option value="0.2"  ${st.vat==='0.2'?'selected':''}>20%</option>
+            </select>
+          </label>` : ''}
           <label class="cmp-edit-field">
             <span class="cmp-edit-label">
               Цена (₽)
-              ${st.priceLocked ? '<span class="cmp-lock-tag" title="Управляется репрайсером">🔒</span>' : ''}
+              ${st.priceLocked ? '<span class="cmp-lock-tag" title="Управляется репрайсером">' + I.lock('',12) + '</span>' : ''}
             </span>
             <input type="number" class="cmp-edit-input" data-field="price" data-store-id="${storeId}"
               value="${esc(st.price)}" ${st.priceLocked ? 'disabled' : ''} placeholder="—">
@@ -810,6 +958,11 @@ export class CatalogMpModule {
             <input type="number" step="0.1" class="cmp-edit-input" data-field="height_cm" data-store-id="${storeId}"
               value="${esc(st.height_cm)}" placeholder="0.0">
           </label>
+          ${showDescription ? `<label class="cmp-edit-field cmp-edit-field--wide">
+            <span class="cmp-edit-label">Описание ${st.extraLoading ? '<span class="cmp-spinner-sm"></span>' : ''}</span>
+            <textarea class="cmp-edit-input cmp-edit-textarea" data-field="description" data-store-id="${storeId}"
+              rows="4" ${st.extraLoading?'disabled':''} placeholder="—">${esc(st.description)}</textarea>
+          </label>` : ''}
         </div>
         ${st.saveError ? `<div class="cmp-edit-error">${esc(st.saveError)}</div>` : ''}
         <div class="cmp-edit-foot">
@@ -895,6 +1048,289 @@ export class CatalogMpModule {
     </div>`;
   }
 
+  // ─────────────────────────── Mass selection / edit ────────────────────────
+
+  private tplSelectBar(): string {
+    if (!this.selected.size) return '';
+    return `
+    <div class="cmp-select-info">
+      <span class="cmp-select-count">${this.selected.size} выбрано</span>
+      <button class="cmp-btn cmp-btn-sm" data-action="select-clear">Снять выделение</button>
+      <button class="cmp-btn cmp-btn-sm cmp-btn-primary" data-action="open-mass-edit">Массовое редактирование</button>
+    </div>`;
+  }
+
+  private updateSelectBar(): void {
+    const bar = this.container.querySelector<HTMLElement>('#cmp-select-bar');
+    if (bar) bar.innerHTML = this.tplSelectBar();
+  }
+
+  private massEditAvailability(): { brand: boolean; vat: boolean; discount: boolean } {
+    const selectedProducts = this.products.filter(p => this.selected.has(p.key));
+    return {
+      brand:    selectedProducts.some(p => p.wb.length > 0 || p.ym.length > 0),
+      vat:      selectedProducts.some(p => p.ozon.length > 0),
+      discount: selectedProducts.some(p => p.wb.length > 0),
+    };
+  }
+
+  private openMassEdit(): void {
+    this.massEdit = {
+      priceMode: 'set', price: '',
+      weight_kg: '', length_cm: '', width_cm: '', height_cm: '',
+      discount: '', brand: '', vat: '',
+      saving: false, error: '', progress: '',
+    };
+    this.massEditOpen = true;
+    this.renderMassEditModal();
+  }
+
+  private renderMassEditModal(): void {
+    this.container.querySelector('.cmp-mass-modal-backdrop')?.remove();
+    if (!this.massEditOpen) return;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = this.tplMassEditModal();
+    while (tmp.firstChild) this.container.appendChild(tmp.firstChild);
+  }
+
+  private tplMassEditModal(): string {
+    const m = this.massEdit;
+    const avail = this.massEditAvailability();
+    return `
+    <div class="cmp-modal-backdrop cmp-mass-modal-backdrop" data-action="close-mass-edit-backdrop">
+      <div class="cmp-modal cmp-modal--sm">
+        <div class="cmp-modal-hdr">
+          <div class="cmp-modal-hdr-left"><span class="cmp-edit-store">Массовое редактирование · ${this.selected.size} товаров</span></div>
+          <button class="cmp-modal-x" data-action="close-mass-edit">✕</button>
+        </div>
+        <div class="cmp-modal-tab-content">
+          <div class="cmp-edit-grid">
+            <label class="cmp-edit-field">
+              <span class="cmp-edit-label">Цена</span>
+              <select class="cmp-edit-input" data-mfield="priceMode" ${m.saving?'disabled':''}>
+                <option value="set"     ${m.priceMode==='set'?'selected':''}>Установить, ₽</option>
+                <option value="percent" ${m.priceMode==='percent'?'selected':''}>Изменить на, %</option>
+                <option value="delta"   ${m.priceMode==='delta'?'selected':''}>Изменить на, ₽</option>
+              </select>
+            </label>
+            <label class="cmp-edit-field">
+              <span class="cmp-edit-label">Значение цены</span>
+              <input type="number" class="cmp-edit-input" data-mfield="price" value="${esc(m.price)}" placeholder="—" ${m.saving?'disabled':''}>
+            </label>
+            <label class="cmp-edit-field">
+              <span class="cmp-edit-label">Вес (кг)</span>
+              <input type="number" step="0.001" class="cmp-edit-input" data-mfield="weight_kg" value="${esc(m.weight_kg)}" placeholder="—" ${m.saving?'disabled':''}>
+            </label>
+            <label class="cmp-edit-field">
+              <span class="cmp-edit-label">Длина (см)</span>
+              <input type="number" step="0.1" class="cmp-edit-input" data-mfield="length_cm" value="${esc(m.length_cm)}" placeholder="—" ${m.saving?'disabled':''}>
+            </label>
+            <label class="cmp-edit-field">
+              <span class="cmp-edit-label">Ширина (см)</span>
+              <input type="number" step="0.1" class="cmp-edit-input" data-mfield="width_cm" value="${esc(m.width_cm)}" placeholder="—" ${m.saving?'disabled':''}>
+            </label>
+            <label class="cmp-edit-field">
+              <span class="cmp-edit-label">Высота (см)</span>
+              <input type="number" step="0.1" class="cmp-edit-input" data-mfield="height_cm" value="${esc(m.height_cm)}" placeholder="—" ${m.saving?'disabled':''}>
+            </label>
+            ${avail.discount ? `<label class="cmp-edit-field">
+              <span class="cmp-edit-label">Скидка WB (%)</span>
+              <input type="number" min="0" max="99" class="cmp-edit-input" data-mfield="discount" value="${esc(m.discount)}" placeholder="—" ${m.saving?'disabled':''}>
+            </label>` : ''}
+            ${avail.brand ? `<label class="cmp-edit-field">
+              <span class="cmp-edit-label">Бренд</span>
+              <input type="text" class="cmp-edit-input" data-mfield="brand" value="${esc(m.brand)}" placeholder="—" ${m.saving?'disabled':''}>
+            </label>` : ''}
+            ${avail.vat ? `<label class="cmp-edit-field">
+              <span class="cmp-edit-label">НДС (Ozon)</span>
+              <select class="cmp-edit-input" data-mfield="vat" ${m.saving?'disabled':''}>
+                <option value="">— не менять —</option>
+                <option value="0"   ${m.vat==='0'?'selected':''}>Без НДС</option>
+                <option value="0.1" ${m.vat==='0.1'?'selected':''}>10%</option>
+                <option value="0.2" ${m.vat==='0.2'?'selected':''}>20%</option>
+              </select>
+            </label>` : ''}
+          </div>
+          <div class="cmp-mass-hint">Заполните только те поля, которые нужно изменить — пустые поля останутся как есть. Цены товаров, заблокированных репрайсером, не изменятся.</div>
+          ${m.error ? `<div class="cmp-edit-error">${esc(m.error)}</div>` : ''}
+          ${m.progress ? `<div class="cmp-mass-progress">${esc(m.progress)}</div>` : ''}
+          <div class="cmp-edit-foot">
+            <button class="cmp-btn cmp-btn-primary${m.saving?' loading':''}" data-action="apply-mass-edit" ${m.saving?'disabled':''}>
+              ${m.saving ? '<span class="cmp-spinner-sm"></span> Применение…' : 'Применить'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  private async applyMassEdit(): Promise<void> {
+    const m = this.massEdit;
+    const selectedProducts = this.products.filter(p => this.selected.has(p.key));
+    if (!selectedProducts.length) return;
+
+    m.saving = true; m.error = ''; m.progress = '';
+    this.renderMassEditModal();
+
+    const hasPrice    = m.price.trim() !== '';
+    const hasDims     = m.weight_kg.trim() !== '' || m.length_cm.trim() !== '' || m.width_cm.trim() !== '' || m.height_cm.trim() !== '';
+    const hasDiscount = m.discount.trim() !== '';
+    const hasBrand    = m.brand.trim() !== '';
+    const hasVat      = m.vat.trim() !== '';
+
+    const computeNewPrice = (current: number | null): number | null => {
+      if (!hasPrice) return null;
+      const v = +m.price;
+      if (m.priceMode === 'set')     return v;
+      if (m.priceMode === 'percent') return current != null ? Math.round(current * (1 + v / 100)) : null;
+      return current != null ? Math.round(current + v) : null;
+    };
+
+    const total = selectedProducts.length;
+    let errors = 0;
+    const failedCodes: string[] = [];
+
+    for (let i = 0; i < total; i++) {
+      const p = selectedProducts[i];
+      m.progress = `Обработка ${i + 1} из ${total}…`;
+      this.renderMassEditModal();
+
+      const locked = this.lockedCodes.has(p.vendorCode.toLowerCase());
+
+      try {
+        // ── Ozon
+        for (const e of p.ozon) {
+          const creds = { client_id: e.store.client_id, api_key: e.store.api_key };
+          const pr = e.product as any;
+          if (hasDims || hasVat) {
+            const dims: Dimensions = {
+              weight_g:  m.weight_kg.trim() !== '' ? Math.round(+m.weight_kg * 1000) : Math.round((pr.weight_kg ?? 0) * 1000),
+              length_mm: m.length_cm.trim() !== '' ? Math.round(+m.length_cm * 10)  : Math.round((pr.length_cm ?? 0) * 10),
+              width_mm:  m.width_cm.trim()  !== '' ? Math.round(+m.width_cm  * 10)  : Math.round((pr.width_cm  ?? 0) * 10),
+              height_mm: m.height_cm.trim() !== '' ? Math.round(+m.height_cm * 10) : Math.round((pr.height_cm ?? 0) * 10),
+            };
+            const oz = toOzon(dims);
+            const item: Record<string, unknown> = {
+              offer_id: p.vendorCode,
+              weight: oz.weight, weight_unit: oz.weight_unit,
+              depth: oz.depth, width: oz.width, height: oz.height,
+              dimension_unit: oz.dimension_unit,
+            };
+            if (hasVat) item.vat = m.vat;
+            await ozonApi.updateProduct(creds, item);
+            if (hasDims) {
+              pr.weight_kg = m.weight_kg.trim() !== '' ? +m.weight_kg : pr.weight_kg;
+              pr.length_cm = m.length_cm.trim() !== '' ? +m.length_cm : pr.length_cm;
+              pr.width_cm  = m.width_cm.trim()  !== '' ? +m.width_cm  : pr.width_cm;
+              pr.height_cm = m.height_cm.trim() !== '' ? +m.height_cm : pr.height_cm;
+            }
+          }
+          if (hasPrice && !locked) {
+            const newPrice = computeNewPrice(e.price);
+            if (newPrice != null && newPrice > 0) {
+              const priceStr = String(newPrice);
+              await ozonApi.updatePrices(creds, [{ offer_id: p.vendorCode, price: priceStr, old_price: priceStr, min_price: priceStr }]);
+              e.price = newPrice;
+            }
+          }
+        }
+
+        // ── WB
+        for (const e of p.wb) {
+          if (!e.nmID) continue;
+          const pr = e.product as any;
+          if (hasDims || hasBrand) {
+            const dims: Dimensions = {
+              weight_g:  m.weight_kg.trim() !== '' ? Math.round(+m.weight_kg * 1000) : Math.round((pr.weight_kg ?? 0) * 1000),
+              length_mm: m.length_cm.trim() !== '' ? Math.round(+m.length_cm * 10)  : Math.round((pr.length_cm ?? 0) * 10),
+              width_mm:  m.width_cm.trim()  !== '' ? Math.round(+m.width_cm  * 10)  : Math.round((pr.width_cm  ?? 0) * 10),
+              height_mm: m.height_cm.trim() !== '' ? Math.round(+m.height_cm * 10) : Math.round((pr.height_cm ?? 0) * 10),
+            };
+            const wb = toWb(dims);
+            await wbApi.updateCard(e.store.api_key, e.nmID, {
+              dimensions: { length: Math.round(wb.length ?? 0), width: Math.round(wb.width ?? 0), height: Math.round(wb.height ?? 0) },
+              brand: hasBrand ? m.brand : undefined,
+            });
+            if (hasDims) {
+              pr.weight_kg = m.weight_kg.trim() !== '' ? +m.weight_kg : pr.weight_kg;
+              pr.length_cm = m.length_cm.trim() !== '' ? +m.length_cm : pr.length_cm;
+              pr.width_cm  = m.width_cm.trim()  !== '' ? +m.width_cm  : pr.width_cm;
+              pr.height_cm = m.height_cm.trim() !== '' ? +m.height_cm : pr.height_cm;
+            }
+            if (hasBrand) pr.brand = m.brand;
+          }
+          if ((hasPrice || hasDiscount) && !locked) {
+            const newPrice = hasPrice ? computeNewPrice(e.price) : e.price;
+            const discount = hasDiscount ? Math.round(+m.discount) : (pr.discount != null ? Math.round(pr.discount) : undefined);
+            if (newPrice != null && newPrice > 0) {
+              await updateWbPrices(e.store.api_key, [{ nmID: e.nmID, price: Math.round(newPrice), discount }]);
+              e.price = newPrice;
+              if (hasDiscount) pr.discount = +m.discount;
+            }
+          }
+        }
+
+        // ── Yandex
+        for (const e of p.ym) {
+          const pr = e.product as any;
+          if (hasDims || hasBrand) {
+            const dims: Dimensions = {
+              weight_g:  m.weight_kg.trim() !== '' ? Math.round(+m.weight_kg * 1000) : Math.round((pr.weight_kg ?? 0) * 1000),
+              length_mm: m.length_cm.trim() !== '' ? Math.round(+m.length_cm * 10)  : Math.round((pr.length_cm ?? 0) * 10),
+              width_mm:  m.width_cm.trim()  !== '' ? Math.round(+m.width_cm  * 10)  : Math.round((pr.width_cm  ?? 0) * 10),
+              height_mm: m.height_cm.trim() !== '' ? Math.round(+m.height_cm * 10) : Math.round((pr.height_cm ?? 0) * 10),
+            };
+            const ym = toYm(dims);
+            const offer: Record<string, unknown> = {
+              offerId: p.vendorCode,
+              weightDimensions: { length: ym.length, width: ym.width, height: ym.height, weight: ym.weight },
+            };
+            if (hasBrand) offer.vendor = m.brand;
+            await yandexApi.updateOffer(e.store.api_key, e.store.business_id!, offer);
+            if (hasDims) {
+              pr.weight_kg = m.weight_kg.trim() !== '' ? +m.weight_kg : pr.weight_kg;
+              pr.length_cm = m.length_cm.trim() !== '' ? +m.length_cm : pr.length_cm;
+              pr.width_cm  = m.width_cm.trim()  !== '' ? +m.width_cm  : pr.width_cm;
+              pr.height_cm = m.height_cm.trim() !== '' ? +m.height_cm : pr.height_cm;
+            }
+            if (hasBrand) pr.vendor = m.brand;
+          }
+          if (hasPrice && !locked && e.store.campaign_id) {
+            const newPrice = computeNewPrice(e.price);
+            if (newPrice != null && newPrice > 0) {
+              await yandexApi.updateOfferPrices(e.store.api_key, String(e.store.campaign_id), [{ offerId: p.vendorCode, price: newPrice }]);
+              e.price = newPrice;
+            }
+          }
+        }
+
+        p.dims = this.resolveDims(p.vendorCode, p.ozon, p.wb, p.ym);
+        if (hasPrice) {
+          const prices = [...p.ozon.map(x => x.price), ...p.wb.map(x => x.price), ...p.ym.map(x => x.price)]
+            .filter((x): x is number => x !== null && x > 0);
+          p.priceRange = { min: prices.length ? Math.min(...prices) : null, max: prices.length ? Math.max(...prices) : null };
+        }
+      } catch (e: any) {
+        errors++;
+        failedCodes.push(p.vendorCode);
+        console.warn(`[mass-edit] ${p.vendorCode}:`, e?.message ?? e);
+      }
+    }
+
+    m.saving = false;
+    m.progress = '';
+    if (errors > 0) {
+      const shown = failedCodes.slice(0, 5).join(', ') + (failedCodes.length > 5 ? `, +${failedCodes.length - 5}` : '');
+      m.error = `Готово с ошибками: ${errors} из ${total} товаров не обновлены (${shown}).`;
+      this.renderMassEditModal();
+    } else {
+      this.massEditOpen = false;
+      this.selected.clear();
+    }
+    this.applyFilters();
+    this.renderShell();
+  }
+
   // ─────────────────────────── Lightbox ─────────────────────────────────────
 
   private renderLightbox(): void {
@@ -942,7 +1378,32 @@ export class CatalogMpModule {
         (this.filters as any)[t.getAttribute('data-filter')!] = t.value;
         this.applyFilters();
       }
+      else if (t.matches('[data-mfield]')) {
+        (this.massEdit as any)[t.getAttribute('data-mfield')!] = t.value;
+      }
       else if (t.id === 'photo-url-input') { this.photoAddUrlValue = t.value; }
+    });
+
+    // ── Photo file upload (delegated once — avoids stacking listeners on repeated clicks)
+    c.addEventListener('change', async e => {
+      const t = e.target as HTMLInputElement;
+      if (t.id !== 'photo-file-input' || !t.files?.length) return;
+      const sid = t.getAttribute('data-store-id')!;
+      const st = this.editState.get(sid);
+      const p = this.openKey ? this.getProduct(this.openKey) : undefined;
+      if (!st || !p) return;
+      const { uploadPhoto } = await import('@/services/photoUpload');
+      for (const f of Array.from(t.files)) {
+        try {
+          const url = await uploadPhoto(f, p.vendorCode);
+          st.photos.push(url);
+        } catch (err: any) {
+          st.saveError = err?.message ?? 'Ошибка загрузки фото';
+        }
+      }
+      t.value = '';
+      this.photoAddStoreId = null;
+      this.refreshPhotosTab();
     });
 
     c.addEventListener('click', async e => {
@@ -969,6 +1430,37 @@ export class CatalogMpModule {
           this.filters = { mp:'', priceMin:'', priceMax:'', weightMin:'', weightMax:'', lengthMin:'', lengthMax:'', widthMin:'', widthMax:'', heightMin:'', heightMax:'', conflicts: false };
           this.applyFilters(); break;
 
+        case 'toggle-select': {
+          const key = el.getAttribute('data-key')!;
+          if (this.selected.has(key)) this.selected.delete(key); else this.selected.add(key);
+          const input = el.querySelector('input[type=checkbox]') as HTMLInputElement | null;
+          if (input) input.checked = this.selected.has(key);
+          el.closest('.cmp-row, .cmp-card-item')?.classList.toggle('cmp-row--selected', this.selected.has(key));
+          el.closest('.cmp-row, .cmp-card-item')?.classList.toggle('cmp-card-item--selected', this.selected.has(key));
+          this.updateSelectBar();
+          break;
+        }
+        case 'select-clear':
+          this.selected.clear();
+          this.container.querySelectorAll('.cmp-row-check input, .cmp-card-check input').forEach(i => (i as HTMLInputElement).checked = false);
+          this.container.querySelectorAll('.cmp-row--selected, .cmp-card-item--selected').forEach(node => node.classList.remove('cmp-row--selected', 'cmp-card-item--selected'));
+          this.updateSelectBar();
+          break;
+        case 'open-mass-edit':
+          this.openMassEdit(); break;
+        case 'close-mass-edit':
+          this.massEditOpen = false;
+          this.container.querySelector('.cmp-mass-modal-backdrop')?.remove();
+          break;
+        case 'close-mass-edit-backdrop':
+          if (el === e.currentTarget || el.classList.contains('cmp-mass-modal-backdrop')) {
+            this.massEditOpen = false;
+            el.remove();
+          }
+          break;
+        case 'apply-mass-edit':
+          await this.applyMassEdit(); break;
+
         case 'open-product':
           this.openModal(el.getAttribute('data-key')!); break;
         case 'close-modal':
@@ -984,6 +1476,7 @@ export class CatalogMpModule {
           const content = this.container.querySelector<HTMLElement>('#cmp-tab-content');
           if (content) content.innerHTML = this.modalTab==='overview' ? this.tplTabOverview(p) : this.modalTab==='card' ? this.tplTabCard(p) : this.tplTabPhotos(p);
           this.container.querySelectorAll('.cmp-modal-tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-tab') === this.modalTab));
+          if (this.modalTab === 'card') this.loadExtraData(p);
           break;
         }
 
@@ -1034,20 +1527,9 @@ export class CatalogMpModule {
           }
           this.refreshPhotosTab(); break;
         }
-        case 'photo-pick-file': {
-          const sid = el.getAttribute('data-store-id')!;
-          const fi = this.container.querySelector<HTMLInputElement>('#photo-file-input');
-          if (!fi) break;
-          fi.click();
-          fi.addEventListener('change', async () => {
-            const st = this.editState.get(sid);
-            if (!st || !fi.files?.length) return;
-            for (const f of Array.from(fi.files)) st.photos.push(await this.readFileAsDataUrl(f));
-            this.photoAddStoreId = null;
-            this.refreshPhotosTab();
-          }, { once: true });
+        case 'photo-pick-file':
+          this.container.querySelector<HTMLInputElement>('#photo-file-input')?.click();
           break;
-        }
         case 'save-photos':
           if (this.openKey) await this.doSavePhotos(this.openKey, el.getAttribute('data-store-id')!, el.getAttribute('data-mp') as any);
           break;
@@ -1122,7 +1604,7 @@ export class CatalogMpModule {
         const s = this.ymStores.find(s => s.id === storeId);
         if (s) await syncYmStore(s);
       }
-      await this.load();
+      await this.load({ silent: true });
     } catch (e: any) {
       this.syncErr.set(storeId, e?.message?.slice(0, 60) ?? 'Ошибка');
     } finally {
@@ -1158,50 +1640,66 @@ export class CatalogMpModule {
         const e = p.ozon.find(x => x.store.id === storeId)!;
         const creds = { client_id: e.store.client_id, api_key: e.store.api_key };
         const oz = toOzon(dims);
-        await ozonApi.updateProduct(creds, {
+        const item: Record<string, unknown> = {
           offer_id: p.vendorCode,
           weight: oz.weight, weight_unit: oz.weight_unit,
           depth: oz.depth, width: oz.width, height: oz.height,
           dimension_unit: oz.dimension_unit,
-        });
+        };
+        if (st.name) item.name = st.name;
+        if (st.extraLoaded && st.vat) item.vat = st.vat;
+        await ozonApi.updateProduct(creds, item);
+        const pr = e.product as any;
+        if (st.barcode && st.barcode !== (pr.barcode ?? '') && pr.sku) {
+          await ozonApi.updateBarcode(creds, pr.sku, st.barcode);
+        }
         if (!st.priceLocked && st.price) {
           await ozonApi.updatePrices(creds, [{ offer_id: p.vendorCode, price: st.price, old_price: st.price, min_price: st.price }]);
           e.price = +st.price;
         }
         // Update in-memory product dims so reopening modal shows correct values
+        pr.weight_kg = st.weight_kg ? +st.weight_kg : null;
+        pr.length_cm = st.length_cm ? +st.length_cm : null;
+        pr.width_cm  = st.width_cm  ? +st.width_cm  : null;
+        pr.height_cm = st.height_cm ? +st.height_cm : null;
+        if (st.name) pr.name = st.name;
+        if (st.barcode) pr.barcode = st.barcode;
+
+      } else if (mp === 'wb') {
+        const e = p.wb.find(x => x.store.id === storeId)!;
+        if (!e.nmID) { st.saveError = 'Нет nmID — невозможно сохранить карточку в WB'; return; }
+        const wb = toWb(dims);
+        await wbApi.updateCard(e.store.api_key, e.nmID, {
+          dimensions: { length: Math.round(wb.length ?? 0), width: Math.round(wb.width ?? 0), height: Math.round(wb.height ?? 0) },
+          title: st.name || undefined,
+          brand: st.brand || undefined,
+          description: st.extraLoaded ? st.description : undefined,
+        });
+        if (!st.priceLocked && st.price) {
+          const discount = st.discount ? Math.round(+st.discount) : undefined;
+          await updateWbPrices(e.store.api_key, [{ nmID: e.nmID, price: Math.round(+st.price), discount }]);
+          e.price = +st.price;
+        }
         const pr = e.product as any;
         pr.weight_kg = st.weight_kg ? +st.weight_kg : null;
         pr.length_cm = st.length_cm ? +st.length_cm : null;
         pr.width_cm  = st.width_cm  ? +st.width_cm  : null;
         pr.height_cm = st.height_cm ? +st.height_cm : null;
-
-      } else if (mp === 'wb') {
-        const e = p.wb.find(x => x.store.id === storeId)!;
-        if (e.nmID) {
-          const wb = toWb(dims);
-          await wbApi.updateCard(e.store.api_key, e.nmID, {
-            dimensions: { length: Math.round(wb.length ?? 0), width: Math.round(wb.width ?? 0), height: Math.round(wb.height ?? 0) },
-          });
-          if (!st.priceLocked && st.price) {
-            const discount = st.discount ? Math.round(+st.discount) : undefined;
-            await updateWbPrices(e.store.api_key, [{ nmID: e.nmID, price: Math.round(+st.price), discount }]);
-            e.price = +st.price;
-          }
-          const pr = e.product as any;
-          pr.weight_kg = st.weight_kg ? +st.weight_kg : null;
-          pr.length_cm = st.length_cm ? +st.length_cm : null;
-          pr.width_cm  = st.width_cm  ? +st.width_cm  : null;
-          pr.height_cm = st.height_cm ? +st.height_cm : null;
-          if (st.discount) pr.discount = +st.discount;
-        }
+        if (st.discount) pr.discount = +st.discount;
+        if (st.name) pr.title = st.name;
+        if (st.brand) pr.brand = st.brand;
 
       } else {
         const e = p.ym.find(x => x.store.id === storeId)!;
         const ym = toYm(dims);
-        await yandexApi.updateOffer(e.store.api_key, e.store.business_id!, {
+        const offer: Record<string, unknown> = {
           offerId: p.vendorCode,
           weightDimensions: { length: ym.length, width: ym.width, height: ym.height, weight: ym.weight },
-        });
+        };
+        if (st.name) offer.name = st.name;
+        if (st.brand) offer.vendor = st.brand;
+        if (st.extraLoaded) offer.description = st.description;
+        await yandexApi.updateOffer(e.store.api_key, e.store.business_id!, offer);
         if (!st.priceLocked && st.price && e.store.campaign_id) {
           await yandexApi.updateOfferPrices(
             e.store.api_key, String(e.store.campaign_id),
@@ -1214,6 +1712,8 @@ export class CatalogMpModule {
         pr.length_cm = st.length_cm ? +st.length_cm : null;
         pr.width_cm  = st.width_cm  ? +st.width_cm  : null;
         pr.height_cm = st.height_cm ? +st.height_cm : null;
+        if (st.name) pr.name = st.name;
+        if (st.brand) pr.vendor = st.brand;
       }
       saveOk = true;
     } catch (e: any) {
@@ -1224,6 +1724,11 @@ export class CatalogMpModule {
         // Recalculate merged dims from updated per-store data
         p.dims = this.resolveDims(p.vendorCode, p.ozon, p.wb, p.ym);
         this.applyFilters();
+        if (st.extraLoaded) {
+          const cacheKey = `${storeId}:${p.vendorCode}`;
+          const extra = mp === 'ozon' ? { vat: st.vat } : { description: st.description };
+          this.extraDataCache.set(cacheKey, { ...this.extraDataCache.get(cacheKey), ...extra });
+        }
       }
       this.refreshCardTab();
     }
@@ -1240,21 +1745,34 @@ export class CatalogMpModule {
 
     try {
       const urls = st.photos.filter(u => u.startsWith('http'));
+      const dropped = st.photos.length - urls.length;
 
       if (mp === 'ozon') {
         const e = p.ozon.find(x => x.store.id === storeId)!;
         await ozonApi.updateProduct({ client_id: e.store.client_id, api_key: e.store.api_key }, { offer_id: p.vendorCode, images: urls });
+        (e.product as any).images = urls;
 
       } else if (mp === 'wb') {
         const e = p.wb.find(x => x.store.id === storeId)!;
-        if (e.nmID) await wbApi.updateCard(e.store.api_key, e.nmID, { photos: urls });
+        if (!e.nmID) { st.saveError = 'Нет nmID — невозможно сохранить фото в WB'; return; }
+        await wbApi.updateCard(e.store.api_key, e.nmID, { photos: urls });
+        (e.product as any).pictures = urls;
 
       } else {
         const e = p.ym.find(x => x.store.id === storeId)!;
         await yandexApi.updateOffer(e.store.api_key, e.store.business_id!, { offerId: p.vendorCode, pictures: urls });
+        (e.product as any).pictures = urls;
       }
 
-      catalogCache.setPhotos(storeId, p.vendorCode, st.photos);
+      st.photos = urls;
+      catalogCache.setPhotos(storeId, p.vendorCode, urls);
+      const set = p.photoSets.find(s => s.storeId === storeId);
+      if (set) set.photos = urls;
+      p.cover = p.photoSets[0]?.photos[0] ?? '';
+
+      if (dropped > 0) {
+        st.saveError = `${dropped} фото не загрузилось (не удалось получить ссылку) и было пропущено`;
+      }
     } catch (e: any) {
       st.saveError = e?.message ?? 'Ошибка сохранения фото';
     } finally {
@@ -1295,12 +1813,60 @@ export class CatalogMpModule {
     if (p && el) el.innerHTML = this.tplTabCard(p);
   }
 
-  private readFileAsDataUrl(file: File): Promise<string> {
-    return new Promise((res, rej) => {
-      const fr = new FileReader();
-      fr.onload = () => res(fr.result as string);
-      fr.onerror = rej;
-      fr.readAsDataURL(file);
-    });
+  /** Подгружает описание (WB/Yandex) и НДС (Ozon) при первом открытии вкладки «Карточка». */
+  private async loadExtraData(p: UnifiedProduct): Promise<void> {
+    const pending: Promise<void>[] = [];
+
+    for (const e of p.ozon) {
+      const st = this.editState.get(e.store.id);
+      if (!st || st.extraLoaded || st.extraLoading) continue;
+      st.extraLoading = true;
+      const creds = { client_id: e.store.client_id, api_key: e.store.api_key };
+      const cacheKey = `${e.store.id}:${p.vendorCode}`;
+      pending.push((async () => {
+        try {
+          const info = await ozonApi.getFullProductInfo(p.vendorCode, (e.product as any).product_id ?? null, creds);
+          st.vat = info?.vat ?? '0';
+          this.extraDataCache.set(cacheKey, { ...this.extraDataCache.get(cacheKey), vat: st.vat });
+        } catch { /* leave default */ }
+        finally { st.extraLoaded = true; st.extraLoading = false; }
+      })());
+    }
+
+    for (const e of p.wb) {
+      const st = this.editState.get(e.store.id);
+      if (!st || st.extraLoaded || st.extraLoading || !e.nmID) continue;
+      st.extraLoading = true;
+      const cacheKey = `${e.store.id}:${p.vendorCode}`;
+      pending.push((async () => {
+        try {
+          const details = await wbApi.getCardDetails(e.store.api_key, e.nmID!);
+          st.description = details?.description ?? '';
+          this.extraDataCache.set(cacheKey, { ...this.extraDataCache.get(cacheKey), description: st.description });
+        } catch { /* leave default */ }
+        finally { st.extraLoaded = true; st.extraLoading = false; }
+      })());
+    }
+
+    for (const e of p.ym) {
+      const st = this.editState.get(e.store.id);
+      if (!st || st.extraLoaded || st.extraLoading || !e.store.business_id) continue;
+      st.extraLoading = true;
+      const cacheKey = `${e.store.id}:${p.vendorCode}`;
+      pending.push((async () => {
+        try {
+          const offer = await yandexApi.getOfferMapping(e.store.api_key, e.store.business_id!, p.vendorCode);
+          st.description = offer?.description ?? '';
+          this.extraDataCache.set(cacheKey, { ...this.extraDataCache.get(cacheKey), description: st.description });
+        } catch { /* leave default */ }
+        finally { st.extraLoaded = true; st.extraLoading = false; }
+      })());
+    }
+
+    if (!pending.length) return;
+    this.refreshCardTab();
+    await Promise.all(pending);
+    this.refreshCardTab();
   }
+
 }

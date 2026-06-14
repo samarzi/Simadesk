@@ -7,6 +7,7 @@
  */
 
 import { authService } from '@/services/authService';
+import { I } from '@/utils/icons';
 
 const IS_DEV_AUTH = import.meta.env.VITE_DEV_AUTH === 'true';
 const BOT_USERNAME = import.meta.env.VITE_TG_BOT_USERNAME as string | undefined;
@@ -91,7 +92,7 @@ export class AuthModule {
 
         ${IS_DEV_AUTH ? `
         <button class="auth-dev-btn" id="dev-login-btn">
-          🛠 DEV: войти без Telegram
+          ${I.settings('',14)} DEV: войти без Telegram
         </button>
         ` : ''}
 
@@ -124,7 +125,7 @@ export class AuthModule {
       if (wrap) {
         wrap.innerHTML = `
           <div style="padding:16px;border:1px solid var(--border2);border-radius:10px;text-align:center;font-size:12px;color:var(--text2)">
-            ⚙️ Настройте <code>VITE_TG_BOT_USERNAME</code> в .env<br>
+            ${I.settings()} Настройте <code>VITE_TG_BOT_USERNAME</code> в .env<br>
             для включения Telegram-входа
           </div>
         `;

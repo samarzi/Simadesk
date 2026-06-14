@@ -15,6 +15,7 @@
  */
 
 import { debug } from '@/utils/debug';
+import { I } from '@/utils/icons';
 import { TimeseriesPoint } from '../types';
 
 type ChartType = 'line' | 'area' | 'bar';
@@ -494,7 +495,7 @@ function renderChartInnerUncached(rawData: TimeseriesPoint[], st: ChartState): s
   return `
     ${renderControls(st, rawData.length)}
     <div style="position:relative">
-      <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"
+      <svg class="an2-chart-svg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"
         preserveAspectRatio="xMidYMid meet"
         style="cursor:crosshair;overflow:visible;display:block;width:100%;height:auto;min-height:320px"
         onmousemove="window._an2CM&&window._an2CM(this,event)"
@@ -580,7 +581,7 @@ function renderControls(st: ChartState, total: number): string {
         ${granBtn('month', 'Мес')}
         <button class="an2-ctrl-pill ${st.autoGran ? 'on' : ''}" onclick="window._an2CB('autoGran')"
           title="Авто: оптимальная группировка для производительности и читаемости (>60 точек → неделя)">
-          ⚡ Авто
+          ${I.zap('', 12)} Авто
         </button>
       </div>
 

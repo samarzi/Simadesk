@@ -15,6 +15,7 @@
 /wb-common/*      https://common-api.wildberries.ru/:splat       200
 /wb-prices/*      https://discounts-prices-api.wildberries.ru/:splat  200
 /wb-feedback/*    https://feedbacks-api.wildberries.ru/:splat    200
+/wb-card/*        https://card.wb.ru/:splat                      200
 
 # SPA catch-all — ОБЯЗАТЕЛЬНО последним
 /*                /index.html                                     200

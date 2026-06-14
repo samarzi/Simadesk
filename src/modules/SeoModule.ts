@@ -9,6 +9,7 @@ import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
 import { fetchWbSearchPosition } from '@/services/wbApi';
 import { helpBtn } from '@/services/helpModal';
+import { I } from '@/utils/icons';
 import { WbProduct } from '@/types/wb';
 import { OzonProduct } from '@/types/ozon';
 import { YandexProduct } from '@/types/yandex';
@@ -401,8 +402,8 @@ export class SeoModule {
         ${this.formError ? `<div style="font-size:12px;color:#dc2626;margin-top:8px">⚠ ${this.formError}</div>` : ''}
         <div style="font-size:11px;color:var(--text-2);margin-top:8px">
           ${mp === 'wb'
-            ? '📡 WB: позиция проверяется автоматически через поиск.'
-            : `✏️ ${MP_LABEL[mp]}: позицию нужно вводить вручную — нажмите «Позиция» в строке после добавления.`}
+            ? `${I.radio('',14)} WB: позиция проверяется автоматически через поиск.`
+            : `${I.edit()} ${MP_LABEL[mp]}: позицию нужно вводить вручную — нажмите «Позиция» в строке после добавления.`}
         </div>
       </div>
     `;

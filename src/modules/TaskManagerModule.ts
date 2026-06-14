@@ -185,6 +185,7 @@ export class TaskManagerModule {
   private modalShowFiles = false;
   private modalShowComments = false;
   private modalShowDeadline = false;
+  private modalShowDate = false;
 
   constructor(container: HTMLElement) {
     this.el = container;
@@ -822,7 +823,8 @@ export class TaskManagerModule {
           style="border-left-color:${PRIORITY_COLOR[t.priority]}">
           <div class="tm-kb-card-title">${priorityDot(t.priority)} ${esc(t.title)}</div>
           <div class="tm-kb-card-meta">
-            ${t.due_date ? `<span>${IC.clock} ${fmtDate(t.due_date)}</span>` : ''}
+            ${t.scheduled_date ? `<span title="Дата выполнения">${IC.deadline} ${fmtDate(t.scheduled_date)}</span>` : ''}
+            ${t.due_date ? `<span title="Дедлайн">${IC.clock} ${fmtDate(t.due_date)}</span>` : ''}
             ${subCount ? `<span>${IC.subtask} ${subDone}/${subCount}</span>` : ''}
             ${assignee}
           </div>
@@ -1108,6 +1110,7 @@ export class TaskManagerModule {
         <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-bottom:6px">Модули</div>
         <div class="tm-mod-cards">
           ${modCard('subs', IC.subtask, 'Подзадачи', this.modalShowSubs, subtasks.length)}
+          ${modCard('date', IC.deadline, 'Дата', this.modalShowDate, t.scheduled_date ? 1 : 0)}
           ${modCard('deadline', IC.deadline, 'Дедлайн', this.modalShowDeadline, t.due_date ? 1 : 0)}
           ${modCard('reminders', IC.bell, 'Напоминания', this.modalShowReminders, taskReminders.length)}
           ${modCard('files', IC.attach, 'Файлы', this.modalShowFiles, this.editAttachments.length)}
@@ -1115,12 +1118,22 @@ export class TaskManagerModule {
         </div>
       </div>
       <div class="tm-extras-sections">
+        ${this.modalShowDate ? `
+        <div class="tm-section">
+          <h4>${IC.deadline} Дата выполнения</h4>
+          <div class="tm-modal-row">
+            <div>
+              <label>Когда делаю</label>
+              <input type="date" data-f="scheduled_date" value="${t.scheduled_date || ''}">
+            </div>
+          </div>
+        </div>` : ''}
         ${this.modalShowDeadline ? `
         <div class="tm-section">
           <h4>${IC.deadline} Дедлайн</h4>
           <div class="tm-modal-row">
             <div>
-              <label>Дата</label>
+              <label>До какого числа</label>
               <input type="date" data-f="due_date" value="${t.due_date || ''}">
             </div>
             <div>
@@ -1526,6 +1539,7 @@ export class TaskManagerModule {
         }
 
         if (mod === 'subs') this.modalShowSubs = !this.modalShowSubs;
+        else if (mod === 'date') this.modalShowDate = !this.modalShowDate;
         else if (mod === 'deadline') this.modalShowDeadline = !this.modalShowDeadline;
         else if (mod === 'reminders') this.modalShowReminders = !this.modalShowReminders;
         else if (mod === 'files') this.modalShowFiles = !this.modalShowFiles;
@@ -1609,6 +1623,7 @@ export class TaskManagerModule {
         const created = await taskDb.createTask({
           title: input.value.trim(), description: '', status: 'todo',
           priority: parent.priority,
+          scheduled_date: parent.scheduled_date,
           due_date: parent.due_date, due_time: parent.due_time,
           end_time: parent.end_time,
           all_day: parent.all_day,
@@ -1740,7 +1755,7 @@ export class TaskManagerModule {
     this.editingTask = {
       id: uuid(), company_id: '', title: '', description: '',
       status: 'todo', priority: 'none',
-      due_date: null, due_time: null, end_time: null, all_day: true,
+      scheduled_date: null, due_date: null, due_time: null, end_time: null, all_day: true,
       tags: '', sort_order: this.tasks.length,
       completed_at: null, parent_id: null, assignee_id: null,
       created_at: '', updated_at: '',
@@ -1759,7 +1774,7 @@ export class TaskManagerModule {
     // Auto-show subtasks if task has any
     const subs = this.subtasksOf(id);
     if (subs.length) this.modalShowSubs = true;
-    // Auto-show deadline if task has a due date
+    if (t.scheduled_date) this.modalShowDate = true;
     if (t.due_date) this.modalShowDeadline = true;
     // Auto-show reminders if task has any
     const taskRems = this.reminders.filter(r => r.task_id === id);
@@ -1789,6 +1804,7 @@ export class TaskManagerModule {
     const data: TaskUpdate = {
       title: val('title'), description: val('description'),
       priority: val('priority') as Priority, status: val('status') as Status,
+      scheduled_date: val('scheduled_date') || null,
       due_date: val('due_date') || null, due_time: val('due_time') || null,
       end_time: val('end_time') || null,
       all_day: ($('[data-f="all_day"]') as HTMLInputElement)?.checked ?? true,
@@ -1804,6 +1820,7 @@ export class TaskManagerModule {
         const created = await taskDb.createTask({
           title: data.title || 'Без названия', description: data.description || '',
           status: data.status || 'todo', priority: data.priority || 'none',
+          scheduled_date: data.scheduled_date ?? null,
           due_date: data.due_date ?? null, due_time: data.due_time ?? null,
           end_time: data.end_time ?? null,
           all_day: data.all_day ?? true, tags: data.tags || '',
@@ -1840,6 +1857,7 @@ export class TaskManagerModule {
         description: val('description') || '',
         status: (val('status') as Status) || 'todo',
         priority: (val('priority') as Priority) || 'none',
+        scheduled_date: val('scheduled_date') || null,
         due_date: val('due_date') || null,
         due_time: val('due_time') || null,
         end_time: val('end_time') || null,
@@ -1859,14 +1877,14 @@ export class TaskManagerModule {
 
   private async quickAdd(title: string): Promise<void> {
     try {
-      const created = await taskDb.createTask({ title, description: '', status: 'todo', priority: 'none', due_date: null, due_time: null, end_time: null, all_day: true, tags: '', sort_order: this.tasks.length, parent_id: null, assignee_id: null });
+      const created = await taskDb.createTask({ title, description: '', status: 'todo', priority: 'none', scheduled_date: null, due_date: null, due_time: null, end_time: null, all_day: true, tags: '', sort_order: this.tasks.length, parent_id: null, assignee_id: null });
       this.tasks.push(created); this.render();
     } catch (err) { console.error(err); }
   }
 
   private async quickAddWithStatus(title: string, status: Status): Promise<void> {
     try {
-      const created = await taskDb.createTask({ title, description: '', status, priority: 'none', due_date: null, due_time: null, end_time: null, all_day: true, tags: '', sort_order: this.tasks.length, parent_id: null, assignee_id: null });
+      const created = await taskDb.createTask({ title, description: '', status, priority: 'none', scheduled_date: null, due_date: null, due_time: null, end_time: null, all_day: true, tags: '', sort_order: this.tasks.length, parent_id: null, assignee_id: null });
       this.tasks.push(created); this.render();
     } catch (err) { console.error(err); }
   }
@@ -1939,6 +1957,7 @@ export class TaskManagerModule {
 
   private resetModalFlags(): void {
     this.modalShowSubs = false;
+    this.modalShowDate = false;
     this.modalShowReminders = false;
     this.modalShowFiles = false;
     this.modalShowComments = false;

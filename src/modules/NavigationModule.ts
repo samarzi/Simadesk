@@ -1,4 +1,5 @@
 import { boxes } from '../stores/appStore';
+import type { AppPage } from '../types';
 import type { App } from '../App';
 
 export class NavigationModule {
@@ -63,7 +64,7 @@ export class NavigationModule {
       'profile-section', 'settings-section',
       'repricer-section',
       'sku-audit-section', 'reviews-section', 'chats-section', 'logs-section', 'automation-section',
-      'catalog-section',
+      'catalog-section', 'producers-section',
     ];
     for (const id of ids) {
       const el = document.getElementById(id);
@@ -92,6 +93,7 @@ export class NavigationModule {
     w.taskManagerModule?.hide();
     w.stockModule?.hide();
     w.catalogMpModule?.hide();
+    w.producersModule?.hide();
   }
 
   /** Сбросить active-классы у всех nav/dock элементов. */
@@ -107,7 +109,7 @@ export class NavigationModule {
       'nav-ozon','nav-yandex','nav-wb',
       'nav-orders-ozon','nav-orders-yandex','nav-orders-wb',
       'nav-repricer',
-      'nav-sku-audit','nav-reviews','nav-chats','nav-logs','nav-automation','nav-tasks','nav-stock','nav-catalog',
+      'nav-sku-audit','nav-reviews','nav-chats','nav-logs','nav-automation','nav-tasks','nav-stock','nav-catalog','nav-producers',
     ];
     for (const id of ids) {
       document.getElementById(id)?.classList.remove('active');
@@ -115,14 +117,10 @@ export class NavigationModule {
   }
 
   async navigateTo(
-    page: 'home' | 'products' | 'analytics' | 'settings-hub' | 'settings' | 'profile' | 'orders' | 'marketplaces'
-        | 'ozon' | 'yandex' | 'wb'
-        | 'orders-ozon' | 'orders-yandex' | 'orders-wb'
-        | 'repricer' | 'stock' | 'catalog'
-        | 'sku-audit' | 'reviews' | 'chats' | 'logs' | 'automation' | 'tasks',
+    page: AppPage,
     { loadAll = false }: { loadAll?: boolean } = {},
   ) {
-    this.app.currentPage = page as any;
+    this.app.currentPage = page;
     localStorage.setItem('last_page', page);
 
     const topbarEl             = document.querySelector<HTMLElement>('.topbar');
@@ -136,7 +134,7 @@ export class NavigationModule {
       page === 'analytics' || page === 'settings-hub' || page === 'settings' || page === 'profile' ||
       page === 'repricer' ||
       page === 'sku-audit' || page === 'reviews' || page === 'chats' || page === 'logs' || page === 'automation' ||
-      page === 'tasks' || page === 'stock' || page === 'catalog';
+      page === 'tasks' || page === 'stock' || page === 'catalog' || page === 'producers';
 
     const groupsBar = document.getElementById('groups-bar');
 
@@ -236,6 +234,10 @@ export class NavigationModule {
         case 'catalog':
           document.getElementById('nav-catalog')?.classList.add('active');
           w.catalogMpModule?.show();
+          break;
+        case 'producers':
+          document.getElementById('nav-producers')?.classList.add('active');
+          w.producersModule?.show();
           break;
       }
       return;
