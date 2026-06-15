@@ -63,6 +63,7 @@ export interface YandexProduct {
   basic_price?: number | null;
   basic_currency?: string;
   market_sku?: number | null;   // SKU маркета
+  market_model_id?: number | null; // ID модели маркета (для ссылки на карточку)
   category_id?: number | null;
   archived?: boolean;
   stock_total?: number;         // суммарный остаток

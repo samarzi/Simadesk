@@ -844,6 +844,7 @@ export async function fetchAllYandexProducts(
       basic_price: offer.basicPrice?.value != null ? Number(offer.basicPrice.value) : null,
       basic_currency: offer.basicPrice?.currencyId ?? 'RUR',
       market_sku: raw.mapping?.marketSku ?? null,
+      market_model_id: raw.mapping?.marketModelId ?? null,
       category_id: raw.mapping?.marketCategoryId ?? offer.marketCategoryId ?? null,
       archived: !!offer.archived,
       stock_total: stocks?.total ?? 0,

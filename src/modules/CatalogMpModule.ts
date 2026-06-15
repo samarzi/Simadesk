@@ -41,6 +41,9 @@ function mpStorefrontUrl(mp: 'ozon' | 'wb' | 'yandex', product: any, nmID?: numb
     case 'ozon':
       return product.sku ? `https://www.ozon.ru/product/${product.sku}/` : null;
     case 'yandex':
+      if (product.market_model_id && product.market_sku) {
+        return `https://market.yandex.ru/product/${product.market_model_id}?sku=${product.market_sku}`;
+      }
       return product.market_sku ? `https://market.yandex.ru/search?text=${product.market_sku}` : null;
   }
 }
