@@ -551,6 +551,15 @@
 .cmp-ov-store { flex: 1; color: var(--text-secondary); min-width: 0; }
 .cmp-ov-val   { font-weight: 500; white-space: nowrap; }
 .cmp-ov-val--low { color: #f59e0b; }
+.cmp-ov-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.cmp-ov-link:hover { color: var(--accent); }
+.cmp-ov-link--disabled { color: var(--border); cursor: default; pointer-events: none; }
 .cmp-ov-hint  { font-size: 12px; color: var(--text-secondary); padding: 8px 0; font-style: italic; }
 .cmp-ov-block {}
 

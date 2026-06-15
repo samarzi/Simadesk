@@ -13,9 +13,9 @@ import {
 } from '@/services/catalogCache';
 import { updateWbPrices } from '@/services/wbApi';
 import { repricerRulesDb } from '@/services/repricerRulesDb';
-import type { OzonStore } from '@/types/ozon';
-import type { WbStore } from '@/types/wb';
-import type { YandexStore } from '@/types/yandex';
+import type { OzonStore, OzonProduct } from '@/types/ozon';
+import type { WbStore, WbProduct } from '@/types/wb';
+import type { YandexStore, YandexProduct } from '@/types/yandex';
 
 // ─────────────────────────────── Constants ───────────────────────────────────
 
@@ -33,11 +33,26 @@ const OZON_STATUS_LABELS: Record<string, string> = {
   expired: 'Истёк срок',
 };
 
+/** Ссылка на карточку товара так, как её видит покупатель на маркетплейсе. */
+function mpStorefrontUrl(mp: 'ozon' | 'wb' | 'yandex', product: any, nmID?: number | null): string | null {
+  switch (mp) {
+    case 'wb':
+      return nmID ? `https://www.wildberries.ru/catalog/${nmID}/detail.aspx` : null;
+    case 'ozon':
+      return product.sku ? `https://www.ozon.ru/product/${product.sku}/` : null;
+    case 'yandex':
+      return product.market_sku ? `https://market.yandex.ru/search?text=${product.market_sku}` : null;
+  }
+}
+
 // ─────────────────────────────── Interfaces ──────────────────────────────────
 
-interface OzonEntry  { store: OzonStore;   product: any; price: number | null; }
-interface WbEntry    { store: WbStore;     product: any; price: number | null; nmID: number | null; }
-interface YmEntry    { store: YandexStore; product: any; price: number | null; }
+/** Общие поля габаритов, присутствующие у товаров всех трёх МП. */
+type MpProduct = OzonProduct | WbProduct | YandexProduct;
+
+interface OzonEntry  { store: OzonStore;   product: OzonProduct;   price: number | null; }
+interface WbEntry    { store: WbStore;     product: WbProduct;     price: number | null; nmID: number | null; }
+interface YmEntry    { store: YandexStore; product: YandexProduct; price: number | null; }
 
 interface PhotoSet {
   storeId:   string;
@@ -233,6 +248,8 @@ export class CatalogMpModule {
       this.wbStores = wbStores;
       this.ymStores = ymStores;
 
+      await catalogCache.preload([...ozStores, ...wbStores, ...ymStores].map(s => s.id));
+
       this.products = this.buildUnified(ozRows, wbRows, ymRows);
       this.applyFilters();
     } catch (e: any) {
@@ -248,7 +265,7 @@ export class CatalogMpModule {
 
   // ─────────────────────────── Build unified ────────────────────────────────
 
-  private buildUnified(ozRows: any[], wbRows: any[], ymRows: any[]): UnifiedProduct[] {
+  private buildUnified(ozRows: OzonProduct[], wbRows: WbProduct[], ymRows: YandexProduct[]): UnifiedProduct[] {
     const map = new Map<string, {
       ozon: OzonEntry[]; wb: WbEntry[]; ym: YmEntry[];
       allNames: string[]; brands: string[];
@@ -268,7 +285,6 @@ export class CatalogMpModule {
       const entry = getOrCreate(vc);
       entry.ozon.push({ store, product: p, price: p.price ?? null });
       if (p.name) entry.allNames.push(p.name);
-      if (p.vendor ?? p.brand) entry.brands.push(p.vendor ?? p.brand);
     }
 
     for (const p of wbRows) {
@@ -278,7 +294,7 @@ export class CatalogMpModule {
       if (!store) continue;
       const entry = getOrCreate(vc);
       entry.wb.push({ store, product: p, price: p.price ?? null, nmID: p.nm_id ?? null });
-      if (p.name) entry.allNames.push(p.name);
+      if (p.title) entry.allNames.push(p.title);
       if (p.brand) entry.brands.push(p.brand);
     }
 
@@ -290,7 +306,7 @@ export class CatalogMpModule {
       const entry = getOrCreate(vc);
       entry.ym.push({ store, product: p, price: p.basic_price ?? null });
       if (p.name) entry.allNames.push(p.name);
-      if (p.vendor ?? p.brand) entry.brands.push(p.vendor ?? p.brand);
+      if (p.vendor) entry.brands.push(p.vendor);
     }
 
     const results: UnifiedProduct[] = [];
@@ -347,7 +363,7 @@ export class CatalogMpModule {
   }
 
   /** Габариты из строки товара БД (weight_kg/length_cm/...), или null если не заполнены. */
-  private dimsFromProductRow(p: any): Dimensions | null {
+  private dimsFromProductRow(p: MpProduct): Dimensions | null {
     if (!p?.weight_kg && !p?.length_cm) return null;
     return {
       weight_g:  Math.round((p.weight_kg ?? 0) * 1000),
@@ -365,7 +381,7 @@ export class CatalogMpModule {
   }
 
   /** Габариты для одного магазина: БД (свежее) > ручной кэш (для старых записей без габаритов в БД). */
-  private resolveEntryDims(p: any, storeId: string, vc: string): Dimensions | null {
+  private resolveEntryDims(p: MpProduct, storeId: string, vc: string): Dimensions | null {
     return this.dimsFromProductRow(p) ?? this.dimsFromCache(storeId, vc);
   }
 
@@ -387,7 +403,7 @@ export class CatalogMpModule {
 
   private detectConflict(vc: string, ozon: OzonEntry[], wb: WbEntry[], ym: YmEntry[]): boolean {
     const dimsList: Dimensions[] = [];
-    const push = (p: any, storeId: string) => {
+    const push = (p: MpProduct, storeId: string) => {
       const d = this.resolveEntryDims(p, storeId, vc);
       if (d) dimsList.push(d);
     };
@@ -680,7 +696,7 @@ export class CatalogMpModule {
     const p = this.getProduct(key);
     if (!p) return;
 
-    const dimsFromProduct = (pr: any): { weight_kg: string; length_cm: string; width_cm: string; height_cm: string } => ({
+    const dimsFromProduct = (pr: MpProduct): { weight_kg: string; length_cm: string; width_cm: string; height_cm: string } => ({
       weight_kg: pr?.weight_kg ? String(+pr.weight_kg) : '',
       length_cm: pr?.length_cm ? String(+pr.length_cm) : '',
       width_cm:  pr?.width_cm  ? String(+pr.width_cm)  : '',
@@ -690,7 +706,7 @@ export class CatalogMpModule {
     const locked = this.lockedCodes.has(p.vendorCode.toLowerCase());
     for (const e of p.ozon) {
       const d = dimsFromProduct(e.product);
-      const pr = e.product as any;
+      const pr = e.product;
       const cached = this.extraDataCache.get(`${e.store.id}:${p.vendorCode}`);
       this.editState.set(e.store.id, {
         ...d, price: e.price != null ? String(e.price) : '', discount: '',
@@ -702,7 +718,7 @@ export class CatalogMpModule {
     }
     for (const e of p.wb) {
       const d = dimsFromProduct(e.product);
-      const pr = e.product as any;
+      const pr = e.product;
       const cached = this.extraDataCache.get(`${e.store.id}:${p.vendorCode}`);
       this.editState.set(e.store.id, {
         ...d, price: e.price != null ? String(e.price) : '',
@@ -715,7 +731,7 @@ export class CatalogMpModule {
     }
     for (const e of p.ym) {
       const d = dimsFromProduct(e.product);
-      const pr = e.product as any;
+      const pr = e.product;
       const cached = this.extraDataCache.get(`${e.store.id}:${p.vendorCode}`);
       this.editState.set(e.store.id, {
         ...d, price: e.price != null ? String(e.price) : '', discount: '',
@@ -794,10 +810,10 @@ export class CatalogMpModule {
   }
 
   private tplTabOverview(p: UnifiedProduct): string {
-    const allEntries: { mpLabel: string; mp: string; storeName: string; price: number|null }[] = [
-      ...p.ozon.map(e => ({ mpLabel: 'OZ', mp: 'ozon',   storeName: e.store.name??'Ozon',   price: e.price })),
-      ...p.wb.map(e =>   ({ mpLabel: 'WB', mp: 'wb',     storeName: e.store.name??'WB',     price: e.price })),
-      ...p.ym.map(e =>   ({ mpLabel: 'ЯМ', mp: 'yandex', storeName: e.store.name??'Яндекс', price: e.price })),
+    const allEntries: { mpLabel: string; mp: string; storeName: string; price: number|null; url: string|null }[] = [
+      ...p.ozon.map(e => ({ mpLabel: 'OZ', mp: 'ozon',   storeName: e.store.name??'Ozon',   price: e.price, url: mpStorefrontUrl('ozon', e.product) })),
+      ...p.wb.map(e =>   ({ mpLabel: 'WB', mp: 'wb',     storeName: e.store.name??'WB',     price: e.price, url: mpStorefrontUrl('wb', e.product, e.nmID) })),
+      ...p.ym.map(e =>   ({ mpLabel: 'ЯМ', mp: 'yandex', storeName: e.store.name??'Яндекс', price: e.price, url: mpStorefrontUrl('yandex', e.product) })),
     ];
 
     const dimSources: { label: string; dims: Dimensions }[] = [];
@@ -816,7 +832,7 @@ export class CatalogMpModule {
 
     const stockRows: { mpLabel: string; mp: string; storeName: string; text: string; low: boolean }[] = [
       ...p.ozon.map(e => {
-        const pr = e.product as any;
+        const pr = e.product;
         const fbo = pr.stock_fbo ?? 0;
         const fbs = pr.stock_fbs ?? 0;
         const total = fbo + fbs;
@@ -828,7 +844,7 @@ export class CatalogMpModule {
         };
       }),
       ...p.wb.map(e => {
-        const pr = e.product as any;
+        const pr = e.product;
         const total = pr.stock_total ?? 0;
         return {
           mpLabel: 'WB', mp: 'wb', storeName: e.store.name ?? 'WB',
@@ -837,7 +853,7 @@ export class CatalogMpModule {
         };
       }),
       ...p.ym.map(e => {
-        const pr = e.product as any;
+        const pr = e.product;
         const total = pr.stock_total ?? 0;
         const available = pr.stock_available ?? 0;
         const archived = !!pr.archived;
@@ -858,6 +874,9 @@ export class CatalogMpModule {
             <span class="cmp-mp-badge cmp-mp-badge--${e.mp}">${e.mpLabel}</span>
             <span class="cmp-ov-store">${esc(e.storeName)}</span>
             <span class="cmp-ov-val">${e.price ? e.price.toLocaleString('ru') + ' ₽' : '—'}</span>
+            ${e.url
+              ? `<a class="cmp-ov-link" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer" title="Открыть на маркетплейсе">${I.externalLink('', 14)}</a>`
+              : `<span class="cmp-ov-link cmp-ov-link--disabled" title="Ссылка недоступна — нужна синхронизация">${I.externalLink('', 14)}</span>`}
           </div>`).join('')}
       </div>
 
@@ -1164,6 +1183,26 @@ export class CatalogMpModule {
     </div>`;
   }
 
+  /** Новые габариты товара с учётом полей массового редактирования (пустые поля — берём текущие). */
+  private massEditDims(pr: MpProduct): Dimensions {
+    const m = this.massEdit;
+    return {
+      weight_g:  m.weight_kg.trim() !== '' ? Math.round(+m.weight_kg * 1000) : Math.round((pr.weight_kg ?? 0) * 1000),
+      length_mm: m.length_cm.trim() !== '' ? Math.round(+m.length_cm * 10)  : Math.round((pr.length_cm ?? 0) * 10),
+      width_mm:  m.width_cm.trim()  !== '' ? Math.round(+m.width_cm  * 10)  : Math.round((pr.width_cm  ?? 0) * 10),
+      height_mm: m.height_cm.trim() !== '' ? Math.round(+m.height_cm * 10) : Math.round((pr.height_cm ?? 0) * 10),
+    };
+  }
+
+  /** Записать изменённые габариты массового редактирования обратно в строку товара (после успешного API-вызова). */
+  private applyMassEditDims(pr: MpProduct): void {
+    const m = this.massEdit;
+    pr.weight_kg = m.weight_kg.trim() !== '' ? +m.weight_kg : pr.weight_kg;
+    pr.length_cm = m.length_cm.trim() !== '' ? +m.length_cm : pr.length_cm;
+    pr.width_cm  = m.width_cm.trim()  !== '' ? +m.width_cm  : pr.width_cm;
+    pr.height_cm = m.height_cm.trim() !== '' ? +m.height_cm : pr.height_cm;
+  }
+
   private async applyMassEdit(): Promise<void> {
     const m = this.massEdit;
     const selectedProducts = this.products.filter(p => this.selected.has(p.key));
@@ -1201,14 +1240,9 @@ export class CatalogMpModule {
         // ── Ozon
         for (const e of p.ozon) {
           const creds = { client_id: e.store.client_id, api_key: e.store.api_key };
-          const pr = e.product as any;
+          const pr = e.product;
           if (hasDims || hasVat) {
-            const dims: Dimensions = {
-              weight_g:  m.weight_kg.trim() !== '' ? Math.round(+m.weight_kg * 1000) : Math.round((pr.weight_kg ?? 0) * 1000),
-              length_mm: m.length_cm.trim() !== '' ? Math.round(+m.length_cm * 10)  : Math.round((pr.length_cm ?? 0) * 10),
-              width_mm:  m.width_cm.trim()  !== '' ? Math.round(+m.width_cm  * 10)  : Math.round((pr.width_cm  ?? 0) * 10),
-              height_mm: m.height_cm.trim() !== '' ? Math.round(+m.height_cm * 10) : Math.round((pr.height_cm ?? 0) * 10),
-            };
+            const dims = this.massEditDims(pr);
             const oz = toOzon(dims);
             const item: Record<string, unknown> = {
               offer_id: p.vendorCode,
@@ -1218,12 +1252,7 @@ export class CatalogMpModule {
             };
             if (hasVat) item.vat = m.vat;
             await ozonApi.updateProduct(creds, item);
-            if (hasDims) {
-              pr.weight_kg = m.weight_kg.trim() !== '' ? +m.weight_kg : pr.weight_kg;
-              pr.length_cm = m.length_cm.trim() !== '' ? +m.length_cm : pr.length_cm;
-              pr.width_cm  = m.width_cm.trim()  !== '' ? +m.width_cm  : pr.width_cm;
-              pr.height_cm = m.height_cm.trim() !== '' ? +m.height_cm : pr.height_cm;
-            }
+            if (hasDims) this.applyMassEditDims(pr);
           }
           if (hasPrice && !locked) {
             const newPrice = computeNewPrice(e.price);
@@ -1238,25 +1267,15 @@ export class CatalogMpModule {
         // ── WB
         for (const e of p.wb) {
           if (!e.nmID) continue;
-          const pr = e.product as any;
+          const pr = e.product;
           if (hasDims || hasBrand) {
-            const dims: Dimensions = {
-              weight_g:  m.weight_kg.trim() !== '' ? Math.round(+m.weight_kg * 1000) : Math.round((pr.weight_kg ?? 0) * 1000),
-              length_mm: m.length_cm.trim() !== '' ? Math.round(+m.length_cm * 10)  : Math.round((pr.length_cm ?? 0) * 10),
-              width_mm:  m.width_cm.trim()  !== '' ? Math.round(+m.width_cm  * 10)  : Math.round((pr.width_cm  ?? 0) * 10),
-              height_mm: m.height_cm.trim() !== '' ? Math.round(+m.height_cm * 10) : Math.round((pr.height_cm ?? 0) * 10),
-            };
+            const dims = this.massEditDims(pr);
             const wb = toWb(dims);
             await wbApi.updateCard(e.store.api_key, e.nmID, {
               dimensions: { length: Math.round(wb.length ?? 0), width: Math.round(wb.width ?? 0), height: Math.round(wb.height ?? 0) },
               brand: hasBrand ? m.brand : undefined,
             });
-            if (hasDims) {
-              pr.weight_kg = m.weight_kg.trim() !== '' ? +m.weight_kg : pr.weight_kg;
-              pr.length_cm = m.length_cm.trim() !== '' ? +m.length_cm : pr.length_cm;
-              pr.width_cm  = m.width_cm.trim()  !== '' ? +m.width_cm  : pr.width_cm;
-              pr.height_cm = m.height_cm.trim() !== '' ? +m.height_cm : pr.height_cm;
-            }
+            if (hasDims) this.applyMassEditDims(pr);
             if (hasBrand) pr.brand = m.brand;
           }
           if ((hasPrice || hasDiscount) && !locked) {
@@ -1272,14 +1291,9 @@ export class CatalogMpModule {
 
         // ── Yandex
         for (const e of p.ym) {
-          const pr = e.product as any;
+          const pr = e.product;
           if (hasDims || hasBrand) {
-            const dims: Dimensions = {
-              weight_g:  m.weight_kg.trim() !== '' ? Math.round(+m.weight_kg * 1000) : Math.round((pr.weight_kg ?? 0) * 1000),
-              length_mm: m.length_cm.trim() !== '' ? Math.round(+m.length_cm * 10)  : Math.round((pr.length_cm ?? 0) * 10),
-              width_mm:  m.width_cm.trim()  !== '' ? Math.round(+m.width_cm  * 10)  : Math.round((pr.width_cm  ?? 0) * 10),
-              height_mm: m.height_cm.trim() !== '' ? Math.round(+m.height_cm * 10) : Math.round((pr.height_cm ?? 0) * 10),
-            };
+            const dims = this.massEditDims(pr);
             const ym = toYm(dims);
             const offer: Record<string, unknown> = {
               offerId: p.vendorCode,
@@ -1287,12 +1301,7 @@ export class CatalogMpModule {
             };
             if (hasBrand) offer.vendor = m.brand;
             await yandexApi.updateOffer(e.store.api_key, e.store.business_id!, offer);
-            if (hasDims) {
-              pr.weight_kg = m.weight_kg.trim() !== '' ? +m.weight_kg : pr.weight_kg;
-              pr.length_cm = m.length_cm.trim() !== '' ? +m.length_cm : pr.length_cm;
-              pr.width_cm  = m.width_cm.trim()  !== '' ? +m.width_cm  : pr.width_cm;
-              pr.height_cm = m.height_cm.trim() !== '' ? +m.height_cm : pr.height_cm;
-            }
+            if (hasDims) this.applyMassEditDims(pr);
             if (hasBrand) pr.vendor = m.brand;
           }
           if (hasPrice && !locked && e.store.campaign_id) {
@@ -1304,16 +1313,20 @@ export class CatalogMpModule {
           }
         }
 
+      } catch (e: any) {
+        errors++;
+        failedCodes.push(p.vendorCode);
+        console.warn(`[mass-edit] ${p.vendorCode}:`, e?.message ?? e);
+      } finally {
+        // Пересчитываем независимо от того, упала ли часть запросов посередине —
+        // успевшие примениться изменения (например, габариты в Ozon при ошибке в WB)
+        // не должны "потеряться" из отображаемых данных.
         p.dims = this.resolveDims(p.vendorCode, p.ozon, p.wb, p.ym);
         if (hasPrice) {
           const prices = [...p.ozon.map(x => x.price), ...p.wb.map(x => x.price), ...p.ym.map(x => x.price)]
             .filter((x): x is number => x !== null && x > 0);
           p.priceRange = { min: prices.length ? Math.min(...prices) : null, max: prices.length ? Math.max(...prices) : null };
         }
-      } catch (e: any) {
-        errors++;
-        failedCodes.push(p.vendorCode);
-        console.warn(`[mass-edit] ${p.vendorCode}:`, e?.message ?? e);
       }
     }
 
@@ -1580,6 +1593,7 @@ export class CatalogMpModule {
     });
 
     document.addEventListener('keydown', e => {
+      if (!this.visible) return;
       if (e.key === 'Escape') {
         if (this.lightboxUrl) { this.lightboxUrl = null; this.container.querySelector('.cmp-lightbox')?.remove(); }
         else if (this.openKey) this.closeModal();
@@ -1649,7 +1663,7 @@ export class CatalogMpModule {
         if (st.name) item.name = st.name;
         if (st.extraLoaded && st.vat) item.vat = st.vat;
         await ozonApi.updateProduct(creds, item);
-        const pr = e.product as any;
+        const pr = e.product;
         if (st.barcode && st.barcode !== (pr.barcode ?? '') && pr.sku) {
           await ozonApi.updateBarcode(creds, pr.sku, st.barcode);
         }
@@ -1680,7 +1694,7 @@ export class CatalogMpModule {
           await updateWbPrices(e.store.api_key, [{ nmID: e.nmID, price: Math.round(+st.price), discount }]);
           e.price = +st.price;
         }
-        const pr = e.product as any;
+        const pr = e.product;
         pr.weight_kg = st.weight_kg ? +st.weight_kg : null;
         pr.length_cm = st.length_cm ? +st.length_cm : null;
         pr.width_cm  = st.width_cm  ? +st.width_cm  : null;
@@ -1707,7 +1721,7 @@ export class CatalogMpModule {
           );
           e.price = +st.price;
         }
-        const pr = e.product as any;
+        const pr = e.product;
         pr.weight_kg = st.weight_kg ? +st.weight_kg : null;
         pr.length_cm = st.length_cm ? +st.length_cm : null;
         pr.width_cm  = st.width_cm  ? +st.width_cm  : null;
@@ -1744,34 +1758,47 @@ export class CatalogMpModule {
     this.refreshPhotosTab();
 
     try {
+      // Повторно пытаемся загрузить локальные (data:) фото в Storage перед сохранением —
+      // они появляются, если при добавлении файла Storage был недоступен. Не теряем их,
+      // если попытка снова не удастся — оставляем в st.photos для следующей попытки.
+      const { uploadPhoto, isDataUrl } = await import('@/services/photoUpload');
+      for (let i = 0; i < st.photos.length; i++) {
+        if (!isDataUrl(st.photos[i])) continue;
+        try {
+          const blob = await (await fetch(st.photos[i])).blob();
+          const file = new File([blob], `photo.${blob.type.split('/')[1] || 'jpg'}`, { type: blob.type });
+          st.photos[i] = await uploadPhoto(file, p.vendorCode);
+        } catch { /* остаётся data:URL — повторим при следующем сохранении */ }
+      }
+
       const urls = st.photos.filter(u => u.startsWith('http'));
-      const dropped = st.photos.length - urls.length;
+      const pendingLocal = st.photos.filter(isDataUrl);
 
       if (mp === 'ozon') {
         const e = p.ozon.find(x => x.store.id === storeId)!;
         await ozonApi.updateProduct({ client_id: e.store.client_id, api_key: e.store.api_key }, { offer_id: p.vendorCode, images: urls });
-        (e.product as any).images = urls;
+        e.product.images = urls;
 
       } else if (mp === 'wb') {
         const e = p.wb.find(x => x.store.id === storeId)!;
         if (!e.nmID) { st.saveError = 'Нет nmID — невозможно сохранить фото в WB'; return; }
         await wbApi.updateCard(e.store.api_key, e.nmID, { photos: urls });
-        (e.product as any).pictures = urls;
+        e.product.pictures = urls;
 
       } else {
         const e = p.ym.find(x => x.store.id === storeId)!;
         await yandexApi.updateOffer(e.store.api_key, e.store.business_id!, { offerId: p.vendorCode, pictures: urls });
-        (e.product as any).pictures = urls;
+        e.product.pictures = urls;
       }
 
-      st.photos = urls;
+      st.photos = [...urls, ...pendingLocal];
       catalogCache.setPhotos(storeId, p.vendorCode, urls);
       const set = p.photoSets.find(s => s.storeId === storeId);
       if (set) set.photos = urls;
       p.cover = p.photoSets[0]?.photos[0] ?? '';
 
-      if (dropped > 0) {
-        st.saveError = `${dropped} фото не загрузилось (не удалось получить ссылку) и было пропущено`;
+      if (pendingLocal.length > 0) {
+        st.saveError = `${pendingLocal.length} фото не удалось загрузить в хранилище — попробуйте сохранить ещё раз`;
       }
     } catch (e: any) {
       st.saveError = e?.message ?? 'Ошибка сохранения фото';
@@ -1825,7 +1852,7 @@ export class CatalogMpModule {
       const cacheKey = `${e.store.id}:${p.vendorCode}`;
       pending.push((async () => {
         try {
-          const info = await ozonApi.getFullProductInfo(p.vendorCode, (e.product as any).product_id ?? null, creds);
+          const info = await ozonApi.getFullProductInfo(p.vendorCode, e.product.product_id ?? null, creds);
           st.vat = info?.vat ?? '0';
           this.extraDataCache.set(cacheKey, { ...this.extraDataCache.get(cacheKey), vat: st.vat });
         } catch { /* leave default */ }
