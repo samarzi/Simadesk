@@ -13,18 +13,23 @@ import {
  * Главная страница — командный центр с live-данными по заказам и виджетами.
  *
  * Поток данных (важно для производительности):
- *   1. `fetchDashboardData()` — ОДИН сетевой заход по всем МП → структура `DashData`.
- *   2. Результат кэшируется на `CACHE_TTL` мс.
- *   3. `renderDashboardData(data)` — чистая заливка DOM, без сети.
+ *   1. `fetchRawData()` — ОДИН сетевой заход по всем МП → «сырые» заказы + карточки магазинов.
+ *   2. Результат кэшируется на `CACHE_TTL` мс (кэш НЕ зависит от фильтра).
+ *   3. `buildDashData()` — фильтрует сырые данные по текущему глобальному фильтру
+ *      (маркетплейс/магазин) и считает агрегаты для виджетов. Чистая функция, без сети.
+ *   4. `renderDashboardData(data)` — заливка DOM.
  *
- * Любой перерендер сетки (правка/drag/resize/добавление виджета) сразу
- * заливает данные из кэша синхронно → нет «залипшей загрузки» и лагов.
+ * Смена фильтра, правка/drag/resize виджетов — всё работает по кэшу синхронно,
+ * без повторных сетевых запросов → нет «залипшей загрузки» и лагов.
  */
 
-const CACHE_TTL = 60_000; // 60 сек актуальности кэша данных
+const CACHE_TTL = 60_000; // 60 сек актуальности кэша сырых данных
+
+type Mp = 'ozon' | 'yandex' | 'wb';
 
 interface UOrder {
-  mp: 'ozon' | 'yandex' | 'wb';
+  mp: Mp;
+  storeId: string;
   id: string;
   status: string;
   isNew: boolean;
@@ -38,9 +43,10 @@ interface UOrder {
 }
 
 interface StoreCard {
-  mp: 'ozon' | 'yandex' | 'wb';
+  mp: Mp;
   mpName: string;
   mpColor: string;
+  storeId: string;
   storeName: string;
   revenue30: number;
   revenueToday: number;
@@ -53,8 +59,15 @@ interface StoreCard {
   connected: boolean;
 }
 
-interface DashData {
+/** Сырые данные — результат сетевого захода, НЕ зависят от фильтра. */
+interface RawData {
   hasStores: boolean;
+  storeCards: StoreCard[];
+  allOrders: UOrder[];
+}
+
+/** Агрегаты для виджетов — результат фильтрации RawData текущим DashFilter. */
+interface DashData {
   storeCards: StoreCard[];
   kpi: Record<string, number>;
   daily: { dates: Date[]; revenue: number[]; orders: number[]; units: number[]; cancels: number[] };
@@ -66,6 +79,13 @@ interface DashData {
   feed: UOrder[];
   urgent: UOrder[];
   top: { name: string; rev: number; count: number; mp: string }[];
+}
+
+/** Глобальный фильтр дашборда — общий переключатель «маркетплейс + магазин». */
+interface DashFilter {
+  mp: 'all' | Mp;
+  storeId: string;   // 'all' | конкретный id
+  storeName: string; // кэш имени для мгновенного отображения до перезагрузки данных
 }
 
 const fmtInt = (n: number) => Math.round(n).toLocaleString('ru');
@@ -83,14 +103,37 @@ function parseOrderDate(raw: string): Date {
   return new Date(raw);
 }
 
+// ── Persist фильтра (по компании, как раскладка/размеры виджетов) ─────────────
+const FILTER_KEY = 'home_dashboard_filter_v1';
+function companyFilterKey(): string {
+  const cid = localStorage.getItem('active_company_id');
+  return cid ? `${FILTER_KEY}_${cid}` : FILTER_KEY;
+}
+function loadFilter(): DashFilter {
+  try {
+    const raw = localStorage.getItem(companyFilterKey());
+    if (raw) {
+      const f = JSON.parse(raw);
+      if (f && typeof f.mp === 'string' && typeof f.storeId === 'string') {
+        return { mp: f.mp, storeId: f.storeId, storeName: f.storeName ?? '' };
+      }
+    }
+  } catch { /* ignore */ }
+  return { mp: 'all', storeId: 'all', storeName: '' };
+}
+function saveFilter(f: DashFilter): void {
+  localStorage.setItem(companyFilterKey(), JSON.stringify(f));
+}
+
 export class HomeDashboardModule {
   constructor(private app: App) {}
 
   private dashboardRefreshTimer: number | null = null;
   private homeEditMode = false;
+  private _filter: DashFilter = loadFilter();
 
-  private _data: DashData | null = null;
-  private _dataTime = 0;
+  private _raw: RawData | null = null;
+  private _rawTime = 0;
   private _fetching = false;
 
   // ── Рендер оболочки ─────────────────────────────────────────────
@@ -100,6 +143,7 @@ export class HomeDashboardModule {
 
     const layout = loadLayout();
     const editMode = this.homeEditMode;
+    const scope = this.scopeLabel();
 
     content.innerHTML = `
       <div class="cmd-wrap">
@@ -121,6 +165,8 @@ export class HomeDashboardModule {
           </div>
         </div>
 
+        ${this.renderFilterBarSkeleton()}
+
         ${editMode ? `
           <div class="cmd-edit-banner">
             <div class="cmd-edit-banner-txt">
@@ -133,7 +179,7 @@ export class HomeDashboardModule {
         ` : ''}
 
         <div class="cmd-widgets-grid ${editMode ? 'edit-mode' : ''}" id="cmd-widgets-grid">
-          ${renderWidgetGrid(layout, editMode)}
+          ${renderWidgetGrid(layout, editMode, scope)}
         </div>
       </div>
     `;
@@ -148,7 +194,7 @@ export class HomeDashboardModule {
         this.dashboardRefreshTimer = null;
         return;
       }
-      this._dataTime = 0; // форсируем свежую загрузку по таймеру
+      this._rawTime = 0; // форсируем свежую загрузку по таймеру
       this.populate().catch(e => debug.warn('[Home] tick', e));
     }, 30_000);
   }
@@ -162,8 +208,77 @@ export class HomeDashboardModule {
   }
 
   refreshDashboard(): void {
-    this._dataTime = 0;
+    this._rawTime = 0;
     this.populate().catch(e => debug.warn('[Home] refresh', e));
+  }
+
+  // ── Глобальный фильтр «маркетплейс + магазин» ────────────────────
+  private mpLabel(mp: 'all' | Mp): string {
+    return mp === 'ozon' ? 'Ozon' : mp === 'yandex' ? 'Яндекс Маркет' : mp === 'wb' ? 'Wildberries' : 'Все МП';
+  }
+
+  private scopeLabel(): string {
+    const f = this._filter;
+    if (f.storeId !== 'all' && f.storeName) return `${this.mpLabel(f.mp)} · ${f.storeName}`;
+    if (f.mp !== 'all') return `${this.mpLabel(f.mp)} · все магазины`;
+    return 'Все МП · все магазины';
+  }
+
+  private renderFilterBarSkeleton(): string {
+    const f = this._filter;
+    const mpOptions = (['all', 'ozon', 'yandex', 'wb'] as const)
+      .map(mp => `<option value="${mp}" ${f.mp === mp ? 'selected' : ''}>${mp === 'all' ? 'Все маркетплейсы' : this.mpLabel(mp)}</option>`)
+      .join('');
+    const storeOptions = `<option value="all" ${f.storeId === 'all' ? 'selected' : ''}>Все магазины</option>`
+      + (f.storeId !== 'all' ? `<option value="${f.storeId}" selected>${escHtml(f.storeName || '…')}</option>` : '');
+    const hasActiveFilter = f.mp !== 'all' || f.storeId !== 'all';
+    return `<div class="cmd-filter-bar" id="cmd-filter-bar">
+      <div class="cmd-filter-group">
+        ${I.globe('', 13)}
+        <select class="cmd-filter-select" id="cmd-filter-mp" onchange="window.app.onDashFilterMpChange(this.value)">${mpOptions}</select>
+      </div>
+      <div class="cmd-filter-group">
+        ${I.store('', 13)}
+        <select class="cmd-filter-select" id="cmd-filter-store" onchange="window.app.onDashFilterStoreChange(this.value, this.options[this.selectedIndex].text)">${storeOptions}</select>
+      </div>
+      ${hasActiveFilter ? `<button class="cmd-filter-clear" onclick="window.app.resetDashboardFilter()">✕ Сбросить фильтр</button>` : ''}
+    </div>`;
+  }
+
+  /** Перестраивает <select> магазинов реальным списком после загрузки сырых данных. */
+  private paintFilterBar(storeCards: StoreCard[]): void {
+    const storeSel = document.getElementById('cmd-filter-store') as HTMLSelectElement | null;
+    if (!storeSel) return;
+    const f = this._filter;
+    const relevant = f.mp === 'all' ? storeCards : storeCards.filter(c => c.mp === f.mp);
+
+    // Если ранее выбранный магазин исчез (отключили/сменился фильтр МП) — сброс на «все»
+    if (f.storeId !== 'all' && !relevant.some(c => c.storeId === f.storeId)) {
+      this._filter = { ...f, storeId: 'all', storeName: '' };
+      saveFilter(this._filter);
+    }
+
+    const options = ['<option value="all">Все магазины</option>']
+      .concat(relevant.map(c => `<option value="${c.storeId}" ${c.storeId === this._filter.storeId ? 'selected' : ''}>${escHtml(c.storeName)}${f.mp === 'all' ? ' · ' + c.mpName : ''}</option>`));
+    storeSel.innerHTML = options.join('');
+  }
+
+  onDashFilterMpChange(mp: string): void {
+    this._filter = { mp: mp as 'all' | Mp, storeId: 'all', storeName: '' };
+    saveFilter(this._filter);
+    this.renderDashboard();
+  }
+
+  onDashFilterStoreChange(storeId: string, storeName: string): void {
+    this._filter = { ...this._filter, storeId, storeName: storeId === 'all' ? '' : storeName };
+    saveFilter(this._filter);
+    this.renderDashboard();
+  }
+
+  resetDashboardFilter(): void {
+    this._filter = { mp: 'all', storeId: 'all', storeName: '' };
+    saveFilter(this._filter);
+    this.renderDashboard();
   }
 
   // ── Управление виджетами ────────────────────────────────────────
@@ -293,7 +408,7 @@ export class HomeDashboardModule {
     this._dragId = null;
     // Без полного перерендера: раскладка уже сохранена, DOM переставлен.
     // Просто перезаливаем данные из кэша (мгновенно) в новые позиции.
-    if (this._data) this.renderDashboardData(this._data);
+    if (this._raw) this.applyFilterAndRender(this._raw);
   }
 
   onWidgetDrop(e: DragEvent): void {
@@ -371,14 +486,14 @@ export class HomeDashboardModule {
     }
     this._resize = null;
     // Перезаливаем данные (графики зависят от размера) без сети
-    if (this._data) this.renderDashboardData(this._data);
+    if (this._raw) this.applyFilterAndRender(this._raw);
   }
 
   // ── Загрузка + заливка ──────────────────────────────────────────
   private async populate(): Promise<void> {
     // Свежий кэш → мгновенная заливка без сети
-    if (this._data && Date.now() - this._dataTime < CACHE_TTL) {
-      this.renderDashboardData(this._data);
+    if (this._raw && Date.now() - this._rawTime < CACHE_TTL) {
+      this.applyFilterAndRender(this._raw);
       this.stampUpdated();
       return;
     }
@@ -387,11 +502,11 @@ export class HomeDashboardModule {
     const btn = document.getElementById('cmd-refresh-btn');
     btn?.classList.add('spinning');
     try {
-      const data = await this.fetchDashboardData();
-      this._data = data;
-      this._dataTime = Date.now();
+      const raw = await this.fetchRawData();
+      this._raw = raw;
+      this._rawTime = Date.now();
       if (this.app.currentPage === 'home') {
-        this.renderDashboardData(data);
+        this.applyFilterAndRender(raw);
         this.stampUpdated();
       }
     } catch (err) {
@@ -402,15 +517,28 @@ export class HomeDashboardModule {
     }
   }
 
+  /** Применяет текущий глобальный фильтр к сырым данным и заливает виджеты. */
+  private applyFilterAndRender(raw: RawData): void {
+    if (!raw.hasStores) { this.renderEmpty(); return; }
+    const f = this._filter;
+    const match = (mp: Mp, storeId: string) =>
+      (f.mp === 'all' || mp === f.mp) && (f.storeId === 'all' || storeId === f.storeId);
+    const storeCards = raw.storeCards.filter(c => match(c.mp, c.storeId));
+    const allOrders = raw.allOrders.filter(o => match(o.mp, o.storeId));
+    const data = this.buildDashData(storeCards, allOrders);
+    this.renderDashboardData(data);
+    this.paintFilterBar(raw.storeCards);
+  }
+
   private stampUpdated(): void {
     const el = document.getElementById('cmd-last-update');
     if (!el) return;
-    const sec = Math.floor((Date.now() - this._dataTime) / 1000);
+    const sec = Math.floor((Date.now() - this._rawTime) / 1000);
     el.textContent = sec < 5 ? 'только что' : `${sec} сек назад`;
   }
 
-  /** Единый сетевой заход по всем МП → структура данных для всех виджетов. */
-  private async fetchDashboardData(): Promise<DashData> {
+  /** Единый сетевой заход по всем МП → сырые заказы + карточки магазинов (без фильтра). */
+  private async fetchRawData(): Promise<RawData> {
     const { ozonDb } = await import('../services/ozonDb');
     const { yandexDb } = await import('../services/yandexDb');
     const { wbDb } = await import('../services/wbDb');
@@ -441,13 +569,13 @@ export class HomeDashboardModule {
     ]);
 
     const hasStores = ozStores.length + ymStores.length + wbStores.length > 0;
-    if (!hasStores) return this.emptyData();
+    if (!hasStores) return { hasStores: false, storeCards: [], allOrders: [] };
 
     const jobs: Promise<void>[] = [];
 
-    const pushCard = (mp: StoreCard['mp'], mpName: string, mpColor: string, storeName: string): StoreCard => {
+    const pushCard = (mp: Mp, mpName: string, mpColor: string, storeId: string, storeName: string): StoreCard => {
       const card: StoreCard = {
-        mp, mpName, mpColor, storeName,
+        mp, mpName, mpColor, storeId, storeName,
         revenue30: 0, revenueToday: 0, orders30: 0, ordersToday: 0,
         newCount: 0, shipUrgent: 0, cancels: 0, lastActivity: null, connected: false,
       };
@@ -466,7 +594,7 @@ export class HomeDashboardModule {
 
     ozStores.forEach((store, idx) => {
       const color = ozColors[idx % ozColors.length];
-      const card = pushCard('ozon', 'Ozon', color, store.name);
+      const card = pushCard('ozon', 'Ozon', color, store.id, store.name);
       jobs.push((async () => {
         try {
           const creds = { client_id: store.client_id, api_key: store.api_key };
@@ -481,7 +609,7 @@ export class HomeDashboardModule {
             const created = new Date(p.created_at || p.in_process_at || '');
             const ship = p.shipment_date ? new Date(p.shipment_date) : null;
             record(card, {
-              mp: 'ozon', id: p.posting_number, status: p.status,
+              mp: 'ozon', storeId: store.id, id: p.posting_number, status: p.status,
               isCancelled: p.status === 'cancelled',
               isNew: p.status === 'awaiting_packaging',
               isShip: (p.status === 'awaiting_packaging' || p.status === 'awaiting_deliver') && !!ship && ship.getTime() <= now.getTime() + 86_400_000,
@@ -496,7 +624,7 @@ export class HomeDashboardModule {
 
     ymStores.forEach((store, idx) => {
       const color = ymColors[idx % ymColors.length];
-      const card = pushCard('yandex', 'Яндекс Маркет', color, store.name);
+      const card = pushCard('yandex', 'Яндекс Маркет', color, store.id, store.name);
       jobs.push((async () => {
         try {
           const orders = await fetchAllYandexOrders(store, ymFrom, ymTo);
@@ -505,7 +633,7 @@ export class HomeDashboardModule {
             const created = parseOrderDate(o.creation_date);
             const isNew = o.status === 'PROCESSING';
             record(card, {
-              mp: 'yandex', id: String(o.id), status: o.status,
+              mp: 'yandex', storeId: store.id, id: String(o.id), status: o.status,
               isCancelled: o.status === 'CANCELLED', isNew, isShip: isNew,
               created, total: o.total, productName: o.items[0]?.name ?? '',
               storeName: store.name, storeColor: color,
@@ -517,7 +645,7 @@ export class HomeDashboardModule {
 
     wbStores.forEach((store, idx) => {
       const color = wbColors[idx % wbColors.length];
-      const card = pushCard('wb', 'Wildberries', color, store.name);
+      const card = pushCard('wb', 'Wildberries', color, store.id, store.name);
       jobs.push((async () => {
         if (isWbCoolingDown()) return;
         try {
@@ -527,7 +655,7 @@ export class HomeDashboardModule {
             const created = new Date(o.created_at);
             const isNew = o.status === 'new';
             record(card, {
-              mp: 'wb', id: String(o.id), status: o.status,
+              mp: 'wb', storeId: store.id, id: String(o.id), status: o.status,
               isCancelled: o.status === 'cancel', isNew, isShip: isNew,
               created, total: o.total, productName: o.items[0]?.name ?? '',
               storeName: store.name, storeColor: color,
@@ -538,6 +666,14 @@ export class HomeDashboardModule {
     });
 
     await Promise.all(jobs);
+    return { hasStores: true, storeCards, allOrders: all };
+  }
+
+  /** Считает агрегаты для виджетов из уже отфильтрованных карточек/заказов. Без сети. */
+  private buildDashData(storeCards: StoreCard[], allOrders: UOrder[]): DashData {
+    const now = new Date();
+    const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+    const all = allOrders;
 
     // ── Агрегаты ──
     const live = all.filter(o => !o.isCancelled);
@@ -622,28 +758,16 @@ export class HomeDashboardModule {
     const top = [...prodMap.values()].sort((a, b) => b.rev - a.rev).slice(0, 8);
 
     return {
-      hasStores: true, storeCards, kpi,
+      storeCards, kpi,
       daily: { dates, revenue, orders, units, cancels },
       returns14: { dates: rDates, counts: rCounts },
       byHour, byWeekday, status, mpShare, feed, urgent, top,
     };
   }
 
-  private emptyData(): DashData {
-    return {
-      hasStores: false, storeCards: [], kpi: {},
-      daily: { dates: [], revenue: [], orders: [], units: [], cancels: [] },
-      returns14: { dates: [], counts: [] },
-      byHour: [], byWeekday: [], status: [], mpShare: [], feed: [], urgent: [], top: [],
-    };
-  }
-
   // ── Заливка DOM (без сети) ──────────────────────────────────────
   private renderDashboardData(d: DashData): void {
-    if (!d.hasStores) { this.renderEmpty(); return; }
-
     // Счётчики
-    const kNames: Record<string, boolean> = { 'k-rev-today': true, 'k-rev-30': true, 'k-orders-today': true, 'k-orders-30': true, 'k-units': true, 'k-avg': true, 'k-payouts': true };
     const money: Record<string, boolean> = { 'k-rev-today': true, 'k-rev-30': true, 'k-avg': true, 'k-payouts': true };
     const seriesFor: Record<string, number[] | null> = {
       'k-rev-today': d.daily.revenue, 'k-rev-30': d.daily.revenue,
@@ -653,7 +777,7 @@ export class HomeDashboardModule {
     };
     for (const cfg of KPIS) {
       const v = d.kpi[cfg.id] ?? 0;
-      const disp = kNames[cfg.id] && money[cfg.id] ? fmtRub(v) : fmtInt(v);
+      const disp = money[cfg.id] ? fmtRub(v) : fmtInt(v);
       this.paintKpi(cfg.elemId, disp, seriesFor[cfg.id] ?? null, cfg.color);
     }
 
@@ -716,7 +840,7 @@ export class HomeDashboardModule {
     const footer = document.getElementById('dw-stores-footer') as HTMLElement | null;
     if (!grid) return;
     const now = Date.now();
-    if (d.storeCards.length === 0) { grid.innerHTML = '<div class="sf-loading">Нет магазинов</div>'; if (footer) footer.style.display = 'none'; return; }
+    if (d.storeCards.length === 0) { grid.innerHTML = '<div class="sf-loading">Нет магазинов по текущему фильтру</div>'; if (footer) footer.style.display = 'none'; return; }
 
     grid.innerHTML = d.storeCards.map(c => {
       const ago = c.lastActivity ? this.timeAgo(c.lastActivity) : 'нет данных';

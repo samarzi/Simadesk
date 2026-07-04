@@ -3837,6 +3837,55 @@
 .cmd-refresh-btn.spinning svg { animation: oz-spin .9s linear infinite; }
 .cmd-refresh-btn #cmd-last-update { color: var(--muted); font-weight: 500; }
 
+/* ── Общий фильтр «маркетплейс + магазин» — применяется ко всем виджетам сразу ── */
+.cmd-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.cmd-filter-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px 0 10px;
+  height: 34px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+}
+.cmd-filter-group svg { flex-shrink: 0; }
+.cmd-filter-select {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 650;
+  font-family: inherit;
+  height: 32px;
+  padding-right: 4px;
+  cursor: pointer;
+  max-width: 200px;
+}
+.cmd-filter-select:focus { outline: none; }
+.cmd-filter-clear {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, #dc2626 35%, var(--border));
+  background: color-mix(in srgb, #dc2626 8%, var(--card));
+  color: #dc2626;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 650;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background .15s;
+}
+.cmd-filter-clear:hover { background: color-mix(in srgb, #dc2626 16%, var(--card)); }
+
 /* ── Баннер режима правки ──────────────────────────────────────── */
 .cmd-edit-banner {
   display: flex;

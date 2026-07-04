@@ -28,12 +28,9 @@ export interface WidgetDef {
   minDims: WidgetDims;
   maxDims: WidgetDims;
   icon: string;
-  skeleton(): string;
+  /** scope — текущий текст охвата данных, задаётся глобальным фильтром (см. HomeDashboardModule). */
+  skeleton(scope: string): string;
 }
-
-// Единый текст охвата — все виджеты агрегируют все МП и все магазины.
-const SCOPE_ALL = 'Все МП · все магазины';
-const SCOPE_MP = 'Ozon · Я.Маркет · WB';
 
 // ── Хранилище размеров ────────────────────────────────────────────────────────
 
@@ -80,7 +77,7 @@ export function clampDims(id: string, cw: number, rh: number): WidgetDims {
 
 interface KpiCfg { id: string; elemId: string; icon: string; label: string; period: string; color: string; }
 
-function kpiSkeleton(c: KpiCfg): string {
+function kpiSkeleton(c: KpiCfg, scope: string): string {
   return `<div class="cmd-kpi" id="${c.elemId}" style="--kpi:${c.color}">
     <div class="cmd-kpi-top">
       <div class="cmd-kpi-icon">${c.icon}</div>
@@ -93,7 +90,7 @@ function kpiSkeleton(c: KpiCfg): string {
       </div>
       <div class="cmd-kpi-bottom">
         <span class="cmd-kpi-label">${c.label}</span>
-        <span class="cmd-kpi-scope">${I.globe('', 11)}<span>${SCOPE_ALL}</span></span>
+        <span class="cmd-kpi-scope">${I.globe('', 11)}<span>${scope}</span></span>
       </div>
     </div>
     <div class="cmd-kpi-spark" id="${c.elemId}-spark"></div>
@@ -122,7 +119,7 @@ function counterDef(c: KpiCfg, title: string, description: string): WidgetDef {
   return {
     id: c.id, title, description, kind: 'counter',
     defaultDims: KPI_DEF, minDims: KPI_MIN, maxDims: KPI_MAX, icon: c.icon,
-    skeleton: () => kpiSkeleton(c),
+    skeleton: (scope: string) => kpiSkeleton(c, scope),
   };
 }
 
@@ -162,77 +159,77 @@ export const WIDGETS: Record<string, WidgetDef> = {
     id: 'd-stores', title: 'Магазины и финансы', kind: 'dashboard',
     description: 'Карточки всех магазинов: выручка, заказы, статус подключения',
     defaultDims: { cw: 2, rh: 3 }, minDims: { cw: 2, rh: 2 }, maxDims: { cw: 4, rh: 4 }, icon: I.store(),
-    skeleton: () => head(I.store('', 15), 'Магазины и финансы', 'Все МП · по каждому магазину', '30 дней') +
+    skeleton: (scope) => head(I.store('', 15), 'Магазины и финансы', scope, '30 дней') +
       `<div class="sf-list" id="dw-stores">${loading('Подключаемся…')}</div><div class="sf-footer" id="dw-stores-footer" style="display:none"></div>`,
   },
   'd-feed': {
     id: 'd-feed', title: 'Лента заказов', kind: 'dashboard',
     description: 'Последние заказы со всех маркетплейсов в реальном времени',
     defaultDims: { cw: 2, rh: 3 }, minDims: { cw: 2, rh: 2 }, maxDims: { cw: 4, rh: 4 }, icon: I.radio(),
-    skeleton: () => head(I.radio('', 15), 'Лента заказов', SCOPE_ALL, 'live') +
+    skeleton: (scope) => head(I.radio('', 15), 'Лента заказов', scope, 'live') +
       `<div class="cmd-scroll" id="dw-feed">${loading()}</div>`,
   },
   'd-urgent': {
     id: 'd-urgent', title: 'Требует действий', kind: 'dashboard',
     description: 'Заказы со срочным дедлайном отгрузки — что сделать прямо сейчас',
     defaultDims: { cw: 2, rh: 2 }, minDims: { cw: 2, rh: 1 }, maxDims: { cw: 4, rh: 4 }, icon: I.zap(),
-    skeleton: () => head(I.zap('', 15), 'Требует действий', SCOPE_ALL, 'сейчас') +
+    skeleton: (scope) => head(I.zap('', 15), 'Требует действий', scope, 'сейчас') +
       `<div class="cmd-scroll" id="dw-urgent">${loading('Проверяем…')}</div>`,
   },
   'd-rev7d': {
     id: 'd-rev7d', title: 'Выручка по дням', kind: 'dashboard',
     description: 'Столбчатый график выручки за последние 7 дней',
     defaultDims: { cw: 2, rh: 2 }, minDims: { cw: 2, rh: 2 }, maxDims: { cw: 4, rh: 3 }, icon: I.chartBar(),
-    skeleton: () => head(I.chartBar('', 15), 'Выручка по дням', SCOPE_ALL, '7 дней') +
+    skeleton: (scope) => head(I.chartBar('', 15), 'Выручка по дням', scope, '7 дней') +
       `<div class="cmd-chart-body" id="dw-rev7d">${loading('Считаем…')}</div>`,
   },
   'd-mpshare': {
     id: 'd-mpshare', title: 'Доли маркетплейсов', kind: 'dashboard',
     description: 'Круговая диаграмма распределения выручки между Ozon, Я.Маркет и WB',
     defaultDims: { cw: 2, rh: 2 }, minDims: { cw: 1, rh: 2 }, maxDims: { cw: 4, rh: 3 }, icon: I.chartPie(),
-    skeleton: () => head(I.chartPie('', 15), 'Доли маркетплейсов', SCOPE_MP, '30 дней') +
+    skeleton: (scope) => head(I.chartPie('', 15), 'Доли маркетплейсов', scope, '30 дней') +
       `<div class="cmd-chart-body" id="dw-mpshare">${loading('Считаем доли…')}</div>`,
   },
   'd-top': {
     id: 'd-top', title: 'Топ товаров', kind: 'dashboard',
     description: 'Топ-товары по выручке за 30 дней с рейтинг-баром',
     defaultDims: { cw: 2, rh: 3 }, minDims: { cw: 2, rh: 2 }, maxDims: { cw: 4, rh: 4 }, icon: I.trophy(),
-    skeleton: () => head(I.trophy('', 15), 'Топ товаров', SCOPE_ALL, '30 дней') +
+    skeleton: (scope) => head(I.trophy('', 15), 'Топ товаров', scope, '30 дней') +
       `<div class="cmd-scroll" id="dw-top">${loading('Считаем…')}</div>`,
   },
   'd-mpcompare': {
     id: 'd-mpcompare', title: 'Сравнение маркетплейсов', kind: 'dashboard',
     description: 'Выручка и заказы по каждому маркетплейсу за 30 дней',
     defaultDims: { cw: 2, rh: 2 }, minDims: { cw: 2, rh: 1 }, maxDims: { cw: 4, rh: 3 }, icon: I.scale(),
-    skeleton: () => head(I.scale('', 15), 'Сравнение МП', SCOPE_MP, '30 дней') +
+    skeleton: (scope) => head(I.scale('', 15), 'Сравнение МП', scope, '30 дней') +
       `<div class="cmd-chart-body" id="dw-mpcompare">${loading('Сравниваем…')}</div>`,
   },
   'd-hours': {
     id: 'd-hours', title: 'Заказы по часам', kind: 'dashboard',
     description: 'В какие часы суток чаще всего покупают (30 дней)',
     defaultDims: { cw: 2, rh: 2 }, minDims: { cw: 2, rh: 1 }, maxDims: { cw: 4, rh: 3 }, icon: I.clock(),
-    skeleton: () => head(I.clock('', 15), 'Заказы по часам', SCOPE_ALL, '30 дней') +
+    skeleton: (scope) => head(I.clock('', 15), 'Заказы по часам', scope, '30 дней') +
       `<div class="cmd-chart-body" id="dw-hours">${loading('Считаем…')}</div>`,
   },
   'd-weekday': {
     id: 'd-weekday', title: 'Заказы по дням недели', kind: 'dashboard',
     description: 'Активность покупателей по дням недели (30 дней)',
     defaultDims: { cw: 2, rh: 2 }, minDims: { cw: 2, rh: 1 }, maxDims: { cw: 4, rh: 3 }, icon: I.calendarDays(),
-    skeleton: () => head(I.calendarDays('', 15), 'Дни недели', SCOPE_ALL, '30 дней') +
+    skeleton: (scope) => head(I.calendarDays('', 15), 'Дни недели', scope, '30 дней') +
       `<div class="cmd-chart-body" id="dw-weekday">${loading('Считаем…')}</div>`,
   },
   'd-status': {
     id: 'd-status', title: 'Статусы заказов', kind: 'dashboard',
     description: 'Распределение заказов по статусам: новые, к отгрузке, в работе, отменённые',
     defaultDims: { cw: 2, rh: 2 }, minDims: { cw: 1, rh: 2 }, maxDims: { cw: 4, rh: 3 }, icon: I.chartActivity(),
-    skeleton: () => head(I.chartActivity('', 15), 'Статусы заказов', SCOPE_ALL, 'сейчас') +
+    skeleton: (scope) => head(I.chartActivity('', 15), 'Статусы заказов', scope, 'сейчас') +
       `<div class="cmd-chart-body" id="dw-status">${loading('Считаем…')}</div>`,
   },
   'd-returns': {
     id: 'd-returns', title: 'Динамика отмен', kind: 'dashboard',
     description: 'График отмен по дням за последние 14 дней',
     defaultDims: { cw: 2, rh: 2 }, minDims: { cw: 2, rh: 1 }, maxDims: { cw: 4, rh: 3 }, icon: I.undo(),
-    skeleton: () => head(I.undo('', 15), 'Динамика отмен', SCOPE_ALL, '14 дней') +
+    skeleton: (scope) => head(I.undo('', 15), 'Динамика отмен', scope, '14 дней') +
       `<div class="cmd-chart-body" id="dw-returns">${loading('Считаем…')}</div>`,
   },
 };
@@ -271,7 +268,7 @@ export function resetLayout(): void {
 
 // ── Рендеринг сетки ───────────────────────────────────────────────────────────
 
-export function renderWidgetGrid(layout: string[], editMode: boolean): string {
+export function renderWidgetGrid(layout: string[], editMode: boolean, scope: string): string {
   return layout.map((id, idx) => {
     const w = WIDGETS[id];
     if (!w) return '';
@@ -293,7 +290,7 @@ export function renderWidgetGrid(layout: string[], editMode: boolean): string {
       : '';
     return `<div class="cmd-widget cmd-widget-cw${dims.cw} cmd-widget-rh${dims.rh}${editMode ? ' editable' : ''}"
         data-widget-id="${id}" data-kind="${w.kind}" data-cw="${dims.cw}" data-rh="${dims.rh}" ${dnd}>
-        ${edit}${w.skeleton()}
+        ${edit}${w.skeleton(scope)}
       </div>`;
   }).join('');
 }

@@ -2027,6 +2027,9 @@ export class App {
   onWidgetDrop(e: DragEvent): void { this.dashboard.onWidgetDrop(e); }
   onWidgetResizeStart(e: MouseEvent | TouchEvent, id: string): void { this.dashboard.onWidgetResizeStart(e, id); }
   openWidgetPicker(): void { this.dashboard.openWidgetPicker(); }
+  onDashFilterMpChange(mp: string): void { this.dashboard.onDashFilterMpChange(mp); }
+  onDashFilterStoreChange(storeId: string, storeName: string): void { this.dashboard.onDashFilterStoreChange(storeId, storeName); }
+  resetDashboardFilter(): void { this.dashboard.resetDashboardFilter(); }
   async viewProductFromDash(productId: string, boxId: string) { return this.dashboard.viewProductFromDash(productId, boxId); }
 
   // ── MASS ACTIONS (delegates -> modules/MassActionsModule.ts) ─────────────
