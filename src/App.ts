@@ -68,7 +68,8 @@ export class App {
   async copyToClipboard(text: string) {
     try {
       await navigator.clipboard.writeText(text);
-      this.toast('Скопировано: ' + text, 'success', 1500);
+      const shown = text.length > 60 ? text.slice(0, 60) + '…' : text;
+      this.toast('Скопировано: ' + shown, 'success', 1500);
     } catch (err) {
       this.toast('Ошибка при копировании', 'error');
     }
@@ -1596,6 +1597,10 @@ export class App {
           }
         } else if (c === 'Название товара') {
           cls = 'td-name';
+          const nameVal = String(d[c] ?? '');
+          suffix = `<button class="copy-btn" title="Копировать название" onclick="event.stopPropagation();window.app.copyToClipboard('${this.esc(nameVal)}')">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1"/><path d="M3.5 10.5V3.5h7"/></svg>
+          </button>`;
         } else if (c === 'Цена, руб.*') {
           cls = 'td-price';
           if (isSynced) {
@@ -2018,9 +2023,8 @@ export class App {
   resetWidgetLayout(): void { this.dashboard.resetWidgetLayout(); }
   onWidgetDragStart(e: DragEvent, id: string): void { this.dashboard.onWidgetDragStart(e, id); }
   onWidgetDragOver(e: DragEvent, el: HTMLElement, targetId: string): void { this.dashboard.onWidgetDragOver(e, el, targetId); }
-  onWidgetDragLeave(el: HTMLElement): void { this.dashboard.onWidgetDragLeave(el); }
   onWidgetDragEnd(): void { this.dashboard.onWidgetDragEnd(); }
-  onWidgetDrop(e: DragEvent, targetId: string): void { this.dashboard.onWidgetDrop(e, targetId); }
+  onWidgetDrop(e: DragEvent): void { this.dashboard.onWidgetDrop(e); }
   onWidgetResizeStart(e: MouseEvent | TouchEvent, id: string): void { this.dashboard.onWidgetResizeStart(e, id); }
   openWidgetPicker(): void { this.dashboard.openWidgetPicker(); }
   async viewProductFromDash(productId: string, boxId: string) { return this.dashboard.viewProductFromDash(productId, boxId); }

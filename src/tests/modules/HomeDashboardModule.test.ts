@@ -3,6 +3,8 @@ import { HomeDashboardModule } from '@/modules/HomeDashboardModule';
 import { DEFAULT_LAYOUT } from '@/modules/HomeWidgets';
 import type { App } from '@/App';
 
+const KEY = 'home_widgets_layout_v3';
+
 function makeApp(overrides: Partial<App> = {}): App {
   return {
     closeModal: vi.fn(),
@@ -19,10 +21,10 @@ describe('HomeDashboardModule — widget layout management', () => {
     const app = makeApp();
     const mod = new HomeDashboardModule(app);
 
-    mod.addWidget('kpi-revenue-30');
+    mod.addWidget('k-avg'); // not in DEFAULT_LAYOUT
 
-    const stored = JSON.parse(localStorage.getItem('home_widgets_layout_v1')!);
-    expect(stored).toEqual([...DEFAULT_LAYOUT, 'kpi-revenue-30']);
+    const stored = JSON.parse(localStorage.getItem(KEY)!);
+    expect(stored).toEqual([...DEFAULT_LAYOUT, 'k-avg']);
     expect(app.closeModal).toHaveBeenCalledOnce();
   });
 
@@ -32,7 +34,7 @@ describe('HomeDashboardModule — widget layout management', () => {
 
     mod.addWidget('does-not-exist');
 
-    expect(localStorage.getItem('home_widgets_layout_v1')).toBeNull();
+    expect(localStorage.getItem(KEY)).toBeNull();
     expect(app.closeModal).not.toHaveBeenCalled();
   });
 
@@ -40,9 +42,9 @@ describe('HomeDashboardModule — widget layout management', () => {
     const app = makeApp();
     const mod = new HomeDashboardModule(app);
 
-    mod.addWidget('kpi-today'); // already in DEFAULT_LAYOUT
+    mod.addWidget('k-rev-today'); // already in DEFAULT_LAYOUT
 
-    expect(localStorage.getItem('home_widgets_layout_v1')).toBeNull();
+    expect(localStorage.getItem(KEY)).toBeNull();
     expect(app.closeModal).not.toHaveBeenCalled();
   });
 
@@ -50,21 +52,21 @@ describe('HomeDashboardModule — widget layout management', () => {
     const app = makeApp();
     const mod = new HomeDashboardModule(app);
 
-    mod.removeWidget('kpi-new');
+    mod.removeWidget('k-new');
 
-    const stored = JSON.parse(localStorage.getItem('home_widgets_layout_v1')!);
-    expect(stored).toEqual(DEFAULT_LAYOUT.filter(id => id !== 'kpi-new'));
+    const stored = JSON.parse(localStorage.getItem(KEY)!);
+    expect(stored).toEqual(DEFAULT_LAYOUT.filter(id => id !== 'k-new'));
   });
 
   it('moveWidget(-1) swaps a widget with its predecessor', () => {
     const app = makeApp();
     const mod = new HomeDashboardModule(app);
 
-    mod.moveWidget('kpi-new', -1); // kpi-new is at index 1, kpi-today at 0
+    mod.moveWidget('k-orders-today', -1); // index 1 → swaps with k-rev-today at 0
 
-    const stored = JSON.parse(localStorage.getItem('home_widgets_layout_v1')!);
-    expect(stored[0]).toBe('kpi-new');
-    expect(stored[1]).toBe('kpi-today');
+    const stored = JSON.parse(localStorage.getItem(KEY)!);
+    expect(stored[0]).toBe('k-orders-today');
+    expect(stored[1]).toBe('k-rev-today');
   });
 
   it('moveWidget is a no-op at the boundary of the layout', () => {
@@ -73,7 +75,7 @@ describe('HomeDashboardModule — widget layout management', () => {
 
     mod.moveWidget(DEFAULT_LAYOUT[0], -1); // already first
 
-    expect(localStorage.getItem('home_widgets_layout_v1')).toBeNull();
+    expect(localStorage.getItem(KEY)).toBeNull();
   });
 
   it('moveWidget is a no-op for an id not in the layout', () => {
@@ -82,6 +84,6 @@ describe('HomeDashboardModule — widget layout management', () => {
 
     mod.moveWidget('does-not-exist', 1);
 
-    expect(localStorage.getItem('home_widgets_layout_v1')).toBeNull();
+    expect(localStorage.getItem(KEY)).toBeNull();
   });
 });
