@@ -25,6 +25,21 @@ import {
 
 const CACHE_TTL = 60_000; // 60 сек актуальности кэша сырых данных
 
+/**
+ * Максимум времени, которое дашборд ждёт ОДИН магазин за один цикл обновления.
+ * Общие retry-хелперы (wbApi/ozonOrdersApi/yandexApi) при 429 могут ретраить
+ * с экспоненциальной паузой до нескольких минут — это уместно для фоновой
+ * синхронизации, но не для дашборда, который обновляется каждые 30 сек и не
+ * должен ждать один зависший магазин, пока остальные давно ответили.
+ */
+const DASH_FETCH_TIMEOUT_MS = 10_000;
+
+function makeTimeoutSignal(ms: number): { signal: AbortSignal; clear: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return { signal: controller.signal, clear: () => clearTimeout(timer) };
+}
+
 type Mp = 'ozon' | 'yandex' | 'wb';
 
 interface UOrder {
@@ -644,12 +659,13 @@ export class HomeDashboardModule {
       const color = ozColors[idx % ozColors.length];
       const card = pushCard('ozon', 'Ozon', color, store.id, store.name);
       jobs.push((async () => {
+        const { signal, clear } = makeTimeoutSignal(DASH_FETCH_TIMEOUT_MS);
         try {
           const creds = { client_id: store.client_id, api_key: store.api_key };
           type OzPost = Awaited<ReturnType<typeof ozonOrdersApi.getFboPostings>>;
           const [fbs, fbo]: [OzPost, OzPost] = await Promise.all([
-            fetchAllPagesByCursor((lim, cursor, sig) => ozonOrdersApi.getFbsPostings(creds, sinceIso, toIso, null, lim, cursor, sig), 50).catch(() => [] as OzPost),
-            fetchAllPages((lim, off, sig) => ozonOrdersApi.getFboPostings(creds, sinceIso, toIso, lim, off as number, sig), 50).catch(() => [] as OzPost),
+            fetchAllPagesByCursor((lim, cursor, sig) => ozonOrdersApi.getFbsPostings(creds, sinceIso, toIso, null, lim, cursor, sig), 50, signal).catch(() => [] as OzPost),
+            fetchAllPages((lim, off, sig) => ozonOrdersApi.getFboPostings(creds, sinceIso, toIso, lim, off as number, sig), 50, signal).catch(() => [] as OzPost),
           ]);
           card.connected = true;
           for (const p of [...fbs, ...fbo]) {
@@ -669,6 +685,7 @@ export class HomeDashboardModule {
             });
           }
         } catch (e: any) { debug.warn('[Home] Ozon', e?.message ?? e); }
+        finally { clear(); }
       })());
     });
 
@@ -676,8 +693,9 @@ export class HomeDashboardModule {
       const color = ymColors[idx % ymColors.length];
       const card = pushCard('yandex', 'Яндекс Маркет', color, store.id, store.name);
       jobs.push((async () => {
+        const { signal, clear } = makeTimeoutSignal(DASH_FETCH_TIMEOUT_MS);
         try {
-          const orders = await fetchAllYandexOrders(store, ymFrom, ymTo);
+          const orders = await fetchAllYandexOrders(store, ymFrom, ymTo, signal);
           card.connected = true;
           for (const o of orders) {
             const created = parseOrderDate(o.creation_date);
@@ -690,6 +708,7 @@ export class HomeDashboardModule {
             });
           }
         } catch (e: any) { debug.warn('[Home] YM', e?.message ?? e); }
+        finally { clear(); }
       })());
     });
 
@@ -698,8 +717,9 @@ export class HomeDashboardModule {
       const card = pushCard('wb', 'Wildberries', color, store.id, store.name);
       jobs.push((async () => {
         if (isWbCoolingDown()) return;
+        const { signal, clear } = makeTimeoutSignal(DASH_FETCH_TIMEOUT_MS);
         try {
-          const orders = await fetchAllWbOrders(store, wbFrom);
+          const orders = await fetchAllWbOrders(store, wbFrom, signal);
           card.connected = true;
           for (const o of orders) {
             const created = new Date(o.created_at);
@@ -712,6 +732,7 @@ export class HomeDashboardModule {
             });
           }
         } catch (e: any) { debug.warn('[Home] WB', e?.message ?? e); }
+        finally { clear(); }
       })());
     });
 
