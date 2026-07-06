@@ -2021,10 +2021,7 @@ export class App {
   addWidget(id: string): void { this.dashboard.addWidget(id); }
   moveWidget(id: string, dir: -1 | 1): void { this.dashboard.moveWidget(id, dir); }
   resetWidgetLayout(): void { this.dashboard.resetWidgetLayout(); }
-  onWidgetDragStart(e: DragEvent, id: string): void { this.dashboard.onWidgetDragStart(e, id); }
-  onWidgetDragOver(e: DragEvent, el: HTMLElement, targetId: string): void { this.dashboard.onWidgetDragOver(e, el, targetId); }
-  onWidgetDragEnd(): void { this.dashboard.onWidgetDragEnd(); }
-  onWidgetDrop(e: DragEvent): void { this.dashboard.onWidgetDrop(e); }
+  onWidgetPointerDown(e: PointerEvent, id: string): void { this.dashboard.onWidgetPointerDown(e, id); }
   onWidgetResizeStart(e: MouseEvent | TouchEvent, id: string): void { this.dashboard.onWidgetResizeStart(e, id); }
   openWidgetPicker(): void { this.dashboard.openWidgetPicker(); }
   onDashFilterMpChange(mp: string): void { this.dashboard.onDashFilterMpChange(mp); }

@@ -113,6 +113,10 @@ export const KPIS: KpiCfg[] = [
   { id: 'k-avg',          elemId: 'k-avg',          icon: I.receipt(),     label: 'Средний чек',   period: '30 ДНЕЙ', color: '#0891b2' },
   { id: 'k-cancels',      elemId: 'k-cancels',      icon: I.undo(),        label: 'Отмены',        period: '30 ДНЕЙ', color: '#ef4444' },
   { id: 'k-payouts',      elemId: 'k-payouts',      icon: I.wallet(),      label: 'К выплате ≈',   period: '30 ДНЕЙ', color: '#005bff' },
+  { id: 'k-stores-active', elemId: 'k-stores-active', icon: I.plug(),      label: 'Активные магазины', period: 'СЕЙЧАС', color: '#0ea5e9' },
+  { id: 'k-cancel-rate',  elemId: 'k-cancel-rate',  icon: I.percent(),     label: '% отмен',       period: '30 ДНЕЙ', color: '#f43f5e' },
+  { id: 'k-max-order',    elemId: 'k-max-order',    icon: I.crown(),       label: 'Крупнейший заказ', period: '30 ДНЕЙ', color: '#f59e0b' },
+  { id: 'k-unique-sku',   elemId: 'k-unique-sku',   icon: I.tag(),         label: 'Уник. товаров', period: '30 ДНЕЙ', color: '#8b5cf6' },
 ];
 
 function counterDef(c: KpiCfg, title: string, description: string): WidgetDef {
@@ -153,6 +157,10 @@ export const WIDGETS: Record<string, WidgetDef> = {
   'k-avg':          counterDef(KPIS[7], 'Средний чек',       'Средняя сумма заказа за 30 дней (все МП)'),
   'k-cancels':      counterDef(KPIS[8], 'Отмены',            'Отменённые заказы за 30 дней (все МП)'),
   'k-payouts':      counterDef(KPIS[9], 'К выплате',         'Оценка к перечислению (≈85% выручки за 30 дней)'),
+  'k-stores-active': counterDef(KPIS[10], 'Активные магазины', 'Магазины, ответившие на запрос заказов прямо сейчас'),
+  'k-cancel-rate':  counterDef(KPIS[11], 'Процент отмен',    'Доля отменённых заказов от общего числа за 30 дней'),
+  'k-max-order':    counterDef(KPIS[12], 'Крупнейший заказ', 'Самый дорогой заказ за 30 дней (все МП)'),
+  'k-unique-sku':   counterDef(KPIS[13], 'Уникальных товаров', 'Сколько разных товаров продано за 30 дней'),
 
   // ── Дашборды ──
   'd-stores': {
@@ -232,6 +240,27 @@ export const WIDGETS: Record<string, WidgetDef> = {
     skeleton: (scope) => head(I.undo('', 15), 'Динамика отмен', scope, '14 дней') +
       `<div class="cmd-chart-body" id="dw-returns">${loading('Считаем…')}</div>`,
   },
+  'd-rev30d': {
+    id: 'd-rev30d', title: 'Выручка за 30 дней', kind: 'dashboard',
+    description: 'Подробный график выручки по дням за последние 30 дней',
+    defaultDims: { cw: 4, rh: 2 }, minDims: { cw: 2, rh: 2 }, maxDims: { cw: 4, rh: 3 }, icon: I.chartActivity(),
+    skeleton: (scope) => head(I.chartActivity('', 15), 'Выручка за 30 дней', scope, '30 дней') +
+      `<div class="cmd-chart-body" id="dw-rev30d">${loading('Считаем…')}</div>`,
+  },
+  'd-aov-trend': {
+    id: 'd-aov-trend', title: 'Средний чек по дням', kind: 'dashboard',
+    description: 'Динамика среднего чека за последние 7 дней',
+    defaultDims: { cw: 2, rh: 2 }, minDims: { cw: 2, rh: 2 }, maxDims: { cw: 4, rh: 3 }, icon: I.receipt(),
+    skeleton: (scope) => head(I.receipt('', 15), 'Средний чек по дням', scope, '7 дней') +
+      `<div class="cmd-chart-body" id="dw-aov">${loading('Считаем…')}</div>`,
+  },
+  'd-price-buckets': {
+    id: 'd-price-buckets', title: 'Заказы по сумме', kind: 'dashboard',
+    description: 'Распределение заказов по ценовым диапазонам за 30 дней',
+    defaultDims: { cw: 2, rh: 2 }, minDims: { cw: 2, rh: 2 }, maxDims: { cw: 4, rh: 3 }, icon: I.chartBar(),
+    skeleton: (scope) => head(I.chartBar('', 15), 'Заказы по сумме', scope, '30 дней') +
+      `<div class="cmd-chart-body" id="dw-buckets">${loading('Считаем…')}</div>`,
+  },
 };
 
 // ── Раскладка ─────────────────────────────────────────────────────────────────
@@ -280,16 +309,10 @@ export function renderWidgetGrid(layout: string[], editMode: boolean, scope: str
       <div class="cmd-widget-resize" onmousedown="window.app.onWidgetResizeStart(event,'${id}')" ontouchstart="window.app.onWidgetResizeStart(event,'${id}')" title="Потяните, чтобы изменить размер">
         <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M11 5L5 11M11 9l-2 2"/></svg>
       </div>` : '';
-    const dnd = editMode
-      ? `draggable="true"
-         ondragstart="window.app.onWidgetDragStart(event,'${id}')"
-         ondragover="window.app.onWidgetDragOver(event,this,'${id}')"
-         ondragend="window.app.onWidgetDragEnd()"
-         ondrop="window.app.onWidgetDrop(event,'${id}')"
-         style="animation-delay:${(idx % 12) * 40}ms"`
-      : '';
+    const dnd = editMode ? `onpointerdown="window.app.onWidgetPointerDown(event,'${id}')"` : '';
     return `<div class="cmd-widget cmd-widget-cw${dims.cw} cmd-widget-rh${dims.rh}${editMode ? ' editable' : ''}"
-        data-widget-id="${id}" data-kind="${w.kind}" data-cw="${dims.cw}" data-rh="${dims.rh}" ${dnd}>
+        data-widget-id="${id}" data-kind="${w.kind}" data-cw="${dims.cw}" data-rh="${dims.rh}" ${dnd}
+        style="animation-delay:${(idx % 12) * 35}ms">
         ${edit}${w.skeleton(scope)}
       </div>`;
   }).join('');

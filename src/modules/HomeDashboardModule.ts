@@ -71,6 +71,7 @@ interface DashData {
   storeCards: StoreCard[];
   kpi: Record<string, number>;
   daily: { dates: Date[]; revenue: number[]; orders: number[]; units: number[]; cancels: number[] };
+  daily30: { dates: Date[]; revenue: number[] };
   returns14: { dates: Date[]; counts: number[] };
   byHour: number[];      // 24
   byWeekday: number[];   // 7 (Пн..Вс)
@@ -79,6 +80,7 @@ interface DashData {
   feed: UOrder[];
   urgent: UOrder[];
   top: { name: string; rev: number; count: number; mp: string }[];
+  priceBuckets: { label: string; short: string; count: number }[];
 }
 
 /** Глобальный фильтр дашборда — общий переключатель «маркетплейс + магазин». */
@@ -325,95 +327,141 @@ export class HomeDashboardModule {
     );
   }
 
-  // ── Drag-and-drop (FLIP live-swap) ──────────────────────────────
+  // ── Drag-and-drop (pointer-based: клон плавно следует за курсором,
+  //    остальные виджеты подстраиваются FLIP-анимацией) ────────────
   private _dragId: string | null = null;
-  private _lastSwap = 0;
+  private _dragClone: HTMLElement | null = null;
+  private _dragStartX = 0;
+  private _dragStartY = 0;
+  private _lastSwapAt = 0;
+  private _dragMoveHandler: ((e: PointerEvent) => void) | null = null;
+  private _dragUpHandler: ((e: PointerEvent) => void) | null = null;
 
-  onWidgetDragStart(e: DragEvent, id: string): void {
+  onWidgetPointerDown(e: PointerEvent, id: string): void {
+    const target = e.target as HTMLElement;
+    if (target.closest('.cmd-widget-resize, .cmd-widget-remove')) return;
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+
+    const el = document.querySelector<HTMLElement>(`[data-widget-id="${id}"]`);
+    if (!el) return;
+    e.preventDefault();
+
     this._dragId = id;
-    const el = e.currentTarget as HTMLElement;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', id);
-      const ghost = document.createElement('div');
-      ghost.style.cssText = 'position:fixed;top:-9999px;width:1px;height:1px';
-      document.body.appendChild(ghost);
-      e.dataTransfer.setDragImage(ghost, 0, 0);
-      requestAnimationFrame(() => ghost.remove());
-    }
-    requestAnimationFrame(() => el.classList.add('dragging'));
+    this._dragStartX = e.clientX;
+    this._dragStartY = e.clientY;
+
+    const rect = el.getBoundingClientRect();
+    const clone = el.cloneNode(true) as HTMLElement;
+    clone.className = `cmd-widget-clone ${el.className}`;
+    clone.removeAttribute('id');
+    clone.querySelectorAll('[id]').forEach(n => n.removeAttribute('id'));
+    clone.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;margin:0;pointer-events:none;z-index:1000;animation:none;`;
+    document.body.appendChild(clone);
+    requestAnimationFrame(() => { clone.style.transform = 'scale(1.03) rotate(1deg)'; });
+    this._dragClone = clone;
+
+    el.classList.add('placeholder');
+
+    this._dragMoveHandler = (ev: PointerEvent) => this.onWidgetPointerMove(ev);
+    this._dragUpHandler = (ev: PointerEvent) => this.onWidgetPointerUp(ev);
+    document.addEventListener('pointermove', this._dragMoveHandler);
+    document.addEventListener('pointerup', this._dragUpHandler);
+    document.addEventListener('pointercancel', this._dragUpHandler);
   }
 
-  onWidgetDragOver(e: DragEvent, el: HTMLElement, targetId: string): void {
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  private onWidgetPointerMove(e: PointerEvent): void {
+    const clone = this._dragClone;
     const srcId = this._dragId;
-    if (!srcId || srcId === targetId) return;
+    if (!clone || !srcId) return;
+
+    const dx = e.clientX - this._dragStartX;
+    const dy = e.clientY - this._dragStartY;
+    clone.style.transform = `translate(${dx}px, ${dy}px) scale(1.03) rotate(1deg)`;
 
     const now = Date.now();
-    if (now - this._lastSwap < 140) return;
-    this._lastSwap = now;
+    if (now - this._lastSwapAt < 90) return;
 
     const grid = document.getElementById('cmd-widgets-grid');
     if (!grid) return;
+    const under = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    const targetEl = under?.closest<HTMLElement>('.cmd-widget');
+    const targetId = targetEl?.dataset.widgetId;
+    if (!targetEl || !targetId || targetId === srcId) return;
+
     const srcEl = grid.querySelector<HTMLElement>(`[data-widget-id="${srcId}"]`);
-    const tgtEl = grid.querySelector<HTMLElement>(`[data-widget-id="${targetId}"]`);
-    if (!srcEl || !tgtEl) return;
+    if (!srcEl) return;
+    this._lastSwapAt = now;
 
     // FLIP: снимаем позиции до перестановки
     const widgets = Array.from(grid.querySelectorAll<HTMLElement>('.cmd-widget'));
     const before = new Map<string, DOMRect>();
-    widgets.forEach(w => { const id = w.dataset.widgetId; if (id) before.set(id, w.getBoundingClientRect()); });
+    widgets.forEach(w => { const wid = w.dataset.widgetId; if (wid) before.set(wid, w.getBoundingClientRect()); });
 
     const layout = loadLayout();
     const si = layout.indexOf(srcId);
     if (si === -1 || layout.indexOf(targetId) === -1) return;
     layout.splice(si, 1);
     const ti = layout.indexOf(targetId);
-    const tgtRect = el.getBoundingClientRect();
-    const insertBefore = (e.clientX - tgtRect.left) < tgtRect.width / 2;
+    const targetRect = targetEl.getBoundingClientRect();
+    const insertBefore = (e.clientX - targetRect.left) < targetRect.width / 2;
     layout.splice(insertBefore ? ti : ti + 1, 0, srcId);
     saveLayout(layout);
 
-    if (insertBefore) grid.insertBefore(srcEl, tgtEl);
-    else tgtEl.after(srcEl);
-    srcEl.classList.add('dragging');
+    if (insertBefore) grid.insertBefore(srcEl, targetEl);
+    else targetEl.after(srcEl);
 
-    // FLIP: анимируем сдвиг остальных
+    // FLIP: анимируем пружинистый сдвиг остальных
     widgets.forEach(w => {
-      const id = w.dataset.widgetId;
-      if (!id || w === srcEl) return;
-      const oldR = before.get(id);
+      const wid = w.dataset.widgetId;
+      if (!wid || w === srcEl) return;
+      const oldR = before.get(wid);
       const newR = w.getBoundingClientRect();
       if (!oldR) return;
-      const dx = oldR.left - newR.left;
-      const dy = oldR.top - newR.top;
-      if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
+      const ddx = oldR.left - newR.left;
+      const ddy = oldR.top - newR.top;
+      if (Math.abs(ddx) < 2 && Math.abs(ddy) < 2) return;
       w.style.transition = 'none';
-      w.style.transform = `translate(${dx}px,${dy}px)`;
+      w.style.transform = `translate(${ddx}px,${ddy}px)`;
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        w.style.transition = 'transform .24s cubic-bezier(.4,0,.2,1)';
+        w.style.transition = 'transform .32s cubic-bezier(.34,1.3,.4,1)';
         w.style.transform = '';
       }));
     });
   }
 
-  onWidgetDragEnd(): void {
-    const grid = document.getElementById('cmd-widgets-grid');
-    grid?.querySelectorAll<HTMLElement>('.cmd-widget').forEach(w => {
-      w.classList.remove('dragging', 'drag-target');
-      w.style.transform = '';
-      w.style.transition = '';
-    });
-    this._dragId = null;
-    // Без полного перерендера: раскладка уже сохранена, DOM переставлен.
-    // Просто перезаливаем данные из кэша (мгновенно) в новые позиции.
-    if (this._raw) this.applyFilterAndRender(this._raw);
-  }
+  private onWidgetPointerUp(_e: PointerEvent): void {
+    if (this._dragMoveHandler) document.removeEventListener('pointermove', this._dragMoveHandler);
+    if (this._dragUpHandler) {
+      document.removeEventListener('pointerup', this._dragUpHandler);
+      document.removeEventListener('pointercancel', this._dragUpHandler);
+    }
 
-  onWidgetDrop(e: DragEvent): void {
-    e.preventDefault();
-    this.onWidgetDragEnd();
+    const srcId = this._dragId;
+    const clone = this._dragClone;
+    const grid = document.getElementById('cmd-widgets-grid');
+    const srcEl = srcId ? grid?.querySelector<HTMLElement>(`[data-widget-id="${srcId}"]`) : null;
+
+    if (clone && srcEl) {
+      // Клон плавно «влетает» в финальный слот виджета, затем убирается
+      const finalRect = srcEl.getBoundingClientRect();
+      clone.style.transition = 'left .22s cubic-bezier(.4,0,.2,1), top .22s cubic-bezier(.4,0,.2,1), transform .22s cubic-bezier(.4,0,.2,1)';
+      clone.style.left = `${finalRect.left}px`;
+      clone.style.top = `${finalRect.top}px`;
+      clone.style.transform = 'scale(1) rotate(0deg)';
+      setTimeout(() => clone.remove(), 230);
+    } else {
+      clone?.remove();
+    }
+
+    srcEl?.classList.remove('placeholder');
+    this._dragId = null;
+    this._dragClone = null;
+    this._dragMoveHandler = null;
+    this._dragUpHandler = null;
+
+    // Раскладка уже сохранена по ходу перетаскивания — просто перезаливаем
+    // данные из кэша (мгновенно, без сети) в новые позиции.
+    if (this._raw) this.applyFilterAndRender(this._raw);
   }
 
   // ── Resize виджетов ─────────────────────────────────────────────
@@ -612,7 +660,9 @@ export class HomeDashboardModule {
               mp: 'ozon', storeId: store.id, id: p.posting_number, status: p.status,
               isCancelled: p.status === 'cancelled',
               isNew: p.status === 'awaiting_packaging',
-              isShip: (p.status === 'awaiting_packaging' || p.status === 'awaiting_deliver') && !!ship && ship.getTime() <= now.getTime() + 86_400_000,
+              // Если дедлайн отгрузки неизвестен (Ozon не всегда отдаёт shipment_date,
+              // особенно по FBO) — считаем заказ срочным, а не молча прячем его из счётчика.
+              isShip: (p.status === 'awaiting_packaging' || p.status === 'awaiting_deliver') && (!ship || ship.getTime() <= now.getTime() + 86_400_000),
               created, total,
               productName: p.products[0]?.name ?? p.products[0]?.offer_id ?? '',
               storeName: store.name, storeColor: color,
@@ -689,6 +739,11 @@ export class HomeDashboardModule {
     };
     kpi['k-avg'] = kpi['k-orders-30'] > 0 ? kpi['k-rev-30'] / kpi['k-orders-30'] : 0;
     kpi['k-payouts'] = Math.round(kpi['k-rev-30'] * 0.85);
+    kpi['k-stores-active'] = storeCards.filter(c => c.connected).length;
+    kpi['k-cancel-rate'] = (kpi['k-cancels'] + kpi['k-orders-30']) > 0
+      ? (kpi['k-cancels'] / (kpi['k-cancels'] + kpi['k-orders-30'])) * 100 : 0;
+    kpi['k-max-order'] = live.reduce((m, o) => Math.max(m, o.total), 0);
+    kpi['k-unique-sku'] = new Set(live.map(o => o.productName || o.id)).size;
 
     // Дневные бакеты (7 дней)
     const days = 7;
@@ -704,6 +759,20 @@ export class HomeDashboardModule {
       if (idx < 0 || idx >= days) continue;
       if (o.isCancelled) { cancels[idx]++; continue; }
       revenue[idx] += o.total; orders[idx]++; units[idx]++;
+    }
+
+    // Дневные бакеты (30 дней) — для подробного графика выручки
+    const days30 = 30;
+    const dates30: Date[] = [];
+    for (let i = days30 - 1; i >= 0; i--) {
+      const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
+      dates30.push(d);
+    }
+    const start30 = dates30[0].getTime();
+    const revenue30arr = new Array(days30).fill(0);
+    for (const o of live) {
+      const idx = Math.floor((o.created.getTime() - start30) / 86_400_000);
+      if (idx >= 0 && idx < days30) revenue30arr[idx] += o.total;
     }
 
     // Отмены 14 дней
@@ -757,27 +826,44 @@ export class HomeDashboardModule {
     }
     const top = [...prodMap.values()].sort((a, b) => b.rev - a.rev).slice(0, 8);
 
+    // Распределение заказов по сумме
+    const bucketDefs = [
+      { label: 'До 1 000 ₽', short: '<1к', max: 1000 },
+      { label: '1 000–3 000 ₽', short: '1–3к', max: 3000 },
+      { label: '3 000–5 000 ₽', short: '3–5к', max: 5000 },
+      { label: '5 000–10 000 ₽', short: '5–10к', max: 10_000 },
+      { label: 'Свыше 10 000 ₽', short: '>10к', max: Infinity },
+    ];
+    const priceBuckets = bucketDefs.map(b => ({ label: b.label, short: b.short, count: 0 }));
+    for (const o of live) {
+      const idx = bucketDefs.findIndex(b => o.total <= b.max);
+      priceBuckets[idx === -1 ? bucketDefs.length - 1 : idx].count++;
+    }
+
     return {
       storeCards, kpi,
       daily: { dates, revenue, orders, units, cancels },
+      daily30: { dates: dates30, revenue: revenue30arr },
       returns14: { dates: rDates, counts: rCounts },
-      byHour, byWeekday, status, mpShare, feed, urgent, top,
+      byHour, byWeekday, status, mpShare, feed, urgent, top, priceBuckets,
     };
   }
 
   // ── Заливка DOM (без сети) ──────────────────────────────────────
   private renderDashboardData(d: DashData): void {
     // Счётчики
-    const money: Record<string, boolean> = { 'k-rev-today': true, 'k-rev-30': true, 'k-avg': true, 'k-payouts': true };
+    const money: Record<string, boolean> = { 'k-rev-today': true, 'k-rev-30': true, 'k-avg': true, 'k-payouts': true, 'k-max-order': true };
+    const percent: Record<string, boolean> = { 'k-cancel-rate': true };
     const seriesFor: Record<string, number[] | null> = {
       'k-rev-today': d.daily.revenue, 'k-rev-30': d.daily.revenue,
       'k-orders-today': d.daily.orders, 'k-orders-30': d.daily.orders,
       'k-units': d.daily.units, 'k-cancels': d.daily.cancels,
       'k-new': null, 'k-ship': null, 'k-avg': null, 'k-payouts': null,
+      'k-stores-active': null, 'k-cancel-rate': null, 'k-max-order': null, 'k-unique-sku': null,
     };
     for (const cfg of KPIS) {
       const v = d.kpi[cfg.id] ?? 0;
-      const disp = money[cfg.id] ? fmtRub(v) : fmtInt(v);
+      const disp = percent[cfg.id] ? `${v.toFixed(1)}%` : money[cfg.id] ? fmtRub(v) : fmtInt(v);
       this.paintKpi(cfg.elemId, disp, seriesFor[cfg.id] ?? null, cfg.color);
     }
 
@@ -785,6 +871,7 @@ export class HomeDashboardModule {
     this.paintFeed(d);
     this.paintUrgent(d);
     this.paintRev7d(d);
+    this.paintRev30d(d);
     this.paintMpShare(d);
     this.paintTop(d);
     this.paintMpCompare(d);
@@ -792,6 +879,8 @@ export class HomeDashboardModule {
     this.paintWeekday(d);
     this.paintStatus(d);
     this.paintReturns(d);
+    this.paintAovTrend(d);
+    this.paintPriceBuckets(d);
   }
 
   private renderEmpty(): void {
@@ -989,12 +1078,44 @@ export class HomeDashboardModule {
     el.innerHTML = `<div class="cmd-chart-note">Всего отмен: <b>${total}</b> за 14 дней</div>${this.barChart(d.returns14.counts, labels, '#ef4444', v => `${v} отмен`, true)}`;
   }
 
+  private paintRev30d(d: DashData): void {
+    const el = document.getElementById('dw-rev30d');
+    if (!el) return;
+    const total = d.daily30.revenue.reduce((s, v) => s + v, 0);
+    const labels = d.daily30.dates.map((x, i) => (i % 5 === 0 ? `${String(x.getDate()).padStart(2, '0')}.${String(x.getMonth() + 1).padStart(2, '0')}` : ''));
+    el.innerHTML = `<div class="cmd-chart-total"><span class="cmd-chart-total-v">${fmtRub(total)}</span><span class="cmd-chart-total-l">за 30 дней</span></div>
+      ${this.barChart(d.daily30.revenue, labels, '#16a34a', v => fmtRub(v), true)}`;
+  }
+
+  private paintAovTrend(d: DashData): void {
+    const el = document.getElementById('dw-aov');
+    if (!el) return;
+    const avg = d.daily.revenue.map((rev, i) => d.daily.orders[i] > 0 ? rev / d.daily.orders[i] : 0);
+    if (avg.every(v => v === 0)) { el.innerHTML = '<div class="cmd-empty-small">Нет данных</div>'; return; }
+    const labels = d.daily.dates.map(x => `${String(x.getDate()).padStart(2, '0')}.${String(x.getMonth() + 1).padStart(2, '0')}`);
+    el.innerHTML = this.barChart(avg, labels, '#0891b2', v => fmtRub(v));
+  }
+
+  private paintPriceBuckets(d: DashData): void {
+    const el = document.getElementById('dw-buckets');
+    if (!el) return;
+    const total = d.priceBuckets.reduce((s, b) => s + b.count, 0);
+    if (total === 0) { el.innerHTML = '<div class="cmd-empty-small">Нет заказов за 30 дней</div>'; return; }
+    el.innerHTML = this.barChart(
+      d.priceBuckets.map(b => b.count),
+      d.priceBuckets.map(b => b.short),
+      '#f59e0b',
+      (_v, i) => `${d.priceBuckets[i].label}: ${d.priceBuckets[i].count} зак.`,
+    );
+  }
+
   // ── Мини-компоненты графиков ────────────────────────────────────
-  private barChart(vals: number[], labels: string[], color: string, tip: (v: number) => string, thin = false): string {
+  private barChart(vals: number[], labels: string[], color: string, tip: (v: number, i: number) => string, thin = false): string {
     const max = Math.max(...vals, 1);
+    const grad = `linear-gradient(180deg, color-mix(in srgb, ${color} 55%, white) 0%, ${color} 100%)`;
     return `<div class="cmd-bars ${thin ? 'cmd-bars-thin' : ''}">
-      ${vals.map((v, i) => `<div class="cmd-bar-col" title="${labels[i] || i}: ${tip(v)}">
-        <div class="cmd-bar-track"><div class="cmd-bar-fill" style="height:${(v / max) * 100}%;background:${color}"></div></div>
+      ${vals.map((v, i) => `<div class="cmd-bar-col" title="${labels[i] || i}: ${tip(v, i)}">
+        <div class="cmd-bar-track"><div class="cmd-bar-fill" style="height:${(v / max) * 100}%;background:${grad}"></div></div>
         ${labels[i] ? `<div class="cmd-bar-lbl">${labels[i]}</div>` : (thin ? '' : '<div class="cmd-bar-lbl">&nbsp;</div>')}
       </div>`).join('')}
     </div>`;

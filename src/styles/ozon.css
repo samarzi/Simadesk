@@ -3923,9 +3923,21 @@
   display: flex;
   flex-direction: column;
   transition: box-shadow .2s, border-color .2s, transform .18s;
+  animation: cmd-widget-enter .4s cubic-bezier(.16,1,.3,1) both;
 }
 .cmd-widget:hover { box-shadow: 0 6px 24px rgba(0,0,0,.09); border-color: color-mix(in srgb, var(--accent) 25%, var(--border)); }
 .cmd-widget > * { min-height: 0; }
+
+/* Тонкая цветная полоса сверху — визуально отделяет дашборд-виджеты от счётчиков */
+.cmd-widget[data-kind="dashboard"]::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: .5;
+  pointer-events: none;
+}
 
 /* col / row span */
 .cmd-widget-cw1 { grid-column: span 1; }
@@ -3937,15 +3949,17 @@
 .cmd-widget-rh3 { grid-row: span 3; }
 .cmd-widget-rh4 { grid-row: span 4; }
 
+/* ── Появление виджетов (каскадом, по animation-delay из разметки) ── */
+@keyframes cmd-widget-enter {
+  from { opacity: 0; transform: translateY(7px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 /* ── Режим правки: wobble + рамка ──────────────────────────────── */
 @keyframes cmd-wobble {
   0%,100% { transform: rotate(0deg); }
   25% { transform: rotate(-.35deg); }
   75% { transform: rotate(.35deg); }
-}
-@keyframes cmd-pop-in {
-  from { opacity: 0; transform: scale(.9); }
-  to { opacity: 1; transform: scale(1); }
 }
 .cmd-widgets-grid.edit-mode .cmd-widget {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
@@ -3953,20 +3967,31 @@
 }
 .cmd-widget.editable {
   cursor: grab;
-  animation: cmd-wobble 1.4s ease-in-out infinite, cmd-pop-in .25s ease both;
+  animation: cmd-wobble 1.4s ease-in-out infinite, cmd-widget-enter .4s cubic-bezier(.16,1,.3,1) both;
+  touch-action: none;
 }
 .cmd-widget.editable:active { cursor: grabbing; }
-.cmd-widget.dragging {
-  opacity: .45;
+
+/* Плейсхолдер — тайл, из которого «подняли» плавающий клон при перетаскивании */
+.cmd-widget.placeholder {
+  opacity: .3;
   animation: none !important;
-  transform: rotate(1.6deg) scale(.97);
-  box-shadow: 0 16px 46px rgba(0,0,0,.28);
-  z-index: 30;
 }
-.cmd-widget.drag-target {
-  outline: 2.5px dashed var(--accent);
-  outline-offset: 3px;
+
+/* Плавающий клон, который следует за курсором/пальцем при drag */
+.cmd-widget-clone {
+  position: fixed;
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 20px 45px rgba(0,0,0,.32);
+  will-change: transform;
+  cursor: grabbing;
 }
+.cmd-widget-clone .cmd-widget-remove,
+.cmd-widget-clone .cmd-widget-resize { display: none !important; }
+
 .cmd-widget.resizing {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
@@ -4439,7 +4464,8 @@
 .cmd-donut-v { font-size: 13px; font-weight: 820; color: var(--text); line-height: 1.05; padding: 0 4px; }
 .cmd-donut-l { font-size: 9px; color: var(--muted); margin-top: 1px; }
 .cmd-donut-legend { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-.cmd-donut-li { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.cmd-donut-li { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 5px; margin: 0 -5px; border-radius: 7px; transition: background .12s; }
+.cmd-donut-li:hover { background: var(--bg2); }
 .cmd-donut-sw { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 .cmd-donut-name { flex: 1; color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmd-donut-val { color: var(--muted); font-weight: 700; flex-shrink: 0; }
