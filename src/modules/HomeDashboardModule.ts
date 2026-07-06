@@ -107,6 +107,13 @@ interface DashFilter {
 
 const fmtInt = (n: number) => Math.round(n).toLocaleString('ru');
 const fmtRub = (n: number) => `${fmtInt(n)} ₽`;
+/** Сокращённая сумма для центра доната — большие числа не вылезают за круг. */
+const fmtCompactRub = (n: number): string => {
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)} млн ₽`;
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(abs >= 10_000 ? 0 : 1)} тыс ₽`;
+  return fmtRub(n);
+};
 
 /**
  * Парсит дату заказа. Яндекс Маркет отдаёт `ДД-ММ-ГГГГ[ ЧЧ:ММ:СС]`,
@@ -394,7 +401,7 @@ export class HomeDashboardModule {
     clone.style.transform = `translate(${dx}px, ${dy}px) scale(1.03) rotate(1deg)`;
 
     const now = Date.now();
-    if (now - this._lastSwapAt < 90) return;
+    if (now - this._lastSwapAt < 130) return;
 
     const grid = document.getElementById('cmd-widgets-grid');
     if (!grid) return;
@@ -425,7 +432,11 @@ export class HomeDashboardModule {
     if (insertBefore) grid.insertBefore(srcEl, targetEl);
     else targetEl.after(srcEl);
 
-    // FLIP: анимируем пружинистый сдвиг остальных
+    // FLIP: анимируем плавный сдвиг остальных. Форсируем синхронный reflow
+    // (чтение offsetHeight) вместо двойного requestAnimationFrame — так каждая
+    // перестановка детерминированно перекрывает предыдущую анимацию на том же
+    // элементе, без гонки между отложенными rAF-коллбэками от разных свапов
+    // (именно она давала «резкие» скачки при быстрой перетаскивании).
     widgets.forEach(w => {
       const wid = w.dataset.widgetId;
       if (!wid || w === srcEl) return;
@@ -437,10 +448,9 @@ export class HomeDashboardModule {
       if (Math.abs(ddx) < 2 && Math.abs(ddy) < 2) return;
       w.style.transition = 'none';
       w.style.transform = `translate(${ddx}px,${ddy}px)`;
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        w.style.transition = 'transform .32s cubic-bezier(.34,1.3,.4,1)';
-        w.style.transform = '';
-      }));
+      void w.offsetHeight; // форсируем reflow — браузер фиксирует «прыжок» перед стартом transition
+      w.style.transition = 'transform .3s cubic-bezier(.22,.61,.36,1)';
+      w.style.transform = '';
     });
   }
 
@@ -918,16 +928,25 @@ export class HomeDashboardModule {
 
   // ── Painters ────────────────────────────────────────────────────
   private paintKpi(elemId: string, value: string, series: number[] | null, color: string): void {
+    const kpiEl = document.getElementById(elemId);
     const valEl = document.getElementById(`${elemId}-val`);
     if (valEl) valEl.textContent = value;
     const sparkEl = document.getElementById(`${elemId}-spark`);
     const trendEl = document.getElementById(`${elemId}-trend`);
+    const hasSeries = !!series && series.some(v => v > 0);
     if (sparkEl) {
-      if (series && series.some(v => v > 0)) {
-        const max = Math.max(...series, 1);
-        sparkEl.innerHTML = series.map((v, i) => `<div style="height:${Math.max(8, (v / max) * 100)}%;opacity:${0.45 + (i / series.length) * 0.55}"></div>`).join('');
-      } else sparkEl.innerHTML = '';
+      if (hasSeries) {
+        const max = Math.max(...series!, 1);
+        sparkEl.innerHTML = series!.map((v, i) => `<div style="height:${Math.max(8, (v / max) * 100)}%;opacity:${0.45 + (i / series!.length) * 0.55}"></div>`).join('');
+        sparkEl.style.display = '';
+      } else {
+        sparkEl.innerHTML = '';
+        sparkEl.style.display = 'none';
+      }
     }
+    // Когда спарклайна нет (нет дневного ряда для этой метрики) — отдаём его
+    // место значению+метке, чтобы оно не «прилипало» к иконке с пустым полем справа.
+    kpiEl?.classList.toggle('cmd-kpi-no-spark', !hasSeries);
     if (trendEl) {
       if (series && series.length >= 2 && series.some(v => v > 0)) {
         const cur = series[series.length - 1], prev = series[series.length - 2];
@@ -1033,7 +1052,7 @@ export class HomeDashboardModule {
     const total = d.mpShare.reduce((s, v) => s + v.rev, 0) || 1;
     el.innerHTML = this.donut(
       d.mpShare.map(v => ({ label: v.name, value: v.rev, color: v.color, sub: `${v.orders} зак.` })),
-      fmtRub(total), 'выручка 30д');
+      fmtCompactRub(total), 'выручка 30д');
   }
 
   private paintStatus(d: DashData): void {
@@ -1151,9 +1170,10 @@ export class HomeDashboardModule {
       const to = (acc / total) * 360;
       return `${s.color} ${from}deg ${to}deg`;
     }).join(', ');
+    const valCls = centerVal.length > 8 ? 'cmd-donut-v cmd-donut-v-sm' : 'cmd-donut-v';
     return `<div class="cmd-donut-wrap">
       <div class="cmd-donut" style="background:conic-gradient(${stops})">
-        <div class="cmd-donut-hole"><span class="cmd-donut-v">${centerVal}</span><span class="cmd-donut-l">${centerLbl}</span></div>
+        <div class="cmd-donut-hole"><span class="${valCls}">${centerVal}</span><span class="cmd-donut-l">${centerLbl}</span></div>
       </div>
       <div class="cmd-donut-legend">${segs.map(s => `<div class="cmd-donut-li">
         <span class="cmd-donut-sw" style="background:${s.color}"></span>
