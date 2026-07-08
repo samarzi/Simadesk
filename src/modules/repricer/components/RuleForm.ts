@@ -4,6 +4,7 @@ import { I } from '@/utils/icons';
 import { MP_BG, MP_COLOR, MP_LABEL, RULE_DESCRIPTIONS, RULE_LABELS } from '../types';
 import type { Mp, RepricerRule, RuleType, SchedulePeriod } from '../types';
 import { esc, evalFormula } from '../utils';
+import { copyButton } from '@/utils/copyButton';
 
 export interface RuleFormProps {
   form: Partial<RepricerRule>;
@@ -58,8 +59,8 @@ export function renderForm(p: RuleFormProps): string {
               <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:6px;max-height:180px;overflow-y:auto">
                 ${formProducts.map(prod => `
                   <div style="display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:5px 10px">
-                    <span style="flex:1;font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(prod.productTitle)}</span>
-                    <span style="font-family:monospace;font-size:10px;color:var(--text2);flex-shrink:0">${esc(prod.vendorCode)}</span>
+                    <span style="flex:1;font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(prod.productTitle)}</span>${copyButton(prod.productTitle, 'Копировать название')}
+                    <span style="font-family:monospace;font-size:10px;color:var(--text2);flex-shrink:0">${esc(prod.vendorCode)}</span>${copyButton(prod.vendorCode, 'Копировать артикул')}
                     ${prodCount > 1 ? `<button onclick="window.repricerModule.removeFormProduct('${esc(prod.vendorCode)}')"
                       style="width:20px;height:20px;border:none;background:#fee2e2;color:#dc2626;border-radius:5px;cursor:pointer;font-size:11px;flex-shrink:0;line-height:1" title="Убрать">✕</button>` : ''}
                   </div>
@@ -114,7 +115,7 @@ export function renderForm(p: RuleFormProps): string {
         </button>
         <button onclick="window.repricerModule.saveForm()" ${!productSelected?'disabled':''}
           style="padding:8px 20px;border-radius:8px;border:none;background:${productSelected?'var(--accent)':'#94a3b8'};
-            color:#fff;cursor:${productSelected?'pointer':'default'};font-size:13px;font-weight:700">
+            color:#000;cursor:${productSelected?'pointer':'default'};font-size:13px;font-weight:700">
           ${p.editId
             ? '✓ Сохранить'
             : (prodCount > 1 ? `✓ Создать правило (${prodCount} товаров)` : '✓ Создать правило')}
@@ -140,6 +141,7 @@ function numInput(key: string, label: string, val: any, ph = ''): string {
 
 function renderFormFields(p: RuleFormProps): string {
   const f = p.form;
+  const formProducts = p.formProducts ?? [];
 
   if (f.type === 'target') return `
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:14px">
@@ -361,6 +363,34 @@ function renderFormFields(p: RuleFormProps): string {
         ${numInput('maxPrice','Макс. цена, ₽',f.maxPrice,'')}
       </div>
     `;
+  }
+
+  if (f.type === 'mrc') {
+    const mrcProducts = formProducts.length > 0
+      ? formProducts
+      : (f.productId && f.vendorCode ? [{ productId: f.productId, vendorCode: f.vendorCode, productTitle: f.productTitle ?? f.productId }] : []);
+
+    return `
+    <div style="font-size:12px;color:var(--text-2);margin-bottom:10px;background:color-mix(in srgb,#fc3f1d 6%,transparent);
+      border:1px solid color-mix(in srgb,#fc3f1d 22%,transparent);border-radius:8px;padding:10px 12px;line-height:1.5">
+      ${I.lightbulb()} Укажите целевую витринную цену (МРЦ) для каждого товара — она будет применена ко всем выбранным маркетплейсам.
+      После создания правила цену можно отдельно скорректировать для каждого маркетплейса во вкладке «МРЦ».
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+      ${mrcProducts.map(prod => `
+        <div style="display:grid;grid-template-columns:1fr 160px;gap:10px;align-items:center;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+          <div style="overflow:hidden">
+            <div style="display:flex;align-items:center;gap:4px;font-size:12px;font-weight:600;color:var(--text)">
+              <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(prod.productTitle)}</span>${copyButton(prod.productTitle, 'Копировать название')}
+            </div>
+            <div style="display:flex;align-items:center;gap:4px;font-family:monospace;font-size:10px;color:var(--text2)">${esc(prod.vendorCode)}${copyButton(prod.vendorCode, 'Копировать артикул')}</div>
+          </div>
+          <input type="number" value="${(f as any)['mrcPrice__' + prod.vendorCode] ?? ''}" min="0" step="1" placeholder="МРЦ, ₽"
+            onchange="window.repricerModule.updateForm('mrcPrice__${esc(prod.vendorCode)}',+this.value)"
+            style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);color:var(--text);font-size:13px;box-sizing:border-box">
+        </div>
+      `).join('')}
+    </div>`;
   }
 
   return '';

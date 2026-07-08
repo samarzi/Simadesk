@@ -19,6 +19,7 @@ import { OzonStore } from '@/types/ozon';
 import { YandexStore } from '@/types/yandex';
 import { esc } from '@/utils/format';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 
 type Mp = 'wb' | 'ozon' | 'yandex';
 
@@ -537,7 +538,11 @@ export class ChatsModule {
       if (ta) ta.value = '';
       this.pendingAttachment = null;
     } catch (err: any) {
-      try { window.app?.toast?.('Ошибка отправки: ' + (err?.message ?? err), 'error'); } catch (e) { debug.warn('[ChatsModule] swallowed error', e); }
+      const msg = String(err?.message ?? err);
+      const friendly = /premium plus subscription/i.test(msg)
+        ? 'Отправка сообщений в чат Ozon доступна только с подпиской Premium Plus'
+        : 'Ошибка отправки: ' + msg;
+      try { window.app?.toast?.(friendly, 'error'); } catch (e) { debug.warn('[ChatsModule] swallowed error', e); }
     }
     this.sending = false;
     this.render();
@@ -848,8 +853,11 @@ export class ChatsModule {
           </div>
           <div style="flex:1;min-width:0">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:2px">
-              <div style="font-size:13px;font-weight:${c.unread > 0 ? '700' : '600'};color:var(--text);
-                white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.title)}</div>
+              <div style="display:flex;align-items:center;gap:4px;min-width:0">
+                <div style="min-width:0;font-size:13px;font-weight:${c.unread > 0 ? '700' : '600'};color:var(--text);
+                  white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.title)}</div>
+                ${copyButton(c.title, 'Копировать название')}
+              </div>
               <div style="font-size:11px;color:var(--text2);flex-shrink:0">${this.fmtTime(c.lastTime)}</div>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
@@ -1041,11 +1049,15 @@ export class ChatsModule {
         <div style="width:38px;height:38px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;
           font-size:14px;font-weight:700;color:#fff;background:${mpColor}">${esc(customerInitial)}</div>
         <div style="min-width:0;flex:1">
-          <div style="font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(customerName)}</div>
+          <div style="display:flex;align-items:center;gap:4px;min-width:0">
+            <span style="min-width:0;font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(customerName)}</span>
+            ${copyButton(customerName, 'Копировать имя клиента')}
+          </div>
           <div style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:5px">
             <span style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:4px;
               background:${mpColor};font-size:7px;font-weight:900;color:#fff;font-family:Arial">${MP_LABEL[this.activeMp]}</span>
             ${esc(chat?.storeName ?? '')}
+            ${chat?.storeName ? copyButton(chat.storeName, 'Копировать название магазина') : ''}
           </div>
         </div>
         ${flagBtn('yellow', 'Не завершено — пометить желтым')}

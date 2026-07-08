@@ -14,6 +14,29 @@
 const tasks = {};      // taskId → { status, type, tabId, logs[], port }
 let sitePort = null;   // long-lived connection с сайтом SimaDesk
 
+// Источники, которым разрешено слать externally_connectable-сообщения.
+// Зеркалит manifest.json → externally_connectable.matches; здесь дублируем явной
+// runtime-проверкой sender.origin, т.к. сама декларация в манифесте не гарантирует
+// защиту от обхода (например через chrome.runtime.sendMessage с произвольным extension id).
+const ALLOWED_EXTERNAL_ORIGINS = [
+  'https://sabatov.netlify.app',
+];
+function isAllowedExternalSender(sender) {
+  const origin = sender?.origin || (sender?.url ? new URL(sender.url).origin : '');
+  if (ALLOWED_EXTERNAL_ORIGINS.includes(origin)) return true;
+  return /^http:\/\/localhost(:\d+)?$/.test(origin);
+}
+
+// Последние неудачные попытки собрать реальную цену покупателя — видно в popup
+// вместо тихого "цена не найдена" без следа. Ограничено последними 50 записями.
+const priceScanFailures = [];
+function logPriceScanFailure(marketplace, info) {
+  priceScanFailures.unshift({ marketplace, ...info, at: new Date().toISOString() });
+  if (priceScanFailures.length > 50) priceScanFailures.length = 50;
+  console.warn(`[SimaDesk] не удалось собрать цену (${marketplace}):`, info);
+  broadcastToPopup({ type: 'price-scan-failure', marketplace, ...info });
+}
+
 // ── Supabase: сбор реальных цен покупателя на Yandex Market ───────────────
 
 const SUPA_URL = 'https://rdqwzojrsmbdxiczqjci.supabase.co';
@@ -175,7 +198,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       clearTimeout(pending.timeoutId);
       yandexPriceTabs.delete(tabId);
       chrome.tabs.remove(tabId).catch(() => {});
-      pending.resolve();
+      pending.resolve({ price: msg.buyerPrice ?? null });
     }
     return;
   }
@@ -190,7 +213,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       clearTimeout(pending.timeoutId);
       wbPriceTabs.delete(tabId);
       chrome.tabs.remove(tabId).catch(() => {});
-      pending.resolve();
+      pending.resolve({ price: msg.buyerPrice ?? null });
     }
     return;
   }
@@ -205,7 +228,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       clearTimeout(pending.timeoutId);
       ozonPriceTabs.delete(tabId);
       chrome.tabs.remove(tabId).catch(() => {});
-      pending.resolve();
+      pending.resolve({ price: msg.buyerPrice ?? null });
     }
     return;
   }
@@ -213,6 +236,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Health check от сайта / popup
   if (msg.type === 'ping') {
     sendResponse({ type: 'pong', version: '1.0.0' });
+    return true;
+  }
+
+  // Неудачные попытки собрать цену покупателя (popup может показать предупреждение)
+  if (msg.type === 'get-price-scan-failures') {
+    sendResponse({ failures: priceScanFailures });
     return true;
   }
 
@@ -254,6 +283,11 @@ chrome.runtime.onConnect.addListener((port) => {
 
 // Connections от внешних сайтов (SimaDesk)
 chrome.runtime.onConnectExternal.addListener((port) => {
+  if (!isAllowedExternalSender(port.sender)) {
+    console.warn('[SimaDesk] заблокировано внешнее подключение от чужого origin:', port.sender?.origin || port.sender?.url);
+    port.disconnect();
+    return;
+  }
   sitePort = port;
   port.onDisconnect.addListener(() => { sitePort = null; });
   port.onMessage.addListener((msg) => handleCommand(msg, port));
@@ -261,6 +295,15 @@ chrome.runtime.onConnectExternal.addListener((port) => {
 
 // Одиночные сообщения от внешних сайтов
 chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
+  if (!isAllowedExternalSender(sender)) {
+    console.warn('[SimaDesk] заблокировано внешнее сообщение от чужого origin:', sender?.origin || sender?.url);
+    sendResponse({ error: 'forbidden_origin' });
+    return true;
+  }
+  if (msg.type === 'get-price-scan-failures') {
+    sendResponse({ failures: priceScanFailures });
+    return true;
+  }
   if (msg.type === 'ping') {
     sendResponse({ type: 'pong', version: '1.0.0' });
     return true;
@@ -271,6 +314,10 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'scan-yandex') {
     handleScanYandex(msg).then(res => sendResponse(res));
+    return true;
+  }
+  if (msg.type === 'check-price-now') {
+    handleCheckPriceNow(msg).then(res => sendResponse(res));
     return true;
   }
   if (msg.type === 'start-task') {
@@ -583,16 +630,19 @@ async function scanYandexPrices() {
   }
 }
 
-function openYandexPriceTab({ marketSku, offerId, productTitle }) {
+function openYandexPriceTab({ marketSku, marketModelId, offerId, productTitle }) {
+  // product/{modelId}?sku={msku} открывает точную карточку — поиск по marketSku
+  // ненадёжен (текстовый полнотекстовый поиск). Если modelId неизвестен — fallback на поиск.
+  const url = marketModelId
+    ? `https://market.yandex.ru/product/${marketModelId}?sku=${marketSku}`
+    : `https://market.yandex.ru/search?text=${marketSku}`;
   return new Promise((resolve) => {
-    chrome.tabs.create({
-      url: `https://market.yandex.ru/product/${marketSku}`,
-      active: false,
-    }, (tab) => {
+    chrome.tabs.create({ url, active: false }, (tab) => {
       const timeoutId = setTimeout(() => {
         yandexPriceTabs.delete(tab.id);
         chrome.tabs.remove(tab.id).catch(() => {});
-        resolve();
+        logPriceScanFailure('yandex', { marketSku, offerId, productTitle, reason: 'timeout_or_selector_not_found' });
+        resolve({ price: null });
       }, 20000);
       yandexPriceTabs.set(tab.id, { marketSku, offerId, productTitle, timeoutId, resolve });
     });
@@ -653,7 +703,8 @@ function openWbPriceTab({ nmId, vendorCode, productTitle }) {
       const timeoutId = setTimeout(() => {
         wbPriceTabs.delete(tab.id);
         chrome.tabs.remove(tab.id).catch(() => {});
-        resolve();
+        logPriceScanFailure('wb', { nmId, vendorCode, productTitle, reason: 'timeout_or_selector_not_found' });
+        resolve({ price: null });
       }, 20000);
       wbPriceTabs.set(tab.id, { nmId, vendorCode, productTitle, timeoutId, resolve });
     });
@@ -705,18 +756,22 @@ async function scanOzonPrices() {
   }
 }
 
-function openOzonPriceTab({ productId, offerId, productTitle }) {
+function openOzonPriceTab({ sku, productId, offerId, productTitle }) {
+  // sku — Ozon storefront SKU (правильная ссылка на карточку для покупателя);
+  // productId — старый id из фонового скана (если sku не передан).
+  const id = sku ?? productId;
   return new Promise((resolve) => {
     chrome.tabs.create({
-      url: `https://www.ozon.ru/product/${productId}/`,
+      url: `https://www.ozon.ru/product/${id}/`,
       active: false,
     }, (tab) => {
       const timeoutId = setTimeout(() => {
         ozonPriceTabs.delete(tab.id);
         chrome.tabs.remove(tab.id).catch(() => {});
-        resolve();
+        logPriceScanFailure('ozon', { sku: id, offerId, productTitle, reason: 'timeout_or_selector_not_found' });
+        resolve({ price: null });
       }, 20000);
-      ozonPriceTabs.set(tab.id, { productId, offerId, productTitle, timeoutId, resolve });
+      ozonPriceTabs.set(tab.id, { sku: id, offerId, productTitle, timeoutId, resolve });
     });
   });
 }
@@ -739,6 +794,35 @@ async function reportOzonPrice(detail) {
       }),
     });
   } catch {}
+}
+
+// ── Проверка точной цены по запросу (открыть карточку товара прямо сейчас) ─
+
+async function handleCheckPriceNow(msg) {
+  const { marketplace, nmId, sku, offerId, marketSku, marketModelId, vendorCode, productTitle } = msg;
+  try {
+    if (marketplace === 'wb') {
+      if (!nmId) return { ok: false, error: 'nmId не указан' };
+      const { price } = await openWbPriceTab({ nmId, vendorCode, productTitle });
+      if (!price) return { ok: false, error: 'Цена не найдена на странице товара' };
+      return { ok: true, price };
+    }
+    if (marketplace === 'ozon') {
+      if (!sku) return { ok: false, error: 'sku не указан' };
+      const { price } = await openOzonPriceTab({ sku, offerId, productTitle });
+      if (!price) return { ok: false, error: 'Цена не найдена на странице товара' };
+      return { ok: true, price };
+    }
+    if (marketplace === 'yandex') {
+      if (!marketSku) return { ok: false, error: 'marketSku неизвестен' };
+      const { price } = await openYandexPriceTab({ marketSku, marketModelId, offerId, productTitle });
+      if (!price) return { ok: false, error: 'Цена не найдена на странице товара' };
+      return { ok: true, price };
+    }
+    return { ok: false, error: 'неизвестный маркетплейс' };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 }
 
 // ── Запуск задачи ─────────────────────────────────────────────────────────
@@ -988,21 +1072,21 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (pending) {
     clearTimeout(pending.timeoutId);
     yandexPriceTabs.delete(tabId);
-    pending.resolve();
+    pending.resolve({ price: null });
   }
 
   const pendingWb = wbPriceTabs.get(tabId);
   if (pendingWb) {
     clearTimeout(pendingWb.timeoutId);
     wbPriceTabs.delete(tabId);
-    pendingWb.resolve();
+    pendingWb.resolve({ price: null });
   }
 
   const pendingOzon = ozonPriceTabs.get(tabId);
   if (pendingOzon) {
     clearTimeout(pendingOzon.timeoutId);
     ozonPriceTabs.delete(tabId);
-    pendingOzon.resolve();
+    pendingOzon.resolve({ price: null });
   }
 
   const task = Object.values(tasks).find(t => t.tabId === tabId);

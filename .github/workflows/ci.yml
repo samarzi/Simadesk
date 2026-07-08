@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  check:
+    name: Type Check + Tests + Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+
+      - run: npm ci
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPA_URL: ${{ secrets.VITE_SUPA_URL }}
+          VITE_SUPA_KEY: ${{ secrets.VITE_SUPA_KEY }}
+          VITE_TG_BOT_USERNAME: ${{ secrets.VITE_TG_BOT_USERNAME }}

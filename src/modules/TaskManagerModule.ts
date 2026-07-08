@@ -8,6 +8,7 @@ import { companyService } from '@/services/companyService';
 import { authService } from '@/services/authService';
 import { apiService } from '@/services/api';
 import { esc } from '@/utils/format';
+import { copyButton } from '@/utils/copyButton';
 import type { Product } from '@/types/index';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -765,10 +766,12 @@ export class TaskManagerModule {
       <div class="tm-prio-bar" style="background:${isSub ? 'transparent' : prioColor}"></div>
       <div class="tm-check${isDone ? ' checked' : ''}" data-toggle="${t.id}">${isDone ? IC.check : ''}</div>
       <div class="tm-row-body" data-edit="${t.id}">
-        <div class="tm-row-title">${isSub ? '' : priorityDot(t.priority) + ' '}${esc(t.title)}</div>
+        <div class="tm-row-title" style="display:flex;align-items:center;gap:4px;white-space:normal;overflow:visible">
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${isSub ? '' : priorityDot(t.priority) + ' '}${esc(t.title)}</span>${copyButton(t.title, 'Копировать название')}
+        </div>
         ${t.description ? `<div class="tm-desc-preview">${renderRichText(t.description.substring(0, 80))}</div>` : ''}
         <div class="tm-row-meta">${dateMeta}${tags}${assignee}${subMeta}</div>
-        ${!isSub && createdDate ? `<div class="tm-row-info">#${shortId} · ${createdDate}</div>` : ''}
+        ${!isSub && createdDate ? `<div class="tm-row-info" style="display:flex;align-items:center;gap:4px">#${shortId}${copyButton(shortId, 'Копировать ID')} · ${createdDate}</div>` : ''}
       </div>
       <button class="tm-del-btn" data-del="${t.id}" title="Удалить">${IC.trash}</button>
     </div>`;
@@ -821,7 +824,7 @@ export class TaskManagerModule {
         return `
         <div class="tm-kb-card" draggable="true" data-drag-id="${t.id}" data-edit="${t.id}"
           style="border-left-color:${PRIORITY_COLOR[t.priority]}">
-          <div class="tm-kb-card-title">${priorityDot(t.priority)} ${esc(t.title)}</div>
+          <div class="tm-kb-card-title" style="display:flex;align-items:center;gap:4px;min-width:0"><span style="min-width:0">${priorityDot(t.priority)} ${esc(t.title)}</span>${copyButton(t.title, 'Копировать название')}</div>
           <div class="tm-kb-card-meta">
             ${t.scheduled_date ? `<span title="Дата выполнения">${IC.deadline} ${fmtDate(t.scheduled_date)}</span>` : ''}
             ${t.due_date ? `<span title="Дедлайн">${IC.clock} ${fmtDate(t.due_date)}</span>` : ''}
@@ -851,7 +854,7 @@ export class TaskManagerModule {
       const list = buckets[q.key];
       const cards = list.map(t => `
         <div class="tm-eq-card" draggable="true" data-drag-id="${t.id}" data-edit="${t.id}">
-          <div class="tm-eq-card-title">${priorityDot(t.priority)} ${esc(t.title)}</div>
+          <div class="tm-eq-card-title" style="display:flex;align-items:center;gap:4px;min-width:0"><span style="min-width:0">${priorityDot(t.priority)} ${esc(t.title)}</span>${copyButton(t.title, 'Копировать название')}</div>
           <div class="tm-eq-card-meta">
             ${t.due_date ? `<span>${fmtDate(t.due_date)}</span>` : ''}
             ${this.memberAvatar(t.assignee_id, 14)}

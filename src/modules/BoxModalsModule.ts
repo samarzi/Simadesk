@@ -4,6 +4,7 @@ import { boxes, boxActions } from '../stores/appStore';
 import { apiService } from '../services/api';
 import { idbCache } from '../services/idbCache';
 import { esc as escHtml, extractFirstEmoji } from '../utils/format';
+import { copyButton } from '../utils/copyButton';
 import type { App } from '../App';
 
 export class BoxModalsModule {
@@ -165,7 +166,7 @@ export class BoxModalsModule {
         ? new Date(box.mp_last_sync).toLocaleString('ru', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
         : 'ещё не синхронизировано';
       this.app.openModal(
-        'Магазин', box.name,
+        'Магазин', `${escHtml(box.name)} ${copyButton(box.name, 'Копировать название')}`,
         `<div style="display:flex;flex-direction:column;gap:10px">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
             <div style="padding:10px 12px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)">
@@ -179,7 +180,7 @@ export class BoxModalsModule {
           </div>
           <div style="padding:10px 12px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)">
             <div style="font-size:10px;color:var(--muted);text-transform:uppercase;margin-bottom:3px">ID магазина</div>
-            <div style="font-size:11px;font-family:monospace;color:var(--text2)">${escHtml(box.mp_store_id || '—')}</div>
+            <div style="font-size:11px;font-family:monospace;color:var(--text2);display:flex;align-items:center;gap:4px">${escHtml(box.mp_store_id || '—')}${box.mp_store_id ? copyButton(box.mp_store_id, 'Копировать ID магазина') : ''}</div>
           </div>
           <div style="font-size:11px;color:var(--muted);line-height:1.5;padding:8px 0">
             Эта группа управляется автоматически через API маркетплейса. Для обновления данных нажмите «↻ Обновить».

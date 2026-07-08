@@ -58,6 +58,7 @@ export interface ProducerProduct {
   producer_id: string;
   name: string;
   articles: string[];
+  internal_id: number | null;
   field_values: Record<string, string>;
   comment: string | null;
   is_archived: boolean;
@@ -204,6 +205,13 @@ export const producerProductDb = {
     return first(r);
   },
 
+  /** Создаёт много товаров одним запросом (для импорта). */
+  async bulkCreate(products: Array<Omit<ProducerProduct, 'id' | 'company_id' | 'created_at' | 'updated_at'>>): Promise<void> {
+    if (products.length === 0) return;
+    const payload = products.map(p => ({ ...p, company_id: cid() }));
+    await supaFetch('producer_products', { method: 'POST', body: JSON.stringify(payload) });
+  },
+
   async update(id: string, patch: Partial<ProducerProduct>): Promise<ProducerProduct> {
     const r = await supaFetch<ProducerProduct | ProducerProduct[]>(
       `producer_products?id=eq.${id}&company_id=eq.${cid()}`,
@@ -227,8 +235,12 @@ export const producerProductDb = {
 
   async bulkDelete(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
-    const filter = `id=in.(${ids.join(',')})&company_id=eq.${cid()}`;
-    await supaFetch(`producer_products?${filter}`, { method: 'DELETE' });
+    const CHUNK = 50;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const filter = `id=in.(${chunk.join(',')})&company_id=eq.${cid()}`;
+      await supaFetch(`producer_products?${filter}`, { method: 'DELETE' });
+    }
   },
 };
 
@@ -249,8 +261,38 @@ export const producerMappingDb = {
     return first(r);
   },
 
+  async update(id: string, patch: Partial<Omit<ProducerMapping, 'id' | 'company_id' | 'created_at'>>): Promise<ProducerMapping> {
+    const r = await supaFetch<ProducerMapping | ProducerMapping[]>(
+      `producer_mappings?id=eq.${id}&company_id=eq.${cid()}`,
+      { method: 'PATCH', body: JSON.stringify(patch) },
+    );
+    return first(r);
+  },
+
+  /** Создаёт много связок одним запросом на чанк (для импорта — кратно быстрее, чем по одной). */
+  async bulkCreate(mappings: Array<Omit<ProducerMapping, 'id' | 'company_id' | 'created_at'>>): Promise<void> {
+    if (mappings.length === 0) return;
+    const CHUNK = 300;
+    const company_id = cid();
+    for (let i = 0; i < mappings.length; i += CHUNK) {
+      const payload = mappings.slice(i, i + CHUNK).map(m => ({ ...m, company_id }));
+      await supaFetch('producer_mappings', { method: 'POST', body: JSON.stringify(payload) });
+    }
+  },
+
   async remove(id: string): Promise<void> {
     await supaFetch(`producer_mappings?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
+  },
+
+  /** Удаляет много связок чанками по id (кратно быстрее, чем по одной). */
+  async bulkRemove(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const CHUNK = 200;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const filter = `id=in.(${chunk.join(',')})&company_id=eq.${cid()}`;
+      await supaFetch(`producer_mappings?${filter}`, { method: 'DELETE' });
+    }
   },
 
   async removeByArticle(article: string): Promise<void> {
@@ -290,6 +332,13 @@ export const producerOrderDb = {
     await supaFetch(`producer_orders?${filter}`, {
       method: 'PATCH',
       body: JSON.stringify({ status }),
+    });
+  },
+
+  async updateNotes(id: string, notes: string): Promise<void> {
+    await supaFetch(`producer_orders?id=eq.${id}&company_id=eq.${cid()}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ notes }),
     });
   },
 

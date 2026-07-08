@@ -311,6 +311,11 @@ export const ozonApi = {
                 sku: firstItem.sku, fbo_sku: firstItem.fbo_sku, fbs_sku: firstItem.fbs_sku,
                 sources: firstItem.sources?.slice?.(0, 2),
               });
+              debug.log(`[Ozon] info/list item dims:`, {
+                weight: firstItem.weight, weight_unit: firstItem.weight_unit,
+                depth: firstItem.depth, width: firstItem.width, height: firstItem.height,
+                dimension_unit: firstItem.dimension_unit,
+              });
             }
           } catch (e) { debug.warn('[ozonApi] swallowed error', e); }
         }
@@ -383,12 +388,12 @@ export const ozonApi = {
             fbo,
             type_id: item.type_id || 0,
             description_category_id: item.description_category_id || 0,
-            weight: item.weight ?? null,
+            weight: item.weight ?? item.package_weight ?? null,
             weight_unit: item.weight_unit || 'g',
-            depth: item.depth ?? null,
-            width: item.width ?? null,
-            height: item.height ?? null,
-            dimension_unit: item.dimension_unit || 'mm',
+            depth: item.depth ?? item.package_depth ?? item.dimensions?.depth ?? null,
+            width: item.width ?? item.package_width ?? item.dimensions?.width ?? null,
+            height: item.height ?? item.package_height ?? item.dimensions?.height ?? null,
+            dimension_unit: item.dimension_unit || item.dimensions?.dimension_unit || 'mm',
           });
         }
       } catch (e) {
@@ -557,13 +562,12 @@ export const ozonApi = {
     return result;
   },
 
-  // ── Fetch buyer prices (marketing_price) for specific offer_ids ──────────
-  // /v5/product/info/prices returns the actual price shown to buyer after Ozon discounts.
-  async getMarketingPrices(
+  // ── Fetch seller prices (price/old_price) for specific offer_ids ──────────
+  async getSellerPrices(
     offerIds: string[],
     creds: Creds,
-  ): Promise<Map<string, { marketingPrice: number; sellerPrice: number; oldPrice: number }>> {
-    const result = new Map<string, { marketingPrice: number; sellerPrice: number; oldPrice: number }>();
+  ): Promise<Map<string, { sellerPrice: number; oldPrice: number }>> {
+    const result = new Map<string, { sellerPrice: number; oldPrice: number }>();
     if (!offerIds.length) return result;
     const CHUNK = 1000;
     for (let i = 0; i < offerIds.length; i += CHUNK) {
@@ -580,12 +584,8 @@ export const ozonApi = {
           const sellerPrice = parseFloat(item.price?.price || '0') || 0;
           // old_price — перечёркнутая цена на странице Ozon (база для визуальной скидки).
           const oldPrice = parseFloat(item.price?.old_price || '0') || 0;
-          // marketing_price — цена покупателя после Ozon-акций. Если отсутствует или 0 → sellerPrice.
-          const rawMarketing = item.price?.marketing_price ?? item.price?.marketing_seller_price;
-          const parsedMarketing = rawMarketing ? parseFloat(String(rawMarketing)) : 0;
-          const marketingPrice = parsedMarketing > 0 ? parsedMarketing : sellerPrice;
           if (item.offer_id && sellerPrice > 0) {
-            const entry = { marketingPrice, sellerPrice, oldPrice };
+            const entry = { sellerPrice, oldPrice };
             result.set(item.offer_id, entry);
             result.set(item.offer_id.toLowerCase(), entry);
           }
@@ -747,20 +747,23 @@ export const ozonApi = {
     }
   },
 
-  // ── Update product (upsert) via /v3/product/import ───────────────────────
-  // Used to update name, description, images, dimensions, VAT, attributes.
+  // ── Update product via /v3/product/import ───────────────────────────────
+  // /v3/product/update не существует в API Ozon (возвращает 404).
+  // Используем /v3/product/import напрямую.
+  // attributes: [] означает "не менять атрибуты" для уже существующего товара.
   async updateProduct(
     creds: Creds,
     item: Record<string, unknown>,
   ): Promise<void> {
-    try {
-      await ozonPost('/v3/product/update', { items: [item] }, creds);
-    } catch (e: any) {
-      if (e.message?.includes('404') || e.message?.includes('405') || e.message?.includes('Method Not Allowed')) {
-        await ozonPost('/v3/product/import', { items: [item] }, creds);
-      } else {
-        throw e;
-      }
+    const payload = { ...item };
+    if (!Array.isArray(payload.attributes)) {
+      payload.attributes = [];
+    }
+    const resp = await ozonPost<any>('/v3/product/import', { items: [payload] }, creds);
+    // import возвращает { result: { task_id } } — задача принята, ошибок нет
+    const taskErrors: any[] = resp?.result?.errors ?? resp?.errors ?? [];
+    if (taskErrors.length) {
+      throw new Error(taskErrors.map((e: any) => e.message ?? e.error ?? String(e)).join('; '));
     }
   },
 
@@ -1082,6 +1085,8 @@ export async function fetchAllOzonProducts(
       barcode: info.barcode,
       status: info.status,
       synced_at: now,
+      type_id: info.type_id || 0,
+      description_category_id: info.description_category_id || 0,
       weight_kg: dims.weight_g != null ? +(dims.weight_g / 1000).toFixed(3) : null,
       length_cm: dims.length_mm != null ? +(dims.length_mm / 10).toFixed(1) : null,
       width_cm:  dims.width_mm  != null ? +(dims.width_mm  / 10).toFixed(1) : null,

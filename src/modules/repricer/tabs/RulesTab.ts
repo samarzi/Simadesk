@@ -4,11 +4,12 @@ import { I } from '@/utils/icons';
 import { MP_LABEL, RULE_LABELS } from '../types';
 import type { RepricerRule, RuleType } from '../types';
 import { esc, ruleProducts } from '../utils';
+import { copyButton } from '@/utils/copyButton';
 
 export interface RulesTabProps {
   rules: RepricerRule[];
   rulesSearch: string;
-  rulesTypeFilter: '' | RuleType;
+  rulesTypeFilter: RuleType;
   /** Рассчитанная целевая цена правила (для primary-товара) — для отображения. */
   computePrice: (r: RepricerRule) => number | null;
   /** Текущая цена товара на маркетплейсе (из каталога). */
@@ -16,31 +17,39 @@ export interface RulesTabProps {
   getProductImage: (r: RepricerRule) => string | null;
   applying: Set<string>;
   applyErrors: Map<string, string>;
+  /** Есть ли непроверенные/требующие подтверждения изменения МРЦ — индикатор на под-вкладке. */
+  mrcAlert: boolean;
+  /** Контент под-вкладки «По МРЦ» (тулбар анализа + карточки + журнал). */
+  renderMrcContent: () => string;
 }
 
-/** Полная вкладка: фильтры + список. */
+const RULE_TYPES = Object.keys(RULE_LABELS) as RuleType[];
+
+/** Полная вкладка: под-вкладки по типам правил + список/контент. */
 export function renderRules(p: RulesTabProps): string {
+  const isMrc = p.rulesTypeFilter === 'mrc';
   return `
-    <!-- ФИЛЬТРЫ + ПОИСК -->
-    <div style="padding:10px 16px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <input type="search" placeholder="Поиск по артикулу, названию, магазину…" value="${esc(p.rulesSearch)}"
-        oninput="window.repricerModule.setRulesSearch(this.value)"
-        style="flex:1;min-width:200px;padding:6px 12px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:8px;font-size:12px">
-      <div style="display:flex;gap:5px;flex-wrap:wrap">
-        ${(['', ...Object.keys(RULE_LABELS)] as Array<'' | RuleType>).map(rt => {
-          const isActive = p.rulesTypeFilter === rt;
-          const label = rt === '' ? 'Все' : RULE_LABELS[rt];
-          const count = rt === '' ? p.rules.length : p.rules.filter(r => r.type === rt).length;
-          if (count === 0 && rt !== '') return '';
-          return `<button onclick="window.repricerModule.setRulesTypeFilter('${rt}')"
-            style="padding:5px 11px;border:1.5px solid ${isActive ? 'var(--accent)' : 'var(--border)'};
-              background:${isActive ? 'var(--accent)' : 'transparent'};color:${isActive ? '#000' : 'var(--text2)'};
-              border-radius:20px;cursor:pointer;font-size:11px;font-weight:${isActive ? '700' : '500'};white-space:nowrap">
-            ${label}${count > 0 ? ` <span style="opacity:.7">${count}</span>` : ''}
-          </button>`;
-        }).join('')}
-      </div>
+    <!-- ПОД-ВКЛАДКИ ПО ТИПАМ ПРАВИЛ -->
+    <div class="rpr-subtabs">
+      ${RULE_TYPES.map(rt => {
+        const isActive = p.rulesTypeFilter === rt;
+        const count = p.rules.filter(r => r.type === rt).length;
+        const amber = rt === 'mrc' && p.mrcAlert;
+        return `<button class="rpr-subtab${isActive ? ' active' : ''}${amber ? ' amber' : ''}"
+          onclick="window.repricerModule.setRulesTypeFilter('${rt}')">
+          ${RULE_LABELS[rt]}
+          ${count > 0 ? `<span class="rpr-tab-badge">${count}</span>` : ''}
+        </button>`;
+      }).join('')}
     </div>
+    ${!isMrc ? `
+      <!-- ПОИСК -->
+      <div style="padding:10px 16px;background:var(--bg2);border-bottom:1px solid var(--border)">
+        <input type="search" placeholder="Поиск по артикулу, названию, магазину…" value="${esc(p.rulesSearch)}"
+          oninput="window.repricerModule.setRulesSearch(this.value)"
+          style="width:100%;padding:6px 12px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:8px;font-size:12px">
+      </div>
+    ` : ''}
     <!-- СПИСОК -->
     <div id="rpr-rules-host">${renderRulesInner(p)}</div>
   `;
@@ -48,9 +57,11 @@ export function renderRules(p: RulesTabProps): string {
 
 /** Только содержимое списка — обновляется при поиске без полного ре-рендера. */
 export function renderRulesInner(p: RulesTabProps): string {
+  if (p.rulesTypeFilter === 'mrc') return p.renderMrcContent();
+
   const q = p.rulesSearch.toLowerCase().trim();
   const filtered = p.rules.filter(r => {
-    if (p.rulesTypeFilter && r.type !== p.rulesTypeFilter) return false;
+    if (r.type !== p.rulesTypeFilter) return false;
     if (q) {
       const hay = [r.productTitle, r.vendorCode, r.storeName,
         ...ruleProducts(r).map(prod => `${prod.vendorCode} ${prod.productTitle}`)].join(' ').toLowerCase();
@@ -59,19 +70,14 @@ export function renderRulesInner(p: RulesTabProps): string {
     return true;
   });
 
-  if (p.rules.length === 0) return `
+  if (filtered.length === 0) return `
     <div class="rpr-empty">
       <div class="rpr-empty-icon">⚙</div>
-      <h3>Нет правил</h3>
-      <p>Создайте правило — система будет автоматически поддерживать нужные цены</p>
-      <button class="rpr-btn rpr-btn-green" onclick="window.repricerModule.openAddForm()" style="margin-top:6px">
-        + Создать первое правило
+      <h3>Нет правил «${RULE_LABELS[p.rulesTypeFilter]}»</h3>
+      <p>Создайте правило этого типа — система будет автоматически поддерживать нужные цены</p>
+      <button class="rpr-btn rpr-btn-green" onclick="window.repricerModule.openAddForm('${p.rulesTypeFilter}')" style="margin-top:6px">
+        + Создать правило
       </button>
-    </div>`;
-
-  if (filtered.length === 0) return `
-    <div style="padding:40px;text-align:center;color:var(--text2);font-size:13px">
-      Ничего не найдено · измените фильтр или поиск
     </div>`;
 
   // Группируем по артикулу — один товар может иметь правила сразу на нескольких
@@ -104,9 +110,11 @@ function renderArticleCard(rules: RepricerRule[], p: RulesTabProps): string {
           ? `<img src="${esc(image)}" alt="" style="width:34px;height:34px;border-radius:7px;object-fit:cover;flex-shrink:0;border:1px solid var(--border);background:var(--bg3)">`
           : `<div style="width:34px;height:34px;border-radius:7px;flex-shrink:0;border:1px solid var(--border);background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--text3)">${I.package()}</div>`}
         <div style="min-width:0;flex:1">
-          <div class="rpr-article-title" title="${esc(title)}">${esc(title)}</div>
+          <div class="rpr-article-title" title="${esc(title)}" style="display:flex;align-items:center;gap:4px;white-space:normal;overflow:visible">
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(title)}</span>${copyButton(title, 'Копировать название')}
+          </div>
           <div style="display:flex;align-items:center;gap:6px;margin-top:2px">
-            ${first.vendorCode ? `<span class="rpr-article-code">${esc(first.vendorCode)}</span>` : ''}
+            ${first.vendorCode ? `<span class="rpr-article-code">${esc(first.vendorCode)}</span>${copyButton(first.vendorCode, 'Копировать артикул')}` : ''}
             <span style="font-size:10.5px;color:var(--text3)">${rules.length} ${rules.length === 1 ? 'правило' : 'правила'}</span>
           </div>
         </div>
@@ -140,7 +148,7 @@ function renderRuleLine(r: RepricerRule, p: RulesTabProps): string {
     <div class="rpr-rule-line" style="opacity:${r.status === 'paused' ? '.55' : '1'}">
       <span class="${mpClass}">${MP_LABEL[r.marketplace]}</span>
       <span class="rpr-type">${RULE_LABELS[r.type]}</span>
-      <span style="font-size:10.5px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">${esc(r.storeName)}</span>
+      <span style="font-size:10.5px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">${esc(r.storeName)}</span>${copyButton(r.storeName, 'Копировать название магазина')}
 
       <div style="margin-left:auto;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
         <div style="text-align:right;min-width:64px">
@@ -170,7 +178,7 @@ function renderRuleLine(r: RepricerRule, p: RulesTabProps): string {
           ${r.status === 'active' && displayPrice ? `
             <button onclick="window.repricerModule.applyRule('${r.id}')" ${isApplying ? 'disabled' : ''} title="Применить сейчас"
               style="padding:5px 11px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:600;
-                background:var(--accent);color:#fff;opacity:${isApplying ? .6 : 1}">
+                background:var(--accent);color:#0a0a0a;opacity:${isApplying ? .6 : 1}">
               ${isApplying ? '…' : '▶'}
             </button>
           ` : ''}

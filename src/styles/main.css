@@ -50,8 +50,8 @@ html.light {
   --border:  rgba(0, 0, 0, 0.08);
   --border2: rgba(0, 0, 0, 0.13);
   --border3: rgba(0, 0, 0, 0.20);
-  --accent: #c8e000;
-  --accent-dim: rgba(180, 200, 0, 0.15);
+  --accent: #8faa00;
+  --accent-dim: rgba(143, 170, 0, 0.15);
   --accent-text: #6e8000;
   --text:  #1c1b19;
   --text2: #5c5a54;
@@ -296,7 +296,6 @@ body {
   border: 1px solid transparent;
   border-radius: 18px;
   z-index: 1000;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 0 0 0.5px rgba(255,255,255,0.04) inset;
   user-select: none;
   /* Animated glow border */
   background-clip: padding-box;
@@ -403,7 +402,6 @@ body {
   background: rgba(20, 20, 24, 0.55);
   backdrop-filter: blur(28px) saturate(200%);
   -webkit-backdrop-filter: blur(28px) saturate(200%);
-  box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 0 0 0.5px rgba(255,255,255,0.04) inset;
   bottom: 10px;
   transition: none;
 }
@@ -443,6 +441,17 @@ body {
 
 .dock-item:hover {
   transform: scale(1.1) translateY(-4px);
+}
+
+/* Раздел недоступен, пока не подключён ни один магазин МП — гасим и блокируем клик */
+.dock-item.dock-locked {
+  opacity: 0.32;
+  pointer-events: none;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+.dock-item.dock-locked:hover {
+  transform: none;
 }
 
 /* Neighbors magnify effect via CSS :has (Safari 15.4+, Chrome 105+) */
@@ -2960,6 +2969,10 @@ img.loaded {
 .copy-btn svg {
   width: 10px;
   height: 10px;
+}
+.col-resizer:hover, .col-resizer:active {
+  background: var(--accent);
+  opacity: .5;
 }
 
 .ozon-field-indicator {

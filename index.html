@@ -118,22 +118,21 @@
 <div class="app">
   <!-- DOCK (macOS-style bottom bar) -->
   <nav class="dock" id="app-dock">
-    <!-- Profile -->
-    <div class="dock-profile" id="dock-profile" onclick="window.app.navigateTo('profile')">
-      <div class="dock-profile-avatar" id="dock-profile-avatar">S</div>
-      <span class="dock-label dock-label-company" id="dock-company-name">SimaDesk</span>
-    </div>
-    <!-- Nav items: фиксированная верхняя зона -->
+    <!-- Фиксированная верхняя зона (нельзя редактировать) -->
     <div class="dock-item dock-fixed active" id="nav-home" onclick="window.app.navigateTo('home')">
       <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg></div>
       <span class="dock-label">Главная</span>
     </div>
-    <div class="dock-divider"></div>
-    <!-- Nav items: основные — всегда видны -->
-    <div class="dock-item" id="nav-products" onclick="window.app.navigateTo('products',{loadAll:true})">
-      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg></div>
-      <span class="dock-label">Товары</span>
+    <div class="dock-item dock-fixed" id="nav-tasks" onclick="window.app.navigateTo('tasks')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/></svg></div>
+      <span class="dock-label">Задачи</span>
     </div>
+    <div class="dock-item dock-fixed" id="nav-products" onclick="window.app.navigateTo('products-hub')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></div>
+      <span class="dock-label">Обзор</span>
+    </div>
+    <div class="dock-divider"></div>
+    <!-- Редактируемые пункты -->
     <div class="dock-item" id="nav-catalog" onclick="window.app.navigateTo('catalog')">
       <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
       <span class="dock-label">Каталог</span>
@@ -175,10 +174,6 @@
 
     <!-- Дополнительные пункты — анимированный враппер, раскрывается кнопкой «Ещё» -->
     <div class="dock-extras-wrapper" id="dock-extras-wrapper">
-      <div class="dock-item" id="nav-marketplaces" onclick="window.app.navigateTo('marketplaces')">
-        <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg></div>
-        <span class="dock-label">API Маркет</span>
-      </div>
       <div class="dock-item" id="nav-sku-audit" onclick="window.app.navigateTo('sku-audit')">
         <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div>
         <span class="dock-label">Анализ</span>
@@ -194,10 +189,14 @@
     </div>
 
     <div class="dock-divider"></div>
-    <!-- Фиксированная нижняя зона -->
-    <div class="dock-item dock-fixed" id="nav-tasks" onclick="window.app.navigateTo('tasks')">
-      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/></svg></div>
-      <span class="dock-label">Задачи</span>
+    <!-- Фиксированная нижняя зона (нельзя редактировать) -->
+    <div class="dock-profile" id="dock-profile" onclick="window.app.navigateTo('profile')">
+      <div class="dock-profile-avatar" id="dock-profile-avatar">S</div>
+      <span class="dock-label dock-label-company" id="dock-company-name">SimaDesk</span>
+    </div>
+    <div class="dock-item dock-fixed" id="nav-marketplaces" onclick="window.app.navigateTo('marketplaces')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg></div>
+      <span class="dock-label">API Маркет</span>
     </div>
     <div class="dock-item dock-fixed" id="nav-settings" onclick="window.app.navigateTo('settings')">
       <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></div>
@@ -384,42 +383,64 @@
     <div id="stock-section" style="display:none;flex:1;overflow:auto"></div>
     <div id="catalog-section" style="display:none;flex:1;overflow:hidden"></div>
     <div id="producers-section" style="display:none;flex:1;overflow:hidden"></div>
+    <div id="products-hub-section" style="display:none;flex:1;overflow:hidden"></div>
 
     <!-- LOGS -->
     <div id="logs-section" style="display:none;flex:1;flex-direction:column;overflow:hidden"></div>
   </div>
 </div>
 
+<!-- AI ASSISTANT — floating widget (portal, rendered outside .app layout) -->
+<div id="ai-assistant-root"></div>
+
 <script>
 (function () {
   // ── Nav item metadata ──────────────────────────────────────────────────────
+  // Только редактируемые пункты (fixed-top и fixed-bottom не включены)
   var DOCK_META = {
-    'nav-products':     { label: 'Товары',     fixed: true,  page: 'products' },
-    'nav-catalog':      { label: 'Каталог',    page: 'catalog' },
-    'nav-orders':       { label: 'Заказы',     page: 'orders' },
-    'nav-stock':        { label: 'Остатки',    page: 'stock' },
-    'nav-producers':    { label: 'Производители', page: 'producers' },
-    'nav-analytics':    { label: 'Аналитика',  page: 'analytics' },
-    'nav-repricer':     { label: 'Репрайсер',  page: 'repricer' },
-    'nav-reviews':      { label: 'Отзывы',     page: 'reviews' },
-    'nav-chats':        { label: 'Чаты',       page: 'chats' },
-    'nav-marketplaces': { label: 'API Маркет', page: 'marketplaces' },
-    'nav-sku-audit':    { label: 'Анализ',     page: 'sku-audit' },
-    'nav-automation':   { label: 'Скрипты',    page: 'automation' },
-    'nav-logs':         { label: 'Логи',       page: 'logs' },
+    'nav-catalog':      { label: 'Каталог',       page: 'catalog' },
+    'nav-orders':       { label: 'Заказы',         page: 'orders' },
+    'nav-stock':        { label: 'Остатки',         page: 'stock' },
+    'nav-producers':    { label: 'Производители',   page: 'producers' },
+    'nav-analytics':    { label: 'Аналитика',       page: 'analytics' },
+    'nav-repricer':     { label: 'Репрайсер',       page: 'repricer' },
+    'nav-reviews':      { label: 'Отзывы',          page: 'reviews' },
+    'nav-chats':        { label: 'Чаты',            page: 'chats' },
+    'nav-sku-audit':    { label: 'Анализ',          page: 'sku-audit' },
+    'nav-automation':   { label: 'Скрипты',         page: 'automation' },
+    'nav-logs':         { label: 'Логи',            page: 'logs' },
   };
   var DEFAULT_CFG = {
-    main:  ['nav-products','nav-catalog','nav-orders','nav-stock','nav-producers','nav-analytics','nav-repricer','nav-reviews','nav-chats'],
-    extra: ['nav-marketplaces','nav-sku-audit','nav-automation','nav-logs'],
+    main:  ['nav-catalog','nav-orders','nav-stock','nav-producers','nav-analytics','nav-repricer','nav-reviews','nav-chats'],
+    extra: ['nav-sku-audit','nav-automation','nav-logs'],
   };
 
+  // Ключ хранилища — per-company (используется window.getDockStorageKey из main.ts)
+  function getStorageKey() {
+    return (window.getDockStorageKey && window.getDockStorageKey()) || 'dock_nav_config';
+  }
+
   function getCfg() {
-    try { return JSON.parse(localStorage.getItem('dock_nav_config') || 'null') || DEFAULT_CFG; }
-    catch { return DEFAULT_CFG; }
+    try {
+      var saved = JSON.parse(localStorage.getItem(getStorageKey()) || 'null');
+      if (!saved) return DEFAULT_CFG;
+      // Добавляем новые пункты которых нет в сохранённом конфиге
+      var allSaved = saved.main.concat(saved.extra);
+      // Убираем устаревшие fixed-элементы из сохранённого конфига
+      var fixedIds = ['nav-products', 'nav-marketplaces', 'nav-tasks'];
+      saved.main  = saved.main.filter(function(id)  { return fixedIds.indexOf(id) === -1; });
+      saved.extra = saved.extra.filter(function(id) { return fixedIds.indexOf(id) === -1; });
+      DEFAULT_CFG.main.concat(DEFAULT_CFG.extra).forEach(function (id) {
+        if (allSaved.indexOf(id) === -1) saved.extra.push(id);
+      });
+      return saved;
+    } catch { return DEFAULT_CFG; }
   }
   function saveCfg(cfg) {
-    try { localStorage.setItem('dock_nav_config', JSON.stringify(cfg)); } catch {}
+    try { localStorage.setItem(getStorageKey(), JSON.stringify(cfg)); } catch {}
   }
+  // Экспортируем saveCfg для drag-кода
+  window._dockSaveCfg = saveCfg;
 
   // ── Apply config to DOM (reorder + distribute items) ──────────────────────
   window.applyDockNavConfig = function () {
@@ -529,7 +550,6 @@
     if (el.classList.contains('dock-more-btn')) return false;
     if (el.classList.contains('dock-profile')) return false;
     if (el.classList.contains('dock-fixed')) return false;
-    if (el.id === 'nav-products') return false;
     if (el.style.display === 'none') return false;
     return true;
   }
@@ -683,7 +703,9 @@
           && !el.classList.contains('dock-fixed')
           && el.style.display !== 'none') { extraIds.push(el.id); }
     });
-    try { localStorage.setItem('dock_nav_config', JSON.stringify({ main: mainIds, extra: extraIds })); } catch {}
+    if (window._dockSaveCfg) {
+      window._dockSaveCfg({ main: mainIds, extra: extraIds });
+    }
   }
 
   document.addEventListener('DOMContentLoaded', function () {

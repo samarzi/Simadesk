@@ -23,6 +23,8 @@ import { ozonApi } from '@/services/ozonApi';
 import { helpBtn } from '@/services/helpModal';
 import { yandexApi } from '@/services/yandexApi';
 import { costPriceDb } from '@/services/costPriceDb';
+import { costProducerLinks } from '@/services/costProducerLinks';
+import { producerMappingDb, producerProductDb, producerFieldDb } from '@/services/producerDb';
 import { repricerRulesDb } from '@/services/repricerRulesDb';
 import { WbProduct, WbStore } from '@/types/wb';
 import { OzonProduct, OzonStore } from '@/types/ozon';
@@ -30,23 +32,28 @@ import { YandexProduct, YandexStore } from '@/types/yandex';
 import * as XLSX from 'xlsx';
 import '@/styles/repricer.css';
 
-import { LOG_KEY } from './repricer/types';
-import type { Mp, PriceLog, RepricerRule, RuleProduct, RuleStatus, RuleType, SchedulePeriod, UnifiedProduct } from './repricer/types';
-import { ruleProducts, uid } from './repricer/utils';
+import { LOG_KEY, RULE_LABELS } from './repricer/types';
+import type { Mp, MrcItem, MrcScanEntry, PriceLog, RepricerRule, RuleProduct, RuleStatus, RuleType, SchedulePeriod, UnifiedProduct } from './repricer/types';
+import { ruleProducts, uid, buildMrcItems, productPageUrl } from './repricer/utils';
 import { computeTargetPrice } from './repricer/pricing';
 import * as catalog from './repricer/catalog';
 import type { CatalogData } from './repricer/catalog';
 import { renderRules as renderRulesTab, renderRulesInner as renderRulesInnerTab } from './repricer/tabs/RulesTab';
 import type { RulesTabProps } from './repricer/tabs/RulesTab';
 import { renderLog as renderLogTab } from './repricer/tabs/LogTab';
-import { renderCosts as renderCostsTab } from './repricer/tabs/CostsTab';
+import { renderCosts as renderCostsTab, renderCostsInner as renderCostsInnerTab } from './repricer/tabs/CostsTab';
 import type { CostsTabProps } from './repricer/tabs/CostsTab';
+import { renderMrc as renderMrcTab } from './repricer/tabs/MrcTab';
+import type { MrcTabProps } from './repricer/tabs/MrcTab';
 import { renderForm as renderRuleForm } from './repricer/components/RuleForm';
 import type { RuleFormProps } from './repricer/components/RuleForm';
 import { renderPicker, renderPickerOverlay } from './repricer/components/ProductPicker';
 import type { ProductPickerProps } from './repricer/components/ProductPicker';
+import { MrcScanner } from './repricer/services/mrcScanner';
 
 export type { RepricerRule };
+
+const RULE_TYPES = Object.keys(RULE_LABELS) as RuleType[];
 
 function loadLog(): PriceLog[] { try { return JSON.parse(localStorage.getItem(LOG_KEY) ?? '[]'); } catch { return []; } }
 function saveLog(l: PriceLog[]): void { localStorage.setItem(LOG_KEY, JSON.stringify(l.slice(0, 500))); }
@@ -65,16 +72,26 @@ export class RepricerModule {
 
   private tab: 'rules' | 'log' | 'costs' = 'rules';
 
+  // ── МРЦ ────────────────────────────────────────────────────────────
+  private mrcScanner: MrcScanner;
+  private mrcApplyingKeys = new Set<string>();
+
   // ── Cost-prices manager ───────────────────────────────────────────
   private costsSearch = '';
   private costsMpFilter: '' | Mp = '';
   private costsSelected = new Set<string>();      // vendorCode (нормализован)
   private costsBulkValue: number | '' = '';
+  private costsSearchTimer: number | null = null;
   /** Lowercased vendor_code/sku из исторических транзакций МП.
    *  Используется чтобы помечать orphan-артикулы как "архив" (был в продажах)
    *  vs "удалён" (нигде не встречался). Грузится один раз при открытии таба. */
   private soldVendorCodes: Set<string> | null = null;
   private soldVendorCodesLoading = false;
+  /** Карта: article_lower → { cost, producerProductId, producerName }
+   *  Артикулы, у которых ЕСТЬ связка с производителем И в карточке указана себестоимость.
+   *  Загружается при открытии вкладки «Себестоимости». */
+  private producerCostMap = new Map<string, { cost: number; producerProductId: string; producerName: string }>();
+  private producerCostMapLoaded = false;
   private editId: string | null = null;
   private showForm = false;
   private form: Partial<RepricerRule> = {};
@@ -84,24 +101,40 @@ export class RepricerModule {
   // Список выбранных товаров для правила (мульти-выбор)
   private formProducts: RuleProduct[] = [];
   private applying = new Set<string>();
+  private applyingAll = false;
   private applyErrors = new Map<string, string>(); // ruleId → error message
+  private reverting = new Set<string>(); // logId → откат в процессе
+  private revertErrors = new Map<string, string>(); // logId → error message
 
   // ── Per-store formulas (для типа formula: каждый магазин = своя формула) ──
   private formStoreFormulas: Map<string, string> = new Map(); // storeId → formula
 
   // ── Rules list filter / search ──────────────────────────────────────────────
   private rulesSearch = '';
-  private rulesTypeFilter: '' | RuleType = '';
+  private rulesTypeFilter: RuleType = 'target';
 
   // ── Product picker (выбор товаров из всех МП с дедупликацией по артикулу) ──
   private pickerOpen = false;
+  private pickerSearchTimer: number | null = null;
   private pickerSelected = new Set<string>();      // ключи UnifiedProduct.vendorCode
   private pickerSearch = '';
   private pickerSelectedMps  = new Set<Mp>();      // выбранные маркетплейсы (кнопки)
   private pickerSelectedStores = new Set<string>(); // выбранные магазины (кнопки)
   private pickerStockFilter: 'all' | 'in' | 'out' = 'all';
 
-  constructor(container: HTMLElement) { this.container = container; }
+  constructor(container: HTMLElement) {
+    this.container = container;
+    this.mrcScanner = new MrcScanner({
+      getRules: () => this.rules,
+      getWbStores: () => this.wbStores,
+      getWbProducts: () => this.wbProducts,
+      getOzonStores: () => this.ozonStores,
+      getOzonProducts: () => this.ozonProducts,
+      getYmStores: () => this.ymStores,
+      getYmProducts: () => this.ymProducts,
+      onChange: () => this.render(),
+    });
+  }
 
   async show(): Promise<void> {
     this.container.style.display = 'flex';
@@ -109,6 +142,8 @@ export class RepricerModule {
     await repricerRulesDb.refresh();
     this.rules = repricerRulesDb.all();
     this.log   = loadLog();
+    const firstWithRules = RULE_TYPES.find(rt => this.rules.some(r => r.type === rt));
+    this.rulesTypeFilter = firstWithRules ?? 'target';
 
     const [[wbS, wbP], [ozS, ozP], [ymS, ymP]] = await Promise.all([
       Promise.all([wbDb.getStores(), wbDb.getProducts()]).catch(() => [[], []] as [WbStore[], WbProduct[]]),
@@ -131,6 +166,7 @@ export class RepricerModule {
     if (t === 'costs') {
       costPriceDb.refresh().then(() => this.render()).catch(() => this.render());
       this.loadSoldVendorCodes();
+      this.loadProducerCostMap();
     } else {
       this.render();
     }
@@ -160,14 +196,14 @@ export class RepricerModule {
    * соответствует тому, что реально будет установлено по кнопке «▶».
    */
   private computePrice(rule: RepricerRule): number | null {
-    const stock = catalog.getStock(this.catalogData(), rule.marketplace, rule.productId);
+    const stock = catalog.getStock(this.catalogData(), rule.marketplace, rule.productId, rule.storeId);
     const cost = costPriceDb.get(rule.vendorCode);
     return computeTargetPrice(rule, { stock, cost });
   }
 
   /** Целевая цена для конкретного товара правила (себестоимость и остаток — свои). */
   private computePriceForProduct(rule: RepricerRule, prod: RuleProduct): number | null {
-    const stock = catalog.getStock(this.catalogData(), rule.marketplace, prod.productId);
+    const stock = catalog.getStock(this.catalogData(), rule.marketplace, prod.productId, rule.storeId);
     const cost = costPriceDb.get(prod.vendorCode);
     return computeTargetPrice(rule, { stock, cost });
   }
@@ -253,7 +289,11 @@ export class RepricerModule {
     this.render();
   }
 
-  setPickerSearch(q: string): void { this.pickerSearch = q; this.renderPickerOnly(); }
+  setPickerSearch(q: string): void {
+    this.pickerSearch = q;
+    if (this.pickerSearchTimer != null) clearTimeout(this.pickerSearchTimer);
+    this.pickerSearchTimer = window.setTimeout(() => this.renderPickerOnly(), 200);
+  }
   setPickerStock(s: string): void { this.pickerStockFilter = s as any; this.renderPickerOnly(); }
 
   togglePickerItem(vendorCode: string): void {
@@ -363,14 +403,15 @@ export class RepricerModule {
   //  ФОРМА ПРАВИЛА
   // ════════════════════════════════════════════════════════════════════════
 
-  openAddForm(): void {
+  openAddForm(type?: RuleType): void {
     this.editId = null;
-    this.form = { type: 'target', status: 'active' };
+    this.form = { type: type ?? 'target', status: 'active' };
     this.formStoreIds.clear();
     this.formProducts = [];
     this.formStoreFormulas = new Map();
     this.showForm = true; this.formError = '';
     this.tab = 'rules';
+    if (type) this.rulesTypeFilter = type;
     this.render();
   }
 
@@ -387,6 +428,7 @@ export class RepricerModule {
       this.formStoreFormulas.set(rule.storeId, rule.formula);
     }
     this.showForm = true; this.formError = '';
+    this.rulesTypeFilter = rule.type;
     this.render();
   }
 
@@ -463,46 +505,174 @@ export class RepricerModule {
     this.render();
   }
 
+  /** Проверка формы под выбранный тип правила. Возвращает текст ошибки или null если всё ок. */
+  private validateFormForType(): string | null {
+    const f = this.form;
+    if (this.formProducts.length === 0 && !f.productId) return 'Выберите товар';
+    if (!f.type) return 'Выберите тип правила';
+
+    switch (f.type) {
+      case 'target':
+        return !f.targetPrice ? 'Укажите целевую цену' : null;
+
+      case 'margin': {
+        if (!f.marginMultiplier) return 'Укажите множитель';
+        const missing = this.formProducts.filter(p => costPriceDb.get(p.vendorCode) == null);
+        if (missing.length > 0) {
+          return `⚠ Не задана себестоимость для: ${missing.map(p => p.vendorCode).join(', ')}. Перейдите во вкладку «Себестоимости».`;
+        }
+        return null;
+      }
+
+      case 'stock': {
+        const tiers = f.stockTiers ?? [];
+        if (tiers.length === 0 || tiers.some(t => !isFinite(t.maxStock) || !isFinite(t.price))) {
+          return 'Добавьте хотя бы один порог с корректными значениями';
+        }
+        return null;
+      }
+
+      case 'schedule': {
+        const periods = f.schedulePeriods ?? [];
+        if (periods.length === 0 || periods.some(p => p.days.length === 0 || !isFinite(p.price))) {
+          return 'Добавьте хотя бы один период с днями и ценой';
+        }
+        return null;
+      }
+
+      case 'mrc': {
+        const mrcProducts = this.formProducts.length > 0
+          ? this.formProducts
+          : (f.productId && f.vendorCode ? [{ productId: f.productId, vendorCode: f.vendorCode, productTitle: f.productTitle ?? f.productId }] : []);
+        if (mrcProducts.length === 0) return 'Выберите товар';
+        const missing = mrcProducts.filter(prod => !((f as any)[`mrcPrice__${prod.vendorCode}`] > 0));
+        if (missing.length > 0) return `Укажите цену МРЦ для: ${missing.map(p => p.vendorCode).join(', ')}`;
+        return null;
+      }
+
+      case 'formula': {
+        if (!f.formula?.trim()) return 'Введите формулу';
+        if (/\bcost_price\b/.test(f.formula)) {
+          const missing = this.formProducts.filter(p => costPriceDb.get(p.vendorCode) == null);
+          if (missing.length > 0) {
+            return `⚠ Формула использует cost_price, но себестоимость не задана для: ${missing.map(p => p.vendorCode).join(', ')}.`;
+          }
+        }
+        const cost = costPriceDb.get(f.vendorCode ?? '') ?? 0;
+        const test = computeTargetPrice({ ...f, type: 'formula' } as RepricerRule, { stock: 0, cost });
+        return test == null ? 'Формула некорректна — проверьте синтаксис' : null;
+      }
+
+      default:
+        return null;
+    }
+  }
+
+  /** Сохраняет правило типа «МРЦ» — отдельная ветка, т.к. одно правило хранит
+   *  mrcItems на все выбранные товары × магазины (ячейка = товар на конкретном МП). */
+  private saveMrcRule(products: RuleProduct[]): void {
+    const f = this.form;
+    const now = new Date().toISOString();
+    const unified = this.buildUnifiedProducts();
+    const mrcPriceFor = (vc: string) => Number((f as any)[`mrcPrice__${vc}`]) || 0;
+
+    if (this.editId) {
+      const existing = this.rules.find(r => r.id === this.editId);
+      const mrcItems = buildMrcItems(unified, products, mrcPriceFor, existing?.mrcItems ?? []);
+      const first = mrcItems[0];
+      const rule: RepricerRule = {
+        id: this.editId,
+        marketplace: existing?.marketplace ?? first?.mp ?? (f.marketplace as Mp) ?? 'wb',
+        storeId: existing?.storeId ?? first?.storeId ?? '',
+        storeName: existing?.storeName ?? first?.storeName ?? '',
+        productId: existing?.productId ?? first?.productId ?? products[0].productId,
+        vendorCode: existing?.vendorCode ?? first?.vendorCode ?? products[0].vendorCode,
+        productTitle: existing?.productTitle ?? first?.productTitle ?? products[0].productTitle,
+        type: 'mrc',
+        status: (f.status ?? 'active') as RuleStatus,
+        mrcItems,
+        createdAt: existing?.createdAt ?? now,
+      };
+      const idx = this.rules.findIndex(r => r.id === this.editId);
+      if (idx >= 0) this.rules[idx] = rule;
+    } else {
+      const mrcItems = buildMrcItems(unified, products, mrcPriceFor);
+      const first = mrcItems[0];
+      const rule: RepricerRule = {
+        id: uid(),
+        marketplace: first?.mp ?? (f.marketplace as Mp) ?? 'wb',
+        storeId: first?.storeId ?? '',
+        storeName: first?.storeName ?? '',
+        productId: first?.productId ?? products[0].productId,
+        vendorCode: first?.vendorCode ?? products[0].vendorCode,
+        productTitle: first?.productTitle ?? products[0].productTitle,
+        type: 'mrc',
+        status: (f.status ?? 'active') as RuleStatus,
+        mrcItems,
+        createdAt: now,
+      };
+      this.rules.unshift(rule);
+    }
+
+    repricerRulesDb.saveMany(this.rules);
+  }
+
+  /** Сохраняет правило обычного типа (target/margin/stock/schedule/formula) при редактировании. */
+  private saveEditedRule(baseRule: Omit<RepricerRule, 'id' | 'marketplace' | 'storeId' | 'storeName' | 'createdAt'>, mp: Mp, now: string): void {
+    const f = this.form;
+    const rule: RepricerRule = {
+      ...baseRule,
+      id: this.editId!,
+      marketplace: mp,
+      storeId: f.storeId ?? '',
+      storeName: f.storeName ?? '',
+      createdAt: this.rules.find(r => r.id === this.editId)?.createdAt ?? now,
+    };
+    const idx = this.rules.findIndex(r => r.id === this.editId);
+    if (idx >= 0) this.rules[idx] = rule;
+  }
+
+  /** Создаёт новые правила: одно правило на каждый выбранный магазин из formStoreIds. */
+  private createNewRules(baseRule: Omit<RepricerRule, 'id' | 'marketplace' | 'storeId' | 'storeName' | 'createdAt'>, products: RuleProduct[], mp: Mp, now: string): void {
+    const f = this.form;
+    const allStores = catalog.allStoresFlat(this.catalogData());
+    let targetStores = allStores.filter(s => this.formStoreIds.has(s.id));
+
+    if (targetStores.length === 0) {
+      targetStores.push({ id: f.storeId ?? '', name: f.storeName ?? '', mp });
+    }
+    for (const store of targetStores) {
+      const resolvedProducts: RuleProduct[] = products.map(prod =>
+        catalog.resolveProductForStore(this.catalogData(), store, prod),
+      );
+
+      const storeFormula = f.type === 'formula'
+        ? (this.formStoreFormulas.get(store.id) || f.formula || '')
+        : undefined;
+
+      const rule: RepricerRule = {
+        ...baseRule,
+        id: uid(),
+        marketplace: store.mp,
+        storeId: store.id,
+        storeName: store.name,
+        productId: resolvedProducts[0].productId,
+        vendorCode: resolvedProducts[0].vendorCode,
+        productTitle: resolvedProducts[0].productTitle,
+        products: resolvedProducts.length > 1 ? resolvedProducts : undefined,
+        ...(storeFormula !== undefined ? { formula: storeFormula } : {}),
+        createdAt: now,
+      };
+      this.rules.unshift(rule);
+    }
+  }
+
   saveForm(): void {
     const f = this.form;
     const mp = (f.marketplace ?? 'wb') as Mp;
-    if (this.formProducts.length === 0 && !f.productId) { this.formError = 'Выберите товар'; this.render(); return; }
-    if (!f.type) { this.formError = 'Выберите тип правила'; this.render(); return; }
-    if (f.type === 'target'   && !f.targetPrice)                                  { this.formError = 'Укажите целевую цену'; this.render(); return; }
-    if (f.type === 'margin') {
-      if (!f.marginMultiplier) { this.formError = 'Укажите множитель'; this.render(); return; }
-      // Проверяем себестоимость для всех товаров
-      const missing = this.formProducts.filter(p => costPriceDb.get(p.vendorCode) == null);
-      if (missing.length > 0) {
-        this.formError = `⚠ Не задана себестоимость для: ${missing.map(p => p.vendorCode).join(', ')}. Перейдите во вкладку «Себестоимости».`;
-        this.render(); return;
-      }
-    }
-    if (f.type === 'stock') {
-      const tiers = f.stockTiers ?? [];
-      if (tiers.length === 0 || tiers.some(t => !isFinite(t.maxStock) || !isFinite(t.price))) {
-        this.formError = 'Добавьте хотя бы один порог с корректными значениями'; this.render(); return;
-      }
-    }
-    if (f.type === 'schedule') {
-      const periods = f.schedulePeriods ?? [];
-      if (periods.length === 0 || periods.some(p => p.days.length === 0 || !isFinite(p.price))) {
-        this.formError = 'Добавьте хотя бы один период с днями и ценой'; this.render(); return;
-      }
-    }
-    if (f.type === 'formula') {
-      if (!f.formula?.trim()) { this.formError = 'Введите формулу'; this.render(); return; }
-      if (/\bcost_price\b/.test(f.formula)) {
-        const missing = this.formProducts.filter(p => costPriceDb.get(p.vendorCode) == null);
-        if (missing.length > 0) {
-          this.formError = `⚠ Формула использует cost_price, но себестоимость не задана для: ${missing.map(p => p.vendorCode).join(', ')}.`;
-          this.render(); return;
-        }
-      }
-      const cost = costPriceDb.get(f.vendorCode ?? '') ?? 0;
-      const test = computeTargetPrice({ ...f, type: 'formula' } as RepricerRule, { stock: 0, cost });
-      if (test == null) { this.formError = 'Формула некорректна — проверьте синтаксис'; this.render(); return; }
-    }
+
+    const error = this.validateFormForType();
+    if (error) { this.formError = error; this.render(); return; }
 
     const now = new Date().toISOString();
 
@@ -510,6 +680,17 @@ export class RepricerModule {
     const products: RuleProduct[] = this.formProducts.length > 0
       ? [...this.formProducts]
       : [{ productId: f.productId!, vendorCode: f.vendorCode ?? '', productTitle: f.productTitle ?? f.productId! }];
+
+    // ── Тип «МРЦ» — особая логика: одно правило хранит mrcItems на все
+    // выбранные товары × магазины (одна ячейка = товар на конкретном МП).
+    if (f.type === 'mrc') {
+      this.saveMrcRule(products);
+      this.showForm = false; this.formError = '';
+      this.formStoreIds.clear();
+      this.formProducts = [];
+      this.render();
+      return;
+    }
 
     const baseRule = {
       productId: products[0].productId,
@@ -526,64 +707,9 @@ export class RepricerModule {
     };
 
     if (this.editId) {
-      // Редактирование — обновляем одно правило
-      const rule: RepricerRule = {
-        ...baseRule,
-        id: this.editId,
-        marketplace: mp,
-        storeId: f.storeId ?? '',
-        storeName: f.storeName ?? '',
-        createdAt: this.rules.find(r => r.id === this.editId)?.createdAt ?? now,
-      };
-      const idx = this.rules.findIndex(r => r.id === this.editId);
-      if (idx >= 0) this.rules[idx] = rule;
+      this.saveEditedRule(baseRule, mp, now);
     } else {
-      // Создание — одно правило на магазин из formStoreIds, со ВСЕМИ товарами внутри
-      const allStores = catalog.allStoresFlat(this.catalogData());
-      let targetStores = allStores.filter(s => this.formStoreIds.has(s.id));
-
-      if (targetStores.length === 0) {
-        targetStores.push({ id: f.storeId ?? '', name: f.storeName ?? '', mp });
-      }
-      for (const store of targetStores) {
-        // Резолвим productId для каждого товара в этом магазине
-        const resolvedProducts: RuleProduct[] = products.map(prod =>
-          catalog.resolveProductForStore(this.catalogData(), store, prod),
-        );
-
-        if (f.type === 'formula') {
-          // Формула: одно правило на магазин, у каждого магазина своя формула
-          const storeFormula = this.formStoreFormulas.get(store.id) || f.formula || '';
-          const rule: RepricerRule = {
-            ...baseRule,
-            id: uid(),
-            marketplace: store.mp,
-            storeId: store.id,
-            storeName: store.name,
-            productId: resolvedProducts[0].productId,
-            vendorCode: resolvedProducts[0].vendorCode,
-            productTitle: resolvedProducts[0].productTitle,
-            products: resolvedProducts.length > 1 ? resolvedProducts : undefined,
-            formula: storeFormula,
-            createdAt: now,
-          };
-          this.rules.unshift(rule);
-        } else {
-          const rule: RepricerRule = {
-            ...baseRule,
-            id: uid(),
-            marketplace: store.mp,
-            storeId: store.id,
-            storeName: store.name,
-            productId: resolvedProducts[0].productId,
-            vendorCode: resolvedProducts[0].vendorCode,
-            productTitle: resolvedProducts[0].productTitle,
-            products: resolvedProducts.length > 1 ? resolvedProducts : undefined,
-            createdAt: now,
-          };
-          this.rules.unshift(rule);
-        }
-      }
+      this.createNewRules(baseRule, products, mp, now);
     }
 
     repricerRulesDb.saveMany(this.rules);
@@ -694,7 +820,15 @@ export class RepricerModule {
       for (const prod of products) {
         // Вычисляем цену для каждого товара (себестоимость может отличаться)
         const newPrice = this.computePriceForProduct(rule, prod);
-        if (!newPrice) continue;
+        // newPrice может быть отрицательным (например, из формулы с вычитанием) —
+        // `!newPrice` такое не отсекает, т.к. отрицательные числа truthy в JS.
+        if (newPrice == null || !isFinite(newPrice) || newPrice <= 0) continue;
+
+        // Цена ДО изменения — читаем сейчас, до мутации in-memory кеша ниже.
+        const oldPrice =
+          rule.marketplace === 'wb'    ? (this.wbProducts.find(p => String(p.nm_id) === prod.productId && p.store_id === rule.storeId)?.price ?? null) :
+          rule.marketplace === 'ozon'  ? (this.ozonProducts.find(p => p.offer_id === prod.productId)?.price ?? null) :
+                                         (this.ymProducts.find(p => p.offer_id === prod.productId)?.basic_price ?? null);
 
         if (rule.marketplace === 'wb') {
           const store = this.wbStores.find(s => s.id === rule.storeId);
@@ -712,19 +846,21 @@ export class RepricerModule {
           let ozonPrice = newPrice;
           let ozonRefOldPrice: number | null = null;
 
-          // Для обычных правил оставляем old_price для визуального "до скидки"
+          // Для визуального "до скидки" используем old_price или текущую цену,
+          // если они выше новой. Иначе явно шлём "0" — Ozon сбросит зачёркнутую цену
+          // и не выдаст VALIDATION_ERROR из-за устаревшего old_price в своей базе.
           if (p?.old_price && p.old_price > ozonPrice) ozonRefOldPrice = p.old_price;
           else if (p?.price && p.price > ozonPrice) ozonRefOldPrice = p.price;
 
           const rawMinP = rule.minPrice ?? Math.round(ozonPrice * 0.8);
           const minP = rawMinP >= ozonPrice ? Math.max(1, ozonPrice - 1) : rawMinP;
-          const safeOldPrice = (ozonRefOldPrice ?? 0) > ozonPrice ? ozonRefOldPrice! : 0;
+          const safeOldPrice = (ozonRefOldPrice ?? 0) > ozonPrice ? Math.round(ozonRefOldPrice!) : 0;
           await ozonApi.updatePrices(
             creds,
             [{
               offer_id: prod.productId,
-              price: String(ozonPrice),
-              ...(safeOldPrice > 0 ? { old_price: String(safeOldPrice) } : {}),
+              price: String(Math.round(ozonPrice)),
+              old_price: String(safeOldPrice),  // "0" сбрасывает зачёркнутую цену в Ozon
               min_price: String(minP),
               auto_action_enabled: 'ENABLED',
             }],
@@ -761,14 +897,10 @@ export class RepricerModule {
           if (ymProd) ymProd.basic_price = ymSellerPrice;
         }
 
-        const oldPrice =
-          rule.marketplace === 'wb'    ? (this.wbProducts.find(p => String(p.nm_id) === prod.productId)?.price ?? null) :
-          rule.marketplace === 'ozon'  ? (this.ozonProducts.find(p => p.offer_id === prod.productId)?.price ?? null) :
-                                         (this.ymProducts.find(p => p.offer_id === prod.productId)?.basic_price ?? null);
-
         const entry: PriceLog = {
           id: uid(), ruleId: id, marketplace: rule.marketplace,
-          storeName: rule.storeName, productTitle: prod.productTitle,
+          storeId: rule.storeId, storeName: rule.storeName,
+          productId: prod.productId, productTitle: prod.productTitle,
           oldPrice, newPrice, appliedAt: new Date().toISOString(), reason: rule.type,
         };
         this.log.unshift(entry); saveLog(this.log);
@@ -789,8 +921,72 @@ export class RepricerModule {
   }
 
   async applyAll(): Promise<void> {
-    const active = this.rules.filter(r => r.status === 'active' && !this.applying.has(r.id));
-    for (const r of active) await this.applyRule(r.id);
+    if (this.applyingAll) return;
+    this.applyingAll = true;
+    try {
+      const active = this.rules.filter(r => r.status === 'active' && !this.applying.has(r.id));
+      for (const r of active) await this.applyRule(r.id);
+    } finally {
+      this.applyingAll = false;
+    }
+  }
+
+  /** Ставит цену напрямую через API маркетплейса, без логики правил (используется для откатов). */
+  private async setMarketplacePrice(mp: Mp, storeId: string, productId: string, price: number): Promise<void> {
+    if (mp === 'wb') {
+      const store = this.wbStores.find(s => s.id === storeId);
+      if (!store) throw new Error('Магазин WB не найден');
+      await updateWbPrices(store.api_key, [{ nmID: Number(productId), price, discount: 0 }]);
+      const wbProd = this.wbProducts.find(p => String(p.nm_id) === productId && p.store_id === storeId);
+      if (wbProd) wbProd.price = price;
+    } else if (mp === 'ozon') {
+      const store = this.ozonStores.find(s => s.id === storeId);
+      if (!store) throw new Error('Магазин Ozon не найден');
+      const creds = { client_id: store.client_id, api_key: store.api_key };
+      const rawMinP = Math.round(price * 0.8);
+      await ozonApi.updatePrices(creds, [{
+        offer_id: productId,
+        price: String(Math.round(price)),
+        old_price: '0',
+        min_price: String(rawMinP),
+        auto_action_enabled: 'ENABLED',
+      }]);
+      const p = this.ozonProducts.find(p => p.offer_id === productId);
+      if (p) p.price = price;
+    } else {
+      const store = this.ymStores.find(s => s.id === storeId);
+      if (!store?.campaign_id) throw new Error('Магазин ЯМ или campaign_id не найден');
+      await yandexApi.updateOfferPrices(store.api_key, String(store.campaign_id), [{
+        offerId: productId, price,
+      }]);
+      const ymProd = this.ymProducts.find(p => p.offer_id === productId && p.store_id === store.id);
+      if (ymProd) ymProd.basic_price = price;
+    }
+  }
+
+  /** Откатывает цену из записи журнала обратно на oldPrice. */
+  async revertLog(logId: string): Promise<void> {
+    const entry = this.log.find(l => l.id === logId);
+    if (!entry || entry.oldPrice == null || this.reverting.has(logId)) return;
+    this.reverting.add(logId); this.render();
+
+    try {
+      await this.setMarketplacePrice(entry.marketplace, entry.storeId, entry.productId, entry.oldPrice);
+      const revertEntry: PriceLog = {
+        id: uid(), ruleId: entry.ruleId, marketplace: entry.marketplace,
+        storeId: entry.storeId, storeName: entry.storeName,
+        productId: entry.productId, productTitle: entry.productTitle,
+        oldPrice: entry.newPrice, newPrice: entry.oldPrice,
+        appliedAt: new Date().toISOString(), reason: 'Откат', isRevert: true,
+      };
+      this.log.unshift(revertEntry); saveLog(this.log);
+    } catch (e: any) {
+      const msg: string = e?.message ?? String(e);
+      console.error('[Repricer] revertLog:', msg);
+      this.revertErrors.set(logId, msg);
+      setTimeout(() => { this.revertErrors.delete(logId); this.render(); }, 8000);
+    }
+    this.reverting.delete(logId); this.render();
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -829,8 +1025,9 @@ export class RepricerModule {
     }
 
     // ── ОСНОВНОЙ ЭКРАН (СПИСОК ПРАВИЛ / ИСТОРИЯ / ...) ──
+    const mrcNeedsConfirm = this.mrcScanner.scanLog.some(e => e.needsConfirm);
     const TAB_CFG = [
-      { id: 'rules',     label: 'Правила',       count: this.rules.length, violet: false },
+      { id: 'rules',     label: 'Правила',       count: this.rules.length, violet: false, amber: mrcNeedsConfirm },
       { id: 'costs',     label: 'Себестоимости', count: costsCount, violet: false, warn: withoutCost > 0 },
       { id: 'log',       label: 'История',       count: this.log.length, violet: false },
     ] as const;
@@ -853,8 +1050,8 @@ export class RepricerModule {
           <div class="rpr-header-actions">
             ${helpBtn('repricer')}
             ${activeCount > 0 ? `
-              <button class="rpr-btn rpr-btn-outline" onclick="window.repricerModule.applyAll()" ${this.applying.size > 0 ? 'disabled' : ''}>
-                ${this.applying.size > 0
+              <button class="rpr-btn rpr-btn-outline" onclick="window.repricerModule.applyAll()" ${this.applyingAll || this.applying.size > 0 ? 'disabled' : ''}>
+                ${this.applyingAll || this.applying.size > 0
                   ? `<span style="display:inline-flex;align-items:center;gap:5px"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="animation:spin 1s linear infinite"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"/></svg>Применяем…</span>`
                   : `▶ Применить все`}
               </button>
@@ -918,6 +1115,8 @@ export class RepricerModule {
       getProductImage: (r) => catalog.getProductImage(this.catalogData(), r),
       applying: this.applying,
       applyErrors: this.applyErrors,
+      mrcAlert: this.mrcScanner.scanLog.some(e => e.needsConfirm),
+      renderMrcContent: () => this.renderMrc(),
     };
   }
 
@@ -932,7 +1131,7 @@ export class RepricerModule {
   }
 
   setRulesTypeFilter(t: string): void {
-    this.rulesTypeFilter = t as any;
+    this.rulesTypeFilter = t as RuleType;
     this.render();
   }
 
@@ -941,15 +1140,132 @@ export class RepricerModule {
   // ════════════════════════════════════════════════════════════════════════
 
   private renderLog(): string {
-    return renderLogTab(this.log);
+    return renderLogTab(this.log, this.reverting, this.revertErrors);
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  ВКЛАДКА «МРЦ»
+  // ════════════════════════════════════════════════════════════════════════
+
+  /** Последняя запись анализа по каждой ячейке (ключ = `${ruleId}:${itemKey}`). */
+  private mrcAnalysisMap(): Map<string, MrcScanEntry> {
+    const m = new Map<string, MrcScanEntry>();
+    for (const e of this.mrcScanner.scanLog) {
+      const k = `${e.ruleId}:${e.itemKey}`;
+      if (!m.has(k)) m.set(k, e);
+    }
+    return m;
+  }
+
+  private renderMrc(): string {
+    const props: MrcTabProps = {
+      rules: this.rules.filter(r => r.type === 'mrc'),
+      analysis: this.mrcAnalysisMap(),
+      applyingKeys: this.mrcApplyingKeys,
+      productLink: (item) => this.mrcItemLink(item),
+      scanning: this.mrcScanner.scanning,
+      scanLog: this.mrcScanner.scanLog,
+      scanProgress: this.mrcScanner.scanProgress,
+      extensionAvailable: this.mrcScanner.extensionAvailable,
+    };
+    return renderMrcTab(props);
+  }
+
+  /** Публичная ссылка на карточку товара на маркетплейсе (та же логика, что и в каталоге). */
+  private mrcItemLink(item: MrcItem): string | null {
+    if (item.mp === 'ozon') {
+      const product = this.ozonProducts.find(p => p.offer_id === item.productId && p.store_id === item.storeId);
+      return productPageUrl('ozon', item.productId, { ozonSku: product?.sku ?? null });
+    }
+    if (item.mp === 'yandex') {
+      const product = this.ymProducts.find(p => p.offer_id === item.productId && p.store_id === item.storeId);
+      return productPageUrl('yandex', item.productId, { marketSku: product?.market_sku ?? null, marketModelId: product?.market_model_id ?? null });
+    }
+    return productPageUrl('wb', item.productId);
+  }
+
+  async analyzeMrc(): Promise<void> {
+    await this.mrcScanner.runScan();
+  }
+
+  async applyMrcEntry(entryId: string): Promise<void> {
+    const entry = this.mrcScanner.scanLog.find(e => e.id === entryId);
+    if (!entry) return;
+    const key = `${entry.ruleId}:${entry.itemKey}`;
+    this.mrcApplyingKeys.add(key); this.render();
+    try {
+      await this.mrcScanner.applyEntry(entryId);
+    } finally {
+      this.mrcApplyingKeys.delete(key); this.render();
+    }
+  }
+
+  async applyAllMrcDeviations(): Promise<void> {
+    const ids = this.mrcScanner.scanLog.filter(e => e.action === 'needs_update').map(e => `${e.ruleId}:${e.itemKey}`);
+    for (const k of ids) this.mrcApplyingKeys.add(k);
+    this.render();
+    try {
+      await this.mrcScanner.applyAllDeviations();
+    } finally {
+      for (const k of ids) this.mrcApplyingKeys.delete(k);
+      this.render();
+    }
+  }
+
+  confirmMrcEntry(entryId: string, applied: boolean): void {
+    this.mrcScanner.confirmEntry(entryId, applied);
+  }
+
+  async retryMrcItem(ruleId: string, itemKey: string): Promise<void> {
+    await this.mrcScanner.retryItem(ruleId, itemKey);
+  }
+
+  removeMrcProduct(ruleId: string, vendorCode: string): void {
+    const rule = this.rules.find(r => r.id === ruleId);
+    if (!rule) return;
+    rule.mrcItems = (rule.mrcItems ?? []).filter(i => i.vendorCode !== vendorCode);
+    repricerRulesDb.save(rule);
+    this.render();
+  }
+
+  toggleMrcItem(ruleId: string, itemKey: string): void {
+    const rule = this.rules.find(r => r.id === ruleId);
+    const item = rule?.mrcItems?.find(i => i.key === itemKey);
+    if (!rule || !item) return;
+    item.enabled = !item.enabled;
+    repricerRulesDb.save(rule);
+    this.render();
+  }
+
+  updateMrcItemPrice(ruleId: string, itemKey: string, price: number): void {
+    const rule = this.rules.find(r => r.id === ruleId);
+    const item = rule?.mrcItems?.find(i => i.key === itemKey);
+    if (!rule || !item || !isFinite(price) || price < 0) return;
+    item.mrcPrice = price;
+    repricerRulesDb.save(rule);
+  }
+
+  /** Ручное снятие паузы ячейки МРЦ (см. MrcCellState.paused) — сервер также снимает её
+   *  сам после нескольких здоровых чтений подряд; эта кнопка — дополнительный быстрый путь. */
+  clearMrcPause(ruleId: string, itemKey: string): void {
+    const rule = this.rules.find(r => r.id === ruleId);
+    const state = rule?.mrcState?.[itemKey];
+    if (!rule || !state) return;
+    state.paused = false;
+    state.pausedReason = undefined;
+    state.pausedAt = undefined;
+    state.consecutiveAnomalies = 0;
+    state.consecutiveHealthy = 0;
+    repricerRulesDb.save(rule);
+    this.render();
   }
 
   // ════════════════════════════════════════════════════════════════════════
   //  ВКЛАДКА «СЕБЕСТОИМОСТИ» — управление cost_price для всех товаров
   // ════════════════════════════════════════════════════════════════════════
 
-  private renderCosts(): string {
-    const props: CostsTabProps = {
+  private costsTabProps(): CostsTabProps {
+    return {
       products: this.buildUnifiedProducts(),
       costsSearch: this.costsSearch,
       costsMpFilter: this.costsMpFilter,
@@ -958,11 +1274,38 @@ export class RepricerModule {
       soldVendorCodes: this.soldVendorCodes ?? null,
       getCost: (vendorCode: string) => costPriceDb.get(vendorCode),
       allCostEntries: costPriceDb.all(),
+      producerLinks: costProducerLinks.all(),
+      producerCostMap: this.producerCostMap,
     };
-    return renderCostsTab(props);
   }
 
-  setCostsSearch(q: string): void { this.costsSearch = q; this.render(); }
+  private renderCosts(): string {
+    return renderCostsTab(this.costsTabProps());
+  }
+
+  /** Лёгкая перерисовка только фильтров/таблицы себестоимостей без потери фокуса на поиске. */
+  private renderCostsOnly(): void {
+    const host = document.getElementById('rpr-costs-host');
+    if (!host) return;
+    const active = document.activeElement as HTMLInputElement | null;
+    const wasSearch = active?.classList.contains('rpr-search');
+    const selStart = wasSearch ? active!.selectionStart : null;
+    const selEnd   = wasSearch ? active!.selectionEnd   : null;
+    host.innerHTML = renderCostsInnerTab(this.costsTabProps());
+    if (wasSearch) {
+      const inp = host.querySelector('input.rpr-search') as HTMLInputElement | null;
+      if (inp) {
+        inp.focus();
+        if (selStart !== null && selEnd !== null) inp.setSelectionRange(selStart, selEnd);
+      }
+    }
+  }
+
+  setCostsSearch(q: string): void {
+    this.costsSearch = q;
+    if (this.costsSearchTimer != null) clearTimeout(this.costsSearchTimer);
+    this.costsSearchTimer = window.setTimeout(() => this.renderCostsOnly(), 200);
+  }
   setCostsMp(mp: string): void { this.costsMpFilter = mp as any; this.render(); }
   toggleCostsRow(vendorCode: string): void {
     const k = vendorCode.toLowerCase();
@@ -1031,6 +1374,44 @@ export class RepricerModule {
     if (this.tab === 'costs') this.render();
   }
 
+  /** Загрузить карту «артикул МП → себестоимость от производителя».
+   *  Используется во вкладке «Себестоимости» для кнопки «перепривязать». */
+  private async loadProducerCostMap(): Promise<void> {
+    if (this.producerCostMapLoaded) return;
+    try {
+      const [mappings, products, fields] = await Promise.all([
+        producerMappingDb.list(),
+        producerProductDb.list(),
+        producerFieldDb.list(),
+      ]);
+      const costField = fields.find(f => /себестоимост/i.test(f.name));
+      if (!costField) { this.producerCostMapLoaded = true; return; }
+
+      const productsById = new Map(products.map(p => [p.id, p]));
+      const map = new Map<string, { cost: number; producerProductId: string; producerName: string }>();
+
+      for (const m of mappings) {
+        const product = productsById.get(m.producer_product_id);
+        if (!product) continue;
+        const rawVal = product.field_values?.[costField.id];
+        if (!rawVal) continue;
+        const cost = parseFloat(String(rawVal).replace(',', '.'));
+        if (!isFinite(cost) || cost <= 0) continue;
+        map.set(m.marketplace_article.trim().toLowerCase(), {
+          cost,
+          producerProductId: m.producer_product_id,
+          producerName: product.name,
+        });
+      }
+
+      this.producerCostMap = map;
+      this.producerCostMapLoaded = true;
+      if (this.tab === 'costs') this.render();
+    } catch (e: any) {
+      console.warn('[Repricer] loadProducerCostMap failed:', e?.message ?? e);
+    }
+  }
+
   /** Удалить все cost_price-записи, которые помечены как "удалён"
    *  (нет в каталоге И никогда не встречались в продажах). */
   deleteAllDeletedCosts(): void {
@@ -1053,6 +1434,38 @@ export class RepricerModule {
   setCost(vendorCode: string, cost: number): void {
     if (!isFinite(cost) || cost < 0) { costPriceDb.remove(vendorCode); }
     else { costPriceDb.set(vendorCode, cost); }
+    this.render();
+  }
+
+  /**
+   * Изменить себестоимость с проверкой привязки к производителю.
+   * Если артикул привязан — показывает предупреждение. При подтверждении снимает привязку.
+   */
+  setCostWithProducerCheck(vendorCode: string, cost: number): void {
+    if (costProducerLinks.isLinked(vendorCode)) {
+      const link = costProducerLinks.get(vendorCode)!;
+      const ok = confirm(
+        `Себестоимость этого артикула привязана к производителю «${link.producerName}».\n` +
+        `Текущее значение: ${link.costAtLink.toLocaleString('ru')} ₽\n\n` +
+        `Хотите изменить вручную и снять привязку к производителю?`
+      );
+      if (!ok) { this.render(); return; }
+      costProducerLinks.unlink(vendorCode);
+    }
+    this.setCost(vendorCode, cost);
+  }
+
+  /** Перепривязать себестоимость от производителя (восстановить после ручного изменения). */
+  relinkFromProducer(vendorCode: string): void {
+    const available = this.producerCostMap.get(vendorCode.trim().toLowerCase());
+    if (!available) return;
+    const ok = confirm(
+      `Привязать себестоимость «${vendorCode}» от производителя?\n` +
+      `Будет установлено: ${available.cost.toLocaleString('ru')} ₽`
+    );
+    if (!ok) return;
+    costPriceDb.set(vendorCode, available.cost);
+    costProducerLinks.link(vendorCode, available.producerProductId, available.producerName, available.cost);
     this.render();
   }
 

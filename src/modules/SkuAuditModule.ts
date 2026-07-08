@@ -7,6 +7,7 @@
 
 import { debug } from '@/utils/debug';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 import { wbDb } from '@/services/wbDb';
 import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
@@ -481,9 +482,10 @@ export class SkuAuditModule {
             <div style="min-width:0;flex:1">
               <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
                 <div style="font-weight:500;font-size:13px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.title}</div>
+                ${copyButton(item.title, 'Копировать название')}
                 ${statusBadge}
               </div>
-              <div style="font-size:11px;color:var(--text-2)">${item.vendorCode || item.id}${item.brand ? ` · ${item.brand}` : ''}</div>
+              <div style="font-size:11px;color:var(--text-2);display:flex;align-items:center;gap:4px">${item.vendorCode || item.id}${item.brand ? ` · ${item.brand}` : ''}${copyButton(item.vendorCode || item.id, 'Копировать артикул')}</div>
             </div>
           </div>
         </td>
@@ -540,8 +542,8 @@ export class SkuAuditModule {
               <span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:10px;background:${color}18;color:${color}">${MP_LABEL[item.marketplace]}</span>
               ${cabinetUrl ? `<a href="${cabinetUrl}" target="_blank" style="font-size:11px;color:var(--text-2);text-decoration:none;opacity:.7" title="Открыть в личном кабинете">↗ ЛК</a>` : ''}
             </div>
-            <div style="font-size:15px;font-weight:600">${item.title}</div>
-            <div style="font-size:12px;color:var(--text-2)">${item.vendorCode || item.id}${item.brand ? ` · ${item.brand}` : ''}${item.category ? ` · ${item.category}` : ''}</div>
+            <div style="font-size:15px;font-weight:600">${item.title}${copyButton(item.title, 'Копировать название')}</div>
+            <div style="font-size:12px;color:var(--text-2)">${item.vendorCode || item.id}${item.brand ? ` · ${item.brand}` : ''}${item.category ? ` · ${item.category}` : ''}${copyButton(item.vendorCode || item.id, 'Копировать артикул')}</div>
           </div>
           <div style="text-align:center;flex-shrink:0">
             <div style="font-size:34px;font-weight:800;color:${gc}">${item.score}</div>

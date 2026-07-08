@@ -75,6 +75,9 @@ export class ProductModalModule {
           <div style="display:flex;align-items:center;gap:4px;padding:3px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:10px">
             <span>${info.mp === 'ozon' ? I.ozon : info.mp === 'ym' || info.mp === 'yandex' ? I.yandex : I.wb}</span>
             <span style="font-weight:600">${escHtml(info.storeName || info.mp)}</span>
+            <button class="copy-btn" title="Копировать название магазина" onclick="event.stopPropagation();window.app.copyToClipboard('${escHtml(info.storeName || info.mp)}')">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1"/><path d="M3.5 10.5V3.5h7"/></svg>
+            </button>
             ${info.fulfillment ? `<span style="opacity:.6">${info.fulfillment}</span>` : ''}
           </div>`).join('')}
       </div>` : '';
@@ -160,7 +163,9 @@ export class ProductModalModule {
       const renderSection = (entries: Array<[string, any]>) => entries.map(([k, v]) => `
         <div class="detail-item">
           <div class="dk">${escHtml(k.replace('*',''))}</div>
-          <div class="dv" style="user-select:text">${escHtml(String(v))}</div>
+          <div class="dv" style="user-select:text">${escHtml(String(v))} <button class="copy-btn" title="Копировать" onclick="event.stopPropagation();window.app.copyToClipboard('${escHtml(String(v))}')">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1"/><path d="M3.5 10.5V3.5h7"/></svg>
+          </button></div>
         </div>`).join('');
 
       const dims = dimensionsDb.get(art);
@@ -209,7 +214,10 @@ export class ProductModalModule {
       this.app.openModalLg(name,
         `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
           <code style="font-size:12px;background:var(--bg2);padding:2px 6px;border-radius:4px">${escHtml(art)}</code>
-          <button class="copy-btn" onclick="window.app.copyToClipboard('${escHtml(art)}')">
+          <button class="copy-btn" title="Копировать артикул" onclick="window.app.copyToClipboard('${escHtml(art)}')">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1"/><path d="M3.5 10.5V3.5h7"/></svg>
+          </button>
+          <button class="copy-btn" title="Копировать название" onclick="window.app.copyToClipboard('${escHtml(name)}')">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1"/><path d="M3.5 10.5V3.5h7"/></svg>
           </button>
         </div>`,

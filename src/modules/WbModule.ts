@@ -6,8 +6,10 @@
 import { debug } from '@/utils/debug';
 import { WbStore, WbProduct } from '@/types/wb';
 import { wbDb } from '@/services/wbDb';
+import { refreshNavLockState } from '@/modules/NavigationModule';
 import { wbApi, fetchAllWbProducts } from '@/services/wbApi';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 
 type View = 'products' | 'stores';
 
@@ -160,15 +162,18 @@ export class WbModule {
               <svg class="oz-sku-chip-ic" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="8" height="9" rx="1"/><path d="M2 10V2a1 1 0 0 1 1-1h7"/></svg>
               <span class="oz-sku-chip-text">${this.esc(p.vendor_code)}</span>
             </span>
-            <div class="oz-muted" style="font-size:11px;margin-top:3px">nm: ${p.nm_id}</div>
+            <div class="oz-muted" style="font-size:11px;margin-top:3px;display:flex;align-items:center;gap:4px">nm: ${p.nm_id}${copyButton(p.nm_id, 'Копировать nm ID')}</div>
           </td>
           <td style="max-width:380px">
-            <div style="font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical" title="${this.esc(p.title)}">
-              ${this.esc(p.title) || 'Без названия'}
+            <div style="display:flex;align-items:flex-start;gap:4px">
+              <div style="min-width:0;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical" title="${this.esc(p.title)}">
+                ${this.esc(p.title) || 'Без названия'}
+              </div>
+              ${p.title ? copyButton(p.title, 'Копировать название') : ''}
             </div>
             ${p.brand ? `<div class="oz-muted" style="font-size:11px;margin-top:2px">${this.esc(p.brand)}</div>` : ''}
           </td>
-          <td><span style="font-size:11px;color:var(--muted)">${this.esc(storeName)}</span></td>
+          <td><span style="font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:4px">${this.esc(storeName)}${copyButton(storeName, 'Копировать название магазина')}</span></td>
           <td style="text-align:right;white-space:nowrap;font-weight:700">${price}</td>
           <td style="text-align:center" class="${stockClass}"><span style="font-weight:700">${stockTotal}</span></td>
         </tr>
@@ -453,6 +458,7 @@ export class WbModule {
         trademark: null,
       });
       this.stores = await wbDb.getStores();
+      refreshNavLockState();
       this.addBusy = false;
       if (keyInp) keyInp.value = '';
       if (nameInp) nameInp.value = '';

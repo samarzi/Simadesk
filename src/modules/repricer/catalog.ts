@@ -86,14 +86,17 @@ export function allStoresFlat(data: CatalogData): Array<{ id: string; name: stri
   ];
 }
 
-/** Остаток конкретного товара (по marketplace + productId). */
-export function getStock(data: CatalogData, mp: Mp, productId: string): number {
-  if (mp === 'wb') return data.wbProducts.find(p => String(p.nm_id) === productId)?.stock_total ?? 0;
+/** Остаток конкретного товара (по marketplace + productId + storeId).
+ *  storeId обязателен: offer_id/артикул задаётся продавцом и может совпасть
+ *  у товаров из разных магазинов — без фильтра по магазину можно случайно
+ *  взять остаток чужого товара с тем же артикулом. */
+export function getStock(data: CatalogData, mp: Mp, productId: string, storeId: string): number {
+  if (mp === 'wb') return data.wbProducts.find(p => String(p.nm_id) === productId && p.store_id === storeId)?.stock_total ?? 0;
   if (mp === 'ozon') {
-    const p = data.ozonProducts.find(p => p.offer_id === productId);
+    const p = data.ozonProducts.find(p => p.offer_id === productId && p.store_id === storeId);
     return (p?.stock_fbs ?? 0) + (p?.stock_fbo ?? 0);
   }
-  return data.ymProducts.find(p => p.offer_id === productId)?.stock_total ?? 0;
+  return data.ymProducts.find(p => p.offer_id === productId && p.store_id === storeId)?.stock_total ?? 0;
 }
 
 /** Реальная цена товара на маркетплейсе сейчас (из последней синхронизации каталога). */

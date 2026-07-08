@@ -10,6 +10,7 @@ import { yandexDb } from '@/services/yandexDb';
 import { fetchWbSearchPosition } from '@/services/wbApi';
 import { helpBtn } from '@/services/helpModal';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 import { WbProduct } from '@/types/wb';
 import { OzonProduct } from '@/types/ozon';
 import { YandexProduct } from '@/types/yandex';
@@ -433,9 +434,9 @@ export class SeoModule {
           <div style="display:flex;align-items:center;gap:7px;margin-bottom:3px">
             <span style="font-size:9px;font-weight:800;padding:2px 6px;border-radius:4px;
               background:${MP_BG[t.marketplace]};color:${MP_COLOR[t.marketplace]};letter-spacing:.3px">${MP_LABEL[t.marketplace]}</span>
-            <span style="font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px;color:var(--text-1)">${t.productTitle}</span>
+            <span style="font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px;color:var(--text-1)">${t.productTitle}</span>${copyButton(t.productTitle, 'Копировать название')}
           </div>
-          <div style="font-size:11px;color:var(--text-2)">${t.productId}</div>
+          <div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-2)">${t.productId}${copyButton(t.productId, 'Копировать ID')}</div>
         </td>
         <td style="padding:11px 12px">
           <span style="font-weight:600;color:var(--text-1)">${t.keyword}</span>

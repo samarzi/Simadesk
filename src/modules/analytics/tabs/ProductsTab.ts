@@ -2,6 +2,7 @@ import { Order, MP_SHORT, MP_COLOR } from '../types';
 import { I } from '@/utils/icons';
 import { computeSkuPerformance } from '../services/kpiAggregator';
 import { fmtMoney, fmtNum, escapeHtml } from '../components/format';
+import { copyButton } from '@/utils/copyButton';
 
 export interface ProductsFilters {
   sort: 'profit' | 'revenue' | 'units' | 'margin';
@@ -89,8 +90,8 @@ function _renderProductsTabUncached(orders: Order[], f: ProductsFilters): string
                 return `
                   <tr>
                     <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                      <div style="font-size:10px;color:var(--text3)">${escapeHtml(s.vendor_code)}</div>
-                      <div style="font-weight:600">${escapeHtml(s.name)}</div>
+                      <div style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text3)">${escapeHtml(s.vendor_code)}${copyButton(s.vendor_code, 'Копировать артикул')}</div>
+                      <div style="display:flex;align-items:center;gap:4px;font-weight:600">${escapeHtml(s.name)}${copyButton(s.name, 'Копировать название')}</div>
                     </td>
                     <td>
                       <span class="mp-badge">

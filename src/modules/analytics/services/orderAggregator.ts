@@ -291,7 +291,7 @@ export function aggregateOrders(input: AggregateInput): Order[] {
       orderId, mp: store.mp, store, date: tx0.operation_date,
       status: isCancel ? 'cancelled' : isReturn ? 'returned' : 'delivered',
       status_raw: tx0.operation_type_name ?? tx0.operation_type ?? '',
-      items, txs,
+      items, txs, is_orphan: true,
     }));
   }
 
@@ -318,6 +318,7 @@ interface MakeOrderInput {
   status_raw: string;
   items: OrderItem[];
   txs: MpTransaction[];
+  is_orphan?: boolean;
 }
 
 function makeOrder(p: MakeOrderInput): Order {
@@ -398,6 +399,10 @@ function makeOrder(p: MakeOrderInput): Order {
   const missing_cogs_count = p.items.filter(it => it.cost_price == null && it.quantity > 0).length;
   if (missing_cogs_count > 0 && source === 'real') source = 'estimated';
 
+  // Финотчёта по заказу ещё нет вообще — комиссия/логистика неизвестны,
+  // а заказ ещё может быть отменён на ПВЗ. Cancel/return уже занулены явно выше.
+  const pending_settlement = !hasReal && status !== 'cancelled' && status !== 'returned';
+
   return {
     order_id: p.orderId,
     date: p.date,
@@ -420,5 +425,7 @@ function makeOrder(p: MakeOrderInput): Order {
     source,
     missing_cogs_count,
     tx_ids: p.txs.map(t => t.mp_transaction_id),
+    pending_settlement,
+    is_orphan: p.is_orphan ?? false,
   };
 }

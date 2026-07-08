@@ -9,6 +9,7 @@
 import { companyService, Company } from '@/services/companyService';
 import { authService } from '@/services/authService';
 import { showToast } from '@/utils/toast';
+import { copyButton } from '@/utils/copyButton';
 
 const ROLE_LABELS: Record<string, string> = {
   owner: 'Владелец',
@@ -255,7 +256,10 @@ export class ProfileModule {
         <div class="profile-req-grid">
           <div class="profile-req-field full">
             <label>Юридическое название</label>
-            <input id="prof-req-legal_name" value="${v(company.legal_name)}" placeholder='ООО "Ромашка"' ${ro ? 'readonly' : ''}>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input id="prof-req-legal_name" value="${v(company.legal_name)}" placeholder='ООО "Ромашка"' style="flex:1;min-width:0" ${ro ? 'readonly' : ''}>
+              ${company.legal_name ? copyButton(company.legal_name, 'Копировать название') : ''}
+            </div>
           </div>
           <div class="profile-req-field">
             <label>Тип</label>
@@ -269,45 +273,75 @@ export class ProfileModule {
           </div>
           <div class="profile-req-field">
             <label>ИНН</label>
-            <input id="prof-req-inn" value="${v(company.inn)}" placeholder="123456789012" ${ro ? 'readonly' : ''}>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input id="prof-req-inn" value="${v(company.inn)}" placeholder="123456789012" style="flex:1;min-width:0" ${ro ? 'readonly' : ''}>
+              ${company.inn ? copyButton(company.inn, 'Копировать ИНН') : ''}
+            </div>
           </div>
           <div class="profile-req-field">
             <label>КПП</label>
-            <input id="prof-req-kpp" value="${v(company.kpp)}" placeholder="123456789" ${ro ? 'readonly' : ''}>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input id="prof-req-kpp" value="${v(company.kpp)}" placeholder="123456789" style="flex:1;min-width:0" ${ro ? 'readonly' : ''}>
+              ${company.kpp ? copyButton(company.kpp, 'Копировать КПП') : ''}
+            </div>
           </div>
           <div class="profile-req-field">
             <label>ОГРН/ОГРНИП</label>
-            <input id="prof-req-ogrn" value="${v(company.ogrn)}" placeholder="1234567890123" ${ro ? 'readonly' : ''}>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input id="prof-req-ogrn" value="${v(company.ogrn)}" placeholder="1234567890123" style="flex:1;min-width:0" ${ro ? 'readonly' : ''}>
+              ${company.ogrn ? copyButton(company.ogrn, 'Копировать ОГРН') : ''}
+            </div>
           </div>
           <div class="profile-req-field full">
             <label>Юр. адрес</label>
-            <input id="prof-req-legal_address" value="${v(company.legal_address)}" placeholder="Москва, ..." ${ro ? 'readonly' : ''}>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input id="prof-req-legal_address" value="${v(company.legal_address)}" placeholder="Москва, ..." style="flex:1;min-width:0" ${ro ? 'readonly' : ''}>
+              ${company.legal_address ? copyButton(company.legal_address, 'Копировать адрес') : ''}
+            </div>
           </div>
           <div class="profile-req-field">
             <label>Телефон</label>
-            <input id="prof-req-phone" value="${v(company.phone)}" placeholder="+7 (000) 000-00-00" ${ro ? 'readonly' : ''}>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input id="prof-req-phone" value="${v(company.phone)}" placeholder="+7 (000) 000-00-00" style="flex:1;min-width:0" ${ro ? 'readonly' : ''}>
+              ${company.phone ? copyButton(company.phone, 'Копировать телефон') : ''}
+            </div>
           </div>
           <div class="profile-req-field">
             <label>Email</label>
-            <input id="prof-req-email" value="${v(company.email)}" placeholder="mail@example.com" ${ro ? 'readonly' : ''}>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input id="prof-req-email" value="${v(company.email)}" placeholder="mail@example.com" style="flex:1;min-width:0" ${ro ? 'readonly' : ''}>
+              ${company.email ? copyButton(company.email, 'Копировать email') : ''}
+            </div>
           </div>
 
           <div class="profile-req-divider">Банковские реквизиты</div>
           <div class="profile-req-field">
             <label>Расчётный счёт</label>
-            <input id="prof-req-bank_account" value="${v(company.bank_account)}" placeholder="40702..." ${ro ? 'readonly' : ''}>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input id="prof-req-bank_account" value="${v(company.bank_account)}" placeholder="40702..." style="flex:1;min-width:0" ${ro ? 'readonly' : ''}>
+              ${company.bank_account ? copyButton(company.bank_account, 'Копировать счёт') : ''}
+            </div>
           </div>
           <div class="profile-req-field">
             <label>БИК</label>
-            <input id="prof-req-bik" value="${v(company.bik)}" placeholder="044525..." ${ro ? 'readonly' : ''}>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input id="prof-req-bik" value="${v(company.bik)}" placeholder="044525..." style="flex:1;min-width:0" ${ro ? 'readonly' : ''}>
+              ${company.bik ? copyButton(company.bik, 'Копировать БИК') : ''}
+            </div>
           </div>
           <div class="profile-req-field">
             <label>Банк</label>
-            <input id="prof-req-bank_name" value="${v(company.bank_name)}" placeholder="ПАО Сбербанк" ${ro ? 'readonly' : ''}>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input id="prof-req-bank_name" value="${v(company.bank_name)}" placeholder="ПАО Сбербанк" style="flex:1;min-width:0" ${ro ? 'readonly' : ''}>
+              ${company.bank_name ? copyButton(company.bank_name, 'Копировать название банка') : ''}
+            </div>
           </div>
           <div class="profile-req-field">
             <label>Корр. счёт</label>
-            <input id="prof-req-corr_account" value="${v(company.corr_account)}" placeholder="301..." ${ro ? 'readonly' : ''}>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input id="prof-req-corr_account" value="${v(company.corr_account)}" placeholder="301..." style="flex:1;min-width:0" ${ro ? 'readonly' : ''}>
+              ${company.corr_account ? copyButton(company.corr_account, 'Копировать корр. счёт') : ''}
+            </div>
           </div>
         </div>
 

@@ -927,41 +927,38 @@ export class HomeDashboardModule {
   }
 
   // ── Painters ────────────────────────────────────────────────────
-  private paintKpi(elemId: string, value: string, series: number[] | null, color: string): void {
-    const kpiEl = document.getElementById(elemId);
+  private paintKpi(elemId: string, value: string, series: number[] | null, _color: string): void {
     const valEl = document.getElementById(`${elemId}-val`);
     if (valEl) valEl.textContent = value;
-    const sparkEl = document.getElementById(`${elemId}-spark`);
+
     const trendEl = document.getElementById(`${elemId}-trend`);
-    const hasSeries = !!series && series.some(v => v > 0);
-    if (sparkEl) {
-      if (hasSeries) {
-        const max = Math.max(...series!, 1);
-        sparkEl.innerHTML = series!.map((v, i) => `<div style="height:${Math.max(8, (v / max) * 100)}%;opacity:${0.45 + (i / series!.length) * 0.55}"></div>`).join('');
-        sparkEl.style.display = '';
-      } else {
-        sparkEl.innerHTML = '';
-        sparkEl.style.display = 'none';
-      }
-    }
-    // Когда спарклайна нет (нет дневного ряда для этой метрики) — отдаём его
-    // место значению+метке, чтобы оно не «прилипало» к иконке с пустым полем справа.
-    kpiEl?.classList.toggle('cmd-kpi-no-spark', !hasSeries);
     if (trendEl) {
       if (series && series.length >= 2 && series.some(v => v > 0)) {
         const cur = series[series.length - 1], prev = series[series.length - 2];
         let pct = 0, dir: 'up' | 'down' | 'flat' = 'flat';
         if (prev > 0) { pct = ((cur - prev) / prev) * 100; dir = pct > 1 ? 'up' : pct < -1 ? 'down' : 'flat'; }
         else if (cur > 0) { dir = 'up'; pct = 100; }
-        const arrow = dir === 'up' ? '▲' : dir === 'down' ? '▼' : '▬';
-        trendEl.style.display = '';
+        const arrow = dir === 'up' ? '↑' : dir === 'down' ? '↓' : '';
         trendEl.className = `cmd-kpi-trend ${dir}`;
-        trendEl.textContent = `${arrow} ${dir === 'flat' ? '0' : Math.abs(Math.round(pct))}% за день`;
+        trendEl.textContent = `${arrow}${Math.abs(Math.round(pct))}%`;
       } else {
-        trendEl.style.display = 'none';
+        trendEl.textContent = '';
       }
     }
-    void color;
+
+    const sparkEl = document.getElementById(`${elemId}-spark`);
+    if (sparkEl) {
+      if (series && series.length >= 2 && series.some(v => v > 0)) {
+        const max = Math.max(...series, 1);
+        const bars = series.slice(-14).map(v => {
+          const h = Math.max(2, (v / max) * 100);
+          return `<div class="cmd-kpi-bar" style="height:${h}%"></div>`;
+        });
+        sparkEl.innerHTML = bars.join('');
+      } else {
+        sparkEl.innerHTML = '';
+      }
+    }
   }
 
   private paintStores(d: DashData): void {

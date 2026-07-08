@@ -1,5 +1,6 @@
 import { Order, MP_LABEL, STATUS_LABEL, STATUS_COLOR } from '../types';
 import { fmtMoney, fmtDateTime, fmtNum, escapeHtml } from './format';
+import { copyButton } from '@/utils/copyButton';
 
 export function renderOrderDrawer(o: Order, onClose = 'window.analyticsModule?.closeOrderDrawer()'): string {
   const sourceLabel = o.source === 'real'
@@ -19,12 +20,12 @@ export function renderOrderDrawer(o: Order, onClose = 'window.analyticsModule?.c
     <div class="an2-drawer" onclick="event.stopPropagation()">
       <div class="an2-drawer-head">
         <div class="an2-drawer-title">
-          <div class="id">№ ${escapeHtml(o.order_id)}</div>
+          <div class="id" style="display:flex;align-items:center;gap:4px">№ ${escapeHtml(o.order_id)}${copyButton(o.order_id, 'Копировать номер заказа')}</div>
           <div class="sub">
             <span class="an2-status-pill" style="background:${STATUS_COLOR[o.status]}22;color:${STATUS_COLOR[o.status]}">
               <span class="dot" style="background:${STATUS_COLOR[o.status]}"></span>${STATUS_LABEL[o.status]}
             </span>
-            <span style="margin-left:8px">${MP_LABEL[o.mp]} · ${escapeHtml(o.store_name)}</span>
+            <span style="margin-left:8px;display:inline-flex;align-items:center;gap:4px">${MP_LABEL[o.mp]} · ${escapeHtml(o.store_name)}${copyButton(o.store_name, 'Копировать название магазина')}</span>
             <span style="margin-left:8px;color:var(--text3)">${fmtDateTime(o.date)}</span>
           </div>
         </div>
@@ -80,8 +81,8 @@ export function renderOrderDrawer(o: Order, onClose = 'window.analyticsModule?.c
                 ? `<img class="an2-drawer-item-img" src="${escapeHtml(it.image)}" loading="lazy" onerror="this.style.display='none'"/>`
                 : `<div class="an2-drawer-item-img"></div>`}
               <div class="an2-drawer-item-info">
-                <div class="name">${escapeHtml(it.name)}</div>
-                <div class="meta">арт. ${escapeHtml(it.vendor_code)} · ${fmtNum(it.quantity)} × ${fmtMoney(it.price)}</div>
+                <div class="name" style="display:flex;align-items:flex-start;gap:4px">${escapeHtml(it.name)}${copyButton(it.name, 'Копировать название')}</div>
+                <div class="meta">арт. <span style="display:inline-flex;align-items:center;gap:2px">${escapeHtml(it.vendor_code)}${copyButton(it.vendor_code, 'Копировать артикул')}</span> · ${fmtNum(it.quantity)} × ${fmtMoney(it.price)}</div>
                 <div class="meta">
                   ${it.cost_price != null
                     ? `<span style="color:var(--text2)">себес. ${fmtMoney(it.cost_price)}${o.status === 'returned' ? ' <span style="color:var(--text3)">· товар вернулся, COGS зачтён в 0</span>' : ` = COGS ${fmtMoney(it.cogs)}`}</span>`

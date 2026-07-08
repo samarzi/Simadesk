@@ -1,5 +1,6 @@
 import { esc } from '@/utils/format';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 import { ozonDb } from '@/services/ozonDb';
 import { wbDb } from '@/services/wbDb';
 import { yandexDb } from '@/services/yandexDb';
@@ -8,6 +9,7 @@ import { wbApi } from '@/services/wbApi';
 import { yandexApi } from '@/services/yandexApi';
 import { toOzon, toWb, toYm } from '@/services/dimensionsUnit';
 import type { Dimensions } from '@/services/dimensionsUnit';
+import { dimensionsDb } from '@/services/dimensionsDb';
 import {
   catalogCache, syncOzonStore, syncYmStore, syncWbStore, fmtSyncDate,
 } from '@/services/catalogCache';
@@ -122,6 +124,12 @@ export class CatalogMpModule {
   private filtered:  UnifiedProduct[] = [];
   private rendered  = 0;
   private readonly CHUNK = 60;
+
+  // ── Постепенная сборка каталога (как в "Связках"): сперва быстро показываем
+  // первую пачку, остальное досчитываем по requestAnimationFrame, не блокируя поток.
+  private readonly BUILD_FIRST = 200;
+  private readonly BUILD_CHUNK = 500;
+  private buildStamp = 0; // защита от гонки при повторном load() во время сборки
 
   // ── Stores
   private ozStores: OzonStore[]    = [];
@@ -253,22 +261,22 @@ export class CatalogMpModule {
 
       await catalogCache.preload([...ozStores, ...wbStores, ...ymStores].map(s => s.id));
 
-      this.products = this.buildUnified(ozRows, wbRows, ymRows);
-      this.applyFilters();
+      // Успешная загрузка отрисовывается постепенно внутри buildUnifiedChunked —
+      // здесь не делаем повторный полный renderShell(), чтобы не сбрасывать
+      // скролл/observer, пока остальные товары ещё могут досчитываться в фоне.
+      await this.buildUnifiedChunked(ozRows, wbRows, ymRows, opts);
     } catch (e: any) {
       if (opts.silent) throw e;
+      this.loading = false;
       this.loadError = e?.message ?? 'Ошибка загрузки данных';
-    } finally {
-      if (!opts.silent) {
-        this.loading = false;
-        this.renderShell();
-      }
+      this.renderShell();
     }
   }
 
   // ─────────────────────────── Build unified ────────────────────────────────
 
-  private buildUnified(ozRows: OzonProduct[], wbRows: WbProduct[], ymRows: YandexProduct[]): UnifiedProduct[] {
+  /** Быстрая группировка сырых строк по vendorCode — без тяжёлых вычислений (габариты/фото). */
+  private groupRows(ozRows: OzonProduct[], wbRows: WbProduct[], ymRows: YandexProduct[]) {
     const map = new Map<string, {
       ozon: OzonEntry[]; wb: WbEntry[]; ym: YmEntry[];
       allNames: string[]; brands: string[];
@@ -312,57 +320,104 @@ export class CatalogMpModule {
       if (p.vendor) entry.brands.push(p.vendor);
     }
 
-    const results: UnifiedProduct[] = [];
-    for (const [k, { ozon, wb, ym, allNames, brands }] of map) {
-      const firstOz = ozon[0]?.product;
-      const firstWb = wb[0]?.product;
-      const vendorCode = firstOz?.offer_id ?? firstWb?.vendor_code ?? ym[0]?.product?.offer_id ?? k;
-      const displayName = allNames[0] ?? vendorCode;
-      const brand = brands[0] ?? '';
+    return map;
+  }
 
-      const dims = this.resolveDims(vendorCode, ozon, wb, ym);
-      const hasConflict = this.detectConflict(vendorCode, ozon, wb, ym);
+  /** Тяжёлая часть на один товар: габариты, конфликты, фото. Вызывается чанками (см. buildUnifiedChunked). */
+  private buildOneProduct(k: string, group: {
+    ozon: OzonEntry[]; wb: WbEntry[]; ym: YmEntry[]; allNames: string[]; brands: string[];
+  }): UnifiedProduct {
+    const { ozon, wb, ym, allNames, brands } = group;
+    const firstOz = ozon[0]?.product;
+    const firstWb = wb[0]?.product;
+    const vendorCode = firstOz?.offer_id ?? firstWb?.vendor_code ?? ym[0]?.product?.offer_id ?? k;
+    const displayName = allNames[0] ?? vendorCode;
+    const brand = brands[0] ?? '';
 
-      const prices = [
-        ...ozon.map(e => e.price), ...wb.map(e => e.price), ...ym.map(e => e.price),
-      ].filter((p): p is number => p !== null && p > 0);
-      const priceRange = {
-        min: prices.length ? Math.min(...prices) : null,
-        max: prices.length ? Math.max(...prices) : null,
-      };
+    const { dims, hasConflict } = this.resolveDimsAndConflict(vendorCode, ozon, wb, ym);
 
-      const photoSets: PhotoSet[] = [];
-      for (const e of ozon) {
-        const cached = catalogCache.getProduct(e.store.id, vendorCode);
-        const dbPhotos: string[] = (e.product.images ?? []);
-        const photos = dbPhotos.length ? dbPhotos : (cached?.photos ?? []);
-        if (photos.length) photoSets.push({ storeId: e.store.id, storeName: e.store.name ?? 'Ozon', mp: 'ozon', photos });
-      }
-      for (const e of wb) {
-        const cached = catalogCache.getProduct(e.store.id, vendorCode);
-        const dbPhotos: string[] = (e.product.pictures ?? []);
-        const photos = dbPhotos.length ? dbPhotos : (cached?.photos ?? []);
-        if (photos.length) photoSets.push({ storeId: e.store.id, storeName: e.store.name ?? 'WB', mp: 'wb', photos });
-      }
-      for (const e of ym) {
-        const cached = catalogCache.getProduct(e.store.id, vendorCode);
-        const dbPhotos: string[] = (e.product.pictures ?? []);
-        const photos = dbPhotos.length ? dbPhotos : (cached?.photos ?? []);
-        if (photos.length) photoSets.push({ storeId: e.store.id, storeName: e.store.name ?? 'Яндекс', mp: 'yandex', photos });
-      }
+    const prices = [
+      ...ozon.map(e => e.price), ...wb.map(e => e.price), ...ym.map(e => e.price),
+    ].filter((p): p is number => p !== null && p > 0);
+    const priceRange = {
+      min: prices.length ? Math.min(...prices) : null,
+      max: prices.length ? Math.max(...prices) : null,
+    };
 
-      const cover = photoSets[0]?.photos[0] ?? '';
-
-      results.push({
-        key: k, vendorCode, displayName, brand,
-        ozon, wb, ym,
-        hasMps: { ozon: ozon.length > 0, wb: wb.length > 0, yandex: ym.length > 0 },
-        priceRange, dims, hasConflict, cover, photoSets,
-      });
+    const photoSets: PhotoSet[] = [];
+    for (const e of ozon) {
+      const cached = catalogCache.getProduct(e.store.id, vendorCode);
+      const dbPhotos: string[] = (e.product.images ?? []);
+      const photos = dbPhotos.length ? dbPhotos : (cached?.photos ?? []);
+      if (photos.length) photoSets.push({ storeId: e.store.id, storeName: e.store.name ?? 'Ozon', mp: 'ozon', photos });
+    }
+    for (const e of wb) {
+      const cached = catalogCache.getProduct(e.store.id, vendorCode);
+      const dbPhotos: string[] = (e.product.pictures ?? []);
+      const photos = dbPhotos.length ? dbPhotos : (cached?.photos ?? []);
+      if (photos.length) photoSets.push({ storeId: e.store.id, storeName: e.store.name ?? 'WB', mp: 'wb', photos });
+    }
+    for (const e of ym) {
+      const cached = catalogCache.getProduct(e.store.id, vendorCode);
+      const dbPhotos: string[] = (e.product.pictures ?? []);
+      const photos = dbPhotos.length ? dbPhotos : (cached?.photos ?? []);
+      if (photos.length) photoSets.push({ storeId: e.store.id, storeName: e.store.name ?? 'Яндекс', mp: 'yandex', photos });
     }
 
-    results.sort((a, b) => a.vendorCode.localeCompare(b.vendorCode));
-    return results;
+    const cover = photoSets[0]?.photos[0] ?? '';
+
+    return {
+      key: k, vendorCode, displayName, brand,
+      ozon, wb, ym,
+      hasMps: { ozon: ozon.length > 0, wb: wb.length > 0, yandex: ym.length > 0 },
+      priceRange, dims, hasConflict, cover, photoSets,
+    };
+  }
+
+  /** Собирает каталог постепенно: первая пачка — синхронно (мгновенный первый рендер),
+   *  остальное — чанками по requestAnimationFrame, как в "Связках" (ProducersModule), чтобы
+   *  не блокировать поток на тысячах товаров. `silent` (после синка одного магазина) не
+   *  трогает оверлей загрузки и не делает полный renderShell — только мягкое обновление списка. */
+  private async buildUnifiedChunked(
+    ozRows: OzonProduct[], wbRows: WbProduct[], ymRows: YandexProduct[],
+    opts: { silent?: boolean } = {},
+  ): Promise<void> {
+    const myStamp = ++this.buildStamp;
+    const map = this.groupRows(ozRows, wbRows, ymRows);
+    const entries = [...map.entries()];
+    const results: UnifiedProduct[] = [];
+
+    let i = 0;
+    const processBatch = (count: number) => {
+      const end = Math.min(i + count, entries.length);
+      for (; i < end; i++) {
+        const [k, group] = entries[i];
+        results.push(this.buildOneProduct(k, group));
+      }
+    };
+
+    const publish = () => {
+      results.sort((a, b) => a.vendorCode.localeCompare(b.vendorCode));
+      this.products = results.slice();
+      this.applyFilters();
+    };
+
+    processBatch(this.BUILD_FIRST);
+    publish();
+
+    if (!opts.silent) {
+      // Первая пачка готова — убираем спиннер загрузки, список уже виден и кликабелен,
+      // остальные товары подгрузятся в фоне без блокировки взаимодействия.
+      this.loading = false;
+      this.container.querySelector('.cmp-placeholder')?.remove();
+    }
+
+    while (i < entries.length) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      if (myStamp !== this.buildStamp) return; // запущена новая загрузка — эту сборку бросаем
+      processBatch(this.BUILD_CHUNK);
+      publish();
+    }
   }
 
   /** Габариты из строки товара БД (weight_kg/length_cm/...), или null если не заполнены. */
@@ -376,10 +431,10 @@ export class CatalogMpModule {
     };
   }
 
-  /** Габариты из ручного кэша синхронизации (catalogCache), или null если не записаны. */
+  /** Габариты из ручного кэша синхронизации (catalogCache), или null если не записаны / все нули. */
   private dimsFromCache(storeId: string, vc: string): Dimensions | null {
     const c = catalogCache.getProduct(storeId, vc);
-    if (c?.weight_g == null) return null;
+    if (!c?.weight_g && !c?.length_mm) return null;
     return { weight_g: c.weight_g, length_mm: c.length_mm ?? 0, width_mm: c.width_mm ?? 0, height_mm: c.height_mm ?? 0 };
   }
 
@@ -388,40 +443,49 @@ export class CatalogMpModule {
     return this.dimsFromProductRow(p) ?? this.dimsFromCache(storeId, vc);
   }
 
+  /** Габариты всех записей (ozon→wb→ym), у которых они заполнены — порядок = приоритет источника. */
+  private buildEntryDimsList(vc: string, ozon: OzonEntry[], wb: WbEntry[], ym: YmEntry[]): Dimensions[] {
+    const dimsList: Dimensions[] = [];
+    for (const e of ozon) { const d = this.resolveEntryDims(e.product, e.store.id, vc); if (d) dimsList.push(d); }
+    for (const e of wb)   { const d = this.resolveEntryDims(e.product, e.store.id, vc); if (d) dimsList.push(d); }
+    for (const e of ym)   { const d = this.resolveEntryDims(e.product, e.store.id, vc); if (d) dimsList.push(d); }
+    return dimsList;
+  }
+
   private resolveDims(vc: string, ozon: OzonEntry[], wb: WbEntry[], ym: YmEntry[]): Dimensions {
-    for (const e of ozon) {
-      const d = this.resolveEntryDims(e.product, e.store.id, vc);
-      if (d) return d;
-    }
-    for (const e of wb) {
-      const d = this.resolveEntryDims(e.product, e.store.id, vc);
-      if (d) return d;
-    }
-    for (const e of ym) {
-      const d = this.resolveEntryDims(e.product, e.store.id, vc);
-      if (d) return d;
-    }
+    const dimsList = this.buildEntryDimsList(vc, ozon, wb, ym);
+    if (dimsList[0]) return dimsList[0];
+    // Финальный фоллбэк: dimensionsDb заполняется при синке "Товаров" (mpCatalogSync)
+    const cached = dimensionsDb.get(vc);
+    if (cached && (cached.weight_g || cached.length_mm)) return cached;
     return { weight_g: 0, length_mm: 0, width_mm: 0, height_mm: 0 };
   }
 
-  private detectConflict(vc: string, ozon: OzonEntry[], wb: WbEntry[], ym: YmEntry[]): boolean {
-    const dimsList: Dimensions[] = [];
-    const push = (p: MpProduct, storeId: string) => {
-      const d = this.resolveEntryDims(p, storeId, vc);
-      if (d) dimsList.push(d);
-    };
-    for (const e of ozon) push(e.product, e.store.id);
-    for (const e of wb)   push(e.product, e.store.id);
-    for (const e of ym)   push(e.product, e.store.id);
+  /** Габариты + конфликт между МП за один проход (вместо отдельных resolveDims+detectConflict) —
+   *  используется в buildOneProduct(), который вызывается на каждый товар каталога чанками (см. buildUnifiedChunked). */
+  private resolveDimsAndConflict(
+    vc: string, ozon: OzonEntry[], wb: WbEntry[], ym: YmEntry[],
+  ): { dims: Dimensions; hasConflict: boolean } {
+    const dimsList = this.buildEntryDimsList(vc, ozon, wb, ym);
 
-    if (dimsList.length < 2) return false;
-    const base = dimsList[0];
-    return dimsList.some(d =>
-      Math.abs((d.weight_g ?? 0) - (base.weight_g ?? 0)) > 10 ||
-      Math.abs((d.length_mm ?? 0) - (base.length_mm ?? 0)) > 2 ||
-      Math.abs((d.width_mm  ?? 0) - (base.width_mm  ?? 0)) > 2 ||
-      Math.abs((d.height_mm ?? 0) - (base.height_mm ?? 0)) > 2,
-    );
+    let dims = dimsList[0];
+    if (!dims) {
+      const cached = dimensionsDb.get(vc);
+      dims = cached && (cached.weight_g || cached.length_mm) ? cached : { weight_g: 0, length_mm: 0, width_mm: 0, height_mm: 0 };
+    }
+
+    let hasConflict = false;
+    if (dimsList.length >= 2) {
+      const base = dimsList[0];
+      hasConflict = dimsList.some(d =>
+        Math.abs((d.weight_g ?? 0) - (base.weight_g ?? 0)) > 10 ||
+        Math.abs((d.length_mm ?? 0) - (base.length_mm ?? 0)) > 2 ||
+        Math.abs((d.width_mm  ?? 0) - (base.width_mm  ?? 0)) > 2 ||
+        Math.abs((d.height_mm ?? 0) - (base.height_mm ?? 0)) > 2,
+      );
+    }
+
+    return { dims, hasConflict };
   }
 
   // ─────────────────────────── Filter & Search ──────────────────────────────
@@ -596,6 +660,7 @@ export class CatalogMpModule {
   private renderList(): void {
     const el = this.container.querySelector<HTMLElement>('#cmp-items');
     if (!el) return;
+    el.classList.toggle('cmp-items--cards', this.view === 'cards');
     const chunk = this.filtered.slice(0, this.CHUNK);
     this.rendered = chunk.length;
     el.innerHTML = this.view === 'list'
@@ -652,9 +717,9 @@ export class CatalogMpModule {
         ${p.cover ? `<img src="${esc(p.cover)}" loading="lazy" alt="">` : '<div class="cmp-row-no-img"></div>'}
       </div>
       <div class="cmp-row-info">
-        <div class="cmp-row-name">${esc(p.displayName)}</div>
+        <div class="cmp-row-name">${esc(p.displayName)}${copyButton(p.displayName, 'Копировать название')}</div>
         <div class="cmp-row-sub">
-          <span class="cmp-row-vc">${esc(p.vendorCode)}</span>
+          <span class="cmp-row-vc">${esc(p.vendorCode)}${copyButton(p.vendorCode, 'Копировать артикул')}</span>
           ${p.brand ? `<span class="cmp-row-brand">${esc(p.brand)}</span>` : ''}
         </div>
       </div>
@@ -675,8 +740,8 @@ export class CatalogMpModule {
         ${p.cover ? `<img src="${esc(p.cover)}" loading="lazy" alt="">` : '<div class="cmp-card-no-img"></div>'}
       </div>
       <div class="cmp-card-body">
-        <div class="cmp-card-name">${esc(p.displayName)}</div>
-        <div class="cmp-card-vc">${esc(p.vendorCode)}</div>
+        <div class="cmp-card-name">${esc(p.displayName)}${copyButton(p.displayName, 'Копировать название')}</div>
+        <div class="cmp-card-vc">${esc(p.vendorCode)}${copyButton(p.vendorCode, 'Копировать артикул')}</div>
         <div class="cmp-card-foot">
           ${this.tplMpBadges(p)}
           <span class="cmp-card-price">${this.fmtPrice(p)}</span>
@@ -770,12 +835,12 @@ export class CatalogMpModule {
     <div class="cmp-modal-hdr">
       <div class="cmp-modal-hdr-left">
         ${this.tplMpBadges(p)}
-        <span class="cmp-modal-vc">${esc(p.vendorCode)}</span>
+        <span class="cmp-modal-vc">${esc(p.vendorCode)}${copyButton(p.vendorCode, 'Копировать артикул')}</span>
         ${p.brand ? `<span class="cmp-modal-brand">· ${esc(p.brand)}</span>` : ''}
       </div>
       <button class="cmp-modal-x" data-action="close-modal">✕</button>
     </div>
-    <div class="cmp-modal-title">${esc(p.displayName)}</div>
+    <div class="cmp-modal-title">${esc(p.displayName)}${copyButton(p.displayName, 'Копировать название')}</div>
     <div class="cmp-modal-body">
       ${this.tplGallery(p)}
       <div class="cmp-modal-right">
@@ -875,7 +940,7 @@ export class CatalogMpModule {
         ${allEntries.map(e => `
           <div class="cmp-ov-row">
             <span class="cmp-mp-badge cmp-mp-badge--${e.mp}">${e.mpLabel}</span>
-            <span class="cmp-ov-store">${esc(e.storeName)}</span>
+            <span class="cmp-ov-store">${esc(e.storeName)}${copyButton(e.storeName, 'Копировать название магазина')}</span>
             <span class="cmp-ov-val">${e.price ? e.price.toLocaleString('ru') + ' ₽' : '—'}</span>
             ${e.url
               ? `<a class="cmp-ov-link" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer" title="Открыть на маркетплейсе">${I.externalLink('', 14)}</a>`
@@ -889,7 +954,7 @@ export class CatalogMpModule {
           ? stockRows.map(s => `
             <div class="cmp-ov-row">
               <span class="cmp-mp-badge cmp-mp-badge--${s.mp}">${s.mpLabel}</span>
-              <span class="cmp-ov-store">${esc(s.storeName)}</span>
+              <span class="cmp-ov-store">${esc(s.storeName)}${copyButton(s.storeName, 'Копировать название магазина')}</span>
               <span class="cmp-ov-val${s.low ? ' cmp-ov-val--low' : ''}">${esc(s.text)}</span>
             </div>`).join('')
           : `<div class="cmp-ov-hint">Данных нет. Нажмите «Обновить» в строке синхронизации.</div>`}
@@ -950,15 +1015,15 @@ export class CatalogMpModule {
           <label class="cmp-edit-field">
             <span class="cmp-edit-label">
               Цена (₽)
-              ${st.priceLocked ? '<span class="cmp-lock-tag" title="Управляется репрайсером">' + I.lock('',12) + '</span>' : ''}
+              ${st.priceLocked ? '<span class="cmp-lock-tag" title="Управляется репрайсером — нажмите на поле, чтобы изменить">' + I.lock('',12) + '</span>' : ''}
             </span>
-            <input type="number" class="cmp-edit-input" data-field="price" data-store-id="${storeId}"
-              value="${esc(st.price)}" ${st.priceLocked ? 'disabled' : ''} placeholder="—">
+            <input type="number" class="cmp-edit-input${st.priceLocked ? ' cmp-edit-input--locked' : ''}" data-field="price" data-store-id="${storeId}"
+              value="${esc(st.price)}" ${st.priceLocked ? 'readonly data-price-locked="true"' : ''} placeholder="—">
           </label>
           ${mp === 'wb' ? `<label class="cmp-edit-field">
             <span class="cmp-edit-label">Скидка (%)</span>
-            <input type="number" min="0" max="99" class="cmp-edit-input" data-field="discount" data-store-id="${storeId}"
-              value="${esc(st.discount)}" ${st.priceLocked ? 'disabled' : ''} placeholder="0">
+            <input type="number" min="0" max="99" class="cmp-edit-input${st.priceLocked ? ' cmp-edit-input--locked' : ''}" data-field="discount" data-store-id="${storeId}"
+              value="${esc(st.discount)}" ${st.priceLocked ? 'readonly data-price-locked="true"' : ''} placeholder="0">
           </label>` : ''}
           <label class="cmp-edit-field">
             <span class="cmp-edit-label">Вес (кг)</span>
@@ -1374,6 +1439,21 @@ export class CatalogMpModule {
 
   // ─────────────────────────── Events ───────────────────────────────────────
 
+  private showPriceLockPopup(input: HTMLInputElement): void {
+    this.container.querySelectorAll('.cmp-lock-warn').forEach(w => w.remove());
+    const storeId = input.getAttribute('data-store-id') ?? '';
+    const warn = document.createElement('div');
+    warn.className = 'cmp-lock-warn';
+    warn.innerHTML = `
+      <span class="cmp-lock-warn-text">${I.lock('',12)} Цена управляется репрайсером</span>
+      <div class="cmp-lock-warn-btns">
+        <button class="cmp-lock-warn-btn" data-action="price-lock-keep">Не трогать</button>
+        <button class="cmp-lock-warn-btn cmp-lock-warn-btn--override" data-action="price-lock-override" data-store-id="${storeId}">Изменить всё равно</button>
+      </div>`;
+    const label = input.closest('.cmp-edit-field') ?? input.parentElement!;
+    label.after(warn);
+  }
+
   private setupEvents(): void {
     if (this.eventsReady) return;
     this.eventsReady = true;
@@ -1421,6 +1501,15 @@ export class CatalogMpModule {
       this.photoAddStoreId = null;
       this.refreshPhotosTab();
     });
+
+    // Intercept clicks on locked price fields — prevent focus, show override popup instead
+    c.addEventListener('pointerdown', e => {
+      const t = e.target as HTMLElement;
+      if (!(t instanceof HTMLInputElement) || !t.hasAttribute('data-price-locked')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.showPriceLockPopup(t);
+    }, true);
 
     c.addEventListener('click', async e => {
       const el = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
@@ -1482,7 +1571,8 @@ export class CatalogMpModule {
         case 'close-modal':
           this.closeModal(); break;
         case 'close-modal-backdrop':
-          if (el === e.currentTarget || el.classList.contains('cmp-modal-backdrop')) this.closeModal();
+          // Закрываем только при клике напрямую по фону, а не по дочерним элементам
+          if (e.target === el) this.closeModal();
           break;
 
         case 'modal-tab': {
@@ -1493,6 +1583,25 @@ export class CatalogMpModule {
           if (content) content.innerHTML = this.modalTab==='overview' ? this.tplTabOverview(p) : this.modalTab==='card' ? this.tplTabCard(p) : this.tplTabPhotos(p);
           this.container.querySelectorAll('.cmp-modal-tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-tab') === this.modalTab));
           if (this.modalTab === 'card') this.loadExtraData(p);
+          break;
+        }
+
+        case 'price-lock-keep':
+          this.container.querySelectorAll('.cmp-lock-warn').forEach(w => w.remove());
+          break;
+
+        case 'price-lock-override': {
+          const storeId = el.getAttribute('data-store-id')!;
+          const st = this.editState.get(storeId);
+          if (!st) break;
+          st.priceLocked = false;
+          this.container.querySelectorAll('.cmp-lock-warn').forEach(w => w.remove());
+          const p = this.getProduct(this.openKey!);
+          const content = this.container.querySelector<HTMLElement>('#cmp-tab-content');
+          if (p && content) content.innerHTML = this.tplTabCard(p);
+          setTimeout(() => {
+            (this.container.querySelector(`input[data-field="price"][data-store-id="${storeId}"]`) as HTMLInputElement | null)?.focus();
+          }, 0);
           break;
         }
 
@@ -1657,16 +1766,27 @@ export class CatalogMpModule {
         const e = p.ozon.find(x => x.store.id === storeId)!;
         const creds = { client_id: e.store.client_id, api_key: e.store.api_key };
         const oz = toOzon(dims);
+        const pr = e.product;
+        let typeId = pr.type_id ?? 0;
+        let catId  = pr.description_category_id ?? 0;
+        if (!typeId || !catId) {
+          const info = await ozonApi.getFullProductInfo(p.vendorCode, pr.product_id ?? null, creds);
+          typeId = info?.type_id ?? 0;
+          catId  = info?.description_category_id ?? 0;
+          if (typeId) pr.type_id = typeId;
+          if (catId)  pr.description_category_id = catId;
+        }
         const item: Record<string, unknown> = {
           offer_id: p.vendorCode,
           weight: oz.weight, weight_unit: oz.weight_unit,
           depth: oz.depth, width: oz.width, height: oz.height,
           dimension_unit: oz.dimension_unit,
         };
+        if (typeId > 0) item.type_id = typeId;
+        if (catId  > 0) item.description_category_id = catId;
         if (st.name) item.name = st.name;
         if (st.extraLoaded && st.vat) item.vat = st.vat;
         await ozonApi.updateProduct(creds, item);
-        const pr = e.product;
         if (st.barcode && st.barcode !== (pr.barcode ?? '') && pr.sku) {
           await ozonApi.updateBarcode(creds, pr.sku, st.barcode);
         }

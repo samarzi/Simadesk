@@ -11,6 +11,7 @@ import { helpBtn } from '@/services/helpModal';
 import { fetchAllOzonProducts } from '@/services/ozonApi';
 import { fetchAllWbProducts } from '@/services/wbApi';
 import { fetchAllYandexProducts } from '@/services/yandexApi';
+import { refreshNavLockState } from '@/modules/NavigationModule';
 
 interface SyncLogEntry {
   store: string;
@@ -59,6 +60,7 @@ export class MarketplacesDashboard {
     this.loading = true;
     this.render();
     await this.load();
+    refreshNavLockState();
     this.loading = false;
     this.render();
   }

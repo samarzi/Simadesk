@@ -685,7 +685,7 @@ export async function fetchWbCurrentPrices(
     const params = new URLSearchParams({ limit: String(LIMIT), offset: String(offset) });
     if (nmIds && nmIds.length > 0) params.set('filterNmID', nmIds.join(','));
 
-    const data = await wbFetch<any>(`/wb-prices/api/v2/list/goods/filter?${params}`, 'GET', apiKey, undefined, undefined, 2);
+    const data = await wbFetch<any>(`/wb-prices/api/v2/list/goods/filter?${params}`, 'GET', apiKey, undefined, undefined, 5);
     const items: any[] = data?.data?.listGoods ?? [];
     for (const item of items) {
       const nmID = Number(item.nmID);
@@ -714,7 +714,7 @@ export async function updateWbPrices(
   signal?: AbortSignal,
 ): Promise<void> {
   try {
-    await wbFetch('/wb-prices/api/v2/upload/task', 'POST', apiKey, { data: items }, signal, 1);
+    await wbFetch('/wb-prices/api/v2/upload/task', 'POST', apiKey, { data: items }, signal, 3);
   } catch (err: any) {
     // WB возвращает 400 когда цена уже установлена — не ошибка
     if (err?.message?.includes('already set')) return;

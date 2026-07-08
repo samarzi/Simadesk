@@ -13,6 +13,7 @@ import { helpBtn } from '@/services/helpModal';
 import { yandexApi } from '@/services/yandexApi';
 import { autoReplyDb } from '@/services/autoReplyDb';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 import { WbStore } from '@/types/wb';
 import { OzonStore } from '@/types/ozon';
 import { YandexStore } from '@/types/yandex';
@@ -837,11 +838,14 @@ export class ReviewsModule {
                 justify-content:center;background:var(--bg3);font-size:14px">${I.package('', 14)}</div>
             `}
             <div style="flex:1;min-width:0">
-              <div style="font-size:12.5px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;
-                text-overflow:ellipsis" title="${this.esc(r.productName)}">${this.esc(r.productName)}</div>
-              <div style="font-size:10.5px;color:var(--text2);display:flex;gap:8px;flex-wrap:wrap">
-                ${r.orderId ? `<span title="Номер заказа">Заказ №${this.esc(String(r.orderId))}</span>` : ''}
-                <span>${this.esc(r.storeName)}</span>
+              <div style="display:flex;align-items:center;gap:4px;min-width:0">
+                <div style="min-width:0;font-size:12.5px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;
+                  text-overflow:ellipsis" title="${this.esc(r.productName)}">${this.esc(r.productName)}</div>
+                ${copyButton(r.productName, 'Копировать название')}
+              </div>
+              <div style="font-size:10.5px;color:var(--text2);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                ${r.orderId ? `<span style="display:inline-flex;align-items:center;gap:3px" title="Номер заказа">Заказ №${this.esc(String(r.orderId))}${copyButton(r.orderId, 'Копировать номер заказа')}</span>` : ''}
+                <span style="display:inline-flex;align-items:center;gap:3px">${this.esc(r.storeName)}${copyButton(r.storeName, 'Копировать название магазина')}</span>
               </div>
             </div>
           </div>

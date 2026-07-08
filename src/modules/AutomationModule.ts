@@ -765,7 +765,7 @@ export class AutomationModule {
                 style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;
                   background:var(--bg);color:var(--text);outline:none"/>
               <button id="auto-save-scan-confirm"
-                style="padding:8px 16px;border-radius:6px;border:none;background:var(--accent);color:#fff;
+                style="padding:8px 16px;border-radius:6px;border:none;background:var(--accent);color:#0a0a0a;
                   font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">
                 Сохранить
               </button>

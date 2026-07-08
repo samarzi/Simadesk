@@ -63,14 +63,16 @@ function localAuthPlugin(env: Record<string, string>): Plugin {
     };
 
     // Find existing user
-    const existing = await fetch(
+    const existingRes = await fetch(
       `${SUPA_URL}/rest/v1/users?telegram_id=eq.${telegramUser.id}&select=id`,
       { headers: adminHeaders }
-    ).then(r => r.json()).catch(() => []);
+    );
+    const existing = await existingRes.json().catch(() => []);
+    if (!existingRes.ok) console.error('[dev-auth] find user failed:', existingRes.status, existing);
 
     let userId: string;
 
-    if (existing.length > 0) {
+    if (Array.isArray(existing) && existing.length > 0) {
       userId = existing[0].id;
       await fetch(`${SUPA_URL}/rest/v1/users?id=eq.${userId}`, {
         method: 'PATCH',
@@ -80,19 +82,21 @@ function localAuthPlugin(env: Record<string, string>): Plugin {
     } else {
       // Create auth user
       const fakeEmail = `tg${telegramUser.id}@simadesk.app`;
-      const authRes = await fetch(`${SUPA_URL}/auth/v1/admin/users`, {
+      const authFetch = await fetch(`${SUPA_URL}/auth/v1/admin/users`, {
         method: 'POST',
         headers: { ...adminHeaders, 'apikey': serviceKey },
         body: JSON.stringify({
           email: fakeEmail, email_confirm: true,
           user_metadata: { telegram_id: telegramUser.id, first_name: telegramUser.first_name },
         }),
-      }).then(r => r.json()).catch(() => null);
+      });
+      const authRes = await authFetch.json().catch(() => null);
+      if (!authFetch.ok) console.error('[dev-auth] create auth user failed:', authFetch.status, authRes);
 
       if (!authRes?.id) return null;
       userId = authRes.id;
 
-      await fetch(`${SUPA_URL}/rest/v1/users`, {
+      const insRes = await fetch(`${SUPA_URL}/rest/v1/users`, {
         method: 'POST',
         headers: adminHeaders,
         body: JSON.stringify({
@@ -105,24 +109,40 @@ function localAuthPlugin(env: Record<string, string>): Plugin {
           last_login_at: new Date().toISOString(),
         }),
       });
+      if (!insRes.ok) console.error('[dev-auth] insert users row failed:', insRes.status, await insRes.text().catch(() => ''));
     }
 
     // Generate magic link and exchange for session
-    const linkRes = await fetch(`${SUPA_URL}/auth/v1/admin/generate_link`, {
+    const linkFetch = await fetch(`${SUPA_URL}/auth/v1/admin/generate_link`, {
       method: 'POST',
       headers: { ...adminHeaders, 'apikey': serviceKey },
       body: JSON.stringify({ type: 'magiclink', email: `tg${telegramUser.id}@simadesk.app` }),
-    }).then(r => r.json()).catch(() => null);
+    });
+    const linkRes = await linkFetch.json().catch(() => null);
+    if (!linkFetch.ok) console.error('[dev-auth] generate_link failed:', linkFetch.status, linkRes);
 
-    if (!linkRes?.properties?.hashed_token) return null;
+    // Сырой REST-ответ GoTrue отдаёт hashed_token в корне объекта, БЕЗ обёртки
+    // properties — в отличие от supabase-js SDK (используется в проде в
+    // supabase/functions/telegram-auth), который сам оборачивает ответ в
+    // { properties: {...} }. Смотрим оба варианта на случай будущих изменений API.
+    const hashedToken = linkRes?.hashed_token ?? linkRes?.properties?.hashed_token;
+    if (!hashedToken) {
+      console.error('[dev-auth] generate_link ok but no hashed_token, body was:', JSON.stringify(linkRes));
+      return null;
+    }
 
-    const sessRes = await fetch(`${SUPA_URL}/auth/v1/verify`, {
+    const sessFetch = await fetch(`${SUPA_URL}/auth/v1/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': SUPA_KEY },
-      body: JSON.stringify({ token_hash: linkRes.properties.hashed_token, type: 'magiclink' }),
-    }).then(r => r.json()).catch(() => null);
+      body: JSON.stringify({ token_hash: hashedToken, type: 'magiclink' }),
+    });
+    const sessRes = await sessFetch.json().catch(() => null);
+    if (!sessFetch.ok) console.error('[dev-auth] verify failed:', sessFetch.status, sessRes);
 
-    if (!sessRes?.access_token) return null;
+    if (!sessRes?.access_token) {
+      console.error('[dev-auth] verify ok but no access_token, body was:', JSON.stringify(sessRes));
+      return null;
+    }
 
     return {
       access_token:  sessRes.access_token,

@@ -4,6 +4,7 @@
 
 import { debug } from '@/utils/debug';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
 import { wbDb } from '@/services/wbDb';
@@ -34,6 +35,8 @@ interface StockItem {
   stockTotal: number;
   imageUrl: string | null;
   nmId?: number;
+  /** Метка модели хранения для редактируемого столбца остатка: FBS / FBY / DBS */
+  stockLabel: 'FBS' | 'FBY' | 'DBS';
 }
 
 interface Warehouse { id: number; name: string; }
@@ -115,6 +118,7 @@ export class StockModule {
       ...ymStores.map(s => ({ id: s.id, name: s.name, mp: 'yandex' as Mp })),
     ];
     const storeNames = new Map(this.stores.map(s => [s.id, s.name]));
+    const ymFulfillment = new Map(ymStores.map(s => [s.id, (s.fulfillment_model || s.placement_type || 'FBS') as string]));
     const items: StockItem[] = [];
 
     for (const p of ozProducts) {
@@ -122,21 +126,23 @@ export class StockModule {
       items.push({ id: `ozon:${p.store_id}:${p.offer_id}`, mp: 'ozon', storeId: p.store_id,
         storeName: storeNames.get(p.store_id) ?? '', offerId: p.offer_id,
         name: p.name || p.offer_id, price: p.price ?? null,
-        stockFbs: fbs, stockFbo: fbo, stockTotal: fbs + fbo, imageUrl: p.images?.[0] ?? null });
+        stockFbs: fbs, stockFbo: fbo, stockTotal: fbs + fbo, imageUrl: p.images?.[0] ?? null, stockLabel: 'FBS' });
     }
     for (const p of wbProducts) {
       const tot = p.stock_total ?? 0;
       items.push({ id: `wb:${p.store_id}:${p.vendor_code}`, mp: 'wb', storeId: p.store_id,
         storeName: storeNames.get(p.store_id) ?? '', offerId: p.vendor_code || String(p.nm_id),
         name: p.title || p.vendor_code || String(p.nm_id), price: p.price ?? null,
-        stockFbs: tot, stockFbo: 0, stockTotal: tot, imageUrl: null, nmId: p.nm_id });
+        stockFbs: tot, stockFbo: 0, stockTotal: tot, imageUrl: null, nmId: p.nm_id, stockLabel: 'FBS' });
     }
     for (const p of ymProducts) {
       const tot = p.stock_total ?? 0;
+      const model = ymFulfillment.get(p.store_id) ?? 'FBS';
+      const label: StockItem['stockLabel'] = model === 'FBY' ? 'FBY' : model === 'DBS' ? 'DBS' : 'FBS';
       items.push({ id: `yandex:${p.store_id}:${p.offer_id}`, mp: 'yandex', storeId: p.store_id,
         storeName: storeNames.get(p.store_id) ?? '', offerId: p.vendor_code || p.offer_id,
         name: p.name || p.offer_id, price: p.basic_price ?? null,
-        stockFbs: p.stock_available ?? tot, stockFbo: 0, stockTotal: tot, imageUrl: null });
+        stockFbs: p.stock_available ?? tot, stockFbo: 0, stockTotal: tot, imageUrl: null, stockLabel: label });
     }
     this.items = items;
   }
@@ -303,6 +309,7 @@ export class StockModule {
   async openEdit(itemId: string): Promise<void> {
     const item = this.items.find(i => i.id === itemId);
     if (!item) return;
+    if (item.mp === 'yandex' && item.stockLabel === 'FBY') return; // FBY-остатками управляет Яндекс, ручное изменение через API недоступно
     this.editItemId = itemId;
     this.editValue = item.stockFbs;
     this.editWarehouseId = null;
@@ -446,7 +453,7 @@ export class StockModule {
           <div style="padding:18px 20px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
             <div style="width:8px;height:8px;border-radius:50%;background:${MP_COLOR[item.mp]};flex-shrink:0"></div>
             <div style="flex:1">
-              <div style="font-size:13px;font-weight:700;color:var(--text)">Изменить FBS остаток</div>
+              <div style="font-size:13px;font-weight:700;color:var(--text)">Изменить остаток ${item.stockLabel}</div>
               <div style="font-size:11px;color:var(--text-2);margin-top:1px">${this.esc(item.name)}</div>
             </div>
             <button onclick="window.stockModule.closeEdit()" style="border:none;background:none;color:var(--text-2);cursor:pointer;font-size:20px;line-height:1;padding:2px 4px">×</button>
@@ -465,7 +472,7 @@ export class StockModule {
               <div style="text-align:center;padding:12px;color:var(--text-2);font-size:12px">Загружаем склады…</div>
             ` : wh.length > 1 ? `
               <div style="margin-bottom:14px">
-                <label style="font-size:11px;font-weight:600;color:var(--text-2);display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Склад FBS</label>
+                <label style="font-size:11px;font-weight:600;color:var(--text-2);display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Склад ${item.stockLabel}</label>
                 <select onchange="window.stockModule.setEditWarehouse(+this.value)"
                   style="width:100%;padding:9px 12px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:8px;font-size:12px">
                   <option value="">— выберите склад —</option>
@@ -476,7 +483,7 @@ export class StockModule {
               <div style="margin-bottom:14px;font-size:12px;color:var(--text-2)">Склад: <b style="color:var(--text)">${this.esc(wh[0].name)}</b></div>
             ` : !this.editError ? `
               <div style="margin-bottom:14px;font-size:12px;color:var(--text-2);padding:8px 12px;background:rgba(245,158,11,.08);border-radius:8px">
-                Нет доступных складов FBS для этого магазина
+                Нет доступных складов ${item.stockLabel} для этого магазина
               </div>
             ` : ''}
 
@@ -675,7 +682,7 @@ export class StockModule {
                         <th style="${thStyle}">Артикул</th>
                         ${thBtn('name',  'Название')}
                         ${thBtn('stock', 'Всего')}
-                        <th style="${thStyle}">FBS ${I.edit()}</th>
+                        <th style="${thStyle}">Остаток ${I.edit()}</th>
                         <th style="${thStyle}">FBO</th>
                         ${thBtn('price', 'Цена')}
                         <th style="${thStyle}">Магазин</th>
@@ -708,21 +715,28 @@ export class StockModule {
                             </td>
 
                             <!-- Название -->
-                            <td style="padding:8px 12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text)" title="${this.esc(item.name)}">${this.esc(item.name)}</td>
+                            <td style="padding:8px 12px;max-width:220px;font-size:12px;color:var(--text)">
+                              <div style="display:flex;align-items:center;gap:4px;min-width:0">
+                                <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${this.esc(item.name)}">${this.esc(item.name)}</span>
+                                ${copyButton(item.name, 'Копировать название')}
+                              </div>
+                            </td>
 
                             <!-- Всего -->
                             <td style="padding:8px 12px;text-align:center">${this.stockBadge(item.stockTotal)}</td>
 
-                            <!-- FBS (редактируемый) -->
+                            <!-- Остаток (редактируемый, метка модели хранения по магазину) -->
                             <td style="padding:8px 12px;text-align:center">
                               <div style="display:inline-flex;align-items:center;gap:4px">
+                                <span style="font-size:9px;font-weight:700;color:var(--text-2)">${item.stockLabel}</span>
                                 <span style="font-size:12px;color:var(--text);font-weight:${item.stockFbs > 0 ? '700' : '400'}">${this.fmtN(item.stockFbs)}</span>
+                                ${(item.mp === 'yandex' && item.stockLabel === 'FBY') ? '' : `
                                 <button onclick="event.stopPropagation();window.stockModule.openEdit(${safeId})"
-                                  title="Изменить FBS"
+                                  title="Изменить остаток (${item.stockLabel})"
                                   style="border:none;background:none;cursor:pointer;opacity:.35;transition:opacity .1s;padding:2px;line-height:1"
                                   onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.35'">
                                   <svg viewBox="0 0 14 14" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" style="width:12px;height:12px"><path d="M10 2l2 2-7 7H3v-2L10 2z"/></svg>
-                                </button>
+                                </button>`}
                               </div>
                             </td>
 
@@ -737,7 +751,12 @@ export class StockModule {
                             </td>
 
                             <!-- Магазин -->
-                            <td style="padding:8px 12px;font-size:11px;color:var(--text-2);white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis">${this.esc(item.storeName)}</td>
+                            <td style="padding:8px 12px;font-size:11px;color:var(--text-2);max-width:120px">
+                              <div style="display:flex;align-items:center;gap:4px;min-width:0">
+                                <span style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(item.storeName)}</span>
+                                ${copyButton(item.storeName, 'Копировать название магазина')}
+                              </div>
+                            </td>
                           </tr>`;
                       }).join('')}
 

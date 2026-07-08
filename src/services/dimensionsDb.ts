@@ -28,20 +28,32 @@ function getKey(): string {
   return STORAGE_KEY_PREFIX + cid;
 }
 
+// In-memory кэш разобранной карты — get()/set() вызываются тысячи раз за один buildUnified()
+// на крупных каталогах, повторный JSON.parse всего хранилища на каждый вызов был узким местом.
+let cachedKey: string | null = null;
+let cachedMap: Map<string, Entry> | null = null;
+
 function loadAll(): Map<string, Entry> {
+  const key = getKey();
+  if (cachedMap && cachedKey === key) return cachedMap;
+  let map = new Map<string, Entry>();
   try {
-    const raw = localStorage.getItem(getKey());
-    if (!raw) return new Map();
-    const arr: Entry[] = JSON.parse(raw);
-    const map = new Map<string, Entry>();
-    for (const e of arr) map.set(e.vendor_code.trim().toLowerCase(), e);
-    return map;
-  } catch { return new Map(); }
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const arr: Entry[] = JSON.parse(raw);
+      for (const e of arr) map.set(e.vendor_code.trim().toLowerCase(), e);
+    }
+  } catch { map = new Map(); }
+  cachedKey = key;
+  cachedMap = map;
+  return map;
 }
 
 function saveAll(map: Map<string, Entry>): void {
   try {
     localStorage.setItem(getKey(), JSON.stringify([...map.values()]));
+    cachedKey = getKey();
+    cachedMap = map;
   } catch (e) { console.warn('[dimensionsDb] saveAll:', e); }
 }
 
@@ -55,6 +67,17 @@ export const dimensionsDb = {
     const map = loadAll();
     const key = vendorCode.trim().toLowerCase();
     map.set(key, { vendor_code: vendorCode, dims, updated_at: new Date().toISOString() });
+    saveAll(map);
+  },
+
+  /** Записать много эталонов одним сохранением (для синка каталога — кратно быстрее, чем по одному). */
+  setMany(entries: Array<{ vendorCode: string; dims: Dimensions }>): void {
+    if (entries.length === 0) return;
+    const map = loadAll();
+    const now = new Date().toISOString();
+    for (const { vendorCode, dims } of entries) {
+      map.set(vendorCode.trim().toLowerCase(), { vendor_code: vendorCode, dims, updated_at: now });
+    }
     saveAll(map);
   },
 

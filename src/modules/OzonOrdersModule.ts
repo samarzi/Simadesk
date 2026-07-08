@@ -10,6 +10,7 @@ import {
 import { ozonDb } from '@/services/ozonDb';
 import { ozonOrdersApi, fetchAllPages, fetchAllPagesByCursor } from '@/services/ozonOrdersApi';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 
 // ── Статусы заказов ──────────────────────────────────────────────────────────
 
@@ -556,7 +557,7 @@ export class OzonOrdersModule {
       ? `<div class="ord-product-line">
            ${this.skuChip(first.offer_id)}
            <span class="ord-qty">× ${first.quantity}</span>
-           ${first.name ? `<span class="ord-pname">${this.esc(first.name.slice(0, 40))}${first.name.length > 40 ? '…' : ''}</span>` : ''}
+           ${first.name ? `<span class="ord-pname">${this.esc(first.name.slice(0, 40))}${first.name.length > 40 ? '…' : ''}</span>${copyButton(first.name, 'Копировать название')}` : ''}
          </div>
          ${moreCount > 0 ? `<span class="ord-more">+${moreCount} ещё</span>` : ''}`
       : '—';
@@ -590,7 +591,7 @@ export class OzonOrdersModule {
             ${schemeBadge}
             ${isNew ? `<span class="ord-new-badge">Новый</span>` : ''}
           </div>
-          <div class="oz-muted" style="font-size:11px;margin-top:3px">${this.esc(storeName)}</div>
+          <div class="oz-muted" style="font-size:11px;margin-top:3px;display:flex;align-items:center;gap:4px">${this.esc(storeName)}${copyButton(storeName, 'Копировать название магазина')}</div>
         </td>
         <td><span class="oz-badge ${statusCss(p.status)}">${statusLabel(p.status)}</span></td>
         <td class="oz-muted">${fmtDateTime(p.created_at)}</td>
@@ -751,6 +752,7 @@ export class OzonOrdersModule {
         <span class="ozo-pill" style="display:inline-flex;align-items:center;gap:6px">
           <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${storeColor}"></span>
           ${this.esc(storeName)}
+          ${copyButton(storeName, 'Копировать название магазина')}
         </span>
         ${isNew ? '<span class="ord-new-badge">Новый</span>' : ''}
       </div>`;
@@ -807,7 +809,10 @@ export class OzonOrdersModule {
           return `<div class="ozo-prod-card">
             ${thumb}
             <div class="ozo-prod-info">
-              <div class="ozo-prod-name" title="${this.esc(pr.name)}">${this.esc(pr.name) || 'Без названия'}</div>
+              <div style="display:flex;align-items:flex-start;gap:4px">
+                <div class="ozo-prod-name" style="min-width:0" title="${this.esc(pr.name)}">${this.esc(pr.name) || 'Без названия'}</div>
+                ${pr.name ? copyButton(pr.name, 'Копировать название') : ''}
+              </div>
               <div class="ozo-prod-sku">${this.skuChip(pr.offer_id)}</div>
             </div>
             <div class="ozo-prod-price">

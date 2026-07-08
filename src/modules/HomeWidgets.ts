@@ -68,30 +68,22 @@ export function clampDims(id: string, cw: number, rh: number): WidgetDims {
 
 // ── Счётчик (KPI) ─────────────────────────────────────────────────────────────
 //
-//   ┌ [icon]                       [ПЕРИОД]
-//   │  VALUE            ▲ +12%
-//   │  Метрика
-//   └  🌐 Все МП · все магазины     (охват — чётко подписан)
-//
+// Минимальная карточка: крупное число по центру, метка снизу, тренд рядом,
+// SVG area-chart как фоновая декорация снизу (заливается из paintKpi).
 // elemId используется модулем для заливки данных (-val / -trend / -spark).
 
 interface KpiCfg { id: string; elemId: string; icon: string; label: string; period: string; color: string; }
 
-function kpiSkeleton(c: KpiCfg, scope: string): string {
+function kpiSkeleton(c: KpiCfg, _scope: string): string {
   return `<div class="cmd-kpi" id="${c.elemId}" style="--kpi:${c.color}">
-    <div class="cmd-kpi-top">
-      <div class="cmd-kpi-icon">${c.icon}</div>
-      <div class="cmd-kpi-period">${c.period}</div>
+    <div class="cmd-kpi-head">
+      <span class="cmd-kpi-icon">${c.icon}</span>
+      <span class="cmd-kpi-label">${c.label}</span>
+      <span class="cmd-kpi-period">${c.period}</span>
     </div>
-    <div class="cmd-kpi-main">
-      <div class="cmd-kpi-valrow">
-        <div class="cmd-kpi-val" id="${c.elemId}-val">—</div>
-        <div class="cmd-kpi-trend" id="${c.elemId}-trend" style="display:none"></div>
-      </div>
-      <div class="cmd-kpi-bottom">
-        <span class="cmd-kpi-label">${c.label}</span>
-        <span class="cmd-kpi-scope">${I.globe('', 11)}<span>${scope}</span></span>
-      </div>
+    <div class="cmd-kpi-mid">
+      <span class="cmd-kpi-val" id="${c.elemId}-val">—</span>
+      <span class="cmd-kpi-trend" id="${c.elemId}-trend"></span>
     </div>
     <div class="cmd-kpi-spark" id="${c.elemId}-spark"></div>
   </div>`;

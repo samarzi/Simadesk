@@ -7,6 +7,7 @@ import { WbStore, WbProduct, WbOrder, WbOrderStatus } from '@/types/wb';
 import { wbDb } from '@/services/wbDb';
 import { fetchAllWbOrders, wbApi, isWbCoolingDown, wbCooldownRemaining } from '@/services/wbApi';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 
 const STATUS_LABELS: Record<WbOrderStatus, string> = {
   new:         'Новый',
@@ -236,12 +237,12 @@ export class WbOrdersModule {
               <svg class="oz-sku-chip-ic" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="8" height="9" rx="1"/><path d="M2 10V2a1 1 0 0 1 1-1h7"/></svg>
               <span class="oz-sku-chip-text">${o.id}</span>
             </span>
-            <div class="oz-muted" style="font-size:11px;margin-top:3px">${this.esc(storeName)}</div>
+            <div class="oz-muted" style="font-size:11px;margin-top:3px;display:flex;align-items:center;gap:4px">${this.esc(storeName)}${copyButton(storeName, 'Копировать название магазина')}</div>
           </td>
           <td><span class="oz-badge ${STATUS_CSS[o.status]}">${STATUS_LABELS[o.status]}</span></td>
           <td class="oz-muted">${fmtDateTime(o.created_at)}</td>
           <td style="padding:6px 8px">${thumbsCell}</td>
-          <td>${first ? `<div class="ord-product-line"><span class="oz-sku-chip" onclick="event.stopPropagation();window.wbOrdersModule.copyText('${this.esc(first.vendor_code)}', this)">${this.esc(first.vendor_code)}</span> <span class="ord-qty">× ${first.count}</span></div>${first.name ? `<div class="oz-muted" style="font-size:11px;margin-top:2px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.esc(first.name)}</div>` : ''}` : '—'}</td>
+          <td>${first ? `<div class="ord-product-line"><span class="oz-sku-chip" onclick="event.stopPropagation();window.wbOrdersModule.copyText('${this.esc(first.vendor_code)}', this)">${this.esc(first.vendor_code)}</span> <span class="ord-qty">× ${first.count}</span></div>${first.name ? `<div style="display:flex;align-items:center;gap:4px;max-width:240px;min-width:0"><div class="oz-muted" style="font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${this.esc(first.name)}</div>${copyButton(first.name, 'Копировать название')}</div>` : ''}` : '—'}</td>
           <td class="oz-prc" style="text-align:right;white-space:nowrap;font-weight:700">${Math.round(o.total).toLocaleString('ru')} ₽</td>
           <td class="oz-muted">${this.esc(o.delivery_address ?? o.warehouse_name ?? '—')}</td>
         </tr>`;
@@ -286,6 +287,7 @@ export class WbOrdersModule {
         <span class="ozo-pill" style="display:inline-flex;align-items:center;gap:6px">
           <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#cb11ab"></span>
           ${this.esc(storeName)}
+          ${copyButton(storeName, 'Копировать название магазина')}
         </span>
         ${isNew ? '<span class="ord-new-badge">Новый</span>' : ''}
       </div>`;
@@ -334,13 +336,16 @@ export class WbOrdersModule {
           return `<div class="ozo-prod-card">
             ${thumb}
             <div class="ozo-prod-info">
-              <div class="ozo-prod-name" title="${this.esc(name)}">${this.esc(name)}</div>
+              <div style="display:flex;align-items:flex-start;gap:4px">
+                <div class="ozo-prod-name" style="min-width:0" title="${this.esc(name)}">${this.esc(name)}</div>
+                ${copyButton(name, 'Копировать название')}
+              </div>
               <div class="ozo-prod-sku">
                 <span class="oz-sku-chip" onclick="window.wbOrdersModule.copyText('${this.esc(it.vendor_code)}', this)">
                   <svg class="oz-sku-chip-ic" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="8" height="9" rx="1"/><path d="M2 10V2a1 1 0 0 1 1-1h7"/></svg>
                   <span class="oz-sku-chip-text">${this.esc(it.vendor_code)}</span>
                 </span>
-                ${it.nm_id ? `<div class="oz-muted" style="font-size:10px;margin-top:3px">nm: ${it.nm_id}</div>` : ''}
+                ${it.nm_id ? `<div class="oz-muted" style="font-size:10px;margin-top:3px;display:flex;align-items:center;gap:4px">nm: ${it.nm_id}${copyButton(it.nm_id, 'Копировать nm ID')}</div>` : ''}
               </div>
             </div>
             <div class="ozo-prod-price">

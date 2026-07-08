@@ -97,3 +97,6 @@ temp/
 
 # Local Netlify folder
 .netlify
+
+# SSL certificates (on VPS, symlinked from /etc/letsencrypt)
+ssl/

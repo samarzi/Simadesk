@@ -11,9 +11,10 @@ import { Mp, MP_LABEL, MP_COLOR, Order, KPI, TimeseriesPoint, PeriodPreset, Stor
 import { aggregateOrders, ProductMap } from './services/orderAggregator';
 import { buildCogsResolver } from './services/cogsResolver';
 import { computeKPI, computeTimeseries, computeMissingCogs, MissingCogsItem } from './services/kpiAggregator';
-import { loadAllStores, buildProductMap, loadOrders, loadTransactions } from './services/dataLoader';
+import { loadAllStores, buildProductMap, loadOrders, loadTransactions, QueryProgress } from './services/dataLoader';
 import { settingsDb } from './services/settingsDb';
 import { financeSync } from '@/services/financeSync';
+import { orderSyncService, OrderSyncStatus } from '@/services/orderSyncService';
 import { costPriceDb } from '@/services/costPriceDb';
 
 import { renderSummaryTab, clearSummaryCache } from './tabs/SummaryTab';
@@ -64,6 +65,14 @@ export class AnalyticsModule {
   private syncing = false;
   private dataLoaded = false;
 
+  // ── Прогресс загрузки ────────────────────────────────────────────────
+  private _loadProgress: QueryProgress | null = null;
+  private _loadSummary: QueryProgress | null = null;
+  private _loadStart = 0;
+  private _loadElapsedMs = 0;
+  private _loadTimer = 0;
+  private _syncStatus: OrderSyncStatus = orderSyncService.status;
+
   // ── «С начала» — поиск даты и подтверждение ─────────────────────────
   /** idle → seeking → confirming → syncing → loaded */
   private _allState: 'idle' | 'seeking' | 'confirming' | 'syncing' | 'loaded' = 'idle';
@@ -97,7 +106,14 @@ export class AnalyticsModule {
   private openedOrderId: string | null = null;
   private settingsOpen = false;
 
-  constructor(container: HTMLElement) { this.container = container; }
+  constructor(container: HTMLElement) {
+    this.container = container;
+    // Подписываемся на статус фонового синка — обновляем бейдж в шапке
+    orderSyncService.onStatus(s => {
+      this._syncStatus = s;
+      if (!this.loading) this._scheduleBodyOnly();
+    });
+  }
 
   async show(): Promise<void> {
     this.container.style.display = 'flex';
@@ -153,6 +169,14 @@ export class AnalyticsModule {
   async refresh(): Promise<void> {
     if (this.loading) return;
     this.loading = true;
+    this._loadProgress = null;
+    this._loadStart = Date.now();
+    // Таймер обновляет отображение прошедшего времени каждые 500мс
+    if (this._loadTimer) clearInterval(this._loadTimer);
+    this._loadTimer = window.setInterval(() => {
+      if (this.loading && !this.dataLoaded) this._scheduleBodyOnly();
+      else { clearInterval(this._loadTimer); this._loadTimer = 0; }
+    }, 500);
     this.render();
     try {
       const storeIds = this.getFilteredStoreIds();
@@ -163,8 +187,20 @@ export class AnalyticsModule {
       const cogs = buildCogsResolver();
       const products = await buildProductMap();
 
+      // Колбэк прогресса: дебаунс через rAF чтобы не флудить ре-рендерами
+      let _rafProgress = 0;
+      const onProgress = (p: QueryProgress) => {
+        this._loadProgress = p;
+        if (!_rafProgress) {
+          _rafProgress = requestAnimationFrame(() => {
+            _rafProgress = 0;
+            if (this.loading && !this.dataLoaded) this._scheduleBodyOnly();
+          });
+        }
+      };
+
       const [liveOrders, txs] = await Promise.all([
-        loadOrders(start, end, storeIds),
+        loadOrders(start, end, storeIds, undefined, onProgress),
         loadTransactions([...storeIds], start, end),
       ]);
 
@@ -190,6 +226,8 @@ export class AnalyticsModule {
       this.knownVendorCodes = knownVc;
       this.missingCogs = computeMissingCogs(this.orders, knownVc);
       this.dataLoaded = true;
+      this._loadElapsedMs = Date.now() - this._loadStart;
+      this._loadSummary   = this._loadProgress ? Object.assign({}, this._loadProgress) : null;
       // Новые данные → инвалидируем все кеши вкладок
       clearSummaryCache();
       clearOrdersCache();
@@ -206,6 +244,7 @@ export class AnalyticsModule {
       console.error('[Analytics] refresh:', e);
     } finally {
       this.loading = false;
+      if (this._loadTimer) { clearInterval(this._loadTimer); this._loadTimer = 0; }
       this.render();
     }
   }
@@ -799,6 +838,8 @@ export class AnalyticsModule {
 
         <div class="an2-spacer"></div>
 
+        ${this._renderLoadMeta()}
+
         <button class="an2-icon-btn ${this.syncing || this._autoSyncing ? 'spinning' : ''}"
           onclick="window.analyticsModule?.syncFinances()"
           title="${this._autoSyncing ? 'Идёт авто-синхронизация финотчёта…' : 'Подтянуть финотчёт из МП'}">
@@ -814,6 +855,37 @@ export class AnalyticsModule {
         </button>
       </div>
     `;
+  }
+
+  /** Мета-чип справа в шапке: статус последней загрузки + фоновый синк. */
+  private _renderLoadMeta(): string {
+    const parts: string[] = [];
+
+    // Статистика последней загрузки
+    if (!this.loading && this._loadSummary && this._loadElapsedMs > 0) {
+      const s = this._loadSummary;
+      const secs = (this._loadElapsedMs / 1000).toFixed(this._loadElapsedMs < 10000 ? 1 : 0);
+      if (s.cached > 0 || s.fetched > 0) {
+        const bits: string[] = [];
+        if (s.cached  > 0) bits.push(`⚡ ${s.cached} кэш`);
+        if (s.fetched > 0) bits.push(`↓ ${s.fetched} API`);
+        if (s.errors  > 0) bits.push(`⚠ ${s.errors} ошибок`);
+        parts.push(`<span class="an2-load-meta" title="Загружено за ${secs} сек">${bits.join(' · ')} · ${secs}с</span>`);
+      }
+    }
+
+    // Фоновая синхронизация заказов
+    if (this._syncStatus.syncing) {
+      const { syncedStores, totalStores, currentStore } = this._syncStatus;
+      const label = currentStore ? currentStore : `${syncedStores}/${totalStores}`;
+      parts.push(`
+        <span class="an2-sync-badge" title="Фоновый синк: кэшируем заказы для быстрой аналитики">
+          <span class="an2-sync-badge-dot"></span>Синк: ${label}
+        </span>
+      `);
+    }
+
+    return parts.join('');
   }
 
   /** Чипы выбора магазина (обязательный single-select, без «Все»). */
@@ -926,10 +998,44 @@ export class AnalyticsModule {
   }
 
   private renderLoader(): string {
+    const elapsed  = (Date.now() - this._loadStart) / 1000;
+    const elapsedS = elapsed < 1 ? '' : `${elapsed.toFixed(elapsed < 10 ? 1 : 0)} с`;
+    const p = this._loadProgress;
+
+    if (!p || p.total === 0) {
+      // Пустой прогресс — показываем описание фазы по времени
+      const phase =
+        elapsed < 3  ? 'Читаем кэш…' :
+        elapsed < 10 ? 'Загружаем из маркетплейсов…' :
+        elapsed < 20 ? 'Это займёт немного времени…' :
+                       'Почти готово…';
+      return `
+        <div class="an2-loader">
+          <div class="an2-loader-ring"></div>
+          <div class="an2-loader-text">${phase}</div>
+          ${elapsedS ? `<div class="an2-loader-elapsed">${elapsedS}</div>` : ''}
+        </div>
+      `;
+    }
+
+    const pct = Math.min(100, Math.round((p.done / p.total) * 100));
+    const hasErrors = p.errors > 0;
     return `
       <div class="an2-loader">
         <div class="an2-loader-ring"></div>
-        <div class="an2-loader-text">Тянем заказы и финотчёты из маркетплейсов…</div>
+        <div class="an2-load-prog">
+          <div class="an2-load-prog-label">${p.currentLabel || 'Загружаем…'}</div>
+          <div class="an2-load-prog-bar-wrap">
+            <div class="an2-load-prog-bar" style="width:${pct}%"></div>
+          </div>
+          <div class="an2-load-prog-stats">
+            <span class="an2-load-prog-done">${p.done} / ${p.total} мес.</span>
+            ${p.cached  > 0 ? `<span class="an2-load-prog-cached">⚡ ${p.cached} из кэша</span>` : ''}
+            ${p.fetched > 0 ? `<span class="an2-load-prog-api">↓ ${p.fetched} из API</span>` : ''}
+            ${hasErrors     ? `<span class="an2-load-prog-err">⚠ ${p.errors} ошибок</span>` : ''}
+            ${elapsedS      ? `<span class="an2-load-prog-time">${elapsedS}</span>` : ''}
+          </div>
+        </div>
       </div>
     `;
   }

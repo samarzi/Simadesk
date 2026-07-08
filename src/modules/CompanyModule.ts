@@ -588,6 +588,7 @@ export class CompanyModule {
       this.closeDropdown();
       this.renderSwitcher();
       window.app?.init?.();
+      (window as any).applyDockNavConfig?.();
       showToast(`Переключено на «${companyService.getActive()?.name}»`, 'success');
     }, sig);
 

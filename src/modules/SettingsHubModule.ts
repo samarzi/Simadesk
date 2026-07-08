@@ -18,6 +18,7 @@ import { OzonStore } from '@/types/ozon';
 import { YandexStore } from '@/types/yandex';
 import { WbStore } from '@/types/wb';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 
 type Page = 'group' | 'columns' | 'formulas' | 'import-export' | 'team' | 'appearance';
 type AnyStore = (OzonStore & { _mp: 'ozon' }) | (YandexStore & { _mp: 'yandex' }) | (WbStore & { _mp: 'wb' });
@@ -698,8 +699,8 @@ export class SettingsHubModule {
             <summary style="cursor:pointer;font-size:12px;color:var(--muted);user-select:none">${I.alertTriangle('', 12)} Артикулы с существующими значениями (${p.willUpdate.length}) — будут перезаписаны</summary>
             <div style="max-height:200px;overflow:auto;margin-top:8px;font-size:11px;font-family:monospace">
               ${p.willUpdate.slice(0, 100).map(u => `
-                <div style="padding:4px 0;border-bottom:1px solid var(--border)">
-                  <b>${this.esc(u.offer_id)}</b> · ${this.esc(u.column)}: <span style="color:#94a3b8">${this.esc(String(u.oldValue))}</span> → <span style="color:#16a34a">${this.esc(String(u.newValue))}</span>
+                <div style="padding:4px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:4px">
+                  <b>${this.esc(u.offer_id)}</b>${copyButton(u.offer_id, 'Копировать артикул')} · ${this.esc(u.column)}: <span style="color:#94a3b8">${this.esc(String(u.oldValue))}</span> → <span style="color:#16a34a">${this.esc(String(u.newValue))}</span>
                 </div>
               `).join('')}
               ${p.willUpdate.length > 100 ? `<div style="padding:4px 0;color:var(--muted)">…ещё ${p.willUpdate.length - 100} строк</div>` : ''}

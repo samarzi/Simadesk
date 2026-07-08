@@ -230,22 +230,22 @@ class AuthService {
   // ── Dev bypass (local dev without a real Telegram bot) ────────────────────
   /**
    * Used in development only (VITE_DEV_AUTH=true in .env.local).
-   * Simulates a logged-in user without Telegram widget.
+   * Идёт через тот же /api/auth/telegram, что и реальный Telegram-вход —
+   * локальный dev-хэндлер (vite.config.ts) без BOT_TOKEN пропускает проверку
+   * подписи и создаёт/переиспользует настоящего Supabase-пользователя с
+   * настоящей сессией (через SUPABASE_SERVICE_ROLE_KEY). Раньше здесь просто
+   * подделывался токен на клиенте — из-за этого все запросы к Supabase падали
+   * с "Expected 3 parts in JWT" (не JWT вовсе, а произвольная строка).
    */
-  devLogin(telegramId = 999999999, name = 'Dev User'): void {
-    const fakeSession: AuthSession = {
-      access_token:  'dev_token_' + Date.now(),
-      refresh_token: 'dev_refresh_' + Date.now(),
-      expires_in:    3600 * 24 * 30, // 30 days for dev
-      user_id:       'dev-user-' + telegramId,
-      first_name:    name,
-      username:      'devuser',
-      photo_url:     null,
-    };
-    this.saveSession(fakeSession);
-    // Also store telegram_id on user
-    const user = this.getUser()!;
-    localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify({ ...user, telegram_id: telegramId }));
+  async devLogin(telegramId = 999999999, name = 'Dev User'): Promise<void> {
+    const authDate = String(Math.floor(Date.now() / 1000));
+    await this.loginWithTelegram({
+      id: String(telegramId),
+      first_name: name,
+      username: 'devuser',
+      auth_date: authDate,
+      hash: 'dev-bypass', // не проверяется локально, т.к. BOT_TOKEN не задан в .env
+    });
   }
 }
 

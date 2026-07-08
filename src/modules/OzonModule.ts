@@ -1,8 +1,10 @@
 import { debug } from '@/utils/debug';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 import { OzonStore, OzonProduct } from '@/types/ozon';
 import { ozonApi, fetchAllOzonProducts } from '@/services/ozonApi';
 import { ozonDb } from '@/services/ozonDb';
+import { refreshNavLockState } from '@/modules/NavigationModule';
 
 type View = 'products' | 'stores';
 
@@ -171,11 +173,14 @@ export class OzonModule {
             </span>
           </td>
           <td style="max-width:400px">
-            <div style="font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical" title="${this.esc(p.name)}">
-              ${this.esc(p.name) || 'Без названия'}
+            <div style="display:flex;align-items:flex-start;gap:4px">
+              <div style="min-width:0;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical" title="${this.esc(p.name)}">
+                ${this.esc(p.name) || 'Без названия'}
+              </div>
+              ${p.name ? copyButton(p.name, 'Копировать название') : ''}
             </div>
           </td>
-          <td><span style="font-size:11px;color:var(--muted)">${this.esc(storeName)}</span></td>
+          <td><span style="font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:4px">${this.esc(storeName)}${copyButton(storeName, 'Копировать название магазина')}</span></td>
           <td style="text-align:right;white-space:nowrap;font-weight:700">${price}</td>
           <td style="text-align:center" class="${stockClass}">
             <span style="font-weight:700">${stock}</span>
@@ -430,6 +435,7 @@ export class OzonModule {
         api_key: apiKey,
       });
       this.stores = await ozonDb.getStores();
+      refreshNavLockState();
       this.addBusy = false;
       if (clientIdInp) clientIdInp.value = '';
       if (keyInp) keyInp.value = '';

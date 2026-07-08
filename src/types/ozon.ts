@@ -27,6 +27,8 @@ export interface OzonProduct {
   barcode: string;
   status: string;
   synced_at: string;
+  type_id?: number;
+  description_category_id?: number;
   // Габариты (заполняются при синхронизации через getProductInfo)
   weight_kg?: number | null;
   length_cm?: number | null;

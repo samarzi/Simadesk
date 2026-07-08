@@ -4,6 +4,7 @@ import { I } from '@/utils/icons';
 import { MP_BG, MP_COLOR, MP_LABEL } from '../types';
 import type { Mp, UnifiedProduct } from '../types';
 import { esc } from '../utils';
+import { copyButton } from '@/utils/copyButton';
 
 export interface ProductPickerProps {
   /** Отфильтрованный список товаров (см. RepricerModule.pickerFiltered). */
@@ -141,9 +142,11 @@ export function renderPicker(p: ProductPickerProps): string {
               ${sel ? '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#000" stroke-width="2"><path d="M2 6l3 3 5-6"/></svg>' : ''}
             </div>
             <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(prod.title)}</div>
+              <div style="display:flex;align-items:center;gap:4px;font-size:13px;font-weight:600;color:var(--text)">
+                <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(prod.title)}</span>${copyButton(prod.title, 'Копировать название')}
+              </div>
               <div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap">
-                <span style="font-family:monospace;font-size:10.5px;color:var(--text2);background:var(--bg3);padding:1px 6px;border-radius:4px">${esc(prod.vendorCode)}</span>
+                <span style="font-family:monospace;font-size:10.5px;color:var(--text2);background:var(--bg3);padding:1px 6px;border-radius:4px">${esc(prod.vendorCode)}</span>${copyButton(prod.vendorCode, 'Копировать артикул')}
                 ${visVariants.map(v => `
                   <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:4px;background:${MP_BG[v.mp]};color:${MP_COLOR[v.mp]}">
                     ${MP_LABEL[v.mp]}${v.storeName ? ' · ' + esc(v.storeName) : ''}
@@ -175,7 +178,7 @@ export function renderPicker(p: ProductPickerProps): string {
         <button onclick="window.repricerModule.closeProductPicker()"
           style="padding:8px 18px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:8px;cursor:pointer;font-size:13px">Отмена</button>
         <button onclick="window.repricerModule.applyPickerSelection()" ${pickerSelected.size === 0 ? 'disabled' : ''}
-          style="padding:8px 20px;border:none;background:var(--accent);color:#fff;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;opacity:${pickerSelected.size === 0 ? '.5' : '1'}">
+          style="padding:8px 20px;border:none;background:var(--accent);color:#0a0a0a;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;opacity:${pickerSelected.size === 0 ? '.5' : '1'}">
           ${pickerSelected.size > 1 ? `Добавить ${pickerSelected.size} товаров` : 'Выбрать'}
         </button>
       </div>

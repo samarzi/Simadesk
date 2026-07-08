@@ -22,8 +22,10 @@ import { yandexDb } from '@/services/yandexDb';
 import { yandexApi, fetchAllYandexOrders } from '@/services/yandexApi';
 import { wbDb } from '@/services/wbDb';
 import { wbApi, fetchAllWbOrders, isWbCoolingDown } from '@/services/wbApi';
+import { orderSyncService } from '@/services/orderSyncService';
 import { helpBtn } from '@/services/helpModal';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 
 type Marketplace = 'ozon' | 'yandex' | 'wb';
 type Scheme = 'FBO' | 'FBS' | 'DBS' | 'FBY' | 'WB' | '';
@@ -260,20 +262,52 @@ export class AllOrdersModule {
     const ac = new AbortController();
     this.abortController = ac;
     const signal = ac.signal;
-    const { since, to, ymFrom, ymTo, wbFrom } = this.getPeriod();
 
     this.loading = true;
+    this.orders = [];
     this.render();
 
-    const unified: UnifiedOrder[] = [];
+    const { since, to } = this.getPeriod();
+    const startTs = new Date(since).getTime();
+    const endTs   = new Date(to).getTime();
+    const days    = (endTs - startTs) / 86_400_000;
+
+    // 7 дней — прямой API (нужны активные заказы в реальном времени).
+    // 30/90 дней — через кэш (прошлые месяцы из Supabase + текущий из API).
+    if (days <= 8) {
+      await this._loadFromApi(ac, signal);
+    } else {
+      await this._loadFromCache(ac, signal, new Date(since), new Date(to));
+    }
+  }
+
+  /** Прямая загрузка из API (7-дневный период, операционный режим). */
+  private async _loadFromApi(ac: AbortController, signal: AbortSignal): Promise<void> {
+    const { since, to, ymFrom, ymTo, wbFrom } = this.getPeriod();
+
+    let remaining = this.ozonStores.length + this.yandexStores.length + this.wbStores.length;
+    if (remaining === 0) { this.loading = false; this.render(); return; }
+
+    const addBatch = (batch: UnifiedOrder[]) => {
+      if (this.abortController !== ac || !batch.length) return;
+      this.orders = [...this.orders, ...batch].sort(
+        (a, b) => parseDateTs(b.created_at) - parseDateTs(a.created_at),
+      );
+    };
+    const storeComplete = () => {
+      if (this.abortController !== ac) return;
+      remaining--;
+      if (remaining <= 0) this.loading = false;
+      this.render();
+    };
 
     // ── Ozon: FBS + FBO ─────────────────────────────────────────
     const ozonPromises = this.ozonStores.map(async (store, idx) => {
       const creds = { client_id: store.client_id, api_key: store.api_key };
       const color = this.ozonColors[idx % this.ozonColors.length];
       const seen = new Set<string>();
+      const batch: UnifiedOrder[] = [];
 
-      // FBS/RFBS/DBS orders (cursor-based v4)
       try {
         const fbsPostings = await fetchAllPagesByCursor(
           (lim, cursor, sig) => ozonOrdersApi.getFbsPostings(creds, since, to, null, lim, cursor, sig),
@@ -285,13 +319,12 @@ export class AllOrdersModule {
           p.store_id = store.id;
           const scheme = ozonSchemeToLabel(p.delivery_scheme);
           const canAct = scheme !== 'FBO' && ['awaiting_packaging', 'awaiting_deliver'].includes(p.status);
-          unified.push(this.toUnified(p, 'ozon', store.name, store.id, color, scheme, canAct));
+          batch.push(this.toUnified(p, 'ozon', store.name, store.id, color, scheme, canAct));
         }
       } catch (err: any) {
         if (err?.name !== 'AbortError') console.error(`[AllOrders] Ozon FBS ${store.name}:`, err.message);
       }
 
-      // FBO orders (offset-based v3)
       try {
         const fboPostings = await fetchAllPages(
           (lim, offset, sig) => ozonOrdersApi.getFboPostings(creds, since, to, lim, offset as number, sig),
@@ -301,23 +334,27 @@ export class AllOrdersModule {
           if (seen.has(p.posting_number)) continue;
           seen.add(p.posting_number);
           p.store_id = store.id;
-          unified.push(this.toUnified(p, 'ozon', store.name, store.id, color, 'FBO', false));
+          batch.push(this.toUnified(p, 'ozon', store.name, store.id, color, 'FBO', false));
         }
       } catch (err: any) {
         if (err?.name !== 'AbortError') console.error(`[AllOrders] Ozon FBO ${store.name}:`, err.message);
       }
+
+      addBatch(batch);
+      storeComplete();
     });
 
     // ── Yandex ──────────────────────────────────────────────────
     const yandexPromises = this.yandexStores.map(async (store, idx) => {
       const color = this.ymColors[idx % this.ymColors.length];
       const scheme = detectYandexScheme(store);
+      const batch: UnifiedOrder[] = [];
       try {
         const orders = await fetchAllYandexOrders(store, ymFrom, ymTo, signal);
         for (const o of orders) {
           const canAct = scheme !== 'FBY' && ['PROCESSING', 'DELIVERY'].includes(o.status);
           const first = o.items[0];
-          unified.push({
+          batch.push({
             marketplace: 'yandex',
             id: String(o.id),
             status: o.status,
@@ -340,18 +377,21 @@ export class AllOrdersModule {
       } catch (err: any) {
         if (err?.name !== 'AbortError') console.error(`[AllOrders] Yandex ${store.name}:`, err.message);
       }
+      addBatch(batch);
+      storeComplete();
     });
 
     // ── WB ──────────────────────────────────────────────────────
     const wbPromises = this.wbStores.map(async (store, idx) => {
       const color = this.wbColors[idx % this.wbColors.length];
-      if (isWbCoolingDown()) return; // WB rate-limited — пропускаем, Ozon/YM грузятся независимо
+      if (isWbCoolingDown()) { storeComplete(); return; }
+      const batch: UnifiedOrder[] = [];
       try {
         const orders = await fetchAllWbOrders(store, wbFrom, signal);
         for (const o of orders) {
           const first = o.items[0];
           const canAct = ['new', 'confirm'].includes(o.status);
-          unified.push({
+          batch.push({
             marketplace: 'wb',
             id: String(o.id),
             status: o.status,
@@ -374,15 +414,123 @@ export class AllOrdersModule {
       } catch (err: any) {
         if (err?.name !== 'AbortError') console.error(`[AllOrders] WB ${store.name}:`, err.message);
       }
+      addBatch(batch);
+      storeComplete();
     });
 
     await Promise.all([...ozonPromises, ...yandexPromises, ...wbPromises]);
+  }
 
-    if (this.abortController !== ac) return;
+  /** Загрузка через кэш (30/90-дневные периоды — кэш + текущий месяц из API). */
+  private async _loadFromCache(
+    ac: AbortController,
+    signal: AbortSignal,
+    start: Date,
+    end: Date,
+  ): Promise<void> {
+    try {
+      const { ozonPostings, yandexOrders, wbOrders } = await orderSyncService.queryOrders(
+        null, start, end, signal,
+      );
 
-    this.orders = unified.sort((a, b) => parseDateTs(b.created_at) - parseDateTs(a.created_at));
-    this.loading = false;
-    this.render();
+      if (this.abortController !== ac) return;
+
+      const startTs = start.getTime();
+      const endTs   = end.getTime();
+
+      const batch: UnifiedOrder[] = [];
+
+      // Ozon
+      const seenOzon = new Set<string>();
+      for (const store of this.ozonStores) {
+        const idx = this.ozonStores.indexOf(store);
+        const color = this.ozonColors[idx % this.ozonColors.length];
+        for (const p of ozonPostings) {
+          if (p.store_id !== store.id) continue;
+          if (seenOzon.has(p.posting_number)) continue;
+          seenOzon.add(p.posting_number);
+          const ts = new Date(p.created_at).getTime();
+          if (ts < startTs || ts > endTs) continue;
+          const scheme = ozonSchemeToLabel(p.delivery_scheme);
+          const canAct = scheme !== 'FBO' && ['awaiting_packaging', 'awaiting_deliver'].includes(p.status);
+          batch.push(this.toUnified(p, 'ozon', store.name, store.id, color, scheme, canAct));
+        }
+      }
+
+      // Yandex
+      for (const store of this.yandexStores) {
+        const idx = this.yandexStores.indexOf(store);
+        const color = this.ymColors[idx % this.ymColors.length];
+        const scheme = detectYandexScheme(store);
+        for (const o of yandexOrders) {
+          if ((o as any).store_id && (o as any).store_id !== store.id) continue;
+          const ts = parseDateTs(o.creation_date);
+          if (ts < startTs || ts > endTs) continue;
+          const canAct = scheme !== 'FBY' && ['PROCESSING', 'DELIVERY'].includes(o.status);
+          const first = o.items[0];
+          batch.push({
+            marketplace: 'yandex',
+            id: String(o.id),
+            status: o.status,
+            statusLabel: YM_STATUS_LABELS[o.status] ?? o.status,
+            statusCss: YM_STATUS_CSS[o.status] ?? 'ord-s-cancelled',
+            scheme,
+            created_at: o.creation_date,
+            storeName: store.name,
+            storeId: store.id,
+            storeColor: color,
+            total: o.total,
+            currency: o.currency_code === 'RUR' ? 'RUB' : o.currency_code,
+            itemsCount: o.items.reduce((s, i) => s + i.count, 0),
+            firstOfferId: first?.offer_id ?? '',
+            firstName: first?.name ?? '',
+            canAct,
+            raw: o,
+          });
+        }
+      }
+
+      // WB
+      for (const store of this.wbStores) {
+        const idx = this.wbStores.indexOf(store);
+        const color = this.wbColors[idx % this.wbColors.length];
+        for (const o of wbOrders) {
+          if (o.store_id !== store.id) continue;
+          const ts = parseDateTs(o.created_at);
+          if (ts < startTs || ts > endTs) continue;
+          const first = o.items[0];
+          const canAct = ['new', 'confirm'].includes(o.status);
+          batch.push({
+            marketplace: 'wb',
+            id: String(o.id),
+            status: o.status,
+            statusLabel: WB_STATUS_LABELS[o.status] ?? o.status,
+            statusCss: WB_STATUS_CSS[o.status] ?? 'ord-s-cancelled',
+            scheme: 'FBS',
+            created_at: o.created_at,
+            storeName: store.name,
+            storeId: store.id,
+            storeColor: color,
+            total: o.total,
+            currency: o.currency_code,
+            itemsCount: o.items.reduce((s, i) => s + i.count, 0),
+            firstOfferId: first?.vendor_code ?? '',
+            firstName: first?.name ?? '',
+            canAct,
+            raw: o,
+          });
+        }
+      }
+
+      this.orders = batch.sort((a, b) => parseDateTs(b.created_at) - parseDateTs(a.created_at));
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') console.error('[AllOrders] cache load:', err.message);
+    } finally {
+      if (this.abortController === ac) {
+        this.loading = false;
+        this.render();
+      }
+    }
   }
 
   private toUnified(p: OzonPosting, mp: Marketplace, storeName: string, storeId: string, color: string, scheme: Scheme, canAct: boolean): UnifiedOrder {
@@ -441,7 +589,18 @@ export class AllOrdersModule {
 
   setSearch(q: string): void {
     this.search = q;
-    this.render();
+    const body = this.container.querySelector<HTMLElement>('#ord-body');
+    if (body) {
+      const filtered = this.getFiltered();
+      body.innerHTML = this.renderContent(filtered);
+      const countEl = this.container.querySelector<HTMLElement>('#ord-count-str');
+      if (countEl) {
+        const total = filtered.reduce((s, o) => s + o.total, 0);
+        countEl.textContent = `${filtered.length.toLocaleString('ru')} заказов · ${Math.round(total).toLocaleString('ru')} ₽`;
+      }
+    } else {
+      this.render();
+    }
   }
 
   refresh(): void {
@@ -741,6 +900,7 @@ export class AllOrdersModule {
         <span class="ozo-pill" style="display:inline-flex;align-items:center;gap:6px">
           <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${o.storeColor}"></span>
           ${this.esc(o.storeName)}
+          ${copyButton(o.storeName, 'Копировать название магазина')}
         </span>
       </div>`;
 
@@ -786,7 +946,10 @@ export class AllOrdersModule {
           return `<div class="ozo-prod-card">
             ${thumb}
             <div class="ozo-prod-info">
-              <div class="ozo-prod-name" title="${this.esc(name)}">${this.esc(name)}</div>
+              <div style="display:flex;align-items:flex-start;gap:4px">
+                <div class="ozo-prod-name" style="min-width:0" title="${this.esc(name)}">${this.esc(name)}</div>
+                ${copyButton(name, 'Копировать название')}
+              </div>
               <div class="ozo-prod-sku">
                 <span class="oz-sku-chip" onclick="window.allOrdersModule.copyText('${this.esc(p.offer_id)}', this)">
                   <svg class="oz-sku-chip-ic" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="8" height="9" rx="1"/><path d="M2 10V2a1 1 0 0 1 1-1h7"/></svg>
@@ -810,7 +973,7 @@ export class AllOrdersModule {
     const actionsBlock = this.buildActionsHtml(o);
 
     return `
-      <div class="ozo-modal">
+      <div class="ozo-modal" data-mp="${o.marketplace}">
         <div class="ozo-modal-head">
           <div style="min-width:0;flex:1">
             <div class="ozo-modal-title ozo-modal-title-copy"
@@ -821,7 +984,7 @@ export class AllOrdersModule {
             ${subtitle}
           </div>
           <button id="aoo-modal-close" class="ozo-modal-close" title="Закрыть (Esc)">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="width:14px;height:14px"><path d="M2 2l10 10M12 2L2 12"/></svg>
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px"><path d="M2 2l10 10M12 2L2 12"/></svg>
           </button>
         </div>
         <div class="ozo-modal-body"><div class="ozo-modal-content">${infoBlock}${productsBlock}${actionsBlock}</div></div>
@@ -830,7 +993,7 @@ export class AllOrdersModule {
 
   private buildActionsHtml(o: UnifiedOrder): string {
     if (o.scheme === 'FBO' || o.scheme === 'FBY') {
-      return `<div style="padding:16px 0;text-align:center;color:rgba(255,255,255,0.3);font-size:13px">
+      return `<div style="padding:16px 24px 20px;font-size:13px;color:var(--muted);border-top:1px solid var(--border)">
         ${o.scheme === 'FBO' ? 'Ozon' : 'Яндекс'} управляет фулфилментом — действия недоступны
       </div>`;
     }
@@ -880,11 +1043,11 @@ export class AllOrdersModule {
     if (!buttons.trim()) return '';
 
     return `
-      <div style="margin-top:16px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.06)">
-        <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px">Действия</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <div class="ozo-modal-actions">
+        <div class="ozo-modal-actions-label">Действия</div>
+        <div class="ozo-modal-actions-row">
           ${buttons}
-          <span id="aoo-action-status" style="font-size:12px;color:rgba(255,255,255,0.3)"></span>
+          <span id="aoo-action-status" class="ozo-modal-actions-status"></span>
         </div>
       </div>`;
   }
@@ -952,6 +1115,12 @@ export class AllOrdersModule {
 
   render(): void {
     if (!this.ozonStores.length && !this.yandexStores.length && !this.wbStores.length) { this.renderEmpty(); return; }
+
+    // Сохраняем фокус поиска до пересоздания DOM
+    const activeEl = document.activeElement as HTMLInputElement | null;
+    const searchFocused = activeEl?.classList.contains('search-input') && this.container.contains(activeEl);
+    const selStart = searchFocused ? activeEl!.selectionStart : null;
+    const selEnd   = searchFocused ? activeEl!.selectionEnd   : null;
 
     const filtered = this.getFiltered();
     const totalSum = filtered.reduce((s, o) => s + o.total, 0);
@@ -1034,14 +1203,23 @@ export class AllOrdersModule {
             <input class="search-input" placeholder="Номер, артикул…" value="${this.esc(this.search)}"
               oninput="window.allOrdersModule.setSearch(this.value)">
           </div>
-          <span class="oz-filter-count">${filtered.length.toLocaleString('ru')} заказов · ${Math.round(totalSum).toLocaleString('ru')} ₽</span>
+          <span class="oz-filter-count" id="ord-count-str">${filtered.length.toLocaleString('ru')} заказов · ${Math.round(totalSum).toLocaleString('ru')} ₽</span>
         </div>
 
         <!-- Контент -->
-        <div class="oz-body" style="flex:1;overflow:auto;padding-bottom:90px">
+        <div class="oz-body" id="ord-body" style="flex:1;overflow:auto;padding-bottom:90px">
           ${this.renderContent(filtered)}
         </div>
       </div>`;
+
+    // Восстанавливаем фокус поиска после пересоздания DOM
+    if (searchFocused) {
+      const inp = this.container.querySelector<HTMLInputElement>('.search-input');
+      if (inp) {
+        inp.focus();
+        if (selStart !== null && selEnd !== null) inp.setSelectionRange(selStart, selEnd);
+      }
+    }
   }
 
   private renderContent(rows: UnifiedOrder[]): string {

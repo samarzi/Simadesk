@@ -113,9 +113,20 @@ export class AuthModule {
 
     // Dev bypass
     if (IS_DEV_AUTH) {
-      document.getElementById('dev-login-btn')?.addEventListener('click', () => {
-        authService.devLogin();
-        this.success();
+      document.getElementById('dev-login-btn')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget as HTMLButtonElement;
+        this.showError('');
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+        try {
+          await authService.devLogin();
+          this.success();
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Ошибка dev-входа. Смотри консоль.';
+          this.showError(msg);
+          btn.disabled = false;
+          btn.style.opacity = '1';
+        }
       });
     }
 

@@ -3,29 +3,31 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files
+# Build args (передаются из docker-compose)
+ARG VITE_SUPA_URL
+ARG VITE_SUPA_KEY
+ARG VITE_TG_BOT_USERNAME
+ARG VITE_DEV_AUTH=false
+
+ENV VITE_SUPA_URL=$VITE_SUPA_URL
+ENV VITE_SUPA_KEY=$VITE_SUPA_KEY
+ENV VITE_TG_BOT_USERNAME=$VITE_TG_BOT_USERNAME
+ENV VITE_DEV_AUTH=$VITE_DEV_AUTH
+
 COPY package*.json ./
+RUN npm ci
 
-# Install dependencies
-RUN npm ci --only=production
-
-# Copy source code
 COPY . .
-
-# Build the application
 RUN npm run build
 
 # Production stage
 FROM nginx:alpine
 
-# Copy built assets from builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Copy nginx configuration
-COPY nginx.conf /etc/nginx/nginx.conf
+# Внутренний nginx — только SPA, без SSL (SSL на внешнем gateway)
+COPY nginx-internal.conf /etc/nginx/nginx.conf
 
-# Expose port
 EXPOSE 80
 
-# Start nginx
 CMD ["nginx", "-g", "daemon off;"]

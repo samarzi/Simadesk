@@ -2,6 +2,8 @@ import { I } from '@/utils/icons';
 import { MP_LABEL } from '../types';
 import type { Mp, UnifiedProduct } from '../types';
 import { esc } from '../utils';
+import { copyButton } from '@/utils/copyButton';
+import type { ProducerCostLink } from '@/services/costProducerLinks';
 
 export interface CostEntry { vendorCode: string; cost: number }
 
@@ -14,30 +16,18 @@ export interface CostsTabProps {
   soldVendorCodes: Set<string> | null;
   getCost: (vendorCode: string) => number | null | undefined;
   allCostEntries: CostEntry[];
+  /** Привязки к производителям: ключ — vendorCode lower. */
+  producerLinks: Record<string, ProducerCostLink>;
+  /** Артикулы у которых есть доступная себестоимость от производителя (для кнопки «привязать»). */
+  producerCostMap: Map<string, { cost: number; producerProductId: string; producerName: string }>;
 }
 
 export function renderCosts(p: CostsTabProps): string {
   const catalogKeys = new Set(p.products.map(q => q.vendorCode.trim().toLowerCase()));
   const orphanEntries = p.allCostEntries.filter(e => !catalogKeys.has(e.vendorCode.trim().toLowerCase()));
-
-  type Row = { vendorCode: string; title: string; variants: UnifiedProduct['variants']; orphan: boolean };
-  const allRows: Row[] = [
-    ...p.products.map(q => ({ vendorCode: q.vendorCode, title: q.title, variants: q.variants, orphan: false })),
-    ...orphanEntries.map(e => ({ vendorCode: e.vendorCode, title: '', variants: [] as UnifiedProduct['variants'], orphan: true })),
-  ];
-
-  const q = p.costsSearch.toLowerCase().trim();
-  const filtered = allRows.filter(r => {
-    if (p.costsMpFilter && !r.orphan && !r.variants.some(v => v.mp === p.costsMpFilter)) return false;
-    if (p.costsMpFilter && r.orphan) return false;
-    if (q && !`${r.vendorCode} ${r.title}`.toLowerCase().includes(q)) return false;
-    return true;
-  });
-
   const catalogCount = p.products.length;
   const withCost = p.products.filter(pr => p.getCost(pr.vendorCode) != null).length;
   const withoutCost = catalogCount - withCost;
-  const allFilteredSelected = filtered.length > 0 && filtered.every(r => p.costsSelected.has(r.vendorCode.toLowerCase()));
   const pct = catalogCount > 0 ? Math.round(withCost / catalogCount * 100) : 0;
 
   return `
@@ -107,6 +97,32 @@ export function renderCosts(p: CostsTabProps): string {
       </div>
     </div>
 
+    <div id="rpr-costs-host">${renderCostsInner(p)}</div>
+  `;
+}
+
+/** Только фильтры + таблица — обновляется при поиске без потери фокуса на поле ввода. */
+export function renderCostsInner(p: CostsTabProps): string {
+  const catalogKeys = new Set(p.products.map(q => q.vendorCode.trim().toLowerCase()));
+  const orphanEntries = p.allCostEntries.filter(e => !catalogKeys.has(e.vendorCode.trim().toLowerCase()));
+
+  type Row = { vendorCode: string; title: string; variants: UnifiedProduct['variants']; orphan: boolean };
+  const allRows: Row[] = [
+    ...p.products.map(q => ({ vendorCode: q.vendorCode, title: q.title, variants: q.variants, orphan: false })),
+    ...orphanEntries.map(e => ({ vendorCode: e.vendorCode, title: '', variants: [] as UnifiedProduct['variants'], orphan: true })),
+  ];
+
+  const q = p.costsSearch.toLowerCase().trim();
+  const filtered = allRows.filter(r => {
+    if (p.costsMpFilter && !r.orphan && !r.variants.some(v => v.mp === p.costsMpFilter)) return false;
+    if (p.costsMpFilter && r.orphan) return false;
+    if (q && !`${r.vendorCode} ${r.title}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const allFilteredSelected = filtered.length > 0 && filtered.every(r => p.costsSelected.has(r.vendorCode.toLowerCase()));
+
+  return `
     <!-- ФИЛЬТРЫ + МАССОВАЯ ОПЕРАЦИЯ -->
     <div style="display:flex;align-items:center;gap:7px;padding:10px 20px;background:var(--bg);border-bottom:1px solid var(--border);flex-wrap:wrap">
       <input class="rpr-search" type="search" placeholder="Поиск по артикулу или названию…"
@@ -161,6 +177,10 @@ export function renderCosts(p: CostsTabProps): string {
               const prices = r.variants.filter(v => v.price != null).map(v => v.price as number);
               const minP = prices.length ? Math.min(...prices) : null;
               const maxP = prices.length ? Math.max(...prices) : null;
+              const vcLower = r.vendorCode.trim().toLowerCase();
+              const link = p.producerLinks[vcLower] ?? null;
+              const isProducerLinked = !!link;
+              const availableFromProducer = !isProducerLinked ? (p.producerCostMap.get(vcLower) ?? null) : null;
               return `
                 <tr style="${sel ? 'background:rgba(212,240,0,.04)' : r.orphan ? 'background:rgba(245,158,11,.03)' : ''}">
                   <td style="padding:7px 16px">
@@ -169,9 +189,9 @@ export function renderCosts(p: CostsTabProps): string {
                       ${sel ? '<svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="black" stroke-width="2.2"><path d="M2 6l3 3 5-6"/></svg>' : ''}
                     </div>
                   </td>
-                  <td style="font-family:monospace;font-size:11.5px">${esc(r.vendorCode)}</td>
+                  <td style="display:flex;align-items:center;gap:4px;font-family:monospace;font-size:11.5px">${esc(r.vendorCode)}${copyButton(r.vendorCode, 'Копировать артикул')}</td>
                   <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text2)">
-                    ${r.orphan ? renderOrphanLabel(r.vendorCode, p.soldVendorCodes) : esc(r.title)}
+                    ${r.orphan ? renderOrphanLabel(r.vendorCode, p.soldVendorCodes) : `<span style="display:inline-flex;align-items:center;gap:4px;max-width:100%">${esc(r.title)}${copyButton(r.title, 'Копировать название')}</span>`}
                   </td>
                   <td style="text-align:center">
                     <div style="display:flex;justify-content:center;gap:2px">
@@ -187,10 +207,27 @@ export function renderCosts(p: CostsTabProps): string {
                       : '—'}
                   </td>
                   <td style="padding:7px 16px">
-                    <div style="display:flex;justify-content:flex-end;align-items:center;gap:5px">
+                    <div style="display:flex;justify-content:flex-end;align-items:center;gap:5px;flex-wrap:wrap">
+                      ${isProducerLinked ? `
+                        <span title="Себестоимость привязана к производителю «${esc(link!.producerName)}»"
+                          style="display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:4px;
+                            background:rgba(99,102,241,.12);color:#818cf8;font-size:10px;font-weight:600;
+                            white-space:nowrap;flex-shrink:0;cursor:default">
+                          🔗 ${esc(link!.producerName)}
+                        </span>
+                      ` : ''}
                       <input type="number" min="0" step="1" value="${cost ?? ''}" placeholder="не задана"
-                        onchange="window.repricerModule.setCost('${esc(r.vendorCode)}',+this.value)"
+                        onchange="window.repricerModule.setCostWithProducerCheck('${esc(r.vendorCode)}',+this.value)"
                         class="rpr-cost-input ${cost != null ? 'has-value' : 'missing'}">
+                      ${availableFromProducer ? `
+                        <button onclick="window.repricerModule.relinkFromProducer('${esc(r.vendorCode)}')"
+                          title="Привязать себестоимость от производителя: ${availableFromProducer.cost.toLocaleString('ru')} ₽ (${esc(availableFromProducer.producerName)})"
+                          style="display:inline-flex;align-items:center;gap:3px;padding:3px 7px;border:1px solid rgba(99,102,241,.35);
+                            border-radius:5px;background:rgba(99,102,241,.08);cursor:pointer;color:#818cf8;font-size:10px;
+                            font-weight:600;white-space:nowrap;flex-shrink:0">
+                          🔗 от производителя
+                        </button>
+                      ` : ''}
                       ${r.orphan ? `
                         <button onclick="if(confirm('Удалить запись?'))window.repricerModule.setCost('${esc(r.vendorCode)}',NaN)"
                           title="Удалить"

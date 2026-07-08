@@ -130,7 +130,7 @@ html.light .an2 {
 }
 .an2-filter-chip:hover { color: var(--text); border-color: var(--border2); }
 .an2-filter-chip.on {
-  color: var(--bg); background: var(--accent); border-color: transparent;
+  color: #0a0a0a; background: var(--accent); border-color: transparent;
 }
 .an2-filter-chip .dot {
   width: 6px; height: 6px; border-radius: 50%; display: inline-block;
@@ -363,6 +363,13 @@ html.light .an2 {
 .an2-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .an2-table .num.pos { color: var(--green); }
 .an2-table .num.neg { color: var(--red); }
+/* Заказ ещё не рассчитан МП (нет финотчёта) — числа предварительные, не финал */
+.an2-table .num.an2-pending { color: var(--text3) !important; }
+.an2-pending-badge {
+  display: inline-block; margin-left: 5px; font-size: 9px; font-weight: 600;
+  color: var(--text3); background: var(--bg3); border-radius: 4px; padding: 1px 5px;
+  vertical-align: middle; text-transform: none;
+}
 .an2-table .mp-badge {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 10px; font-weight: 700; padding: 2px 7px;
@@ -407,7 +414,62 @@ html.light .an2 {
   border-radius: 50%;
   animation: an-spin .9s linear infinite;
 }
-.an2-loader-text { font-size: 11px; color: var(--text2); letter-spacing: .5px; }
+.an2-loader-text    { font-size: 11px; color: var(--text2); letter-spacing: .5px; }
+.an2-loader-elapsed { font-size: 11px; color: var(--text3); font-variant-numeric: tabular-nums; }
+
+/* Прогресс-бар во время загрузки данных */
+.an2-load-prog {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  min-width: 260px; max-width: 340px; width: 100%;
+}
+.an2-load-prog-label {
+  font-size: 12px; color: var(--text2); text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.an2-load-prog-bar-wrap {
+  width: 100%; height: 4px;
+  background: var(--bg3); border-radius: 2px; overflow: hidden;
+}
+.an2-load-prog-bar {
+  height: 100%; background: var(--accent); border-radius: 2px;
+  transition: width .25s ease;
+  box-shadow: 0 0 6px var(--accent-dim);
+}
+.an2-load-prog-stats {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  justify-content: center; font-size: 11px;
+}
+.an2-load-prog-done   { color: var(--text3); }
+.an2-load-prog-cached { color: var(--green); font-weight: 600; }
+.an2-load-prog-api    { color: var(--accent); font-weight: 600; }
+.an2-load-prog-err    { color: var(--red); font-weight: 600; }
+.an2-load-prog-time   { color: var(--text3); font-variant-numeric: tabular-nums; }
+
+/* Статус-чип после загрузки (кэш / API / время) */
+.an2-load-meta {
+  font-size: 10px; color: var(--text3);
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 3px 8px;
+  white-space: nowrap; cursor: default;
+  transition: color .15s, border-color .15s;
+}
+.an2-load-meta:hover { color: var(--text2); border-color: var(--border2); }
+
+/* Бейдж фонового синка */
+.an2-sync-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 10px; color: var(--text3);
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 3px 8px;
+  white-space: nowrap;
+}
+.an2-sync-badge-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 4px var(--accent);
+  animation: an-pulse-dot 1.8s ease-in-out infinite;
+  flex-shrink: 0;
+}
 
 /* Top progress-bar при подгрузке (когда данные уже есть на экране) */
 .an2-topbar {

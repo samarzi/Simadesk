@@ -8,6 +8,7 @@ import { YandexStore, YandexOrder, YandexOrderStatus, YandexProduct } from '@/ty
 import { yandexDb } from '@/services/yandexDb';
 import { fetchAllYandexOrders, yandexApi } from '@/services/yandexApi';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 
 const STATUS_LABELS: Record<string, string> = {
   PROCESSING:           'В обработке',
@@ -291,7 +292,7 @@ export class YandexOrdersModule {
           <td onclick="event.stopPropagation()" style="padding:8px 10px"><span class="oz-sku-chip" onclick="window.yandexOrdersModule.copyText('${o.id}', this)">
             <svg class="oz-sku-chip-ic" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="8" height="9" rx="1"/><path d="M2 10V2a1 1 0 0 1 1-1h7"/></svg>
             <span class="oz-sku-chip-text">${o.id}</span></span>
-            <div class="oz-muted" style="font-size:11px;margin-top:3px">${this.esc(storeName)}</div>
+            <div class="oz-muted" style="font-size:11px;margin-top:3px;display:flex;align-items:center;gap:4px">${this.esc(storeName)}${copyButton(storeName, 'Копировать название магазина')}</div>
           </td>
           <td><span class="oz-badge ${STATUS_CSS[o.status] ?? 'ord-s-cancelled'}">${STATUS_LABELS[o.status] ?? o.status}</span></td>
           <td class="oz-muted">${fmtDateTime(o.creation_date)}</td>
@@ -442,6 +443,7 @@ export class YandexOrdersModule {
         <span class="ozo-pill" style="display:inline-flex;align-items:center;gap:6px">
           <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fc3f1d"></span>
           ${this.esc(storeName)}
+          ${copyButton(storeName, 'Копировать название магазина')}
         </span>
         ${isNew ? '<span class="ord-new-badge">Новый</span>' : ''}
       </div>`;
@@ -518,7 +520,10 @@ export class YandexOrdersModule {
           return `<div class="ozo-prod-card">
             ${thumb}
             <div class="ozo-prod-info">
-              <div class="ozo-prod-name" title="${this.esc(name)}">${this.esc(name)}</div>
+              <div style="display:flex;align-items:flex-start;gap:4px">
+                <div class="ozo-prod-name" style="min-width:0" title="${this.esc(name)}">${this.esc(name)}</div>
+                ${copyButton(name, 'Копировать название')}
+              </div>
               <div class="ozo-prod-sku">
                 <span class="oz-sku-chip" onclick="window.yandexOrdersModule.copyText('${this.esc(offerId)}', this)">
                   <svg class="oz-sku-chip-ic" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="8" height="9" rx="1"/><path d="M2 10V2a1 1 0 0 1 1-1h7"/></svg>

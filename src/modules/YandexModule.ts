@@ -7,8 +7,10 @@
 
 import { debug } from '@/utils/debug';
 import { I } from '@/utils/icons';
+import { copyButton } from '@/utils/copyButton';
 import { YandexStore, YandexProduct } from '@/types/yandex';
 import { yandexDb } from '@/services/yandexDb';
+import { refreshNavLockState } from '@/modules/NavigationModule';
 import { yandexApi, fetchAllYandexProducts } from '@/services/yandexApi';
 
 type View = 'products' | 'stores';
@@ -182,15 +184,18 @@ export class YandexModule {
               <svg class="oz-sku-chip-ic" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="8" height="9" rx="1"/><path d="M2 10V2a1 1 0 0 1 1-1h7"/></svg>
               <span class="oz-sku-chip-text">${this.esc(p.offer_id)}</span>
             </span>
-            ${p.vendor_code && p.vendor_code !== p.offer_id ? `<div class="oz-muted" style="font-size:11px;margin-top:3px">арт.: ${this.esc(p.vendor_code)}</div>` : ''}
+            ${p.vendor_code && p.vendor_code !== p.offer_id ? `<div class="oz-muted" style="font-size:11px;margin-top:3px;display:flex;align-items:center;gap:4px">арт.: ${this.esc(p.vendor_code)}${copyButton(p.vendor_code, 'Копировать артикул')}</div>` : ''}
           </td>
           <td style="max-width:400px">
-            <div style="font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical" title="${this.esc(p.name)}">
-              ${this.esc(p.name) || 'Без названия'}
+            <div style="display:flex;align-items:flex-start;gap:4px">
+              <div style="min-width:0;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical" title="${this.esc(p.name)}">
+                ${this.esc(p.name) || 'Без названия'}
+              </div>
+              ${p.name ? copyButton(p.name, 'Копировать название') : ''}
             </div>
             ${p.vendor ? `<div class="oz-muted" style="font-size:11px;margin-top:2px">${this.esc(p.vendor)}</div>` : ''}
           </td>
-          <td><span style="font-size:11px;color:var(--muted)">${this.esc(storeName)}</span></td>
+          <td><span style="font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:4px">${this.esc(storeName)}${copyButton(storeName, 'Копировать название магазина')}</span></td>
           <td style="text-align:right;white-space:nowrap;font-weight:700">${price}</td>
           <td style="text-align:center" class="${stockClass}">
             <span style="font-weight:700">${stockTotal}</span>
@@ -476,6 +481,7 @@ export class YandexModule {
         });
       }
       this.stores = await yandexDb.getStores();
+      refreshNavLockState();
       this.addBusy = false;
       if (keyInp) keyInp.value = '';
       if (nameInp) nameInp.value = '';

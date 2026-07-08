@@ -3,7 +3,7 @@ export type AppPage =
   | 'home' | 'products' | 'analytics' | 'settings-hub' | 'settings' | 'profile' | 'orders' | 'marketplaces'
   | 'ozon' | 'yandex' | 'wb'
   | 'orders-ozon' | 'orders-yandex' | 'orders-wb'
-  | 'repricer' | 'stock' | 'catalog' | 'producers'
+  | 'repricer' | 'stock' | 'catalog' | 'producers' | 'products-hub'
   | 'sku-audit' | 'reviews' | 'chats' | 'logs' | 'automation' | 'tasks';
 
 export interface Box {

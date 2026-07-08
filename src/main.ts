@@ -2,6 +2,7 @@ import './styles/main.css';
 import './styles/ozon.css';
 import './styles/auth.css';
 import './styles/catalog-mp.css';
+import './styles/products-hub.css';
 
 // Apply saved theme immediately (before DOMContentLoaded to avoid flash)
 if (localStorage.getItem('simadesk_theme') === 'light') {
@@ -37,6 +38,15 @@ import { SettingsModule } from './modules/SettingsModule';
 import { StockModule } from './modules/StockModule';
 import { CatalogMpModule } from './modules/CatalogMpModule';
 import { ProducersModule } from './modules/ProducersModule';
+import { ProductsHubModule } from './modules/ProductsHubModule';
+import { orderSyncService } from './services/orderSyncService';
+import { companyService } from './services/companyService';
+
+// Экспортируем функцию получения per-company ключа dock-конфига (используется в inline-скрипте)
+(window as any).getDockStorageKey = () => {
+  const cid = companyService.getActiveId();
+  return cid ? `dock_nav_config_${cid}` : 'dock_nav_config';
+};
 
 // ── Helper: register a section module ─────────────────────────────────────────
 const init = <T>(id: string, factory: (el: HTMLElement) => T, key: string): void => {
@@ -79,11 +89,18 @@ function bootApp(): void {
   init('stock-section',          (el) => new StockModule(el),           'stockModule');
   init('catalog-section',        (el) => new CatalogMpModule(el),       'catalogMpModule');
   init('producers-section',      (el) => new ProducersModule(el),       'producersModule');
+  init('products-hub-section',   (el) => new ProductsHubModule(el),     'productsHubModule');
 
   // Apply dock autohide setting on boot
   if (localStorage.getItem('settings_dock_autohide') === 'on') {
     document.getElementById('app-dock')?.classList.add('dock-autohide');
   }
+
+  // Запускаем фоновую синхронизацию заказов (не блокирует UI)
+  orderSyncService.init().catch(e => console.warn('[boot] orderSyncService:', e));
+
+  // Применяем per-company конфиг dock после того как company стала известна
+  (window as any).applyDockNavConfig?.();
 }
 
 // ── Auth gate ──────────────────────────────────────────────────────────────────
@@ -160,6 +177,7 @@ declare global {
     stockModule: import('./modules/StockModule').StockModule;
     catalogMpModule: import('./modules/CatalogMpModule').CatalogMpModule;
     producersModule: import('./modules/ProducersModule').ProducersModule;
+    productsHubModule: import('./modules/ProductsHubModule').ProductsHubModule;
     taskManagerModule: import('./modules/TaskManagerModule').TaskManagerModule;
     ensureDockExpandedForPage?: (page: string) => void;
     __showMetricTip?: (id: string) => void;

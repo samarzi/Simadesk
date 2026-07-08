@@ -1,6 +1,7 @@
 import { Order, OrderStatus, STATUS_LABEL, STATUS_COLOR, MP_SHORT, MP_COLOR } from '../types';
 import { I } from '@/utils/icons';
 import { fmtMoney, fmtDate, fmtNum, escapeHtml } from '../components/format';
+import { copyButton } from '@/utils/copyButton';
 
 export interface OrdersFilters {
   status: OrderStatus | 'all';
@@ -57,6 +58,10 @@ export function renderOrdersTab(orders: Order[], f: OrdersFilters): string {
 
 function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
   const filtered = orders.filter(o => {
+    // Осиротевшие транзакции (упаковка/сервис без реального заказа от МП) —
+    // не полноценный заказ, показывать строкой не за что. Их сумма всё равно
+    // учтена в сводных расходах (kpiAggregator не фильтрует is_orphan).
+    if (o.is_orphan) return false;
     if (f.status !== 'all' && o.status !== f.status) return false;
     if (f.mp !== 'all' && o.mp !== f.mp) return false;
     if (f.search) {
@@ -95,8 +100,11 @@ function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
         </tr>`);
     }
     const expensesMp = o.commission + o.logistics + o.logistics_return + o.services;
-    const goods = o.items.map(it => `${escapeHtml(it.vendor_code)}×${it.quantity}`).join(', ');
+    const goods = o.items.map(it => `<span style="display:inline-flex;align-items:center;gap:2px">${escapeHtml(it.vendor_code)}×${it.quantity}${copyButton(it.vendor_code, 'Копировать артикул')}</span>`).join(', ');
     const safeId = escapeHtml(o.order_id);
+    const pending = o.pending_settlement;
+    const pendingCls = pending ? ' an2-pending' : '';
+    const pendingTitle = pending ? ' title="Финотчёт МП ещё не пришёл — комиссия/логистика неизвестны, цифры предварительные"' : '';
     rowsArr.push(`
       <tr onclick="window.analyticsModule?.openOrder('${safeId}')">
         <td class="an2-col-date">${fmtDate(o.date)}</td>
@@ -120,10 +128,10 @@ function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
         <td class="an2-col-goods">
           <span class="an2-src ${o.source}" title="${o.source === 'real' ? 'финотчёт' : o.source === 'estimated' ? 'расчёт' : 'нет данных'}"></span>${goods}
         </td>
-        <td class="num">${o.revenue > 0 ? fmtMoney(o.revenue) : '—'}</td>
-        <td class="num neg">${expensesMp > 0 ? fmtMoney(expensesMp) : '—'}</td>
-        <td class="num">${o.cogs > 0 ? fmtMoney(o.cogs) : '—'}</td>
-        <td class="num ${o.net_profit >= 0 ? 'pos' : 'neg'}">${o.net_profit !== 0 ? fmtMoney(o.net_profit) : '—'}</td>
+        <td class="num${pendingCls}"${pendingTitle}>${o.revenue > 0 ? fmtMoney(o.revenue) : '—'}${pending ? ' <span class="an2-pending-badge">пока не финал</span>' : ''}</td>
+        <td class="num neg${pendingCls}">${expensesMp > 0 ? fmtMoney(expensesMp) : '—'}</td>
+        <td class="num${pendingCls}">${o.cogs > 0 ? fmtMoney(o.cogs) : '—'}</td>
+        <td class="num${pendingCls} ${!pending && o.net_profit >= 0 ? 'pos' : !pending ? 'neg' : ''}">${o.net_profit !== 0 ? fmtMoney(o.net_profit) : '—'}</td>
       </tr>`);
   }
 

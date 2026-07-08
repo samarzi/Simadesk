@@ -4,6 +4,10 @@
  * Хранит результаты ручной синхронизации с API каждого МП.
  * При сбое API данные остаются в кэше — пользователь видит старые данные.
  * Обновляется ТОЛЬКО вручную (кнопка "Синхронизировать" в Каталоге).
+ *
+ * Хранилище — IndexedDB (фото-урлы и описания могут не влезть в лимит localStorage
+ * ~5MB для магазинов с тысячами SKU). Для синхронного доступа из шаблонов рендера
+ * данные предзагружаются в memCache через preload() перед buildUnified().
  */
 
 import { debug } from '@/utils/debug';
@@ -13,6 +17,8 @@ import { fetchAllYandexProducts } from './yandexApi';
 import { ozonDb }    from './ozonDb';
 import { wbDb }      from './wbDb';
 import { yandexDb }  from './yandexDb';
+import { dimensionsDb } from './dimensionsDb';
+import { isEmpty }   from './dimensionsUnit';
 import type { OzonStore }    from '@/types/ozon';
 import type { WbStore }      from '@/types/wb';
 import type { YandexStore }  from '@/types/yandex';
@@ -37,40 +43,132 @@ interface StoreCache {
   products:  CachedProduct[];
 }
 
-const PREFIX = 'cat_cache_v2_';
+const DB_NAME  = 'simadesk-catalog-cache';
+const DB_STORE = 'stores';
+const LEGACY_PREFIX = 'cat_cache_v2_'; // старый localStorage-кэш, мигрируется при первом preload()
 
-// In-memory cache of parsed localStorage entries — getProduct()/resolveDims() are called
-// once per (store × product) during buildUnified, which would otherwise re-parse the
-// entire store blob from localStorage thousands of times and noticeably lag the UI.
+// In-memory cache, заполняется через preload() перед buildUnified — getProduct()/resolveDims()
+// вызываются синхронно много раз и не могут ждать IndexedDB на каждый вызов.
 const memCache = new Map<string, StoreCache | null>();
+
+// Индекс normalizedVendorCode → CachedProduct по магазину — getProduct() вызывается тысячи раз
+// при buildUnified() на каталоге из нескольких тысяч товаров, поэтому линейный .find() недопустим.
+const productIndex = new Map<string, Map<string, CachedProduct>>();
+
+function buildIndex(storeId: string, products: CachedProduct[]): Map<string, CachedProduct> {
+  const idx = new Map<string, CachedProduct>();
+  for (const p of products) idx.set(p.vendorCode.trim().toLowerCase(), p);
+  productIndex.set(storeId, idx);
+  return idx;
+}
+
+// ── IndexedDB helpers ────────────────────────────────────────────────────────
+
+let dbPromise: Promise<IDBDatabase | null> | null = null;
+
+function openDb(): Promise<IDBDatabase | null> {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise(resolve => {
+    if (typeof indexedDB === 'undefined') { resolve(null); return; }
+    try {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = e => {
+        const db = (e.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE, { keyPath: 'storeId' });
+      };
+      req.onsuccess = e => resolve((e.target as IDBOpenDBRequest).result);
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+  return dbPromise;
+}
+
+function idbGet(db: IDBDatabase, storeId: string): Promise<StoreCache | null> {
+  return new Promise(resolve => {
+    try {
+      const req = db.transaction(DB_STORE, 'readonly').objectStore(DB_STORE).get(storeId);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+}
+
+function idbSet(db: IDBDatabase, entry: StoreCache): Promise<void> {
+  return new Promise(resolve => {
+    try {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).put(entry);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch { resolve(); }
+  });
+}
+
+function idbDelete(db: IDBDatabase, storeId: string): Promise<void> {
+  return new Promise(resolve => {
+    try {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).delete(storeId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch { resolve(); }
+  });
+}
+
+function persist(entry: StoreCache): void {
+  openDb().then(db => {
+    if (db) idbSet(db, entry).catch(e => debug.warn('[catalogCache] idb set failed', e));
+  });
+}
 
 // ── Core cache operations ─────────────────────────────────────────────────────
 
 export const catalogCache = {
+  /**
+   * Загрузить кэш указанных магазинов в память (вызывать перед buildUnified).
+   * При первом обращении мигрирует старые записи из localStorage в IndexedDB.
+   */
+  async preload(storeIds: string[]): Promise<void> {
+    const pending = storeIds.filter(id => !memCache.has(id));
+    if (!pending.length) return;
+    const db = await openDb();
+    for (const storeId of pending) {
+      let entry: StoreCache | null = null;
+      if (db) {
+        try { entry = await idbGet(db, storeId); } catch { entry = null; }
+      }
+      if (!entry) {
+        // Миграция из старого localStorage-кэша
+        try {
+          const raw = localStorage.getItem(LEGACY_PREFIX + storeId);
+          if (raw) {
+            entry = JSON.parse(raw) as StoreCache;
+            localStorage.removeItem(LEGACY_PREFIX + storeId);
+            if (db) idbSet(db, entry).catch(() => {});
+          }
+        } catch { entry = null; }
+      }
+      memCache.set(storeId, entry);
+      if (entry) buildIndex(storeId, entry.products);
+    }
+  },
+
   get(storeId: string): StoreCache | null {
-    if (memCache.has(storeId)) return memCache.get(storeId)!;
-    let parsed: StoreCache | null = null;
-    try {
-      const raw = localStorage.getItem(PREFIX + storeId);
-      parsed = raw ? (JSON.parse(raw) as StoreCache) : null;
-    } catch { parsed = null; }
-    memCache.set(storeId, parsed);
-    return parsed;
+    return memCache.get(storeId) ?? null;
   },
 
   set(storeId: string, products: CachedProduct[]): void {
     const entry: StoreCache = { storeId, syncedAt: new Date().toISOString(), products };
     memCache.set(storeId, entry);
-    try {
-      localStorage.setItem(PREFIX + storeId, JSON.stringify(entry));
-    } catch (e) { console.warn('[catalogCache] set:', e); }
+    buildIndex(storeId, products);
+    persist(entry);
   },
 
   getProduct(storeId: string, vendorCode: string): CachedProduct | null {
     const s = this.get(storeId);
     if (!s) return null;
-    const key = vendorCode.trim().toLowerCase();
-    return s.products.find(p => p.vendorCode.trim().toLowerCase() === key) ?? null;
+    const idx = productIndex.get(storeId) ?? buildIndex(storeId, s.products);
+    return idx.get(vendorCode.trim().toLowerCase()) ?? null;
   },
 
   getSyncedAt(storeId: string): string | null {
@@ -79,19 +177,28 @@ export const catalogCache = {
 
   /** Обновить только фото конкретного товара в кэше (после ручного редактирования). */
   setPhotos(storeId: string, vendorCode: string, photos: string[]): void {
-    const cache = this.get(storeId);
-    if (!cache) return;
+    // Создаём запись кэша, если магазин ещё не синхронизировался — иначе фото
+    //, сохранённые только на стороне МП (без записи в локальную БД), пропадут
+    // из каталога после перезагрузки страницы.
+    const cache = this.get(storeId) ?? { storeId, syncedAt: new Date().toISOString(), products: [] };
     const key = vendorCode.trim().toLowerCase();
-    const existing = cache.products.find(p => p.vendorCode.trim().toLowerCase() === key);
-    if (existing) existing.photos = photos;
-    else cache.products.push({ vendorCode, mpId: '', weight_g: null, length_mm: null, width_mm: null, height_mm: null, photos, description: '', barcode: '' });
+    const idx = productIndex.get(storeId) ?? buildIndex(storeId, cache.products);
+    const existing = idx.get(key);
+    if (existing) {
+      existing.photos = photos;
+    } else {
+      const np: CachedProduct = { vendorCode, mpId: '', weight_g: null, length_mm: null, width_mm: null, height_mm: null, photos, description: '', barcode: '' };
+      cache.products.push(np);
+      idx.set(key, np);
+    }
     memCache.set(storeId, cache);
-    try { localStorage.setItem(PREFIX + storeId, JSON.stringify(cache)); } catch (e) { debug.warn('[catalogCache] swallowed error', e); }
+    persist(cache);
   },
 
   clear(storeId: string): void {
     memCache.delete(storeId);
-    localStorage.removeItem(PREFIX + storeId);
+    localStorage.removeItem(LEGACY_PREFIX + storeId);
+    openDb().then(db => { if (db) idbDelete(db, storeId).catch(() => {}); });
   },
 };
 
@@ -124,6 +231,13 @@ export async function syncOzonStore(
     description: '',
     barcode:     p.barcode ?? '',
   }));
+
+  // Сохраняем в dimensionsDb (читается каталогом как финальный фоллбэк)
+  dimensionsDb.setMany(
+    cached
+      .map(c => ({ vendorCode: c.vendorCode, dims: { weight_g: c.weight_g, length_mm: c.length_mm, width_mm: c.width_mm, height_mm: c.height_mm } }))
+      .filter(e => !isEmpty(e.dims)),
+  );
 
   catalogCache.set(store.id, cached);
 }
@@ -158,6 +272,12 @@ export async function syncYmStore(
     barcode:     '',
   }));
 
+  dimensionsDb.setMany(
+    cached
+      .map(c => ({ vendorCode: c.vendorCode, dims: { weight_g: c.weight_g, length_mm: c.length_mm, width_mm: c.width_mm, height_mm: c.height_mm } }))
+      .filter(e => !isEmpty(e.dims)),
+  );
+
   catalogCache.set(store.id, cached);
 }
 
@@ -186,6 +306,12 @@ export async function syncWbStore(
     description: '',
     barcode:     '',
   }));
+
+  dimensionsDb.setMany(
+    cached
+      .map(c => ({ vendorCode: c.vendorCode, dims: { weight_g: c.weight_g, length_mm: c.length_mm, width_mm: c.width_mm, height_mm: c.height_mm } }))
+      .filter(e => !isEmpty(e.dims)),
+  );
 
   catalogCache.set(store.id, cached);
 }

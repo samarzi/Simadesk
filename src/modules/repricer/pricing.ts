@@ -92,5 +92,7 @@ export function computeTargetPrice(rule: RepricerRule, ctx: PriceContext): numbe
       if (result == null) return null;
       return clampToRule(rule, Math.round(result));
     }
+    default:
+      return null;
   }
 }

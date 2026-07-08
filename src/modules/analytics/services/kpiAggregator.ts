@@ -47,6 +47,21 @@ export function computeKPI(orders: Order[]): KPI {
   let realCount = 0, missingCogsOrders = 0;
 
   for (const o of orders) {
+    switch (o.status) {
+      case 'delivered':   delivered++;  break;
+      case 'processing':
+      case 'in_delivery': processing++; break;
+      case 'returned':    returned++;   break;
+      case 'cancelled':   cancelled++;  break;
+    }
+    if (o.source === 'real') realCount++;
+    if (o.missing_cogs_count > 0) missingCogsOrders++;
+
+    // Финотчёта МП по заказу ещё нет — комиссия/логистика неизвестны, а сам заказ
+    // ещё может быть отменён на ПВЗ. Считаем только для статусов/счётчиков выше,
+    // в денежные суммы не включаем — во избежание завышенной "предварительной" прибыли.
+    if (o.pending_settlement) continue;
+
     if (o.status === 'returned') {
       returns_revenue += o.revenue;
     } else if (o.status === 'cancelled') {
@@ -63,16 +78,6 @@ export function computeKPI(orders: Order[]): KPI {
     if (o.status !== 'cancelled') {
       for (const it of o.items) units_sold += it.quantity;
     }
-
-    switch (o.status) {
-      case 'delivered':   delivered++;  break;
-      case 'processing':
-      case 'in_delivery': processing++; break;
-      case 'returned':    returned++;   break;
-      case 'cancelled':   cancelled++;  break;
-    }
-    if (o.source === 'real') realCount++;
-    if (o.missing_cogs_count > 0) missingCogsOrders++;
   }
 
   const revenue = revenue_gross - returns_revenue;
@@ -97,6 +102,7 @@ export function computeTimeseries(orders: Order[], dateFrom: Date, dateTo: Date)
   const byDay = new Map<string, { revenue: number; expenses: number }>();
   for (const o of orders) {
     if (!o.date) continue;
+    if (o.pending_settlement) continue; // финотчёта ещё нет — не искажаем график предварительными цифрами
     const day = o.date.slice(0, 10);
     const cur = byDay.get(day) ?? { revenue: 0, expenses: 0 };
     if (o.status === 'cancelled') { byDay.set(day, cur); continue; }
@@ -131,6 +137,7 @@ export function computeSkuPerformance(orders: Order[]): SkuPerformance[] {
   const map = new Map<string, Acc>();
   for (const o of orders) {
     if (o.status === 'cancelled') continue;
+    if (o.pending_settlement) continue; // финотчёта ещё нет — не искажаем разбивку по SKU
     const sign = o.status === 'returned' ? -1 : 1;
     // Доли по позиции от заказа: распределяем commission/logistics пропорционально revenue
     const denom = o.items.reduce((s, it) => s + Math.max(0, it.revenue), 0);

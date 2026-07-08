@@ -1,6 +1,47 @@
 import { boxes } from '../stores/appStore';
 import type { AppPage } from '../types';
 import type { App } from '../App';
+import { ozonDb } from '@/services/ozonDb';
+import { yandexDb } from '@/services/yandexDb';
+import { wbDb } from '@/services/wbDb';
+
+/** Разделы, доступные ДО подключения хотя бы одного магазина МП. Всё остальное
+ *  без магазина бессмысленно (пустой каталог/заказы/аналитика и т.п.). */
+const ALLOWED_WITHOUT_STORE = new Set<AppPage>([
+  'marketplaces', 'ozon', 'yandex', 'wb', 'settings', 'settings-hub', 'profile',
+]);
+
+/** dock-item id → закрашивать серым и блокировать клик, пока нет ни одного магазина. */
+const LOCKABLE_NAV_IDS = [
+  'nav-home', 'nav-tasks', 'nav-products',
+  'nav-catalog', 'nav-orders', 'nav-stock', 'nav-producers',
+  'nav-analytics', 'nav-repricer', 'nav-reviews', 'nav-chats',
+  'dock-more-btn', 'nav-sku-audit', 'nav-automation', 'nav-logs',
+];
+
+/** Есть ли хотя бы один подключённый магазин (Ozon/WB/ЯМ) у текущей компании. */
+export async function hasAnyStoreConnected(): Promise<boolean> {
+  const [oz, ym, wb] = await Promise.all([
+    ozonDb.getStores().catch(() => []),
+    yandexDb.getStores().catch(() => []),
+    wbDb.getStores().catch(() => []),
+  ]);
+  return oz.length + ym.length + wb.length > 0;
+}
+
+/**
+ * Красит недоступные (без магазина) пункты дока серым и блокирует клики по ним.
+ * Вызывается при каждой навигации, а также сразу после подключения/отключения
+ * магазина (OzonModule/YandexModule/WbModule, MarketplacesDashboard), чтобы
+ * иконки разблокировались без ожидания следующего перехода.
+ */
+export async function refreshNavLockState(): Promise<boolean> {
+  const hasStore = await hasAnyStoreConnected();
+  for (const id of LOCKABLE_NAV_IDS) {
+    document.getElementById(id)?.classList.toggle('dock-locked', !hasStore);
+  }
+  return hasStore;
+}
 
 export class NavigationModule {
   constructor(private app: App) {}
@@ -64,7 +105,7 @@ export class NavigationModule {
       'profile-section', 'settings-section',
       'repricer-section',
       'sku-audit-section', 'reviews-section', 'chats-section', 'logs-section', 'automation-section',
-      'catalog-section', 'producers-section',
+      'catalog-section', 'producers-section', 'products-hub-section',
     ];
     for (const id of ids) {
       const el = document.getElementById(id);
@@ -94,6 +135,7 @@ export class NavigationModule {
     w.stockModule?.hide();
     w.catalogMpModule?.hide();
     w.producersModule?.hide();
+    w.productsHubModule?.hide();
   }
 
   /** Сбросить active-классы у всех nav/dock элементов. */
@@ -109,7 +151,7 @@ export class NavigationModule {
       'nav-ozon','nav-yandex','nav-wb',
       'nav-orders-ozon','nav-orders-yandex','nav-orders-wb',
       'nav-repricer',
-      'nav-sku-audit','nav-reviews','nav-chats','nav-logs','nav-automation','nav-tasks','nav-stock','nav-catalog','nav-producers',
+      'nav-sku-audit','nav-reviews','nav-chats','nav-logs','nav-automation','nav-tasks','nav-stock','nav-catalog','nav-producers','nav-products-hub',
     ];
     for (const id of ids) {
       document.getElementById(id)?.classList.remove('active');
@@ -119,7 +161,18 @@ export class NavigationModule {
   async navigateTo(
     page: AppPage,
     { loadAll = false }: { loadAll?: boolean } = {},
-  ) {
+  ): Promise<void> {
+    // Без подключённого магазина большинство разделов бессмысленны (пустые данные) —
+    // до первого подключения пускаем только на API Маркет/Настройки/Профиль.
+    // refreshNavLockState заодно красит недоступные иконки дока серым.
+    const hasStore = await refreshNavLockState();
+    if (!ALLOWED_WITHOUT_STORE.has(page) && !hasStore) {
+      if (page !== 'marketplaces') {
+        this.app.toast('Сначала подключи магазин в разделе «API Маркет»', 'info');
+        return this.navigateTo('marketplaces');
+      }
+    }
+
     this.app.currentPage = page;
     localStorage.setItem('last_page', page);
 
@@ -134,7 +187,7 @@ export class NavigationModule {
       page === 'analytics' || page === 'settings-hub' || page === 'settings' || page === 'profile' ||
       page === 'repricer' ||
       page === 'sku-audit' || page === 'reviews' || page === 'chats' || page === 'logs' || page === 'automation' ||
-      page === 'tasks' || page === 'stock' || page === 'catalog' || page === 'producers';
+      page === 'tasks' || page === 'stock' || page === 'catalog' || page === 'producers' || page === 'products-hub';
 
     const groupsBar = document.getElementById('groups-bar');
 
@@ -238,6 +291,10 @@ export class NavigationModule {
         case 'producers':
           document.getElementById('nav-producers')?.classList.add('active');
           w.producersModule?.show();
+          break;
+        case 'products-hub':
+          document.getElementById('nav-products')?.classList.add('active');
+          w.productsHubModule?.show();
           break;
       }
       return;

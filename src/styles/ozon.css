@@ -4124,192 +4124,147 @@
 .cmd-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
 /* ══════════════════════════════════════════════════════════════
-   Счётчик (KPI)
+   Счётчик (KPI) — v5: left-aligned card with accent + sparkline
    ══════════════════════════════════════════════════════════════ */
-/*
- * Базовая раскладка счётчика — ГОРИЗОНТАЛЬНАЯ (иконка · значение · спарклайн,
- * заполняющий остаток ширины). Это раскладка по умолчанию для низких (rh1)
- * виджетов — самого частого размера. Для высоких (rh2) виджетов ниже
- * переопределяется на вертикальную (flex-direction: column).
- */
 .cmd-kpi {
   position: relative;
   height: 100%;
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 16px;
-  padding: 13px 18px;
-  background:
-    radial-gradient(130% 100% at 100% 0%, color-mix(in srgb, var(--kpi, #005bff) 15%, transparent) 0%, transparent 52%),
-    var(--card);
+  flex-direction: column;
+  gap: 0;
+  padding: 14px 16px 10px;
+  background: var(--card);
+  border-left: 3px solid var(--kpi);
   overflow: hidden;
 }
-/* цветная полоска-акцент слева = мгновенная визуальная маркировка метрики */
-.cmd-kpi::before {
-  content: '';
-  position: absolute;
-  left: 0; top: 0; bottom: 0;
-  width: 3px;
-  background: var(--kpi, #005bff);
-  opacity: .9;
-}
-.cmd-kpi-top {
+
+/* ── Row 1: icon + label + period badge ── */
+.cmd-kpi-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
+  gap: 6px;
+  min-width: 0;
 }
 .cmd-kpi-icon {
-  width: 30px; height: 30px;
-  border-radius: 9px;
-  display: flex; align-items: center; justify-content: center;
-  background: color-mix(in srgb, var(--kpi, #005bff) 20%, transparent);
-  color: var(--kpi, #005bff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--kpi) 14%, transparent);
+  color: var(--kpi);
   flex-shrink: 0;
-  transition: width .18s, height .18s;
 }
-.cmd-kpi-icon svg { width: 16px; height: 16px; }
-/* Бейдж периода паркуется в углу карточки — не зависит от раскладки контента (ряд/колонка) */
+.cmd-kpi-icon svg { width: 13px; height: 13px; }
+.cmd-kpi-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
 .cmd-kpi-period {
-  position: absolute;
-  top: 12px; right: 14px;
-  z-index: 1;
-  font-size: 9px;
-  font-weight: 800;
+  font-size: 8px;
+  font-weight: 750;
   text-transform: uppercase;
   letter-spacing: .5px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--kpi, #005bff) 16%, transparent);
-  color: var(--kpi, #005bff);
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--kpi) 10%, transparent);
+  color: var(--kpi);
   white-space: nowrap;
   flex-shrink: 0;
 }
-.cmd-kpi-main {
-  position: relative;
-  z-index: 1;
-  flex: 0 1 auto;
+
+/* ── Row 2: value + trend ── */
+.cmd-kpi-mid {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: auto;
   min-width: 0;
-  min-height: 0;
 }
-.cmd-kpi-valrow { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .cmd-kpi-val {
-  font-size: 28px;
-  font-weight: 830;
-  letter-spacing: -1px;
-  line-height: 1;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -.6px;
+  line-height: 1.15;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-/* нижняя строка: метрика + охват (чьи данные) в одну линию */
-.cmd-kpi-bottom {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 5px;
   min-width: 0;
-}
-.cmd-kpi-label {
-  font-size: 12px;
-  font-weight: 650;
-  color: var(--text-2);
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 .cmd-kpi-trend {
-  font-size: 10px;
-  font-weight: 800;
-  padding: 2px 6px;
-  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
   white-space: nowrap;
   flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 4px;
 }
-.cmd-kpi-trend.up { color: #16a34a; background: color-mix(in srgb,#16a34a 15%,transparent); }
-.cmd-kpi-trend.down { color: #dc2626; background: color-mix(in srgb,#dc2626 15%,transparent); }
-.cmd-kpi-trend.flat { color: var(--muted); background: var(--bg2); }
-.cmd-kpi-scope {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--muted);
-  min-width: 0;
+.cmd-kpi-trend:empty { display: none; }
+.cmd-kpi-trend.up {
+  color: #22c55e;
+  background: color-mix(in srgb, #22c55e 10%, transparent);
 }
-.cmd-kpi-scope svg { flex-shrink: 0; opacity: .75; }
-.cmd-kpi-scope > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Спарклайн растягивается на весь остаток ширины — вместо пустого поля
-   у счётчиков он заполняется мини-графиком последних дней. */
+.cmd-kpi-trend.down {
+  color: #ef4444;
+  background: color-mix(in srgb, #ef4444 10%, transparent);
+}
+.cmd-kpi-trend.flat { color: var(--muted); }
+
+/* ── Row 3: inline sparkline bar chart ── */
 .cmd-kpi-spark {
-  position: relative;
-  z-index: 1;
-  display: none;
-  flex: 1 1 auto;
-  align-self: stretch;
-  min-width: 28px;
-  height: 30px;
+  display: flex;
   align-items: flex-end;
-  gap: 3px;
+  gap: 2px;
+  height: 28px;
+  margin-top: auto;
+  min-width: 0;
+  overflow: hidden;
 }
-.cmd-kpi-spark > div {
+.cmd-kpi-spark:empty { display: none; }
+.cmd-kpi-bar {
   flex: 1;
-  background: var(--kpi, #005bff);
-  border-radius: 3px 3px 0 0;
-  min-height: 3px;
+  min-width: 0;
+  border-radius: 2px 2px 0 0;
+  background: color-mix(in srgb, var(--kpi) 30%, transparent);
   transition: height .3s ease;
 }
+.cmd-kpi-bar:last-child {
+  background: var(--kpi);
+  opacity: .85;
+}
 
-/* Адаптив KPI под размер ─────────────────────────────────────── */
+/* ── Adaptive sizes ─────────────────────────────────────────── */
 
-/* 1×1 — компактно: иконка + значение в ряд, по центру карточки.
-   Спарклайну/охвату/тренду тут физически негде поместиться разборчиво —
-   вместо пустого поля справа контент центрируется, а не «прилипает» слева. */
-.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi { padding: 10px 14px; gap: 10px; justify-content: center; }
-.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-icon { width: 26px; height: 26px; }
-.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-icon svg { width: 14px; height: 14px; }
-.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-period { font-size: 8px; padding: 2px 6px; top: 8px; right: 10px; letter-spacing: .3px; }
-.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-val { font-size: 21px; }
-.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-label { font-size: 10.5px; }
-.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-scope,
-.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-trend,
-.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-spark { display: none !important; }
+/* 1×1 compact */
+.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi { padding: 10px 12px 8px; }
+.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-val { font-size: 20px; }
+.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-label { font-size: 10px; }
+.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-icon { width: 18px; height: 18px; border-radius: 4px; }
+.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-icon svg { width: 11px; height: 11px; }
+.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-period { font-size: 7px; padding: 1.5px 4px; }
+.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-trend { font-size: 9px; }
+.cmd-widget-cw1.cmd-widget-rh1 .cmd-kpi-spark { height: 20px; }
 
-/* 2×1 — по умолчанию: иконка · значение+тренд+метрика · спарклайн заполняет остаток ширины */
-.cmd-widget-cw2.cmd-widget-rh1 .cmd-kpi-icon { width: 34px; height: 34px; }
-.cmd-widget-cw2.cmd-widget-rh1 .cmd-kpi-icon svg { width: 18px; height: 18px; }
-.cmd-widget-cw2.cmd-widget-rh1 .cmd-kpi-val { font-size: 28px; }
-.cmd-widget-cw2.cmd-widget-rh1 .cmd-kpi-spark { display: flex; }
-/* Нет дневного ряда для метрики — спарклайн скрыт (см. paintKpi), место отдаём
-   значению и центрируем его в освободившейся ширине (иначе текст остаётся
-   прилипшим к иконке, а сама выросшая коробка визуально пустует). */
-.cmd-kpi.cmd-kpi-no-spark .cmd-kpi-main { flex: 1 1 auto; align-items: center; text-align: center; }
-.cmd-kpi.cmd-kpi-no-spark .cmd-kpi-bottom { justify-content: center; }
+/* 1×2 tall narrow */
+.cmd-widget-cw1.cmd-widget-rh2 .cmd-kpi-val { font-size: 24px; }
+.cmd-widget-cw1.cmd-widget-rh2 .cmd-kpi-spark { height: 44px; }
 
-/* 1×2 — высокий узкий: вертикальная раскладка, спарклайн снизу */
-.cmd-widget-cw1.cmd-widget-rh2 .cmd-kpi,
-.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi { flex-direction: column; align-items: stretch; }
-.cmd-widget-cw1.cmd-widget-rh2 .cmd-kpi-top,
-.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-top { justify-content: space-between; width: 100%; }
-.cmd-widget-cw1.cmd-widget-rh2 .cmd-kpi-period,
-.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-period { position: static; margin-left: auto; }
-.cmd-widget-cw1.cmd-widget-rh2 .cmd-kpi-val { font-size: 26px; }
-.cmd-widget-cw1.cmd-widget-rh2 .cmd-kpi-bottom { flex-direction: column; align-items: flex-start; gap: 3px; }
-.cmd-widget-cw1.cmd-widget-rh2 .cmd-kpi-spark { display: flex; flex: 0 0 auto; height: 30px; }
-
-/* 2×2 — крупный: всё + большой спарклайн на всю ширину внизу */
-.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi { padding: 15px 17px; gap: 8px; }
-.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-icon { width: 42px; height: 42px; }
-.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-icon svg { width: 22px; height: 22px; }
+/* 2×2 large */
+.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi { padding: 18px 20px 14px; }
 .cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-val { font-size: 38px; }
-.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-period { font-size: 10px; }
 .cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-label { font-size: 13px; }
-.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-spark { display: flex; flex: 0 0 auto; height: 40px; }
+.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-icon { width: 26px; height: 26px; }
+.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-icon svg { width: 15px; height: 15px; }
+.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-period { font-size: 9px; }
+.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-trend { font-size: 12px; }
+.cmd-widget-cw2.cmd-widget-rh2 .cmd-kpi-spark { height: 48px; }
 
 /* ══════════════════════════════════════════════════════════════
    Магазины и финансы (sf)
