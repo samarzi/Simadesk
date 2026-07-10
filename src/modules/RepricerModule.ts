@@ -1375,7 +1375,7 @@ export class RepricerModule {
   }
 
   /** Загрузить карту «артикул МП → себестоимость от производителя».
-   *  Используется во вкладке «Себестоимости» для кнопки «перепривязать». */
+   *  Автоматически привязывает себестоимость для всех найденных совпадений. */
   private async loadProducerCostMap(): Promise<void> {
     if (this.producerCostMapLoaded) return;
     try {
@@ -1406,6 +1406,19 @@ export class RepricerModule {
 
       this.producerCostMap = map;
       this.producerCostMapLoaded = true;
+
+      // Автоматическая привязка себестоимости для непривязанных артикулов
+      let linkedCount = 0;
+      for (const [article, info] of map) {
+        if (costProducerLinks.isLinked(article)) continue;
+        costPriceDb.set(article, info.cost);
+        costProducerLinks.link(article, info.producerProductId, info.producerName, info.cost);
+        linkedCount++;
+      }
+      if (linkedCount > 0) {
+        console.info(`[Repricer] Auto-linked ${linkedCount} cost prices from producers`);
+      }
+
       if (this.tab === 'costs') this.render();
     } catch (e: any) {
       console.warn('[Repricer] loadProducerCostMap failed:', e?.message ?? e);
