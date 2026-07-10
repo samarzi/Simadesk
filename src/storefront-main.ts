@@ -16,6 +16,7 @@ interface Product {
   source: string;
   source_id: string;
   market_model_id?: string;
+  ozon_sku?: string;
   title: string;
   price: number;
   original_price: number;
@@ -39,7 +40,7 @@ interface GroupedProduct {
   price_max: number;
   entries: Product[]; // sorted cheapest first
 }
-interface Banner { id: number; image_url: string; link_url?: string; }
+interface Banner { id: number; title?: string; image_url: string; link_url?: string; }
 interface StoreData { settings: Settings; products: Product[]; banners: Banner[]; }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -61,13 +62,16 @@ function fmtRange(min: number, max: number): string {
   return min === max ? fmt(min) : `${fmt(min)} — ${fmt(max)}`;
 }
 function getImages(p: Product): string[] {
-  if (Array.isArray(p.images) && p.images.length) return p.images.filter(Boolean);
+  if (Array.isArray(p.images) && p.images.length) {
+    const filtered = p.images.filter(Boolean);
+    if (filtered.length) return filtered;
+  }
   if (p.image_url) return [p.image_url];
   return [];
 }
 function buildEntryUrl(p: Product): string {
   if (p.source === 'wb') return `https://www.wildberries.ru/catalog/${p.source_id}/detail.aspx`;
-  if (p.source === 'ozon') return `https://www.ozon.ru/product/${p.source_id}/`;
+  if (p.source === 'ozon') return `https://www.ozon.ru/product/${p.ozon_sku ?? p.source_id}/`;
   if (p.source === 'yandex') {
     if (p.market_model_id) return `https://market.yandex.ru/product/${p.market_model_id}?sku=${p.source_id}`;
     return `https://market.yandex.ru/search?text=${encodeURIComponent(p.title ?? '')}`;
@@ -77,7 +81,7 @@ function buildEntryUrl(p: Product): string {
 function groupProducts(products: Product[]): GroupedProduct[] {
   const map = new Map<string, GroupedProduct>();
   for (const p of products) {
-    const vc = (p.vendor_code ?? '').trim();
+    const vc = (p.vendor_code ?? '').trim().toLowerCase();
     const key = vc ? `v:${vc}` : `s:${p.source}:${p.source_id}`;
     const imgs = getImages(p);
     if (!map.has(key)) {
@@ -495,15 +499,12 @@ function renderCard(group: GroupedProduct): string {
     `<span style="background:${BADGE_BG[src]??'rgba(100,100,100,.85)'};color:#fff;padding:.12rem .35rem;border-radius:999px;font-size:9px;font-weight:700">${BADGE[src]??src}</span>`
   ).join('');
 
-  const cheapest = group.entries[0];
-  const hasDiscount = group.price_min === group.price_max && cheapest.discount > 0;
-
   return `
 <div class="ss-card" data-key="${esc(group.key)}">
   <div class="ss-card-img">
     ${img
       ? `<img src="${esc(img)}" alt="${esc(group.title)}" loading="lazy">`
-      : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:2.5rem;color:hsl(var(--foreground)/.15)">📦</div>`}
+      : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:hsl(var(--foreground)/.15)"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`}
     <div class="ss-card-grad"></div>
     <div style="position:absolute;top:.4rem;right:.4rem;display:flex;flex-direction:column;gap:.2rem;align-items:flex-end">${badgesHtml}</div>
   </div>
@@ -511,14 +512,10 @@ function renderCard(group: GroupedProduct): string {
     <div class="ss-card-title">${esc(group.title)}</div>
     <div class="ss-card-price-row">
       <span style="${PRICE_GRAD};font-size:.9rem;font-weight:900">${priceStr}</span>
-      ${hasDiscount ? `<span style="font-size:.7rem;text-decoration:line-through;opacity:.5">${fmt(cheapest.original_price)}</span><span style="font-size:.7rem;font-weight:800;color:#f87171">−${cheapest.discount}%</span>` : ''}
-      ${group.price_min < group.price_max ? `<span style="font-size:.65rem;color:hsl(var(--muted-foreground))">мин — макс</span>` : ''}
     </div>
   </div>
   <div class="ss-card-buy">
-    <div class="ss-card-buy-btn">
-      ${srcKeys.length > 1 ? `${srcKeys.length} маркетплейса` : (BUY_LABEL[srcKeys[0]] ?? 'Купить')}
-    </div>
+    <div class="ss-card-buy-btn">Купить</div>
   </div>
 </div>`;
 }
@@ -539,9 +536,9 @@ function renderSkeletons(n = 12): string {
 
 function headerHtml(s: Settings, showBack: boolean, backLabel = 'Назад'): string {
   const contacts = [
-    s.telegram ? `<a href="https://t.me/${esc(s.telegram.replace(/^@/,''))}" target="_blank" rel="noopener" class="ss-contact" style="color:rgb(38,160,218);background:rgba(38,160,218,.12);border:1px solid rgba(38,160,218,.25)">✈ Telegram</a>` : '',
-    s.whatsapp  ? `<a href="https://wa.me/${esc(s.whatsapp.replace(/\D/g,''))}" target="_blank" rel="noopener" class="ss-contact" style="color:rgb(37,211,102);background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.25)">💬 WhatsApp</a>` : '',
-    s.website   ? `<a href="${esc(s.website.startsWith('http')?s.website:'https://'+s.website)}" target="_blank" rel="noopener" class="ss-contact" style="color:hsl(var(--primary));background:hsl(var(--primary)/.1);border:1px solid hsl(var(--border))">🌐 Сайт</a>` : '',
+    s.telegram ? `<a href="https://t.me/${esc(s.telegram.replace(/^@/,''))}" target="_blank" rel="noopener" class="ss-contact" style="color:rgb(38,160,218);background:rgba(38,160,218,.12);border:1px solid rgba(38,160,218,.25)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Telegram</a>` : '',
+    s.whatsapp  ? `<a href="https://wa.me/${esc(s.whatsapp.replace(/\D/g,''))}" target="_blank" rel="noopener" class="ss-contact" style="color:rgb(37,211,102);background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.25)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg> WhatsApp</a>` : '',
+    s.website   ? `<a href="${esc(s.website.startsWith('http')?s.website:'https://'+s.website)}" target="_blank" rel="noopener" class="ss-contact" style="color:hsl(var(--primary));background:hsl(var(--primary)/.1);border:1px solid hsl(var(--border))"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg> Сайт</a>` : '',
   ].filter(Boolean).join('');
 
   return `
@@ -568,10 +565,10 @@ function headerHtml(s: Settings, showBack: boolean, backLabel = 'Назад'): s
 // ─── How It Works ─────────────────────────────────────────────────────────────
 
 const HOW_STEPS = [
-  { icon:'🛍️', title:'Выбери товар',      desc:'Просматривай каталог и нажимай на понравившийся товар', grad:'linear-gradient(135deg,#3b82f6,#06b6d4)', num_bg:'#3b82f6' },
-  { icon:'🏪', title:'Перейди в магазин', desc:'Нажми кнопку «Купить» для перехода на маркетплейс',    grad:'linear-gradient(135deg,#a855f7,#ec4899)', num_bg:'#a855f7' },
-  { icon:'✅', title:'Оформи заказ',      desc:'Добавь в корзину и оформи заказ прямо в маркетплейсе', grad:'linear-gradient(135deg,#22c55e,#10b981)', num_bg:'#22c55e' },
-  { icon:'📦', title:'Получи товар',      desc:'Курьером или в пункте выдачи — как тебе удобнее',      grad:'linear-gradient(135deg,#f97316,#ef4444)', num_bg:'#f97316' },
+  { icon:'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>', title:'Выбери товар',      desc:'Просматривай каталог и нажимай на понравившийся товар', grad:'linear-gradient(135deg,#3b82f6,#06b6d4)', num_bg:'#3b82f6' },
+  { icon:'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>', title:'Перейди в магазин', desc:'Нажми кнопку «Купить» для перехода на маркетплейс',    grad:'linear-gradient(135deg,#a855f7,#ec4899)', num_bg:'#a855f7' },
+  { icon:'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>', title:'Оформи заказ',      desc:'Добавь в корзину и оформи заказ прямо в маркетплейсе', grad:'linear-gradient(135deg,#22c55e,#10b981)', num_bg:'#22c55e' },
+  { icon:'<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>', title:'Получи товар',      desc:'Курьером или в пункте выдачи — как тебе удобнее',      grad:'linear-gradient(135deg,#f97316,#ef4444)', num_bg:'#f97316' },
 ];
 
 function renderHowItWorks(): string {
@@ -582,7 +579,7 @@ function renderHowItWorks(): string {
   <div class="ss-hiw-bg2"></div>
   <div style="max-width:1400px;margin:0 auto;padding:0 1rem">
     <div style="text-align:center">
-      <div class="ss-hiw-badge">✨ <span>Как сделать заказ</span></div>
+      <div class="ss-hiw-badge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> <span>Как сделать заказ</span></div>
       <h2 class="ss-hiw-title">Как это работает?</h2>
       <p class="ss-hiw-sub">Находи и покупай товары из маркетплейсов в 4 шага</p>
     </div>
@@ -591,7 +588,7 @@ function renderHowItWorks(): string {
       ${steps.map((s,i) => `
       <div class="ss-hiw-step-card" style="animation:slideInScale .5s cubic-bezier(.34,1.56,.64,1) ${i*.1}s both">
         <div class="ss-hiw-icon-wrap" style="background:${s.grad};box-shadow:0 6px 20px rgba(0,0,0,.3)">
-          <span style="font-size:1.5rem;position:relative;z-index:1">${s.icon}</span>
+          <span style="position:relative;z-index:1;display:flex;align-items:center;justify-content:center">${s.icon}</span>
           <div class="ss-hiw-num" style="background:${s.num_bg}">${s.n}</div>
         </div>
         <h3 style="font-size:.875rem;font-weight:800;margin-bottom:.35rem;color:hsl(var(--foreground))">${s.title}</h3>
@@ -603,7 +600,7 @@ function renderHowItWorks(): string {
       <div style="animation:slideInLeft .4s cubic-bezier(.34,1.56,.64,1) ${i*.08}s both">
         <div class="ss-hiw-mob-card">
           <div class="ss-hiw-mob-icon" style="background:${s.grad};box-shadow:0 4px 12px rgba(0,0,0,.3)">
-            <span>${s.icon}</span>
+            <span style="display:flex;align-items:center;justify-content:center">${s.icon}</span>
             <div class="ss-hiw-mob-num">${s.n}</div>
           </div>
           <div>
@@ -642,7 +639,7 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
         ${featured.map(g => renderCard(g)).join('')}
       </div>` : `
       <div style="text-align:center;padding:3rem 1rem">
-        <div style="font-size:3rem;margin-bottom:.75rem">🛍️</div>
+        <div style="display:flex;justify-content:center;margin-bottom:.75rem;color:hsl(var(--foreground)/.2)"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg></div>
         <h3 style="font-size:1.25rem;font-weight:700;margin-bottom:.5rem">Товары появятся скоро</h3>
         <p style="color:hsl(var(--muted-foreground));font-size:.875rem">Магазин пока пустой, загляните позже</p>
       </div>`}
@@ -743,7 +740,7 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
     if (grid) {
       if (f.length === 0) {
         grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:3rem 1rem">
-          <div style="font-size:3rem;margin-bottom:.75rem">🔍</div>
+          <div style="display:flex;justify-content:center;margin-bottom:.75rem;color:hsl(var(--foreground)/.2)"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
           <h3 style="font-size:1.1rem;font-weight:700;margin-bottom:.5rem;color:hsl(var(--foreground))">Ничего не найдено</h3>
           <p style="color:hsl(var(--muted-foreground));font-size:.875rem">Попробуйте изменить запрос или сбросить фильтр</p>
         </div>`;
@@ -800,8 +797,8 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
   // Custom URL button (extra "buy on website" button)
   const customEntry = group.entries.find(e => e.custom_url && e.custom_url.trim());
   const customBtnHtml = customEntry?.custom_url
-    ? `<a href="${esc(customEntry.custom_url)}" target="_blank" rel="noopener noreferrer" class="ss-btn-sec" style="border-color:hsl(var(--primary)/.4);color:hsl(var(--primary));font-weight:800">
-        🌐 Купить у продавца${customEntry.custom_price != null ? ` · ${fmt(customEntry.custom_price)}` : ''} ↗
+    ? `<a href="${esc(customEntry.custom_url)}" target="_blank" rel="noopener noreferrer" class="ss-btn-sec" style="border-color:hsl(var(--primary)/.4);color:hsl(var(--primary));font-weight:800;display:inline-flex;align-items:center;gap:.4rem">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg> Купить у продавца${customEntry.custom_price != null ? ` · ${fmt(customEntry.custom_price)}` : ''} ↗
       </a>`
     : '';
 
@@ -834,7 +831,7 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
   <div class="ss-det-layout">
     <div>
       ${imgs.length === 0
-        ? `<div class="ss-gal"><div style="aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;background:hsl(var(--muted)/.3);border-radius:1rem;font-size:4rem;color:hsl(var(--foreground)/.2)">📦</div></div>`
+        ? `<div class="ss-gal"><div style="aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;background:hsl(var(--muted)/.3);border-radius:1rem;color:hsl(var(--foreground)/.2)"><svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div></div>`
         : `<div class="ss-gal">
             <div class="ss-gal-main" id="ss-gal-main">
               ${imgs.map(img => `<div class="ss-gal-slide"><img src="${esc(img)}" alt="photo" loading="lazy"></div>`).join('')}
@@ -895,7 +892,7 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
 
 <div class="ss-mobile-bar">
   <a href="${esc(buildEntryUrl(cheapest))}" target="_blank" rel="noopener noreferrer" class="ss-btn-pri" style="flex:1">${BUY_LABEL[cheapest.source] ?? 'Купить'} ↗</a>
-  ${customEntry?.custom_url ? `<a href="${esc(customEntry.custom_url)}" target="_blank" rel="noopener noreferrer" class="ss-btn-sec">🌐 Сайт</a>` : ''}
+  ${customEntry?.custom_url ? `<a href="${esc(customEntry.custom_url)}" target="_blank" rel="noopener noreferrer" class="ss-btn-sec" style="display:inline-flex;align-items:center;gap:.35rem"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg> Сайт</a>` : ''}
 </div>`;
 
   document.body.appendChild(panel);
@@ -1023,7 +1020,7 @@ async function init(): Promise<void> {
   const slug  = parts[0];
   if (!slug) {
     root.innerHTML = `<div style="min-height:100vh;background:hsl(var(--background));display:flex;align-items:center;justify-content:center;text-align:center;padding:2rem">
-      <div><div style="font-size:4rem;margin-bottom:1rem">🏪</div><h1 style="font-size:1.5rem;font-weight:900;color:hsl(var(--foreground));margin-bottom:.5rem">Магазин не найден</h1>
+      <div><div style="display:flex;justify-content:center;margin-bottom:1rem;color:hsl(var(--foreground)/.2)"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div><h1 style="font-size:1.5rem;font-weight:900;color:hsl(var(--foreground));margin-bottom:.5rem">Магазин не найден</h1>
       <p style="color:hsl(var(--muted-foreground))">Проверьте адрес</p></div></div>`;
     return;
   }
@@ -1032,7 +1029,7 @@ async function init(): Promise<void> {
   try { data = await fetchStoreData(slug); }
   catch {
     root.innerHTML = `<div style="min-height:100vh;background:hsl(var(--background));display:flex;align-items:center;justify-content:center;text-align:center;padding:2rem">
-      <div><div style="font-size:3.5rem;margin-bottom:1rem">📡</div><h1 style="font-size:1.25rem;font-weight:900;color:hsl(var(--foreground));margin-bottom:.5rem">Ошибка соединения</h1>
+      <div><div style="display:flex;justify-content:center;margin-bottom:1rem;color:hsl(var(--foreground)/.2)"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0119 12.55M5 12.55a10.94 10.94 0 015.17-2.39M10.71 5.05A16 16 0 0122.56 9M1.42 9a15.91 15.91 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01"/></svg></div><h1 style="font-size:1.25rem;font-weight:900;color:hsl(var(--foreground));margin-bottom:.5rem">Ошибка соединения</h1>
       <p style="color:hsl(var(--muted-foreground));margin-bottom:1.5rem">Проверьте подключение к интернету</p>
       <button onclick="location.reload()" style="background:linear-gradient(135deg,#00FFCC,#00CCAA);color:#000;font-weight:800;padding:.75rem 2rem;border-radius:.875rem;border:none;cursor:pointer;font-size:.9rem">Обновить</button></div></div>`;
     return;
@@ -1040,7 +1037,7 @@ async function init(): Promise<void> {
 
   if (!data) {
     root.innerHTML = `<div style="min-height:100vh;background:hsl(var(--background));display:flex;align-items:center;justify-content:center;text-align:center;padding:2rem">
-      <div><div style="font-size:4rem;margin-bottom:1rem">🏪</div><h1 style="font-size:1.5rem;font-weight:900;color:hsl(var(--foreground));margin-bottom:.5rem">Магазин не найден</h1>
+      <div><div style="display:flex;justify-content:center;margin-bottom:1rem;color:hsl(var(--foreground)/.2)"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div><h1 style="font-size:1.5rem;font-weight:900;color:hsl(var(--foreground));margin-bottom:.5rem">Магазин не найден</h1>
       <p style="color:hsl(var(--muted-foreground));margin-bottom:1.5rem">Проверьте адрес или попросите владельца поделиться ссылкой</p>
       <a href="https://simadesk.ru" style="display:inline-block;background:linear-gradient(135deg,#00FFCC,#00CCAA);color:#000;font-weight:800;padding:.75rem 2rem;border-radius:.875rem;text-decoration:none">Открыть SimaDesk</a></div></div>`;
     return;

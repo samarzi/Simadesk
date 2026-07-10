@@ -34,6 +34,7 @@ export interface StorefrontProduct {
 export interface StorefrontBanner {
   id: string;
   company_id: string;
+  title?: string;
   image_url: string;
   link_url: string;
   sort_order: number;
@@ -186,16 +187,24 @@ export const storefrontDb = {
     return rows ?? [];
   },
 
-  async addBanner(companyId: string, imageUrl: string, linkUrl: string, sortOrder = 0): Promise<void> {
+  async addBanner(companyId: string, imageUrl: string, linkUrl: string, sortOrder = 0, title = ''): Promise<void> {
     await dbFetch('storefront_banners', {
       method: 'POST',
       body: JSON.stringify({
         company_id: companyId,
+        title: title || null,
         image_url: imageUrl,
         link_url: linkUrl || '/',
         sort_order: sortOrder,
         is_active: true,
       }),
+    }, { 'Prefer': 'return=minimal' });
+  },
+
+  async updateBanner(id: string, data: { title?: string; image_url?: string; link_url?: string }): Promise<void> {
+    await dbFetch(`storefront_banners?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
     }, { 'Prefer': 'return=minimal' });
   },
 
@@ -217,6 +226,31 @@ export const storefrontDb = {
       method: 'PATCH',
       body: JSON.stringify({ is_active: isActive }),
     }, { 'Prefer': 'return=minimal' });
+  },
+
+  async uploadBannerImage(file: File, companyId: string): Promise<string> {
+    const { authService } = await import('./authService');
+    const token = authService.getAccessToken();
+    const apiUrl = import.meta.env.VITE_API_URL as string;
+    const apiKey = import.meta.env.VITE_API_KEY as string;
+    const rawExt = (file.name.split('.').pop() ?? 'jpg').toLowerCase().replace(/[^a-z]/g, '');
+    const safeExt = ['jpg','jpeg','png','webp','gif'].includes(rawExt) ? rawExt : 'jpg';
+    const path = `${companyId}/${Date.now()}.${safeExt}`;
+    const res = await fetch(`${apiUrl}/storage/v1/object/storefront-banners/${path}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token ?? apiKey}`,
+        'apikey': apiKey,
+        'Content-Type': file.type || 'image/jpeg',
+        'x-upsert': 'true',
+      },
+      body: file,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as { message?: string }).message || `Upload failed: ${res.status}`);
+    }
+    return `${apiUrl}/storage/v1/object/public/storefront-banners/${path}`;
   },
 
   buildBuyUrl(source: 'wb' | 'ozon' | 'yandex', sourceId: string): string {
