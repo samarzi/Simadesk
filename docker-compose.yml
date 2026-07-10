@@ -2,10 +2,10 @@ version: "3.8"
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  SimaDesk — Self-hosted stack
-#  VPS: 135.106.172.135  |  Domain: samarzi.online
+#  VPS: 135.106.172.135  |  Domain: simadesk.ru
 #
 #  Services:
-#    db        — PostgreSQL 15 with supabase extensions
+#    db        — PostgreSQL 15 (with server extensions)
 #    auth      — GoTrue (Supabase Auth)
 #    rest      — PostgREST (Supabase REST API)
 #    functions — Supabase Edge Runtime (telegram-auth и др.)
@@ -35,7 +35,7 @@ services:
       JWT_EXP: 3600
     volumes:
       - db-data:/var/lib/postgresql/data
-      - ./supabase/migrations:/docker-entrypoint-initdb.d:ro
+      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
       interval: 5s
@@ -171,7 +171,7 @@ services:
       VERIFY_JWT: "true"
       BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
     volumes:
-      - ./supabase/functions:/home/deno/functions:ro
+      - ./backend/functions:/home/deno/functions:ro
     command:
       - start
       - --main-service
@@ -183,9 +183,10 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        VITE_SUPA_URL: ${SITE_URL}
-        VITE_SUPA_KEY: ${ANON_KEY}
+        VITE_API_URL: ${SITE_URL}
+        VITE_API_KEY: ${ANON_KEY}
         VITE_TG_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME}
+        VITE_YANDEX_CLIENT_ID: ${YANDEX_CLIENT_ID:-}
         VITE_DEV_AUTH: "false"
     restart: unless-stopped
     depends_on:

@@ -1,17 +1,17 @@
 import { YandexStore, YandexProduct } from '@/types/yandex';
-import { supaFetch } from './supabaseClient';
+import { dbFetch } from './dbClient';
 import { companyService } from './companyService';
 
 export const yandexDb = {
   getStores: (): Promise<YandexStore[]> => {
     const cid = companyService.getActiveId();
     if (!cid) return Promise.resolve([]);
-    return supaFetch<YandexStore[]>(`yandex_stores?company_id=eq.${cid}&select=*&order=created_at.asc`);
+    return dbFetch<YandexStore[]>(`yandex_stores?company_id=eq.${cid}&select=*&order=created_at.asc`);
   },
 
   createStore: async (store: Omit<YandexStore, 'id' | 'created_at'>): Promise<YandexStore> => {
     const cid = companyService.getActiveId();
-    const r = await supaFetch<YandexStore[]>('yandex_stores', {
+    const r = await dbFetch<YandexStore[]>('yandex_stores', {
       method: 'POST',
       body: JSON.stringify({ ...store, company_id: cid }),
     });
@@ -19,13 +19,13 @@ export const yandexDb = {
   },
 
   updateStore: (id: string, updates: Partial<YandexStore>): Promise<void> =>
-    supaFetch(`yandex_stores?id=eq.${id}`, {
+    dbFetch(`yandex_stores?id=eq.${id}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
     }),
 
   deleteStore: (id: string): Promise<void> =>
-    supaFetch(`yandex_stores?id=eq.${id}`, { method: 'DELETE' }),
+    dbFetch(`yandex_stores?id=eq.${id}`, { method: 'DELETE' }),
   // ON DELETE CASCADE в yandex_products удаляет товары автоматически
 
   getProducts: async (): Promise<YandexProduct[]> => {
@@ -36,7 +36,7 @@ export const yandexDb = {
     const PAGE = 1000;
     let offset = 0;
     while (true) {
-      const page = await supaFetch<YandexProduct[]>(
+      const page = await dbFetch<YandexProduct[]>(
         `yandex_products?store_id=in.(${ids})&order=offer_id.asc&limit=${PAGE}&offset=${offset}`,
       );
       all.push(...page);
@@ -53,10 +53,10 @@ export const yandexDb = {
   },
 
   replaceStoreProducts: async (storeId: string, products: YandexProduct[]): Promise<void> => {
-    await supaFetch(`yandex_products?store_id=eq.${storeId}`, { method: 'DELETE' });
+    await dbFetch(`yandex_products?store_id=eq.${storeId}`, { method: 'DELETE' });
     if (!products.length) return;
     for (let i = 0; i < products.length; i += 100) {
-      await supaFetch('yandex_products', {
+      await dbFetch('yandex_products', {
         method: 'POST',
         headers: { 'Prefer': 'return=minimal' },
         body: JSON.stringify(products.slice(i, i + 100)),

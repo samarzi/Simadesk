@@ -8,7 +8,7 @@
  * Кэшируются только ПРОШЕДШИЕ месяцы (не текущий — в нём ещё могут появляться заказы).
  */
 
-import { supaFetch } from '@/services/supabaseClient';
+import { dbFetch } from '@/services/dbClient';
 
 export const SETTLED_DAYS = 7;
 
@@ -64,7 +64,7 @@ export const analyticsOrderCache = {
     try {
       const from = toStr(monthStart(start));
       const to   = toStr(monthEnd(end));
-      const rows = await supaFetch<CacheRow[]>(
+      const rows = await dbFetch<CacheRow[]>(
         `analytics_orders_cache` +
         `?store_id=eq.${encodeURIComponent(storeId)}` +
         `&chunk_from=gte.${from}&chunk_to=lte.${to}` +
@@ -85,7 +85,7 @@ export const analyticsOrderCache = {
     try {
       const from = toStr(monthStart(start));
       const to   = toStr(monthEnd(end));
-      const rows = await supaFetch<{ chunk_from: string; chunk_to: string }[]>(
+      const rows = await dbFetch<{ chunk_from: string; chunk_to: string }[]>(
         `analytics_orders_cache` +
         `?store_id=eq.${encodeURIComponent(storeId)}` +
         `&chunk_from=gte.${from}&chunk_to=lte.${to}` +
@@ -105,7 +105,7 @@ export const analyticsOrderCache = {
     const s = monthStart(monthDate);
     const e = monthEnd(monthDate);
     try {
-      await supaFetch<any>('analytics_orders_cache', {
+      await dbFetch<any>('analytics_orders_cache', {
         method: 'POST',
         headers: { 'Prefer': 'resolution=merge-duplicates' },
         body: JSON.stringify({
@@ -127,7 +127,7 @@ export const analyticsOrderCache = {
     try {
       const from = toStr(monthStart(start));
       const to   = toStr(monthEnd(end));
-      await supaFetch<any>(
+      await dbFetch<any>(
         `analytics_orders_cache` +
         `?store_id=eq.${encodeURIComponent(storeId)}` +
         `&chunk_from=gte.${from}&chunk_to=lte.${to}`,
@@ -141,7 +141,7 @@ export const analyticsOrderCache = {
   /** Инвалидировать весь кэш магазина. */
   async invalidateStore(storeId: string): Promise<void> {
     try {
-      await supaFetch<any>(`analytics_orders_cache?store_id=eq.${encodeURIComponent(storeId)}`, { method: 'DELETE' });
+      await dbFetch<any>(`analytics_orders_cache?store_id=eq.${encodeURIComponent(storeId)}`, { method: 'DELETE' });
     } catch (e) {
       console.warn('[analyticsOrderCache] invalidateStore:', e);
     }

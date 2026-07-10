@@ -11,6 +11,7 @@ import { I } from '@/utils/icons';
 
 const IS_DEV_AUTH = import.meta.env.VITE_DEV_AUTH === 'true';
 const BOT_USERNAME = import.meta.env.VITE_TG_BOT_USERNAME as string | undefined;
+const YANDEX_CLIENT_ID = import.meta.env.VITE_YANDEX_CLIENT_ID as string | undefined;
 
 export class AuthModule {
   private el: HTMLElement;
@@ -23,14 +24,129 @@ export class AuthModule {
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  async show(): Promise<void> {
+  // Публичный метод для запуска привязки Яндекса к уже авторизованному аккаунту
+  // (вызывается из main.ts после бута приложения)
+  startYandexLink(token: string): void {
+    this.handleYandexLink(token);
+  }
+
+  async show(yandexLoginToken?: string): Promise<void> {
     // Если запущено как Telegram Mini App — входим автоматически
     if (authService.isTelegramMiniApp()) {
       await this.handleTelegramMiniApp();
       return;
     }
+
+    // Яндекс OAuth login token передан напрямую из main.ts
+    if (yandexLoginToken) {
+      await this.handleYandexToken(yandexLoginToken);
+      return;
+    }
+
     this.el.classList.remove('hidden');
     this.render();
+  }
+
+  private async handleYandexLink(token: string): Promise<void> {
+    const overlay = this.createOverlay('Привязываем Яндекс ID...');
+    document.body.appendChild(overlay);
+
+    try {
+      const result = await authService.linkYandex(token, false);
+      overlay.remove();
+
+      if (result.conflict) {
+        await this.handleYandexMergeDialog(token);
+        return;
+      }
+
+      (window as any).profileModule?.showAccountTab?.();
+    } catch (err) {
+      overlay.remove();
+      const msg = err instanceof Error ? err.message : 'Ошибка привязки Яндекс';
+      alert(msg);
+    }
+  }
+
+  private async handleYandexMergeDialog(token: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const dialog = document.createElement('div');
+      dialog.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:24px';
+      dialog.innerHTML = `
+        <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:20px;padding:32px;max-width:420px;width:100%;box-shadow:0 32px 80px rgba(0,0,0,.7)">
+          <div style="font-size:28px;text-align:center;margin-bottom:12px">🔗</div>
+          <div style="font-size:17px;font-weight:700;color:var(--text);text-align:center;margin-bottom:10px">Объединить аккаунты?</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;text-align:center;margin-bottom:24px">
+            Этот Яндекс ID уже зарегистрирован как отдельный профиль.<br><br>
+            Если объединить — все <strong style="color:var(--text)">компании и данные</strong> из Яндекс-профиля перейдут в ваш текущий аккаунт. Яндекс-профиль будет удалён.<br><br>
+            <span style="color:var(--text3);font-size:12px">Это действие необратимо.</span>
+          </div>
+          <div style="display:flex;gap:10px">
+            <button id="merge-cancel" style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer">Отмена</button>
+            <button id="merge-confirm" style="flex:2;padding:11px;border-radius:10px;border:none;background:#005bff;color:#fff;font-size:13px;font-weight:700;cursor:pointer">Объединить аккаунты</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(dialog);
+
+      dialog.querySelector('#merge-cancel')!.addEventListener('click', () => {
+        dialog.remove();
+        resolve();
+      });
+
+      dialog.querySelector('#merge-confirm')!.addEventListener('click', async () => {
+        dialog.remove();
+        const overlay = this.createOverlay('Объединяем аккаунты...');
+        document.body.appendChild(overlay);
+        try {
+          await authService.linkYandex(token, true);
+          overlay.remove();
+          // Перезагружаем компании, так как могли добавиться новые
+          (window as any).profileModule?.showAccountTab?.();
+          // Перезагружаем страницу чтобы company switcher обновился
+          setTimeout(() => location.reload(), 800);
+        } catch (err) {
+          overlay.remove();
+          const msg = err instanceof Error ? err.message : 'Ошибка объединения';
+          alert(msg);
+        }
+        resolve();
+      });
+    });
+  }
+
+  private createOverlay(text: string): HTMLElement {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px';
+    el.innerHTML = `
+      <div style="font-size:14px;color:#fff">${text}</div>
+      <div style="width:32px;height:32px;border:2px solid rgba(255,255,255,.3);border-top-color:#fc3f1d;border-radius:50%;animation:spin .8s linear infinite"></div>
+      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+    `;
+    return el;
+  }
+
+  private async handleYandexToken(token: string): Promise<void> {
+    this.el.classList.remove('hidden');
+    this.el.innerHTML = `
+      <div class="auth-card" style="gap:16px">
+        <div class="auth-logo">SimaDesk</div>
+        <div style="color:var(--text2);font-size:13px">Входим через Яндекс...</div>
+        <div style="width:32px;height:32px;border:2px solid var(--border2);border-top-color:#fc3f1d;border-radius:50%;animation:spin .8s linear infinite"></div>
+      </div>
+      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+    `;
+    try {
+      await authService.loginWithYandex(token);
+      this.success();
+    } catch (err) {
+      this.render();
+      setTimeout(() => {
+        const msg = err instanceof Error ? err.message : 'Ошибка входа через Яндекс';
+        this.showError(msg);
+      }, 0);
+    }
   }
 
   private async handleTelegramMiniApp(): Promise<void> {
@@ -79,15 +195,54 @@ export class AuthModule {
         <div class="auth-tagline">Marketplace Desk</div>
 
         <div class="auth-headline">Вход в систему</div>
-        <div class="auth-sub">
-          Авторизуйтесь через Telegram —<br>
-          быстро и без пароля
-        </div>
+        <div class="auth-sub">Выберите удобный способ входа</div>
 
         <div class="auth-error" id="auth-error"></div>
 
-        <div class="auth-tg-wrap" id="tg-widget-wrap">
-          ${this.renderWidget()}
+        <div class="auth-methods">
+
+          <!-- Telegram method -->
+          <div class="auth-method">
+            <div class="auth-method-header">
+              <div class="auth-method-icon tg">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="#2AABEE">
+                  <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.833.94z"/>
+                </svg>
+              </div>
+              <div class="auth-method-meta">
+                <div class="auth-method-name">Telegram</div>
+                <span class="auth-method-badge vpn-req">⚠️ Нужен VPN в России</span>
+              </div>
+            </div>
+            <div class="auth-tg-wrap" id="tg-widget-wrap">
+              ${this.renderWidget()}
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5">
+              Чтобы войти с другого Telegram-аккаунта — используй
+              <a href="https://web.telegram.org/a/#logout" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">выход из Telegram Web</a>
+              или открой в приватном режиме
+            </div>
+          </div>
+
+          <!-- Yandex method -->
+          ${YANDEX_CLIENT_ID ? `
+          <div class="auth-method">
+            <div class="auth-method-header">
+              <div class="auth-method-icon ya">
+                <svg viewBox="0 0 24 24" width="20" height="20">
+                  <path d="M2.04 12c0-5.523 4.476-10 10-10 5.522 0 10 4.477 10 10s-4.478 10-10 10c-5.524 0-10-4.477-10-10z" fill="#FC3F1D"/>
+                  <path d="M13.32 7.666h-.924c-1.694 0-2.585.858-2.585 2.123 0 1.43.616 2.1 1.881 2.959l1.045.704-3.003 4.548H7.49l2.695-4.07c-1.55-1.111-2.42-2.19-2.42-4.025 0-2.288 1.595-3.805 4.355-3.805h2.97v11.9H13.32V7.666z" fill="#fff"/>
+                </svg>
+              </div>
+              <div class="auth-method-meta">
+                <div class="auth-method-name">Яндекс ID</div>
+                <span class="auth-method-badge no-vpn">✓ Работает без VPN в России</span>
+              </div>
+            </div>
+            ${this.renderYandexBtn()}
+          </div>
+          ` : ''}
+
         </div>
 
         ${IS_DEV_AUTH ? `
@@ -110,6 +265,14 @@ export class AuthModule {
 
     // Inject Telegram widget script via createElement (innerHTML blocks script execution)
     this.injectWidget();
+
+    // Yandex login
+    document.getElementById('yandex-login-btn')?.addEventListener('click', () => {
+      this.redirectToYandex();
+    });
+    document.getElementById('yandex-switch-btn')?.addEventListener('click', () => {
+      this.redirectToYandex(true);
+    });
 
     // Dev bypass
     if (IS_DEV_AUTH) {
@@ -145,10 +308,32 @@ export class AuthModule {
   }
 
   private renderWidget(): string {
-    // Returns empty placeholder — actual script injected via injectWidget()
-    // because <script> tags in innerHTML are NOT executed by browsers
     if (!BOT_USERNAME) return '';
     return `<div id="tg-widget-inner"></div>`;
+  }
+
+  private renderYandexBtn(): string {
+    if (!YANDEX_CLIENT_ID) return '';
+    return `
+      <button class="auth-ya-btn" id="yandex-login-btn">
+        <svg class="auth-ya-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M2.04 12c0-5.523 4.476-10 10-10 5.522 0 10 4.477 10 10s-4.478 10-10 10c-5.524 0-10-4.477-10-10z" fill="#FC3F1D"/>
+          <path d="M13.32 7.666h-.924c-1.694 0-2.585.858-2.585 2.123 0 1.43.616 2.1 1.881 2.959l1.045.704-3.003 4.548H7.49l2.695-4.07c-1.55-1.111-2.42-2.19-2.42-4.025 0-2.288 1.595-3.805 4.355-3.805h2.97v11.9H13.32V7.666z" fill="#fff"/>
+        </svg>
+        Войти через Яндекс
+      </button>
+      <button class="auth-switch-btn" id="yandex-switch-btn" title="Войти с другого Яндекс аккаунта">
+        Сменить аккаунт Яндекс
+      </button>
+    `;
+  }
+
+  private redirectToYandex(forceConfirm = false): void {
+    if (!YANDEX_CLIENT_ID) return;
+    const redirectUri = encodeURIComponent(window.location.origin + '/');
+    const force = forceConfirm ? '&force_confirm=yes' : '';
+    const url = `https://oauth.yandex.ru/authorize?response_type=token&client_id=${YANDEX_CLIENT_ID}&redirect_uri=${redirectUri}${force}`;
+    window.location.href = url;
   }
 
   private injectWidget(): void {

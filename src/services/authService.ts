@@ -11,7 +11,7 @@
 import { cookies } from '@/utils/cookies';
 
 const STORAGE_KEYS = {
-  ACCESS_TOKEN:  'sb_access_token',
+  ACCESS_TOKEN:  'access_token',
   REFRESH_TOKEN: 'sb_refresh_token',
   USER:          'sb_user',
   EXPIRES_AT:    'sb_expires_at',
@@ -19,12 +19,14 @@ const STORAGE_KEYS = {
 
 export interface AuthUser {
   id: string;          // Supabase auth UUID
-  telegram_id: number;
+  telegram_id?: number | null;
+  yandex_id?: number | null;
   first_name: string;
   last_name?: string | null;
   username?: string | null;
   photo_url?: string | null;
-  display_name?: string | null;  // кастомное имя (если не хочет использовать TG-имя)
+  display_name?: string | null;
+  yandex_login?: string | null;
 }
 
 export interface AuthSession {
@@ -35,16 +37,30 @@ export interface AuthSession {
   first_name: string;
   username: string | null;
   photo_url: string | null;
+  yandex_login?: string | null;
 }
 
-const SUPA_URL   = import.meta.env.VITE_SUPA_URL as string;
-const SUPA_KEY   = import.meta.env.VITE_SUPA_KEY as string;
-// In dev mode requests go to Vite's local auth handler (/api/auth/telegram).
-// In production they go to the Supabase Edge Function.
+export interface LinkedAccounts {
+  telegram_id: number | null;
+  yandex_id: number | null;
+  telegram_username: string | null;
+  yandex_login: string | null;
+  profile_source: string | null;
+  telegram_first_name: string | null;
+  telegram_last_name: string | null;
+  telegram_photo_url: string | null;
+  yandex_first_name: string | null;
+  yandex_last_name: string | null;
+  yandex_photo_url: string | null;
+}
+
+const API_URL   = import.meta.env.VITE_API_URL as string;
+const API_KEY   = import.meta.env.VITE_API_KEY as string;
 const IS_DEV     = import.meta.env.DEV === true;
 const AUTH_URL   = IS_DEV
   ? '/api/auth/telegram'
-  : `${SUPA_URL}/functions/v1/telegram-auth`;
+  : `${API_URL}/functions/v1/telegram-auth`;
+const YANDEX_AUTH_URL = `${API_URL}/functions/v1/yandex-auth`;
 
 class AuthService {
   // ── Getters ───────────────────────────────────────────────────────────────
@@ -83,6 +99,7 @@ class AuthService {
       first_name: session.first_name,
       username: session.username ?? null,
       photo_url: session.photo_url ?? null,
+      yandex_login: session.yandex_login ?? null,
     } satisfies Partial<AuthUser>);
 
     // localStorage — быстрый доступ в рамках сессии
@@ -115,8 +132,8 @@ class AuthService {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': SUPA_KEY,
-        'Authorization': `Bearer ${SUPA_KEY}`,
+        'apikey': API_KEY,
+        'Authorization': `Bearer ${API_KEY}`,
       },
       body: JSON.stringify({ telegram_data: telegramData }),
     });
@@ -137,8 +154,8 @@ class AuthService {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': SUPA_KEY,
-        'Authorization': `Bearer ${SUPA_KEY}`,
+        'apikey': API_KEY,
+        'Authorization': `Bearer ${API_KEY}`,
       },
       body: JSON.stringify({ init_data: initData }),
     });
@@ -149,6 +166,146 @@ class AuthService {
     }
     const session: AuthSession = await res.json();
     this.saveSession(session);
+  }
+
+  /** Yandex OAuth — новый вход (пользователь не авторизован) */
+  async loginWithYandex(yandexToken: string): Promise<void> {
+    const res = await fetch(YANDEX_AUTH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': API_KEY,
+        'Authorization': `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({ yandex_token: yandexToken }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Network error' }));
+      throw new Error(err.error || `Yandex auth failed: ${res.status}`);
+    }
+    const session: AuthSession = await res.json();
+    this.saveSession(session);
+  }
+
+  /** Привязать Яндекс к уже авторизованному аккаунту.
+   *  Возвращает { linked, conflict, merged } — не бросает исключение при конфликте. */
+  async linkYandex(yandexToken: string, merge = false): Promise<{ linked: boolean; conflict: boolean; merged: boolean }> {
+    const accessToken = this.getAccessToken();
+    if (!accessToken) throw new Error('Не авторизован');
+    const res = await fetch(YANDEX_AUTH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': API_KEY,
+        'Authorization': `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ yandex_token: yandexToken, merge }),
+    });
+
+    if (res.status === 409) {
+      return { linked: false, conflict: true, merged: false };
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Network error' }));
+      throw new Error(err.error || `Yandex link failed: ${res.status}`);
+    }
+
+    const data = await res.json();
+    const yandexId: number | undefined = data.yandex_id;
+    if (yandexId) {
+      const user = this.getUser();
+      if (user) {
+        user.yandex_id = yandexId;
+        localStorage.setItem('sb_user', JSON.stringify(user));
+      }
+    }
+    return { linked: true, conflict: false, merged: !!data.merged };
+  }
+
+  /** Получить привязанные аккаунты + данные профиля из БД */
+  async fetchLinkedAccounts(): Promise<LinkedAccounts> {
+    const empty: LinkedAccounts = {
+      telegram_id: null, yandex_id: null, telegram_username: null,
+      yandex_login: null, profile_source: null,
+      telegram_first_name: null, telegram_last_name: null, telegram_photo_url: null,
+      yandex_first_name: null, yandex_last_name: null, yandex_photo_url: null,
+    };
+    const userId = this.getUser()?.id;
+    if (!userId) return empty;
+    const token = await this.getValidToken();
+    if (!token) return empty;
+    try {
+      const fields = [
+        'telegram_id', 'yandex_id', 'telegram_username',
+        'yandex_login', 'profile_source',
+        'telegram_first_name', 'telegram_last_name', 'telegram_photo_url',
+        'yandex_first_name', 'yandex_last_name', 'yandex_photo_url',
+      ].join(',');
+      const res = await fetch(
+        `${API_URL}/rest/v1/users?id=eq.${userId}&select=${fields}`,
+        { headers: { 'apikey': API_KEY, 'Authorization': `Bearer ${token}` } },
+      );
+      if (!res.ok) return empty;
+      const rows = await res.json();
+      const r = rows[0] ?? {};
+      return {
+        telegram_id: r.telegram_id ?? null,
+        yandex_id: r.yandex_id ?? null,
+        telegram_username: r.telegram_username ?? null,
+        yandex_login: r.yandex_login ?? null,
+        profile_source: r.profile_source ?? null,
+        telegram_first_name: r.telegram_first_name ?? null,
+        telegram_last_name: r.telegram_last_name ?? null,
+        telegram_photo_url: r.telegram_photo_url ?? null,
+        yandex_first_name: r.yandex_first_name ?? null,
+        yandex_last_name: r.yandex_last_name ?? null,
+        yandex_photo_url: r.yandex_photo_url ?? null,
+      };
+    } catch {
+      return empty;
+    }
+  }
+
+  /** Установить источник данных профиля и обновить отображаемые поля */
+  async setProfileSource(source: 'telegram' | 'yandex', accounts: LinkedAccounts): Promise<void> {
+    const userId = this.getUser()?.id;
+    if (!userId) throw new Error('Not authenticated');
+    const token = await this.getValidToken();
+    if (!token) throw new Error('Not authenticated');
+
+    // For Telegram: fall back to username if no first_name set
+    const firstName = source === 'telegram'
+      ? (accounts.telegram_first_name || accounts.telegram_username || null)
+      : accounts.yandex_first_name;
+    const lastName  = source === 'telegram' ? accounts.telegram_last_name  : accounts.yandex_last_name;
+    const photoUrl  = source === 'telegram' ? accounts.telegram_photo_url  : accounts.yandex_photo_url;
+
+    const res = await fetch(`${API_URL}/rest/v1/users?id=eq.${userId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': API_KEY,
+        'Authorization': `Bearer ${token}`,
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify({
+        profile_source: source,
+        // Always overwrite — even with null — to clear stale data from the other provider
+        first_name: firstName ?? null,
+        last_name:  lastName  ?? null,
+        photo_url:  photoUrl  ?? null,
+      }),
+    });
+    if (!res.ok) throw new Error('Failed to update profile source');
+
+    // Update cached display data
+    const user = this.getUser();
+    if (user) {
+      user.first_name = firstName ?? '';
+      user.photo_url  = photoUrl  ?? null;
+      user.username   = source === 'yandex' ? accounts.yandex_login : accounts.telegram_username;
+      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
+    }
   }
 
   /** Проверяет, запущено ли приложение внутри Telegram (Mini App) */
@@ -177,11 +334,11 @@ class AuthService {
     if (!refreshToken) return false;
 
     try {
-      const res = await fetch(`${SUPA_URL}/auth/v1/token?grant_type=refresh_token`, {
+      const res = await fetch(`${API_URL}/auth/v1/token?grant_type=refresh_token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'apikey': SUPA_KEY,
+          'apikey': API_KEY,
         },
         body: JSON.stringify({ refresh_token: refreshToken }),
       });
@@ -233,7 +390,7 @@ class AuthService {
    * Идёт через тот же /api/auth/telegram, что и реальный Telegram-вход —
    * локальный dev-хэндлер (vite.config.ts) без BOT_TOKEN пропускает проверку
    * подписи и создаёт/переиспользует настоящего Supabase-пользователя с
-   * настоящей сессией (через SUPABASE_SERVICE_ROLE_KEY). Раньше здесь просто
+   * настоящей сессией (через SERVICE_ROLE_KEY). Раньше здесь просто
    * подделывался токен на клиенте — из-за этого все запросы к Supabase падали
    * с "Expected 3 parts in JWT" (не JWT вовсе, а произвольная строка).
    */

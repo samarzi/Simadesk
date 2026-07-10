@@ -1295,7 +1295,7 @@ export class SiteBuilderModule {
 ```typescript
 // src/services/siteBuilderDb.ts
 
-import { supabase } from './supabaseClient';
+import { dbClient } from './dbClient';
 
 export class SiteBuilderDb {
   // =====================
@@ -1303,7 +1303,7 @@ export class SiteBuilderDb {
   // =====================
 
   async getSites(): Promise<UserSite[]> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('user_sites')
       .select('*')
       .order('created_at', { ascending: false });
@@ -1313,7 +1313,7 @@ export class SiteBuilderDb {
   }
 
   async getSite(id: string): Promise<UserSite> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('user_sites')
       .select('*')
       .eq('id', id)
@@ -1324,7 +1324,7 @@ export class SiteBuilderDb {
   }
 
   async getSiteBySubdomain(subdomain: string): Promise<UserSite | null> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('user_sites')
       .select('*')
       .eq('subdomain', subdomain)
@@ -1339,7 +1339,7 @@ export class SiteBuilderDb {
     subdomain: string;
     settings: SiteSettings;
   }): Promise<UserSite> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('user_sites')
       .insert(site)
       .select()
@@ -1350,7 +1350,7 @@ export class SiteBuilderDb {
   }
 
   async updateSite(id: string, updates: Partial<UserSite>): Promise<UserSite> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('user_sites')
       .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', id)
@@ -1362,7 +1362,7 @@ export class SiteBuilderDb {
   }
 
   async deleteSite(id: string): Promise<void> {
-    const { error } = await supabase
+    const { error } = await dbClient
       .from('user_sites')
       .delete()
       .eq('id', id);
@@ -1375,7 +1375,7 @@ export class SiteBuilderDb {
   // =====================
 
   async getProducts(siteId: string): Promise<SiteProduct[]> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('site_products')
       .select('*')
       .eq('site_id', siteId)
@@ -1386,7 +1386,7 @@ export class SiteBuilderDb {
   }
 
   async addProduct(siteId: string, product: Partial<SiteProduct>): Promise<SiteProduct> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('site_products')
       .insert({ ...product, site_id: siteId })
       .select()
@@ -1397,7 +1397,7 @@ export class SiteBuilderDb {
   }
 
   async updateProduct(id: string, updates: Partial<SiteProduct>): Promise<SiteProduct> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('site_products')
       .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', id)
@@ -1409,7 +1409,7 @@ export class SiteBuilderDb {
   }
 
   async deleteProduct(id: string): Promise<void> {
-    const { error } = await supabase
+    const { error } = await dbClient
       .from('site_products')
       .delete()
       .eq('id', id);
@@ -1424,7 +1424,7 @@ export class SiteBuilderDb {
     }));
 
     for (const update of updates) {
-      await supabase
+      await dbClient
         .from('site_products')
         .update({ sort_order: update.sort_order })
         .eq('id', update.id);
@@ -1436,7 +1436,7 @@ export class SiteBuilderDb {
   // =====================
 
   async getBanners(siteId: string): Promise<SiteBanner[]> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('site_banners')
       .select('*')
       .eq('site_id', siteId)
@@ -1447,7 +1447,7 @@ export class SiteBuilderDb {
   }
 
   async addBanner(siteId: string, banner: Partial<SiteBanner>): Promise<SiteBanner> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('site_banners')
       .insert({ ...banner, site_id: siteId })
       .select()
@@ -1458,7 +1458,7 @@ export class SiteBuilderDb {
   }
 
   async updateBanner(id: string, updates: Partial<SiteBanner>): Promise<SiteBanner> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('site_banners')
       .update(updates)
       .eq('id', id)
@@ -1470,7 +1470,7 @@ export class SiteBuilderDb {
   }
 
   async deleteBanner(id: string): Promise<void> {
-    const { error } = await supabase
+    const { error } = await dbClient
       .from('site_banners')
       .delete()
       .eq('id', id);
@@ -1483,7 +1483,7 @@ export class SiteBuilderDb {
   // =====================
 
   async getPages(siteId: string): Promise<SitePage[]> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('site_pages')
       .select('*')
       .eq('site_id', siteId)
@@ -1494,7 +1494,7 @@ export class SiteBuilderDb {
   }
 
   async addPage(siteId: string, page: Partial<SitePage>): Promise<SitePage> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('site_pages')
       .insert({ ...page, site_id: siteId })
       .select()
@@ -1505,7 +1505,7 @@ export class SiteBuilderDb {
   }
 
   async updatePage(id: string, updates: Partial<SitePage>): Promise<SitePage> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('site_pages')
       .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', id)
@@ -1517,7 +1517,7 @@ export class SiteBuilderDb {
   }
 
   async deletePage(id: string): Promise<void> {
-    const { error } = await supabase
+    const { error } = await dbClient
       .from('site_pages')
       .delete()
       .eq('id', id);
@@ -1542,7 +1542,7 @@ export class SiteBuilderDb {
   }
 
   async getCategories(siteId: string): Promise<SiteCategory[]> {
-    const { data, error } = await supabase
+    const { data, error } = await dbClient
       .from('site_categories')
       .select('*')
       .eq('site_id', siteId)

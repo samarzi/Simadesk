@@ -6,21 +6,21 @@
 
 ### 1. Основная миграция (таблицы + старые RLS)
 ```
-Файл: supabase_multiuser.sql
+Файл: multiuser.sql
 ```
 Создаёт: `users`, `companies`, `company_members`, `company_invitations`,
 добавляет `company_id` в `boxes`/`sheets`, включает RLS.
 
 ### 2. ОБЯЗАТЕЛЬНО — исправление рекурсии RLS  
 ```
-Файл: supabase_rls_fix.sql
+Файл: rls_fix.sql
 ```
 ⚠️ Без этого будет ошибка **"infinite recursion detected in policy"**.
 Пересоздаёт все политики через `SECURITY DEFINER` функцию — убирает рекурсию.
 
 ### 3. Юридическое название компании (если таблица уже создана)
 ```
-Файл: supabase_companies_legal_name.sql
+Файл: companies_legal_name.sql
 ```
 Добавляет колонку `legal_name` в `companies`.
 
@@ -33,8 +33,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT DEFAULT NULL;
 
 ## Если начинаешь с нуля (таблиц ещё нет)
 
-Запусти только **`supabase_multiuser.sql`** (он уже содержит `legal_name`),
-затем **`supabase_rls_fix.sql`**.
+Запусти только **`multiuser.sql`** (он уже содержит `legal_name`),
+затем **`rls_fix.sql`**.
 
 ---
 

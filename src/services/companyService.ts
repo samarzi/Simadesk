@@ -8,7 +8,7 @@
  *  - Provide company_id for all insert operations across the app
  */
 
-import { supaFetch } from './supabaseClient';
+import { dbFetch } from './dbClient';
 import { authService } from './authService';
 import { cookies } from '@/utils/cookies';
 
@@ -90,7 +90,7 @@ class CompanyService {
 
   async load(): Promise<Company[]> {
     // Use the my_companies view which already filters by current user
-    const rows = await supaFetch<(Company & { role: CompanyRole; joined_at: string })[]>(
+    const rows = await dbFetch<(Company & { role: CompanyRole; joined_at: string })[]>(
       'my_companies?select=*&order=created_at.asc',
     );
     this._companies = rows.map(r => ({
@@ -163,7 +163,7 @@ class CompanyService {
       created_by: authService.getUser()?.id ?? null,
     };
 
-    const result = await supaFetch<Company[]>('companies', {
+    const result = await dbFetch<Company[]>('companies', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -173,7 +173,7 @@ class CompanyService {
     // Add owner membership (the DB trigger might handle this,
     // but we do it explicitly to be safe)
     try {
-      await supaFetch('company_members', {
+      await dbFetch('company_members', {
         method: 'POST',
         body: JSON.stringify({
           company_id: company.id,
@@ -195,7 +195,7 @@ class CompanyService {
   // ── Update company ────────────────────────────────────────────────────────
 
   async update(id: string, updates: Partial<Omit<Company, 'id' | 'created_at' | 'created_by' | 'role'>>): Promise<void> {
-    await supaFetch(`companies?id=eq.${id}`, {
+    await dbFetch(`companies?id=eq.${id}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
     });
@@ -209,7 +209,7 @@ class CompanyService {
   // ── Delete company (owner only) ───────────────────────────────────────────
 
   async delete(id: string): Promise<void> {
-    await supaFetch(`companies?id=eq.${id}`, { method: 'DELETE' });
+    await dbFetch(`companies?id=eq.${id}`, { method: 'DELETE' });
     this._companies = this._companies.filter(c => c.id !== id);
     if (this._activeId === id) {
       this._activeId = this._companies[0]?.id ?? null;
@@ -231,21 +231,22 @@ class CompanyService {
     user_id: string;
     role: CompanyRole;
     joined_at: string;
+    joined_via_link_id: string | null;
     first_name: string;
     telegram_username: string | null;
     photo_url: string | null;
   }>> {
-    return supaFetch(
-      `company_members?company_id=eq.${companyId}&select=id,user_id,role,joined_at,users(first_name,telegram_username,photo_url)`,
+    return dbFetch(
+      `company_members?company_id=eq.${companyId}&select=id,user_id,role,joined_at,joined_via_link_id,users(first_name,telegram_username,photo_url)`,
     );
   }
 
   async removeMember(memberId: string): Promise<void> {
-    await supaFetch(`company_members?id=eq.${memberId}`, { method: 'DELETE' });
+    await dbFetch(`company_members?id=eq.${memberId}`, { method: 'DELETE' });
   }
 
   async updateMemberRole(memberId: string, role: CompanyRole): Promise<void> {
-    await supaFetch(`company_members?id=eq.${memberId}`, {
+    await dbFetch(`company_members?id=eq.${memberId}`, {
       method: 'PATCH',
       body: JSON.stringify({ role }),
     });
@@ -254,7 +255,7 @@ class CompanyService {
   // ── Invitation by token ───────────────────────────────────────────────────
 
   async createInvite(companyId: string, role: 'admin' | 'manager' | 'viewer'): Promise<string> {
-    const result = await supaFetch<Array<{ token: string }>>('company_invitations', {
+    const result = await dbFetch<Array<{ token: string }>>('company_invitations', {
       method: 'POST',
       body: JSON.stringify({ company_id: companyId, role }),
     });
@@ -270,7 +271,7 @@ class CompanyService {
   async inviteByUsername(companyId: string, telegramUsername: string, role: CompanyRole): Promise<void> {
     const username = telegramUsername.replace(/^@/, '').toLowerCase().trim();
     if (!username) throw new Error('Пустой username');
-    await supaFetch('company_invitations', {
+    await dbFetch('company_invitations', {
       method: 'POST',
       body: JSON.stringify({
         company_id: companyId,
@@ -288,7 +289,7 @@ class CompanyService {
     created_at: string;
   }>> {
     // Все ещё неиспользованные приглашения этой компании (с username или с токеном)
-    const rows = await supaFetch<any[]>(
+    const rows = await dbFetch<any[]>(
       `company_invitations?company_id=eq.${companyId}&used_at=is.null&select=id,telegram_username,role,created_at,token&order=created_at.desc`,
     );
     return (rows ?? []).map((r: any) => ({
@@ -300,7 +301,7 @@ class CompanyService {
   }
 
   async cancelPendingInvitation(id: string): Promise<void> {
-    await supaFetch(`company_invitations?id=eq.${id}`, { method: 'DELETE' });
+    await dbFetch(`company_invitations?id=eq.${id}`, { method: 'DELETE' });
   }
 
   // ── My incoming invitations (for the current user to accept/decline) ──────
@@ -316,7 +317,7 @@ class CompanyService {
     const username = (user?.username ?? '').replace(/^@/, '').toLowerCase().trim();
     if (!username) return [];
     try {
-      const rows = await supaFetch<any[]>(
+      const rows = await dbFetch<any[]>(
         `company_invitations?telegram_username=eq.${encodeURIComponent(username)}&used_at=is.null&select=id,company_id,role,created_at,companies(name,color,logo_url)&order=created_at.desc`,
       );
       return (rows ?? []).map((r: any) => ({
@@ -336,7 +337,7 @@ class CompanyService {
     if (!user) throw new Error('Не авторизован');
     // Insert into company_members (ignore duplicate)
     try {
-      await supaFetch('company_members', {
+      await dbFetch('company_members', {
         method: 'POST',
         body: JSON.stringify({ company_id: companyId, user_id: user.id, role }),
       });
@@ -344,7 +345,7 @@ class CompanyService {
       console.warn('[companyService] acceptInvitation member insert:', e);
     }
     // Mark invitation as used
-    await supaFetch(`company_invitations?id=eq.${inviteId}`, {
+    await dbFetch(`company_invitations?id=eq.${inviteId}`, {
       method: 'PATCH',
       body: JSON.stringify({ used_at: new Date().toISOString() }),
     });
@@ -353,10 +354,49 @@ class CompanyService {
   }
 
   async declineInvitation(inviteId: string): Promise<void> {
-    await supaFetch(`company_invitations?id=eq.${inviteId}`, {
+    await dbFetch(`company_invitations?id=eq.${inviteId}`, {
       method: 'PATCH',
       body: JSON.stringify({ used_at: new Date().toISOString() }),
     });
+  }
+
+  // ── Invite links (join-by-URL) — all via SECURITY DEFINER RPCs ──────────────
+
+  async getInviteLinks(companyId: string): Promise<Array<{
+    id: string; token: string; role: CompanyRole;
+    use_count: number; is_active: boolean; created_at: string;
+  }>> {
+    const result = await dbFetch<any[]>('rpc/get_invite_links', {
+      method: 'POST',
+      body: JSON.stringify({ p_company_id: companyId }),
+    });
+    return result ?? [];
+  }
+
+  async createInviteLink(companyId: string, role: CompanyRole = 'manager'): Promise<{ id: string; token: string }> {
+    const rows = await dbFetch<any[]>('rpc/create_invite_link', {
+      method: 'POST',
+      body: JSON.stringify({ p_company_id: companyId, p_role: role }),
+    });
+    return Array.isArray(rows) ? rows[0] : rows;
+  }
+
+  async deactivateInviteLink(linkId: string): Promise<void> {
+    await dbFetch('rpc/deactivate_invite_link', {
+      method: 'POST',
+      body: JSON.stringify({ p_link_id: linkId }),
+    });
+  }
+
+  async claimInviteLink(token: string): Promise<{ success?: boolean; company_id?: string; role?: string; error?: string }> {
+    return dbFetch('rpc/claim_invite_link', {
+      method: 'POST',
+      body: JSON.stringify({ p_token: token }),
+    }, { 'Prefer': 'return=representation' });
+  }
+
+  buildInviteUrl(token: string): string {
+    return `${window.location.origin}/?invite=${token}`;
   }
 }
 

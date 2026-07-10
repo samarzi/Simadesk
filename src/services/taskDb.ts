@@ -3,7 +3,7 @@
  * Both tables are RLS-protected by company_id through company_members.
  */
 
-import { supaFetch, getAuthHeaders } from './supabaseClient';
+import { dbFetch, getAuthHeaders } from './dbClient';
 import { companyService } from './companyService';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -84,13 +84,13 @@ export const taskDb = {
   getTasks: async (): Promise<Task[]> => {
     const id = companyService.getActiveId();
     if (!id) return [];
-    return supaFetch<Task[]>(
+    return dbFetch<Task[]>(
       `tasks?company_id=eq.${id}&select=*&order=sort_order.asc,created_at.desc`,
     );
   },
 
   createTask: async (data: TaskCreate): Promise<Task> => {
-    const r = await supaFetch<Task[]>('tasks', {
+    const r = await dbFetch<Task[]>('tasks', {
       method: 'POST',
       body: JSON.stringify({ company_id: cid(), ...data }),
     });
@@ -98,7 +98,7 @@ export const taskDb = {
   },
 
   updateTask: async (id: string, data: TaskUpdate): Promise<Task> => {
-    const r = await supaFetch<Task[]>(`tasks?id=eq.${id}`, {
+    const r = await dbFetch<Task[]>(`tasks?id=eq.${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
@@ -106,7 +106,7 @@ export const taskDb = {
   },
 
   deleteTask: async (id: string): Promise<void> => {
-    await supaFetch(`tasks?id=eq.${id}`, { method: 'DELETE' });
+    await dbFetch(`tasks?id=eq.${id}`, { method: 'DELETE' });
   },
 };
 
@@ -116,13 +116,13 @@ export const reminderDb = {
   getReminders: async (): Promise<Reminder[]> => {
     const id = companyService.getActiveId();
     if (!id) return [];
-    return supaFetch<Reminder[]>(
+    return dbFetch<Reminder[]>(
       `reminders?company_id=eq.${id}&select=*&order=remind_at.asc`,
     );
   },
 
   createReminder: async (data: ReminderCreate): Promise<Reminder> => {
-    const r = await supaFetch<Reminder[]>('reminders', {
+    const r = await dbFetch<Reminder[]>('reminders', {
       method: 'POST',
       body: JSON.stringify({ company_id: cid(), ...data }),
     });
@@ -130,7 +130,7 @@ export const reminderDb = {
   },
 
   updateReminder: async (id: string, data: ReminderUpdate): Promise<Reminder> => {
-    const r = await supaFetch<Reminder[]>(`reminders?id=eq.${id}`, {
+    const r = await dbFetch<Reminder[]>(`reminders?id=eq.${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
@@ -138,7 +138,7 @@ export const reminderDb = {
   },
 
   deleteReminder: async (id: string): Promise<void> => {
-    await supaFetch(`reminders?id=eq.${id}`, { method: 'DELETE' });
+    await dbFetch(`reminders?id=eq.${id}`, { method: 'DELETE' });
   },
 };
 
@@ -148,13 +148,13 @@ export const commentDb = {
   getComments: async (taskId: string): Promise<TaskComment[]> => {
     const id = companyService.getActiveId();
     if (!id) return [];
-    return supaFetch<TaskComment[]>(
+    return dbFetch<TaskComment[]>(
       `task_comments?company_id=eq.${id}&task_id=eq.${taskId}&select=*&order=created_at.asc`,
     );
   },
 
   createComment: async (taskId: string, authorId: string, body: string): Promise<TaskComment> => {
-    const r = await supaFetch<TaskComment[]>('task_comments', {
+    const r = await dbFetch<TaskComment[]>('task_comments', {
       method: 'POST',
       body: JSON.stringify({ company_id: cid(), task_id: taskId, author_id: authorId, body }),
     });
@@ -162,20 +162,20 @@ export const commentDb = {
   },
 
   deleteComment: async (id: string): Promise<void> => {
-    await supaFetch(`task_comments?id=eq.${id}`, { method: 'DELETE' });
+    await dbFetch(`task_comments?id=eq.${id}`, { method: 'DELETE' });
   },
 };
 
 // ── Attachment CRUD ─────────────────────────────────────────────────────
 
-const SUPA_URL = import.meta.env.VITE_SUPA_URL as string;
+const API_URL = import.meta.env.VITE_API_URL as string;
 const STORAGE_BUCKET = 'task-files';
 
 export const attachmentDb = {
   getAttachments: async (taskId: string): Promise<TaskAttachment[]> => {
     const id = companyService.getActiveId();
     if (!id) return [];
-    return supaFetch<TaskAttachment[]>(
+    return dbFetch<TaskAttachment[]>(
       `task_attachments?company_id=eq.${id}&task_id=eq.${taskId}&select=*&order=created_at.asc`,
     );
   },
@@ -191,7 +191,7 @@ export const attachmentDb = {
     delete (headers as any)['Prefer'];
 
     const uploadRes = await fetch(
-      `${SUPA_URL}/storage/v1/object/${STORAGE_BUCKET}/${storagePath}`,
+      `${API_URL}/storage/v1/object/${STORAGE_BUCKET}/${storagePath}`,
       { method: 'POST', headers, body: file },
     );
     if (!uploadRes.ok) {
@@ -200,7 +200,7 @@ export const attachmentDb = {
     }
 
     // Create metadata record
-    const r = await supaFetch<TaskAttachment[]>('task_attachments', {
+    const r = await dbFetch<TaskAttachment[]>('task_attachments', {
       method: 'POST',
       body: JSON.stringify({
         company_id: companyId,
@@ -219,22 +219,22 @@ export const attachmentDb = {
   getDownloadUrl: async (storagePath: string): Promise<string> => {
     const headers = getAuthHeaders();
     const res = await fetch(
-      `${SUPA_URL}/storage/v1/object/sign/${STORAGE_BUCKET}/${storagePath}`,
+      `${API_URL}/storage/v1/object/sign/${STORAGE_BUCKET}/${storagePath}`,
       { method: 'POST', headers, body: JSON.stringify({ expiresIn: 3600 }) },
     );
     if (!res.ok) throw new Error('Failed to get signed URL');
     const data = await res.json();
-    return `${SUPA_URL}/storage/v1${data.signedURL}`;
+    return `${API_URL}/storage/v1${data.signedURL}`;
   },
 
   deleteAttachment: async (id: string, storagePath: string): Promise<void> => {
     // Delete from storage
     const headers = getAuthHeaders();
     await fetch(
-      `${SUPA_URL}/storage/v1/object/${STORAGE_BUCKET}/${storagePath}`,
+      `${API_URL}/storage/v1/object/${STORAGE_BUCKET}/${storagePath}`,
       { method: 'DELETE', headers },
     );
     // Delete metadata
-    await supaFetch(`task_attachments?id=eq.${id}`, { method: 'DELETE' });
+    await dbFetch(`task_attachments?id=eq.${id}`, { method: 'DELETE' });
   },
 };

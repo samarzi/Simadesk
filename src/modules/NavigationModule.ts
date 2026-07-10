@@ -106,6 +106,7 @@ export class NavigationModule {
       'repricer-section',
       'sku-audit-section', 'reviews-section', 'chats-section', 'logs-section', 'automation-section',
       'catalog-section', 'producers-section', 'products-hub-section',
+      'simastore-section',
     ];
     for (const id of ids) {
       const el = document.getElementById(id);
@@ -136,6 +137,7 @@ export class NavigationModule {
     w.catalogMpModule?.hide();
     w.producersModule?.hide();
     w.productsHubModule?.hide();
+    w.simaStoreModule?.hide();
   }
 
   /** Сбросить active-классы у всех nav/dock элементов. */
@@ -152,6 +154,7 @@ export class NavigationModule {
       'nav-orders-ozon','nav-orders-yandex','nav-orders-wb',
       'nav-repricer',
       'nav-sku-audit','nav-reviews','nav-chats','nav-logs','nav-automation','nav-tasks','nav-stock','nav-catalog','nav-producers','nav-products-hub',
+      'nav-simastore',
     ];
     for (const id of ids) {
       document.getElementById(id)?.classList.remove('active');
@@ -187,7 +190,8 @@ export class NavigationModule {
       page === 'analytics' || page === 'settings-hub' || page === 'settings' || page === 'profile' ||
       page === 'repricer' ||
       page === 'sku-audit' || page === 'reviews' || page === 'chats' || page === 'logs' || page === 'automation' ||
-      page === 'tasks' || page === 'stock' || page === 'catalog' || page === 'producers' || page === 'products-hub';
+      page === 'tasks' || page === 'stock' || page === 'catalog' || page === 'producers' || page === 'products-hub' ||
+      page === 'simastore';
 
     const groupsBar = document.getElementById('groups-bar');
 
@@ -295,6 +299,10 @@ export class NavigationModule {
         case 'products-hub':
           document.getElementById('nav-products')?.classList.add('active');
           w.productsHubModule?.show();
+          break;
+        case 'simastore':
+          document.getElementById('nav-simastore')?.classList.add('active');
+          w.simaStoreModule?.show();
           break;
       }
       return;

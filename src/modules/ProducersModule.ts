@@ -363,7 +363,7 @@ export class ProducersModule {
   private smartImportStep: 0 | 1 | 2 = 0;
   private smartImportFile: File | null = null;
   private smartImportMapping: Record<string, string> = {};
-  private smartImportPreview: { toCreate: any[]; toUpdate: any[]; skip: number; skipNoName?: number; ambiguous?: number } = { toCreate: [], toUpdate: [], skip: 0 };
+  private smartImportPreview: { toCreate: any[]; toUpdate: any[]; skip: number; skipNoName?: number; ambiguous?: number; newProducers?: string[] } = { toCreate: [], toUpdate: [], skip: 0 };
   private smartImportProducerId = '';
   private smartUnmappedAction: Record<string, 'create' | 'ignore'> = {};
   private smartMatchMode: 'article' | 'name' | 'both' = 'both';
@@ -5473,7 +5473,7 @@ export class ProducersModule {
 
     const producerBlock = `
       <div style="display:flex;flex-direction:column;gap:6px">
-        <div style="font-size:11px;color:var(--text-2)">Поставщик по умолчанию</div>
+        <div style="font-size:11px;color:var(--text-2)">Запасной поставщик <span style="opacity:.7">(для строк без колонки «Поставщик»)</span></div>
         <div style="display:flex;gap:8px;align-items:center">
           ${this.producers.length > 0 ? `
             <select onchange="window.producersModule._smartSetProducer(this.value)"
@@ -5495,6 +5495,9 @@ export class ProducersModule {
     `;
 
     const noProducers = this.producers.length === 0;
+    const hasProducerCol = !!(this.smartImportMapping['producer'] && (window as any).__smartImportHeaders);
+    // Disable Analyze only when there are no producers AND no producer column detected in file
+    const analyzeDisabled = noProducers && !hasProducerCol;
 
     return `
       <div style="display:flex;flex-direction:column;gap:14px">
@@ -5502,22 +5505,26 @@ export class ProducersModule {
           onchange="window.producersModule._smartFileChange(this)">
         <div style="display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--text-2)">
           Файл Excel (.xlsx)
-          ${noProducers ? `
-            <div style="border:2px dashed var(--line);border-radius:8px;padding:24px;text-align:center;opacity:.45;cursor:not-allowed">
-              <div style="font-size:24px;margin-bottom:6px">🔒</div>
-              <div style="font-size:12px;color:var(--text-2)">Сначала создайте поставщика</div>
+          ${noProducers && !this.smartImportFile ? `
+            <div style="padding:8px 12px;border-radius:6px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.2);font-size:11px;color:#fbbf24;margin-bottom:2px">
+              ⚡ Если файл содержит колонку «Поставщик», производители будут созданы автоматически. Иначе <button onclick="window.producersModule._smartOpenProducerForm()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:11px;text-decoration:underline;padding:0">создайте поставщика вручную</button>.
             </div>
-          ` : `
-            <div id="smart-drop-zone" style="border:2px dashed var(--line);border-radius:8px;padding:24px;text-align:center;cursor:pointer;transition:border-color .2s"
-              onclick="document.getElementById('smart-import-file').click()"
-              ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
-              ondragleave="this.style.borderColor='var(--line)'"
-              ondrop="event.preventDefault();window.producersModule._smartDropFile(event)">
-              <div style="font-size:24px;margin-bottom:6px">📂</div>
-              <div style="font-size:12px;color:var(--text-1)">${this.smartImportFile ? esc(this.smartImportFile.name) : 'Перетащите файл или нажмите для выбора'}</div>
-            </div>
-          `}
+          ` : ''}
+          <div id="smart-drop-zone" style="border:2px dashed var(--line);border-radius:8px;padding:24px;text-align:center;cursor:pointer;transition:border-color .2s"
+            onclick="document.getElementById('smart-import-file').click()"
+            ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+            ondragleave="this.style.borderColor='var(--line)'"
+            ondrop="event.preventDefault();window.producersModule._smartDropFile(event)">
+            <div style="font-size:24px;margin-bottom:6px">📂</div>
+            <div style="font-size:12px;color:var(--text-1)">${this.smartImportFile ? esc(this.smartImportFile.name) : 'Перетащите файл или нажмите для выбора'}</div>
+          </div>
         </div>
+
+        ${hasProducerCol ? `
+          <div style="padding:8px 12px;border-radius:6px;background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.2);font-size:11px;color:#4ade80">
+            ✓ Найдена колонка «Поставщик» — производители из файла будут распознаны и созданы автоматически
+          </div>
+        ` : ''}
 
         ${producerBlock}
 
@@ -5568,8 +5575,8 @@ export class ProducersModule {
 
           <div style="display:flex;justify-content:flex-end">
             <button id="smart-analyze-btn" onclick="window.producersModule._smartAnalyze()"
-              ${noProducers ? 'disabled' : ''}
-              style="background:var(--accent);color:#0a0a0a;border:none;padding:8px 18px;border-radius:7px;font-size:13px;cursor:pointer;font-weight:500;display:inline-flex;align-items:center;gap:6px;${noProducers ? 'opacity:.4;cursor:not-allowed' : ''}">
+              ${analyzeDisabled ? 'disabled' : ''}
+              style="background:var(--accent);color:#0a0a0a;border:none;padding:8px 18px;border-radius:7px;font-size:13px;cursor:pointer;font-weight:500;display:inline-flex;align-items:center;gap:6px;${analyzeDisabled ? 'opacity:.4;cursor:not-allowed' : ''}">
               Анализировать →
             </button>
           </div>
@@ -5588,7 +5595,7 @@ export class ProducersModule {
   }
 
   private _smartImportStep1Html(): string {
-    const { toCreate, toUpdate, skip, skipNoName = 0, ambiguous = 0 } = this.smartImportPreview;
+    const { toCreate, toUpdate, skip, skipNoName = 0, ambiguous = 0, newProducers = [] } = this.smartImportPreview;
     const total = toCreate.length + toUpdate.length + skip + ambiguous;
     const skipReasons = [
       skipNoName > 0 ? `${skipNoName} без наименования` : '',
@@ -5596,6 +5603,11 @@ export class ProducersModule {
     ].filter(Boolean).join(' · ');
     return `
       <div style="display:flex;flex-direction:column;gap:14px">
+        ${newProducers.length > 0 ? `
+          <div style="padding:8px 12px;border-radius:6px;background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.2);font-size:11px;color:#4ade80">
+            ✓ Автоматически созданы поставщики (${newProducers.length}): ${newProducers.map(n => `<b>${esc(n)}</b>`).join(', ')}
+          </div>
+        ` : ''}
         <div style="display:grid;grid-template-columns:repeat(${ambiguous > 0 ? 5 : 4},1fr);gap:10px">
           ${[
             ['Новых', toCreate.length, '#4ade80'],
@@ -5623,7 +5635,10 @@ export class ProducersModule {
           </div>
         ` : ''}
 
-        ${toCreate.length > 0 ? `
+        ${toCreate.length > 0 ? (() => {
+          const producersById = new Map(this.producers.map(p => [p.id, p.name]));
+          const multiProducer = new Set(toCreate.map(p => p.producer_id)).size > 1;
+          return `
           <div>
             <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">
               Новые товары (первые ${Math.min(20, toCreate.length)})
@@ -5632,6 +5647,7 @@ export class ProducersModule {
               <table style="width:100%;font-size:12px;border-collapse:collapse">
                 <thead style="background:var(--bg-2);position:sticky;top:0">
                   <tr>
+                    ${multiProducer ? `<th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);font-size:10px;color:var(--text-2)">Поставщик</th>` : ''}
                     <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);font-size:10px;color:var(--text-2)">Артикул</th>
                     <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);font-size:10px;color:var(--text-2)">Наименование</th>
                   </tr>
@@ -5639,6 +5655,7 @@ export class ProducersModule {
                 <tbody>
                   ${toCreate.slice(0, 20).map(p => `
                     <tr style="border-bottom:1px solid var(--line)">
+                      ${multiProducer ? `<td style="padding:6px 10px;font-size:10px;color:var(--text-2)">${esc(producersById.get(p.producer_id) ?? '')}</td>` : ''}
                       <td style="padding:6px 10px;font-family:monospace">${esc(p.articles?.[0] ?? '')}</td>
                       <td style="padding:6px 10px">${esc(p.name)}</td>
                     </tr>
@@ -5647,7 +5664,8 @@ export class ProducersModule {
               </table>
             </div>
           </div>
-        ` : ''}
+          `;
+        })() : ''}
 
         <div style="display:flex;justify-content:space-between">
           <button onclick="window.producersModule._smartBack()"
@@ -5665,13 +5683,14 @@ export class ProducersModule {
   }
 
   private _smartImportStep2Html(): string {
-    const { toCreate, toUpdate } = this.smartImportPreview;
+    const { toCreate, toUpdate, newProducers = [] } = this.smartImportPreview;
     return `
       <div style="display:flex;flex-direction:column;align-items:center;gap:16px;padding:24px">
         <div style="font-size:56px">✓</div>
         <div style="font-size:16px;font-weight:600;color:var(--text-1)">Импорт завершён!</div>
-        <div style="font-size:13px;color:var(--text-2)">
-          Создано: <b style="color:#4ade80">${toCreate.length}</b> · Обновлено: <b style="color:#fbbf24">${toUpdate.length}</b>
+        <div style="font-size:13px;color:var(--text-2);text-align:center">
+          Создано товаров: <b style="color:#4ade80">${toCreate.length}</b> · Обновлено: <b style="color:#fbbf24">${toUpdate.length}</b>
+          ${newProducers.length > 0 ? `<br>Создано поставщиков: <b style="color:#60a5fa">${newProducers.length}</b> (${newProducers.map(n => esc(n)).join(', ')})` : ''}
         </div>
         <button onclick="document.getElementById('producers-modal').remove()"
           style="background:var(--accent);color:#0a0a0a;border:none;padding:9px 20px;border-radius:7px;font-size:13px;cursor:pointer;margin-top:8px">
@@ -5805,7 +5824,8 @@ export class ProducersModule {
   }
 
   async _smartAnalyze(): Promise<void> {
-    if (!this.smartImportProducerId) { this.toast('Сначала создайте поставщика', 'error'); return; }
+    const m = this.smartImportMapping;
+    if (!this.smartImportProducerId && !m['producer']) { this.toast('Укажите поставщика по умолчанию или используйте файл с колонкой «Поставщик»', 'error'); return; }
     const analyzeBtn = document.getElementById('smart-analyze-btn') as HTMLButtonElement | null;
     if (analyzeBtn) { analyzeBtn.disabled = true; analyzeBtn.innerHTML = `<span style="display:inline-block;width:13px;height:13px;border:2px solid rgba(0,0,0,.2);border-top-color:#0a0a0a;border-radius:50%;animation:spin .7s linear infinite"></span>Анализирую…`; }
     const rows: any[] = (window as any).__smartImportRows ?? [];
@@ -5836,6 +5856,38 @@ export class ProducersModule {
 
     const prodByName = new Map<string, string>();
     for (const pr of this.producers) prodByName.set(pr.name.toLowerCase(), pr.id);
+
+    // Auto-create producers that appear in the file's "Поставщик" column but don't exist yet
+    const autoCreatedProducers: string[] = [];
+    if (m['producer']) {
+      const uniqueNames = new Set<string>();
+      for (const row of rows) {
+        const name = String(row[m['producer']] ?? '').trim();
+        if (name && !prodByName.has(name.toLowerCase())) uniqueNames.add(name);
+      }
+      for (const name of uniqueNames) {
+        try {
+          const newProd = await producerDb.create({
+            name,
+            prefix: name.slice(0, 3).toUpperCase(),
+            workflow: 'both',
+            output_type: 'new',
+            template_url: null,
+            template_config: null,
+            output_config: null,
+            contacts: null,
+          });
+          this.producers.push(newProd);
+          prodByName.set(name.toLowerCase(), newProd.id);
+          autoCreatedProducers.push(name);
+        } catch { /* already exists or transient error */ }
+      }
+      // If a default producer is still not set but we now have at least one, use the first
+      if (!this.smartImportProducerId && this.producers.length > 0) {
+        this.smartImportProducerId = this.producers[0].id;
+      }
+    }
+
     const fieldByName = new Map<string, string>();
     for (const f of this.fields) fieldByName.set(this._normalizeHeader(f.name), f.id);
 
@@ -5860,8 +5912,6 @@ export class ProducersModule {
         if (nameKey) existingByArticleAndName.set(`${artKey}|${nameKey}`, p);
       }
     }
-
-    const m = this.smartImportMapping;
     const toCreate: any[] = [];
     const toUpdate: any[] = [];
     let skip = 0;
@@ -5949,7 +5999,7 @@ export class ProducersModule {
       }
     }
 
-    this.smartImportPreview = { toCreate, toUpdate, skip, skipNoName, ambiguous };
+    this.smartImportPreview = { toCreate, toUpdate, skip, skipNoName, ambiguous, newProducers: autoCreatedProducers };
     this.smartImportStep = 1;
     this._renderSmartImportModal();
   }

@@ -82,7 +82,13 @@ export class CompanyModule {
       const companies = await companyService.load();
 
       if (companies.length === 0) {
-        // Новый пользователь — обязательно создать компанию
+        // Check for pending invite link — if present, join via it instead of showing create form
+        const pendingToken = sessionStorage.getItem('pending_invite');
+        if (pendingToken) {
+          await this.claimInviteAndBoot(pendingToken);
+          return;
+        }
+        // Новый пользователь без приглашения — обязательно создать компанию
         this.showCreate(false);
       } else {
         // Автовыбор: companyService.load() уже восстановил активный из localStorage
@@ -113,6 +119,50 @@ export class CompanyModule {
         </div>
       `;
     }
+  }
+
+  // ── Claim invite link on first boot (new user with no companies) ─────────
+
+  private async claimInviteAndBoot(token: string): Promise<void> {
+    this.gateEl.innerHTML = `
+      <div class="company-picker-card" style="align-items:center;gap:20px;padding:40px 24px">
+        <div style="width:32px;height:32px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:cp-spin .8s linear infinite"></div>
+        <div style="color:var(--text2);font-size:13px">Присоединяемся к компании…</div>
+      </div>
+      <style>@keyframes cp-spin{to{transform:rotate(360deg)}}</style>
+    `;
+
+    try {
+      const result = await companyService.claimInviteLink(token);
+      sessionStorage.removeItem('pending_invite');
+
+      if (result?.success) {
+        // Reload companies — should now include the joined one
+        const updated = await companyService.load();
+        if (updated.length > 0) {
+          const activeId = companyService.getActiveId();
+          if (activeId) companyService.setActive(activeId);
+          this.hidGate();
+          this.renderSwitcher();
+          showToast('Вы вступили в компанию!', 'success');
+          this.onReady();
+          return;
+        }
+      } else {
+        const msgs: Record<string, string> = {
+          invalid_link: 'Ссылка недействительна или была отозвана',
+          link_expired: 'Срок действия ссылки истёк',
+          link_exhausted: 'Лимит использований ссылки исчерпан',
+        };
+        showToast(msgs[result?.error ?? ''] ?? 'Не удалось применить ссылку-приглашение', 'error');
+      }
+    } catch (e) {
+      console.warn('[CompanyModule] claimInvite failed', e);
+      sessionStorage.removeItem('pending_invite');
+    }
+
+    // Fallback: invite failed — show company creation
+    this.showCreate(false);
   }
 
   // Public wrapper for error screen button
@@ -238,6 +288,9 @@ export class CompanyModule {
           <button class="cc-btn" id="cc-next-btn" disabled style="background:transparent;border:1px solid var(--border2);color:var(--text2)">
             Добавить реквизиты юр. лица (необязательно)
           </button>
+          <button id="cc-logout-btn" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:4px 0;text-decoration:underline;margin-top:4px">
+            Выйти из аккаунта
+          </button>
         </div>
       </div>
     `;
@@ -287,6 +340,12 @@ export class CompanyModule {
       const name = nameInput.value.trim();
       if (!name) return;
       this.renderCreateStep2(name, showBackBtn);
+    });
+
+    // Logout
+    document.getElementById('cc-logout-btn')?.addEventListener('click', () => {
+      authService.clearSession();
+      location.reload();
     });
   }
 

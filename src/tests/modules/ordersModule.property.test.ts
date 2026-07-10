@@ -219,10 +219,10 @@ describe('Property 7: Text filtering correctness', () => {
 describe('Property 8: Filtering does not trigger new API requests', () => {
   it('filters locally without fetching', () => {
     const fetchMock = vi.fn();
-    
+
     fc.assert(
       fc.property(
-        fc.array(fc.anything(), { minLength: 0, maxLength: 100 }),
+        fc.array(fc.string(), { minLength: 0, maxLength: 100 }),
         fc.string(),
         (data, filterValue) => {
           // Reset mock call count
@@ -230,9 +230,9 @@ describe('Property 8: Filtering does not trigger new API requests', () => {
 
           // Simulate filtering on already loaded data (client-side only, no new fetches)
           void data.filter(item =>
-            String(item).toLowerCase().includes(filterValue.toLowerCase())
+            item.toLowerCase().includes(filterValue.toLowerCase())
           );
-          
+
           // Fetch should not be called during filtering
           return fetchMock.mock.calls.length === 0;
         }

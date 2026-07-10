@@ -19,7 +19,7 @@ let sitePort = null;   // long-lived connection с сайтом SimaDesk
 // runtime-проверкой sender.origin, т.к. сама декларация в манифесте не гарантирует
 // защиту от обхода (например через chrome.runtime.sendMessage с произвольным extension id).
 const ALLOWED_EXTERNAL_ORIGINS = [
-  'https://sabatov.netlify.app',
+  'https://simadesk.ru',
 ];
 function isAllowedExternalSender(sender) {
   const origin = sender?.origin || (sender?.url ? new URL(sender.url).origin : '');
@@ -39,19 +39,19 @@ function logPriceScanFailure(marketplace, info) {
 
 // ── Supabase: сбор реальных цен покупателя на Yandex Market ───────────────
 
-const SUPA_URL = 'https://rdqwzojrsmbdxiczqjci.supabase.co';
-const SUPA_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJkcXd6b2pyc21iZHhpY3pxamNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0OTAwNjEsImV4cCI6MjA5MzA2NjA2MX0.lw9aXynPfMo0hy6J_E3BBlqd6W4MTIVM3BrVdjkBaNE';
-const YANDEX_PRICE_BRIDGE = `${SUPA_URL}/functions/v1/yandex-price-bridge`;
+const API_URL = 'https://simadesk.ru';
+const API_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvY2FsaG9zdCIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzgzNTI5MTk2LCJleHAiOjIwOTkxMDUxOTZ9.FDfekEEhWPD0Zp3UpfEiuFGUME3fLNtyaJ8cH6aBJcY';
+const YANDEX_PRICE_BRIDGE = `${API_URL}/functions/v1/yandex-price-bridge`;
 const yandexPriceTabs = new Map(); // tabId → { marketSku, offerId, timeoutId }
 
 // ── Supabase: сбор реальных цен покупателя на Wildberries ──────────────────
 
-const WB_PRICE_BRIDGE = `${SUPA_URL}/functions/v1/wb-price-bridge`;
+const WB_PRICE_BRIDGE = `${API_URL}/functions/v1/wb-price-bridge`;
 const wbPriceTabs = new Map(); // tabId → { nmId, vendorCode, timeoutId }
 
 // ── Supabase: сбор реальных цен покупателя на Ozon ─────────────────────────
 
-const OZON_PRICE_BRIDGE = `${SUPA_URL}/functions/v1/ozon-price-bridge`;
+const OZON_PRICE_BRIDGE = `${API_URL}/functions/v1/ozon-price-bridge`;
 const ozonPriceTabs = new Map(); // tabId → { productId, offerId, timeoutId }
 
 // ── Keep-alive через chrome.alarms (надёжнее setInterval в MV3) ───────────
@@ -612,8 +612,8 @@ async function scanYandexPrices() {
   try {
     const resp = await fetch(`${YANDEX_PRICE_BRIDGE}?action=targets`, {
       headers: {
-        apikey: SUPA_ANON_KEY,
-        Authorization: `Bearer ${SUPA_ANON_KEY}`,
+        apikey: API_ANON_KEY,
+        Authorization: `Bearer ${API_ANON_KEY}`,
       },
     });
     const data = await resp.json();
@@ -655,8 +655,8 @@ async function reportYandexPrice(detail) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        apikey: SUPA_ANON_KEY,
-        Authorization: `Bearer ${SUPA_ANON_KEY}`,
+        apikey: API_ANON_KEY,
+        Authorization: `Bearer ${API_ANON_KEY}`,
       },
       body: JSON.stringify({
         action: 'report',
@@ -676,8 +676,8 @@ async function scanWbPrices() {
   try {
     const resp = await fetch(`${WB_PRICE_BRIDGE}?action=targets`, {
       headers: {
-        apikey: SUPA_ANON_KEY,
-        Authorization: `Bearer ${SUPA_ANON_KEY}`,
+        apikey: API_ANON_KEY,
+        Authorization: `Bearer ${API_ANON_KEY}`,
       },
     });
     const data = await resp.json();
@@ -717,8 +717,8 @@ async function reportWbPrice(detail) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        apikey: SUPA_ANON_KEY,
-        Authorization: `Bearer ${SUPA_ANON_KEY}`,
+        apikey: API_ANON_KEY,
+        Authorization: `Bearer ${API_ANON_KEY}`,
       },
       body: JSON.stringify({
         action: 'report',
@@ -738,8 +738,8 @@ async function scanOzonPrices() {
   try {
     const resp = await fetch(`${OZON_PRICE_BRIDGE}?action=targets`, {
       headers: {
-        apikey: SUPA_ANON_KEY,
-        Authorization: `Bearer ${SUPA_ANON_KEY}`,
+        apikey: API_ANON_KEY,
+        Authorization: `Bearer ${API_ANON_KEY}`,
       },
     });
     const data = await resp.json();
@@ -782,8 +782,8 @@ async function reportOzonPrice(detail) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        apikey: SUPA_ANON_KEY,
-        Authorization: `Bearer ${SUPA_ANON_KEY}`,
+        apikey: API_ANON_KEY,
+        Authorization: `Bearer ${API_ANON_KEY}`,
       },
       body: JSON.stringify({
         action: 'report',

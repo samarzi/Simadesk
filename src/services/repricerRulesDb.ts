@@ -13,7 +13,7 @@
  */
 
 import { debug } from '@/utils/debug';
-import { supaFetch } from './supabaseClient';
+import { dbFetch } from './dbClient';
 import { companyService } from './companyService';
 
 const LEGACY_KEY          = 'repricer_rules_v3';            // старый единый ключ (до multi-company)
@@ -22,7 +22,7 @@ const MIGRATED_KEY_PREFIX = 'repricer_legacy_pushed_';       // флаг: legacy
 
 let cache: Record<string, any> = {};
 let cacheCompanyId: string | null = null;
-let supabaseAvailable = true;
+let dbAvailable = true;
 
 function getCacheKey(): string {
   const cid = companyService.getActiveId();
@@ -43,12 +43,12 @@ function loadLegacy(): any[] {
 async function refreshFromServer(): Promise<void> {
   const cid = companyService.getActiveId();
   if (!cid) return;
-  const token = localStorage.getItem('sb_access_token');
+  const token = localStorage.getItem('access_token');
   if (!token) return;
   if (cacheCompanyId !== cid) { cache = {}; cacheCompanyId = null; }
 
   try {
-    const rows = await supaFetch<Array<{ id: string; data: any }>>(
+    const rows = await dbFetch<Array<{ id: string; data: any }>>(
       `repricer_rules?company_id=eq.${cid}&select=id,data`,
     );
 
@@ -70,7 +70,7 @@ async function refreshFromServer(): Promise<void> {
             toUpload.push({ id: rule.id, company_id: cid, data: rule, updated_at: new Date().toISOString() });
           }
           for (let i = 0; i < toUpload.length; i += 50) {
-            supaFetch('repricer_rules?on_conflict=id', {
+            dbFetch('repricer_rules?on_conflict=id', {
               method: 'POST',
               headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
               body: JSON.stringify(toUpload.slice(i, i + 50)),
@@ -85,11 +85,11 @@ async function refreshFromServer(): Promise<void> {
 
     cacheCompanyId = cid;
     saveCache();
-    supabaseAvailable = true;
+    dbAvailable = true;
   } catch (e: any) {
     const msg = String(e?.message ?? '');
     if (msg.includes('42P01') || (msg.includes('repricer_rules') && msg.includes('not found'))) {
-      supabaseAvailable = false;
+      dbAvailable = false;
       console.warn('[repricerRulesDb] Supabase table repricer_rules не найдена. Используется localStorage.');
       // Load from company-scoped cache; if empty, do one-time migration from legacy key
       cache = loadCache();
@@ -115,10 +115,10 @@ async function refreshFromServer(): Promise<void> {
 
 async function pushToServer(rule: any, retries = 2): Promise<void> {
   const cid = companyService.getActiveId();
-  if (!cid || !supabaseAvailable) return;
+  if (!cid || !dbAvailable) return;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      await supaFetch('repricer_rules?on_conflict=id', {
+      await dbFetch('repricer_rules?on_conflict=id', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
         body: JSON.stringify({ id: rule.id, company_id: cid, data: rule, updated_at: new Date().toISOString() }),
@@ -126,7 +126,7 @@ async function pushToServer(rule: any, retries = 2): Promise<void> {
       return;
     } catch (e: any) {
       const msg = String(e?.message ?? '');
-      if (msg.includes('repricer_rules') && msg.includes('42P01')) { supabaseAvailable = false; return; }
+      if (msg.includes('repricer_rules') && msg.includes('42P01')) { dbAvailable = false; return; }
       console.warn(`[repricerRulesDb] push "${rule.id}" attempt ${attempt + 1}/${retries + 1}:`, msg);
       if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
     }
@@ -135,9 +135,9 @@ async function pushToServer(rule: any, retries = 2): Promise<void> {
 
 async function removeFromServer(id: string): Promise<void> {
   const cid = companyService.getActiveId();
-  if (!cid || !supabaseAvailable) return;
+  if (!cid || !dbAvailable) return;
   try {
-    await supaFetch(`repricer_rules?company_id=eq.${cid}&id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await dbFetch(`repricer_rules?company_id=eq.${cid}&id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' });
   } catch (e) { console.warn('[repricerRulesDb] remove:', e); }
 }
 
@@ -170,5 +170,5 @@ export const repricerRulesDb = {
   /** Принудительная перезагрузка с сервера. Вызвать при открытии модуля. */
   async refresh(): Promise<void> { return refreshFromServer(); },
 
-  isCloudSyncAvailable(): boolean { return supabaseAvailable; },
+  isCloudSyncAvailable(): boolean { return dbAvailable; },
 };

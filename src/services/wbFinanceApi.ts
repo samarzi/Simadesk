@@ -16,9 +16,10 @@
  *   - order_dt, sale_dt   — даты
  */
 
-const SUPA_URL = import.meta.env.VITE_SUPA_URL as string;
-const SUPA_KEY = import.meta.env.VITE_SUPA_KEY as string;
-const WB_PROXY = `${SUPA_URL}/functions/v1/wb-proxy`;
+const API_URL = import.meta.env.VITE_API_URL as string;
+const API_KEY = import.meta.env.VITE_API_KEY as string;
+// На VPS WB-запросы проксируются через nginx (/wb-stats/), не через edge function.
+const WB_PROXY = API_URL;
 
 export interface WbFinanceRow {
   realizationreport_id?: number;
@@ -74,7 +75,7 @@ export const wbFinanceApi = {
         headers: {
           'Authorization': apiKey,
           'Accept': 'application/json',
-          'apikey': SUPA_KEY,
+          'apikey': API_KEY,
         },
         signal,
       });

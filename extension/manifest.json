@@ -24,7 +24,7 @@
     "https://market.yandex.ru/*",
     "https://www.wildberries.ru/*",
     "https://www.ozon.ru/*",
-    "https://rdqwzojrsmbdxiczqjci.supabase.co/*"
+    "https://simadesk.ru/*"
   ],
 
   "background": {
@@ -42,7 +42,7 @@
 
   "externally_connectable": {
     "matches": [
-      "https://sabatov.netlify.app/*",
+      "https://simadesk.ru/*",
       "http://localhost:*/*"
     ]
   },
@@ -57,7 +57,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://sabatov.netlify.app/*",
+        "https://simadesk.ru/*",
         "http://localhost:*/*"
       ],
       "js": ["content/simadesk-bridge-isolated.js"],
@@ -66,7 +66,7 @@
     },
     {
       "matches": [
-        "https://sabatov.netlify.app/*",
+        "https://simadesk.ru/*",
         "http://localhost:*/*"
       ],
       "js": ["content/simadesk-bridge.js"],

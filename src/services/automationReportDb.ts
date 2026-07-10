@@ -2,7 +2,7 @@
  * Automation Report DB — сохранение результатов выполнения автоматизации.
  */
 
-import { supaFetch } from './supabaseClient';
+import { dbFetch } from './dbClient';
 import { companyService } from './companyService';
 
 export interface AutomationReport {
@@ -29,7 +29,7 @@ export const automationReportDb = {
     if (!cid) return [];
     let url = `automation_reports?company_id=eq.${cid}&select=*&order=created_at.desc&limit=50`;
     if (scriptType) url += `&script_type=eq.${scriptType}`;
-    return supaFetch<AutomationReport[]>(url);
+    return dbFetch<AutomationReport[]>(url);
   },
 
   /** Сохранить отчёт */
@@ -47,7 +47,7 @@ export const automationReportDb = {
   }): Promise<AutomationReport> => {
     const cid = companyService.getActiveId();
     if (!cid) throw new Error('Не выбрана компания');
-    const r = await supaFetch<AutomationReport[]>('automation_reports', {
+    const r = await dbFetch<AutomationReport[]>('automation_reports', {
       method: 'POST',
       body: JSON.stringify({
         company_id: cid,

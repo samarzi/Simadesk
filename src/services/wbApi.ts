@@ -2,17 +2,18 @@
  * API клиент Wildberries.
  * Авторизация: HTTP заголовок `Authorization: <jwt-token>` (без "Bearer").
  *
- * Запросы идут через Supabase Edge Function (wb-proxy) — Deno Deploy IP,
- * который WB не блокирует (в отличие от Netlify datacenter IP).
+ * На VPS запросы идут через nginx-прокси (/wb-stats/, /wb-marketplace/, и т.д.),
+ * который перенаправляет на соответствующие хосты WB API.
  */
 
 import { debug } from '@/utils/debug';
 import { WbStore, WbProduct, WbOrder, WbOrderItem, WbOrderStatus } from '@/types/wb';
 import { wbDb } from './wbDb';
 
-const SUPA_URL  = import.meta.env.VITE_SUPA_URL as string;
-const SUPA_KEY  = import.meta.env.VITE_SUPA_KEY as string;
-const WB_PROXY  = `${SUPA_URL}/functions/v1/wb-proxy`;
+const API_URL  = import.meta.env.VITE_API_URL as string;
+const API_KEY  = import.meta.env.VITE_API_KEY as string;
+// На VPS WB-запросы проксируются напрямую через nginx (/wb-*/), не через edge function.
+const WB_PROXY  = API_URL;
 
 const RETRYABLE = new Set([500, 502, 503, 504]);
 
@@ -107,7 +108,7 @@ async function wbFetch<T>(
           'Authorization': apiKey,
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'apikey': SUPA_KEY,
+          'apikey': API_KEY,
         },
         body: body ? JSON.stringify(body) : undefined,
         signal,
@@ -162,7 +163,7 @@ async function wbFetchForm(path: string, apiKey: string, form: FormData, signal?
     headers: {
       'Authorization': apiKey,
       'Accept': 'application/json',
-      'apikey': SUPA_KEY,
+      'apikey': API_KEY,
     },
     body: form,
     signal,
@@ -371,7 +372,7 @@ export const wbApi = {
         'Authorization': apiKey,
         'Content-Type': 'application/json',
         'Accept': type === 'pdf' ? 'application/pdf' : 'application/json',
-        'apikey': SUPA_KEY,
+        'apikey': API_KEY,
       },
       body: JSON.stringify({ orders: orderIds }),
       signal,

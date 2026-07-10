@@ -1,5 +1,5 @@
 import { OzonStore, OzonProduct } from '@/types/ozon';
-import { supaFetch } from './supabaseClient';
+import { dbFetch } from './dbClient';
 import { companyService } from './companyService';
 
 export const ozonDb = {
@@ -8,12 +8,12 @@ export const ozonDb = {
   getStores: (): Promise<OzonStore[]> => {
     const cid = companyService.getActiveId();
     if (!cid) return Promise.resolve([]);
-    return supaFetch<OzonStore[]>(`ozon_stores?company_id=eq.${cid}&select=*&order=created_at.asc`);
+    return dbFetch<OzonStore[]>(`ozon_stores?company_id=eq.${cid}&select=*&order=created_at.asc`);
   },
 
   createStore: async (store: Omit<OzonStore, 'id' | 'created_at'>): Promise<OzonStore> => {
     const cid = companyService.getActiveId();
-    const r = await supaFetch<OzonStore[]>('ozon_stores', {
+    const r = await dbFetch<OzonStore[]>('ozon_stores', {
       method: 'POST',
       body: JSON.stringify({ ...store, company_id: cid }),
     });
@@ -21,13 +21,13 @@ export const ozonDb = {
   },
 
   updateStore: (id: string, updates: Partial<OzonStore>): Promise<void> =>
-    supaFetch(`ozon_stores?id=eq.${id}`, {
+    dbFetch(`ozon_stores?id=eq.${id}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
     }),
 
   deleteStore: (id: string): Promise<void> =>
-    supaFetch(`ozon_stores?id=eq.${id}`, { method: 'DELETE' }),
+    dbFetch(`ozon_stores?id=eq.${id}`, { method: 'DELETE' }),
 
   // ── Products ───────────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ export const ozonDb = {
     const PAGE = 1000;
     let offset = 0;
     while (true) {
-      const page = await supaFetch<OzonProduct[]>(
+      const page = await dbFetch<OzonProduct[]>(
         `ozon_products?or=(${storeFilter})&select=*&order=offer_id.asc&limit=${PAGE}&offset=${offset}`,
       );
       all.push(...page);
@@ -53,7 +53,7 @@ export const ozonDb = {
   upsertProducts: async (products: Omit<OzonProduct, 'id'>[]): Promise<void> => {
     for (let i = 0; i < products.length; i += 100) {
       const chunk = products.slice(i, i + 100);
-      await supaFetch('ozon_products?on_conflict=store_id,offer_id', {
+      await dbFetch('ozon_products?on_conflict=store_id,offer_id', {
         method: 'POST',
         headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
         body: JSON.stringify(chunk),
@@ -62,13 +62,13 @@ export const ozonDb = {
   },
 
   deleteProductsByStore: (storeId: string): Promise<void> =>
-    supaFetch(`ozon_products?store_id=eq.${storeId}`, { method: 'DELETE' }),
+    dbFetch(`ozon_products?store_id=eq.${storeId}`, { method: 'DELETE' }),
 
   replaceStoreProducts: async (storeId: string, products: Omit<OzonProduct, 'id'>[]): Promise<void> => {
-    await supaFetch(`ozon_products?store_id=eq.${storeId}`, { method: 'DELETE' });
+    await dbFetch(`ozon_products?store_id=eq.${storeId}`, { method: 'DELETE' });
     if (products.length > 0) {
       for (let i = 0; i < products.length; i += 100) {
-        await supaFetch('ozon_products', {
+        await dbFetch('ozon_products', {
           method: 'POST',
           headers: { 'Prefer': 'return=minimal' },
           body: JSON.stringify(products.slice(i, i + 100)),
@@ -78,14 +78,14 @@ export const ozonDb = {
   },
 
   updateProduct: (id: string, updates: Partial<OzonProduct>): Promise<void> =>
-    supaFetch(`ozon_products?id=eq.${id}`, {
+    dbFetch(`ozon_products?id=eq.${id}`, {
       method: 'PATCH',
       body: JSON.stringify({ ...updates, synced_at: new Date().toISOString() }),
     }),
 
   deleteByOfferIds: (offerIds: string[]): Promise<void> => {
     const filter = offerIds.map(id => `offer_id.eq.${encodeURIComponent(id)}`).join(',');
-    return supaFetch(`ozon_products?or=(${filter})`, { method: 'DELETE' });
+    return dbFetch(`ozon_products?or=(${filter})`, { method: 'DELETE' });
   },
 
   updateByOfferIdAndStore: (
@@ -93,7 +93,7 @@ export const ozonDb = {
     offerId: string,
     updates: Partial<OzonProduct>,
   ): Promise<void> =>
-    supaFetch(
+    dbFetch(
       `ozon_products?store_id=eq.${storeId}&offer_id=eq.${encodeURIComponent(offerId)}`,
       {
         method: 'PATCH',

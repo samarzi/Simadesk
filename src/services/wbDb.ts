@@ -1,17 +1,17 @@
 import { WbStore, WbProduct } from '@/types/wb';
-import { supaFetch } from './supabaseClient';
+import { dbFetch } from './dbClient';
 import { companyService } from './companyService';
 
 export const wbDb = {
   getStores: (): Promise<WbStore[]> => {
     const cid = companyService.getActiveId();
     if (!cid) return Promise.resolve([]);
-    return supaFetch<WbStore[]>(`wb_stores?company_id=eq.${cid}&select=*&order=created_at.asc`);
+    return dbFetch<WbStore[]>(`wb_stores?company_id=eq.${cid}&select=*&order=created_at.asc`);
   },
 
   createStore: async (store: Omit<WbStore, 'id' | 'created_at'>): Promise<WbStore> => {
     const cid = companyService.getActiveId();
-    const r = await supaFetch<WbStore[]>('wb_stores', {
+    const r = await dbFetch<WbStore[]>('wb_stores', {
       method: 'POST',
       body: JSON.stringify({ ...store, company_id: cid }),
     });
@@ -19,13 +19,13 @@ export const wbDb = {
   },
 
   updateStore: (id: string, updates: Partial<WbStore>): Promise<void> =>
-    supaFetch(`wb_stores?id=eq.${id}`, {
+    dbFetch(`wb_stores?id=eq.${id}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
     }),
 
   deleteStore: (id: string): Promise<void> =>
-    supaFetch(`wb_stores?id=eq.${id}`, { method: 'DELETE' }),
+    dbFetch(`wb_stores?id=eq.${id}`, { method: 'DELETE' }),
   // ON DELETE CASCADE в wb_products удаляет товары автоматически
 
   getProducts: async (): Promise<WbProduct[]> => {
@@ -36,7 +36,7 @@ export const wbDb = {
     const PAGE = 1000;
     let offset = 0;
     while (true) {
-      const page = await supaFetch<WbProduct[]>(
+      const page = await dbFetch<WbProduct[]>(
         `wb_products?store_id=in.(${ids})&order=nm_id.asc&limit=${PAGE}&offset=${offset}`,
       );
       all.push(...page);
@@ -47,13 +47,13 @@ export const wbDb = {
   },
 
   getStoreProducts: (storeId: string): Promise<WbProduct[]> =>
-    supaFetch<WbProduct[]>(`wb_products?store_id=eq.${storeId}&select=nm_id,price,discount,stock_total`),
+    dbFetch<WbProduct[]>(`wb_products?store_id=eq.${storeId}&select=nm_id,price,discount,stock_total`),
 
   replaceStoreProducts: async (storeId: string, products: WbProduct[]): Promise<void> => {
-    await supaFetch(`wb_products?store_id=eq.${storeId}`, { method: 'DELETE' });
+    await dbFetch(`wb_products?store_id=eq.${storeId}`, { method: 'DELETE' });
     if (!products.length) return;
     for (let i = 0; i < products.length; i += 100) {
-      await supaFetch('wb_products', {
+      await dbFetch('wb_products', {
         method: 'POST',
         headers: { 'Prefer': 'return=minimal' },
         body: JSON.stringify(products.slice(i, i + 100)),

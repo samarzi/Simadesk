@@ -7,7 +7,7 @@
  */
 
 import { companyService, Company } from '@/services/companyService';
-import { authService } from '@/services/authService';
+import { authService, LinkedAccounts } from '@/services/authService';
 import { showToast } from '@/utils/toast';
 import { copyButton } from '@/utils/copyButton';
 
@@ -26,9 +26,17 @@ const ROLE_COLORS: Record<string, string> = {
 
 export class ProfileModule {
   private el: HTMLElement;
-  private activeTab: 'companies' | 'team' | 'requisites' = 'companies';
+  private activeTab: 'companies' | 'team' | 'requisites' | 'account' = 'companies';
+  private linkedAccounts: LinkedAccounts = {
+    telegram_id: null, yandex_id: null, telegram_username: null,
+    yandex_login: null, profile_source: null,
+    telegram_first_name: null, telegram_last_name: null, telegram_photo_url: null,
+    yandex_first_name: null, yandex_last_name: null, yandex_photo_url: null,
+  };
+  private pendingSource: 'telegram' | 'yandex' | null = null;
   private teamMembers: Array<any> = [];
   private pendingInvites: Array<any> = [];
+  private inviteLinks: Array<{ id: string; token: string; role: string; use_count: number; is_active: boolean }> = [];
   /** Incoming invitations sent TO current user */
   private myIncomingInvites: Array<any> = [];
 
@@ -47,13 +55,21 @@ export class ProfileModule {
     this.el.style.display = 'none';
   }
 
-  setTab(tab: 'companies' | 'team' | 'requisites'): void {
+  setTab(tab: 'companies' | 'team' | 'requisites' | 'account'): void {
     this.activeTab = tab;
     if (tab === 'team') {
       const c = companyService.getActive();
       if (c) this.loadTeam(c.id);
     }
+    if (tab === 'account') {
+      this.loadLinkedAccounts();
+    }
     this.render();
+  }
+
+  showAccountTab(): void {
+    this.show();
+    this.setTab('account');
   }
 
   render(): void {
@@ -85,12 +101,14 @@ export class ProfileModule {
           <button class="profile-page-tab ${this.activeTab === 'companies' ? 'active' : ''}" onclick="window.profileModule.setTab('companies')">Компании</button>
           <button class="profile-page-tab ${this.activeTab === 'team' ? 'active' : ''}" onclick="window.profileModule.setTab('team')">Команда</button>
           <button class="profile-page-tab ${this.activeTab === 'requisites' ? 'active' : ''}" onclick="window.profileModule.setTab('requisites')">Реквизиты</button>
+          <button class="profile-page-tab ${this.activeTab === 'account' ? 'active' : ''}" onclick="window.profileModule.setTab('account')">Аккаунт</button>
         </div>
 
         <div class="profile-page-content">
           ${this.activeTab === 'companies' ? this.renderCompanies(companies, company) : ''}
           ${this.activeTab === 'team' ? this.renderTeam(company) : ''}
           ${this.activeTab === 'requisites' ? this.renderRequisites(company) : ''}
+          ${this.activeTab === 'account' ? this.renderAccount() : ''}
         </div>
         <div style="height:140px;flex-shrink:0"></div>
       </div>
@@ -170,6 +188,11 @@ export class ProfileModule {
     if (!company) return '<div style="padding:20px;color:var(--text3)">Нет активной компании</div>';
     const canManage = company.role === 'owner' || company.role === 'admin';
 
+    const linkBadge = `<span title="Вступил по ссылке-приглашению" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 7px;border-radius:20px;background:#00897b22;color:#00897b;font-weight:600;vertical-align:middle">
+      <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="10" height="10"><path d="M8 3.5 10.5 1 13 3.5M10.5 1v8M6 10.5 3.5 13 1 10.5M3.5 13V5"/></svg>
+      по ссылке
+    </span>`;
+
     const members = this.teamMembers.length === 0
       ? `<div style="padding:20px;color:var(--text3);text-align:center">Загрузка...</div>`
       : this.teamMembers.map(m => `
@@ -180,7 +203,7 @@ export class ProfileModule {
               : `<span>${(m.first_name?.[0] ?? '?').toUpperCase()}</span>`}
           </div>
           <div class="profile-team-info">
-            <div class="profile-team-name">${this.esc(m.first_name ?? '')}</div>
+            <div class="profile-team-name">${this.esc(m.first_name ?? '')} ${m.joined_via_link_id ? linkBadge : ''}</div>
             <div class="profile-team-tg">${m.telegram_username ? '@' + this.esc(m.telegram_username) : ''}</div>
           </div>
           <div class="profile-team-badge" style="--badge-color:${ROLE_COLORS[m.role]}">${ROLE_LABELS[m.role] ?? m.role}</div>
@@ -212,7 +235,7 @@ export class ProfileModule {
 
     const inviteForm = canManage ? `
       <div class="profile-invite-form">
-        <div class="profile-section-title">Пригласить участника</div>
+        <div class="profile-section-title">Пригласить по username</div>
         <div class="profile-invite-row">
           <input id="prof-invite-username" class="profile-page-input" placeholder="@username" style="flex:1">
           <select id="prof-invite-role" class="profile-page-input" style="width:150px">
@@ -226,12 +249,66 @@ export class ProfileModule {
       </div>
     ` : '';
 
+    const activeLink = this.inviteLinks[0] ?? null;
+    const inviteLinkBlock = canManage ? `
+      <div style="margin-top:20px;padding:16px;background:var(--bg3);border-radius:14px;border:1.5px solid var(--border2)">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+          <div style="width:34px;height:34px;border-radius:9px;background:#005bff18;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <svg viewBox="0 0 20 20" fill="none" stroke="#005bff" stroke-width="1.6" stroke-linecap="round" width="18" height="18"><path d="M13 7l2.5-2.5a2.121 2.121 0 0 1 3 3L16 10M7 13l-2.5 2.5a2.121 2.121 0 0 1-3-3L4 10M8 12l4-4"/></svg>
+          </div>
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text)">Ссылка-приглашение</div>
+            <div style="font-size:11px;color:var(--text3)">Отправь — и человек сразу попадёт в компанию</div>
+          </div>
+        </div>
+        ${activeLink ? `
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+            <input id="prof-invite-link-url" readonly
+              value="${this.esc(companyService.buildInviteUrl(activeLink.token))}"
+              style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:12px;font-family:monospace;min-width:0;cursor:text;outline:none"
+              onclick="this.select()">
+            <button onclick="window.profileModule.copyInviteLink()"
+              style="flex-shrink:0;display:flex;align-items:center;gap:5px;padding:8px 14px;border-radius:8px;background:#005bff;color:#fff;border:none;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" width="13" height="13"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M3 11V3a1 1 0 0 1 1-1h8"/></svg>
+              Скопировать
+            </button>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text3);flex-wrap:wrap">
+            <span>Роль: <strong style="color:var(--text)">${ROLE_LABELS[activeLink.role] ?? activeLink.role}</strong></span>
+            <span style="color:var(--border2)">·</span>
+            <span>Использований: <strong style="color:var(--text)">${activeLink.use_count}</strong></span>
+            <button onclick="window.profileModule.revokeInviteLink('${this.esc(activeLink.id)}')"
+              style="margin-left:auto;font-size:11px;color:#ef4444;background:none;border:none;cursor:pointer;padding:0">
+              Отозвать
+            </button>
+          </div>
+        ` : `
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+            <div>
+              <div style="font-size:11px;color:var(--text3);margin-bottom:4px">Роль для новых участников</div>
+              <select id="prof-link-role" class="profile-page-input" style="min-width:160px">
+                <option value="admin">Администратор</option>
+                <option value="manager" selected>Менеджер</option>
+                <option value="viewer">Наблюдатель</option>
+              </select>
+            </div>
+            <button onclick="window.profileModule.createInviteLink()"
+              style="display:flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;background:#005bff;color:#fff;border:none;cursor:pointer;font-size:13px;font-weight:600">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13"><path d="M8 3v10M3 8h10"/></svg>
+              Создать ссылку
+            </button>
+          </div>
+        `}
+      </div>
+    ` : '';
+
     return `
       <div class="profile-team">
         <div class="profile-section-title">Участники (${this.teamMembers.length})</div>
         ${members}
         ${pending}
         ${inviteForm}
+        ${inviteLinkBlock}
       </div>
     `;
   }
@@ -350,7 +427,168 @@ export class ProfileModule {
     `;
   }
 
+  private async loadLinkedAccounts(): Promise<void> {
+    this.linkedAccounts = await authService.fetchLinkedAccounts();
+    this.pendingSource = (this.linkedAccounts.profile_source as 'telegram' | 'yandex' | null) ?? null;
+    if (this.activeTab === 'account') this.render();
+  }
+
+  private renderAccount(): string {
+    const {
+      telegram_id, yandex_id, telegram_username, yandex_login,
+      profile_source,
+      telegram_first_name, telegram_last_name, telegram_photo_url,
+      yandex_first_name, yandex_last_name, yandex_photo_url,
+    } = this.linkedAccounts;
+
+    const YANDEX_CLIENT_ID = (import.meta.env.VITE_YANDEX_CLIENT_ID as string | undefined) ?? '';
+    const tgLinked = !!telegram_id;
+    const yaLinked = !!yandex_id;
+    const bothLinked = tgLinked && yaLinked;
+
+    // ── Login methods ─────────────────────────────────────────────────────────
+    const recommendation = !bothLinked ? `
+      <div style="margin-bottom:16px;padding:12px 14px;background:rgba(99,102,241,0.07);border:1px solid rgba(99,102,241,0.2);border-radius:12px;display:flex;gap:10px;align-items:flex-start">
+        <div style="font-size:18px;flex-shrink:0">💡</div>
+        <div style="font-size:12px;color:var(--text2);line-height:1.5">
+          ${!tgLinked
+            ? 'Привяжи Telegram для резервного входа. Telegram может быть заблокирован в РФ, поэтому важно иметь оба способа.'
+            : 'Привяжи Яндекс ID — это позволит входить без VPN, если Telegram заблокирован в твоей сети.'}
+        </div>
+      </div>
+    ` : '';
+
+    const yaLinkUrl = YANDEX_CLIENT_ID
+      ? `https://oauth.yandex.ru/authorize?response_type=token&client_id=${YANDEX_CLIENT_ID}&redirect_uri=${encodeURIComponent(window.location.origin + '/')}`
+      : '';
+
+    const tgRow = `
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--bg3);border:1px solid ${tgLinked ? 'rgba(34,197,94,.2)' : 'var(--border2)'};border-radius:12px;margin-bottom:8px">
+        <div style="width:36px;height:36px;border-radius:9px;background:rgba(42,171,238,.12);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="#2AABEE"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.833.94z"/></svg>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--text)">Telegram</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:1px">
+            ${tgLinked
+              ? `${telegram_first_name ?? ''} ${telegram_last_name ?? ''}`.trim() + (telegram_username ? ` · @${this.esc(telegram_username)}` : '')
+              : 'Не привязан'}
+          </div>
+        </div>
+        <div style="font-size:11px;padding:2px 9px;border-radius:20px;${tgLinked ? 'background:rgba(34,197,94,.1);color:#22c55e;font-weight:600' : 'background:var(--bg4);color:var(--text3)'}">
+          ${tgLinked ? 'Привязан ⚠️ VPN' : 'Нет'}
+        </div>
+      </div>
+    `;
+
+    const yaRow = `
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--bg3);border:1px solid ${yaLinked ? 'rgba(34,197,94,.2)' : 'var(--border2)'};border-radius:12px;margin-bottom:${bothLinked ? '20px' : '8px'}">
+        <div style="width:36px;height:36px;border-radius:9px;background:rgba(252,63,29,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M2.04 12c0-5.523 4.476-10 10-10 5.522 0 10 4.477 10 10s-4.478 10-10 10c-5.524 0-10-4.477-10-10z" fill="#FC3F1D"/><path d="M13.32 7.666h-.924c-1.694 0-2.585.858-2.585 2.123 0 1.43.616 2.1 1.881 2.959l1.045.704-3.003 4.548H7.49l2.695-4.07c-1.55-1.111-2.42-2.19-2.42-4.025 0-2.288 1.595-3.805 4.355-3.805h2.97v11.9H13.32V7.666z" fill="#fff"/></svg>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--text)">Яндекс ID</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:1px">
+            ${yaLinked
+              ? `${yandex_first_name ?? ''} ${yandex_last_name ?? ''}`.trim() + (yandex_login ? ` · ${this.esc(yandex_login)}` : '')
+              : 'Не привязан — войди через Яндекс без VPN'}
+          </div>
+        </div>
+        <div style="flex-shrink:0">
+          ${yaLinked
+            ? `<span style="font-size:11px;padding:2px 9px;border-radius:20px;background:rgba(34,197,94,.1);color:#22c55e;font-weight:600">Привязан ✓</span>`
+            : (yaLinkUrl
+                ? `<a href="${yaLinkUrl}" style="font-size:12px;padding:6px 12px;border-radius:8px;background:#FC3F1D;color:#fff;text-decoration:none;font-weight:600;white-space:nowrap">Привязать</a>`
+                : '')}
+        </div>
+      </div>
+    `;
+
+    // ── Profile source selector (only when both linked) ───────────────────────
+    const currentSource = this.pendingSource ?? (tgLinked ? 'telegram' : 'yandex');
+
+    const tgPreviewName = [telegram_first_name, telegram_last_name].filter(Boolean).join(' ') || '—';
+    const tgPreviewHandle = telegram_username ? `@${telegram_username}` : '';
+    const yaPreviewName = [yandex_first_name, yandex_last_name].filter(Boolean).join(' ') || '—';
+    const yaPreviewHandle = yandex_login ? yandex_login : '';
+
+    const sourceSelector = bothLinked ? `
+      <div class="profile-section-title" style="margin-bottom:12px">Данные профиля</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">
+        Выбери, откуда отображать имя и фото во всём приложении. ID пользователя не меняется.
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+        <button id="source-tg-btn" style="padding:14px;border-radius:12px;border:2px solid ${currentSource === 'telegram' ? '#2AABEE' : 'var(--border2)'};background:${currentSource === 'telegram' ? 'rgba(42,171,238,.06)' : 'var(--bg3)'};cursor:pointer;text-align:left;transition:border-color .15s,background .15s">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="#2AABEE"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.833.94z"/></svg>
+            <span style="font-size:12px;font-weight:600;color:var(--text)">Telegram</span>
+            ${currentSource === 'telegram' ? '<span style="margin-left:auto;font-size:10px;padding:1px 7px;border-radius:20px;background:rgba(42,171,238,.15);color:#2AABEE;font-weight:600">Активен</span>' : ''}
+          </div>
+          ${telegram_photo_url ? `<img src="${this.esc(telegram_photo_url)}" style="width:36px;height:36px;border-radius:50%;margin-bottom:6px;display:block">` : '<div style="width:36px;height:36px;border-radius:50%;background:var(--bg4);margin-bottom:6px"></div>'}
+          <div style="font-size:12px;font-weight:600;color:var(--text)">${this.esc(tgPreviewName)}</div>
+          <div style="font-size:11px;color:var(--text3)">${this.esc(tgPreviewHandle)}</div>
+        </button>
+        <button id="source-ya-btn" style="padding:14px;border-radius:12px;border:2px solid ${currentSource === 'yandex' ? '#FC3F1D' : 'var(--border2)'};background:${currentSource === 'yandex' ? 'rgba(252,63,29,.05)' : 'var(--bg3)'};cursor:pointer;text-align:left;transition:border-color .15s,background .15s">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M2.04 12c0-5.523 4.476-10 10-10 5.522 0 10 4.477 10 10s-4.478 10-10 10c-5.524 0-10-4.477-10-10z" fill="#FC3F1D"/><path d="M13.32 7.666h-.924c-1.694 0-2.585.858-2.585 2.123 0 1.43.616 2.1 1.881 2.959l1.045.704-3.003 4.548H7.49l2.695-4.07c-1.55-1.111-2.42-2.19-2.42-4.025 0-2.288 1.595-3.805 4.355-3.805h2.97v11.9H13.32V7.666z" fill="#fff"/></svg>
+            <span style="font-size:12px;font-weight:600;color:var(--text)">Яндекс</span>
+            ${currentSource === 'yandex' ? '<span style="margin-left:auto;font-size:10px;padding:1px 7px;border-radius:20px;background:rgba(252,63,29,.12);color:#FC3F1D;font-weight:600">Активен</span>' : ''}
+          </div>
+          ${yandex_photo_url ? `<img src="${this.esc(yandex_photo_url)}" style="width:36px;height:36px;border-radius:50%;margin-bottom:6px;display:block">` : '<div style="width:36px;height:36px;border-radius:50%;background:var(--bg4);margin-bottom:6px"></div>'}
+          <div style="font-size:12px;font-weight:600;color:var(--text)">${this.esc(yaPreviewName)}</div>
+          <div style="font-size:11px;color:var(--text3)">${this.esc(yaPreviewHandle)}</div>
+        </button>
+      </div>
+      <button id="save-profile-source-btn" style="width:100%;padding:10px;border-radius:10px;border:none;background:var(--accent);color:#0a0a0a;font-size:13px;font-weight:700;cursor:pointer;opacity:${currentSource !== profile_source ? '1' : '0.5'};transition:opacity .2s">
+        Применить выбранный источник
+      </button>
+    ` : '';
+
+    return `
+      <div style="padding-bottom:40px">
+        <div class="profile-section-title" style="margin-bottom:14px">Способы входа</div>
+        ${recommendation}
+        ${tgRow}
+        ${yaRow}
+        ${sourceSelector}
+        ${bothLinked && !sourceSelector.includes('source-tg-btn') ? '' : ''}
+      </div>
+    `;
+  }
+
+  private bindAccountEvents(): void {
+    document.getElementById('source-tg-btn')?.addEventListener('click', () => {
+      this.pendingSource = 'telegram';
+      this.render();
+      this.bindEvents();
+    });
+    document.getElementById('source-ya-btn')?.addEventListener('click', () => {
+      this.pendingSource = 'yandex';
+      this.render();
+      this.bindEvents();
+    });
+    document.getElementById('save-profile-source-btn')?.addEventListener('click', async () => {
+      if (!this.pendingSource) return;
+      const btn = document.getElementById('save-profile-source-btn') as HTMLButtonElement;
+      btn.disabled = true;
+      btn.textContent = 'Сохраняем...';
+      try {
+        await authService.setProfileSource(this.pendingSource, this.linkedAccounts);
+        this.linkedAccounts.profile_source = this.pendingSource;
+        showToast('Данные профиля обновлены', 'success');
+        this.render();
+        this.bindEvents();
+      } catch {
+        showToast('Не удалось сохранить', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Применить выбранный источник';
+      }
+    });
+  }
+
   private bindEvents(): void {
+    if (this.activeTab === 'account') this.bindAccountEvents();
+
     // Switch company
     this.el.querySelectorAll<HTMLElement>('[data-switch-company]').forEach(card => {
       card.addEventListener('click', (e) => {
@@ -404,21 +642,33 @@ export class ProfileModule {
 
   // ── Team actions ─────
   private async loadTeam(companyId: string): Promise<void> {
-    try {
-      const members = await companyService.getMembers(companyId);
-      this.teamMembers = (members ?? []).map((m: any) => ({
+    const [membersRes, invitesRes, linksRes] = await Promise.allSettled([
+      companyService.getMembers(companyId),
+      companyService.getPendingInvitations?.(companyId),
+      companyService.getInviteLinks(companyId),
+    ]);
+
+    if (membersRes.status === 'fulfilled') {
+      this.teamMembers = (membersRes.value ?? []).map((m: any) => ({
         id: m.id,
         user_id: m.user_id,
         role: m.role,
+        joined_via_link_id: m.joined_via_link_id ?? null,
         first_name: m.users?.first_name ?? '—',
         telegram_username: m.users?.telegram_username ?? m.users?.username ?? null,
         photo_url: m.users?.photo_url ?? null,
       }));
-      const invites = await companyService.getPendingInvitations?.(companyId);
-      this.pendingInvites = invites ?? [];
-    } catch (e) {
-      console.warn('[ProfileModule] loadTeam error:', e);
     }
+    if (invitesRes.status === 'fulfilled') {
+      this.pendingInvites = invitesRes.value ?? [];
+    }
+    if (linksRes.status === 'fulfilled') {
+      this.inviteLinks = linksRes.value ?? [];
+    } else {
+      console.warn('[ProfileModule] getInviteLinks error:', linksRes.reason);
+      showToast('Ошибка загрузки ссылок: ' + (linksRes.reason?.message ?? linksRes.reason), 'error');
+    }
+
     this.render();
   }
 
@@ -559,6 +809,42 @@ export class ProfileModule {
     } catch (e: any) {
       showToast(e?.message ?? 'Ошибка', 'error');
     }
+  }
+
+  async createInviteLink(): Promise<void> {
+    const company = companyService.getActive();
+    if (!company) return;
+    const roleEl = document.getElementById('prof-link-role') as HTMLSelectElement | null;
+    const role = (roleEl?.value ?? 'manager') as any;
+    try {
+      await companyService.createInviteLink(company.id, role);
+      showToast('Ссылка создана', 'success');
+      this.loadTeam(company.id);
+    } catch (e: any) {
+      showToast(e?.message ?? 'Ошибка', 'error');
+    }
+  }
+
+  async revokeInviteLink(linkId: string): Promise<void> {
+    if (!confirm('Отозвать ссылку? Старая ссылка перестанет работать.')) return;
+    try {
+      await companyService.deactivateInviteLink(linkId);
+      showToast('Ссылка отозвана', 'success');
+      const c = companyService.getActive();
+      if (c) this.loadTeam(c.id);
+    } catch (e: any) {
+      showToast(e?.message ?? 'Ошибка', 'error');
+    }
+  }
+
+  copyInviteLink(): void {
+    const input = document.getElementById('prof-invite-link-url') as HTMLInputElement | null;
+    const url = input?.value;
+    if (!url) return;
+    navigator.clipboard.writeText(url).then(
+      () => showToast('Ссылка скопирована', 'success'),
+      () => { input?.select(); showToast('Скопируй вручную (Ctrl+C)', 'info'); },
+    );
   }
 
   logout(): void {

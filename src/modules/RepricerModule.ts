@@ -1338,7 +1338,7 @@ export class RepricerModule {
     if (this.soldVendorCodes || this.soldVendorCodesLoading) return;
     this.soldVendorCodesLoading = true;
     try {
-      const { supaFetch } = await import('@/services/supabaseClient');
+      const { dbFetch } = await import('@/services/dbClient');
       const { companyService } = await import('@/services/companyService');
       const cid = companyService.getActiveId();
       if (!cid) { this.soldVendorCodes = new Set(); this.soldVendorCodesLoading = false; return; }
@@ -1352,7 +1352,7 @@ export class RepricerModule {
 
       const ids = allStoreIds.map(id => `"${id}"`).join(',');
       // Берём только items_json — экономим трафик. До 50k записей.
-      const rows = await supaFetch<Array<{ items_json: Array<{ sku?: any; vendor_code?: any }> | null }>>(
+      const rows = await dbFetch<Array<{ items_json: Array<{ sku?: any; vendor_code?: any }> | null }>>(
         `mp_transactions?store_id=in.(${ids})&select=items_json&items_json=not.is.null&limit=50000`,
       );
 

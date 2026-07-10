@@ -77,8 +77,8 @@ npm run deploy
 
 ```bash
 # Для Netlify/Vercel (через UI)
-VITE_SUPA_URL=https://your-project.supabase.co
-VITE_SUPA_KEY=your-production-anon-key
+VITE_API_URL=https://simadesk.ru
+VITE_API_KEY=your-production-anon-key
 ```
 
 ### Безопасность

@@ -12,7 +12,7 @@
  */
 
 import { debug } from '@/utils/debug';
-import { supaFetch } from './supabaseClient';
+import { dbFetch } from './dbClient';
 import { companyService } from './companyService';
 
 const CACHE_KEY_PREFIX = 'cost_prices_v3_';  // per-company cache
@@ -27,7 +27,7 @@ interface CostEntry {
 // ── In-memory cache (синхронный доступ) ──────────────────────────────────────
 let cache: Record<string, CostEntry> = {};
 let cacheCompanyId: string | null = null;
-let supabaseAvailable = true;            // станет false если миграция не применена
+let dbAvailable = true;            // станет false если миграция не применена
 
 function getCacheKey(): string {
   const cid = companyService.getActiveId();
@@ -51,7 +51,7 @@ async function refreshFromServer(): Promise<void> {
   const cid = companyService.getActiveId();
   if (!cid) return;
   // Не делаем запрос если токен ещё не готов — это вызовет 401 при старте
-  const token = localStorage.getItem('sb_access_token');
+  const token = localStorage.getItem('access_token');
   if (!token) return;
   // При смене компании — сбрасываем кеш и загружаем заново
   if (cacheCompanyId !== cid) {
@@ -61,7 +61,7 @@ async function refreshFromServer(): Promise<void> {
   if (cacheCompanyId === cid && Object.keys(cache).length > 0) return; // уже актуально
 
   try {
-    const rows = await supaFetch<Array<{ vendor_code: string; cost: number; updated_at: string }>>(
+    const rows = await dbFetch<Array<{ vendor_code: string; cost: number; updated_at: string }>>(
       `cost_prices?company_id=eq.${cid}&select=vendor_code,cost,updated_at`,
     );
 
@@ -103,7 +103,7 @@ async function refreshFromServer(): Promise<void> {
       }
       // Пушим в фоне батчами по 50
       for (let i = 0; i < toUpload.length; i += 50) {
-        supaFetch('cost_prices?on_conflict=company_id,vendor_code', {
+        dbFetch('cost_prices?on_conflict=company_id,vendor_code', {
           method: 'POST',
           headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
           body: JSON.stringify(toUpload.slice(i, i + 50)),
@@ -113,12 +113,12 @@ async function refreshFromServer(): Promise<void> {
 
     cacheCompanyId = cid;
     saveCache();
-    supabaseAvailable = true;
+    dbAvailable = true;
   } catch (e: any) {
     const msg = String(e?.message ?? '');
     if (msg.includes('42P01') || (msg.includes('cost_prices') && msg.includes('not found'))) {
       // Миграция не применена — работаем чисто на localStorage
-      supabaseAvailable = false;
+      dbAvailable = false;
       console.warn('[costPriceDb] Supabase table cost_prices не найдена. Используется localStorage.');
     } else {
       // 401, сетевая ошибка и т.д. — пробуем работать из localStorage
@@ -135,10 +135,10 @@ async function refreshFromServer(): Promise<void> {
 /** Сохранить запись на сервер с retry. */
 async function pushToServer(vendorCode: string, cost: number, retries = 2): Promise<void> {
   const cid = companyService.getActiveId();
-  if (!cid || !supabaseAvailable) return;
+  if (!cid || !dbAvailable) return;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      await supaFetch('cost_prices?on_conflict=company_id,vendor_code', {
+      await dbFetch('cost_prices?on_conflict=company_id,vendor_code', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
         body: JSON.stringify({ company_id: cid, vendor_code: vendorCode, cost, updated_at: new Date().toISOString() }),
@@ -147,7 +147,7 @@ async function pushToServer(vendorCode: string, cost: number, retries = 2): Prom
     } catch (e: any) {
       const msg = String(e?.message ?? '');
       if (msg.includes('cost_prices') && msg.includes('42P01')) {
-        supabaseAvailable = false;
+        dbAvailable = false;
         return;
       }
       console.warn(`[costPriceDb] push "${vendorCode}" attempt ${attempt + 1}/${retries + 1}:`, msg);
@@ -159,9 +159,9 @@ async function pushToServer(vendorCode: string, cost: number, retries = 2): Prom
 /** Удалить запись с сервера. */
 async function removeFromServer(vendorCode: string): Promise<void> {
   const cid = companyService.getActiveId();
-  if (!cid || !supabaseAvailable) return;
+  if (!cid || !dbAvailable) return;
   try {
-    await supaFetch(
+    await dbFetch(
       `cost_prices?company_id=eq.${cid}&vendor_code=eq.${encodeURIComponent(vendorCode)}`,
       { method: 'DELETE' },
     );
@@ -210,13 +210,13 @@ export const costPriceDb = {
     }
     saveCache();
     // Bulk upload в Supabase
-    if (cid && supabaseAvailable && toUpload.length > 0) {
-      supaFetch('cost_prices?on_conflict=company_id,vendor_code', {
+    if (cid && dbAvailable && toUpload.length > 0) {
+      dbFetch('cost_prices?on_conflict=company_id,vendor_code', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
         body: JSON.stringify(toUpload),
       }).catch((e: any) => {
-        if (String(e?.message ?? '').includes('cost_prices')) supabaseAvailable = false;
+        if (String(e?.message ?? '').includes('cost_prices')) dbAvailable = false;
         console.warn('[costPriceDb] bulkSet:', e);
       });
     }
@@ -241,7 +241,7 @@ export const costPriceDb = {
   async refresh(): Promise<void> { return refreshFromServer(); },
 
   /** Доступен ли Supabase backend (миграция применена)? */
-  isCloudSyncAvailable(): boolean { return supabaseAvailable; },
+  isCloudSyncAvailable(): boolean { return dbAvailable; },
 
   /** Синхронизировать себестоимости из customColumnsDb → costPriceDb.
    *  Если в customColumnsDb есть cost_price, но нет в costPriceDb — добавляем. */
@@ -281,7 +281,7 @@ companyService.onChange?.(() => {
 (function tryLoad(attempt = 0) {
   const delay = attempt === 0 ? 800 : 3000;
   setTimeout(() => {
-    const token = localStorage.getItem('sb_access_token');
+    const token = localStorage.getItem('access_token');
     if (!token && attempt < 5) { tryLoad(attempt + 1); return; }
     refreshFromServer()
       .then(() => costPriceDb.syncFromCustomColumns())

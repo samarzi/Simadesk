@@ -30,7 +30,7 @@ src/
 │   └── OzonModule.ts    # Интеграция с Ozon Seller API
 ├── services/             # API сервисы
 │   ├── api.ts           # Supabase REST API
-│   ├── supabaseClient.ts# HTTP клиент Supabase
+│   ├── dbClient.ts# HTTP клиент Supabase
 │   ├── idbCache.ts      # IndexedDB кэш
 │   ├── ozonApi.ts       # Ozon Seller API
 │   └── ozonDb.ts        # Ozon таблицы в Supabase
@@ -105,7 +105,7 @@ npm test
 - Race condition protection через `loadToken`
 
 ### API оптимизации
-- Параллельная пагинация на сервере (`supaFetchAll`)
+- Параллельная пагинация на сервере (`dbFetchAll`)
 - Memory cache + IndexedDB cache (stale-while-revalidate)
 - Debounce поиска (280ms)
 
@@ -128,8 +128,8 @@ npm test
 
 ### Environment Variables
 ```env
-VITE_SUPA_URL=https://your-project.supabase.co
-VITE_SUPA_KEY=your-anon-key
+VITE_API_URL=https://simadesk.ru
+VITE_API_KEY=your-anon-key
 ```
 
 ### TypeScript конфиг

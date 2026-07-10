@@ -7,9 +7,9 @@
 import { vi } from 'vitest';
 
 // @ts-expect-error — patching import.meta.env for tests
-import.meta.env.VITE_SUPA_URL = 'https://test.supabase.co';
+import.meta.env.VITE_API_URL = 'https://test.simadesk.ru';
 // @ts-expect-error
-import.meta.env.VITE_SUPA_KEY = 'test-key';
+import.meta.env.VITE_API_KEY = 'test-key';
 
 // Silence console.log/warn in tests unless DEBUG=true
 if (!process.env.DEBUG) {

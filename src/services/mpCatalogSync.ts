@@ -13,7 +13,7 @@
 import { apiService } from './api';
 import { ozonApi } from './ozonApi';
 import { companyService } from './companyService';
-import { supaFetch } from './supabaseClient';
+import { dbFetch } from './dbClient';
 import { dimensionsDb } from './dimensionsDb';
 import { fromOzon, fromWb, fromYm, isEmpty } from './dimensionsUnit';
 import type { OzonStore } from '@/types/ozon';
@@ -350,7 +350,7 @@ export async function syncOzonStore(
   }
 
   // 9. Обновить время последней синхронизации
-  await supaFetch(`boxes?id=eq.${box.id}`, {
+  await dbFetch(`boxes?id=eq.${box.id}`, {
     method: 'PATCH',
     body: JSON.stringify({ mp_last_sync: new Date().toISOString() }),
   });
@@ -456,7 +456,7 @@ export async function syncYandexStore(
     await Promise.all(toUpdate.slice(i, i + 100).map(u => apiService.updateProduct(u.id, { data: u.data })));
   }
 
-  await supaFetch(`boxes?id=eq.${box.id}`, {
+  await dbFetch(`boxes?id=eq.${box.id}`, {
     method: 'PATCH',
     body: JSON.stringify({ mp_last_sync: new Date().toISOString() }),
   });
@@ -676,7 +676,7 @@ export async function syncWbStore(
     await Promise.all(toUpdate.slice(i, i + 100).map(u => apiService.updateProduct(u.id, { data: u.data })));
   }
 
-  await supaFetch(`boxes?id=eq.${box.id}`, {
+  await dbFetch(`boxes?id=eq.${box.id}`, {
     method: 'PATCH',
     body: JSON.stringify({ mp_last_sync: new Date().toISOString() }),
   });

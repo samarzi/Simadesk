@@ -37,8 +37,9 @@ export class SettingsHubModule {
   private stores: AnyStore[] = [];
   private importPreview: ImportPreview | null = null;
   private importUpdates: Array<{ offer_id: string; column_id: string; value: any }> = [];
-  private teamMembers: Array<{ id: string; user_id: string; role: CompanyRole; joined_at: string; first_name: string; telegram_username: string | null; photo_url: string | null }> = [];
+  private teamMembers: Array<{ id: string; user_id: string; role: CompanyRole; joined_at: string; first_name: string; telegram_username: string | null; photo_url: string | null; joined_via_link_id: string | null }> = [];
   private pendingInvites: Array<{ id: string; telegram_username: string; role: CompanyRole; created_at: string }> = [];
+  private inviteLinks: Array<{ id: string; token: string; role: CompanyRole; use_count: number; is_active: boolean }> = [];
 
   constructor(container: HTMLElement) { this.container = container; }
 
@@ -845,9 +846,10 @@ export class SettingsHubModule {
     const cid = companyService.getActiveId();
     if (!cid) return;
     try {
-      const [members, pending] = await Promise.all([
+      const [members, pending, links] = await Promise.all([
         companyService.getMembers(cid),
         companyService.getPendingInvitations(cid),
+        companyService.getInviteLinks(cid),
       ]);
       this.teamMembers = members.map((m: any) => ({
         id: m.id,
@@ -857,8 +859,10 @@ export class SettingsHubModule {
         first_name: m.users?.first_name ?? m.first_name ?? '—',
         telegram_username: m.users?.telegram_username ?? m.telegram_username ?? null,
         photo_url: m.users?.photo_url ?? m.photo_url ?? null,
+        joined_via_link_id: m.joined_via_link_id ?? null,
       }));
       this.pendingInvites = pending;
+      this.inviteLinks = links ?? [];
       this.render();
     } catch (e: any) {
       console.error('[Team]', e);
@@ -876,6 +880,11 @@ export class SettingsHubModule {
       return `<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:${colors[r]}22;color:${colors[r]};font-weight:600">${roleLabel(r)}</span>`;
     };
 
+    const linkBadge = `<span title="Вступил по ссылке-приглашению" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 7px;border-radius:20px;background:#00897b22;color:#00897b;font-weight:600">
+      <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="11" height="11"><path d="M8 3.5 10.5 1 13 3.5M10.5 1v8M6 10.5 3.5 13 1 10.5M3.5 13V5"/></svg>
+      по ссылке
+    </span>`;
+
     const membersHtml = this.teamMembers.length === 0
       ? `<div style="color:var(--muted);font-size:13px;padding:16px 0">Загрузка...</div>`
       : this.teamMembers.map(m => `
@@ -885,7 +894,10 @@ export class SettingsHubModule {
             : `<div style="width:36px;height:36px;border-radius:50%;background:var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:var(--muted)">${(m.first_name?.[0] ?? '?').toUpperCase()}</div>`
           }</div>
           <div style="flex:1;min-width:0">
-            <div style="font-weight:600;font-size:13px">${this.esc(m.first_name)}</div>
+            <div style="font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px">
+              ${this.esc(m.first_name)}
+              ${m.joined_via_link_id ? linkBadge : ''}
+            </div>
             <div style="font-size:11px;color:var(--muted)">${m.telegram_username ? '@' + this.esc(m.telegram_username) : ''}</div>
           </div>
           ${roleBadge(m.role)}
@@ -927,7 +939,7 @@ export class SettingsHubModule {
 
     const addFormHtml = canManage ? `
       <div class="sh-card" style="margin-top:24px">
-        <div style="font-size:13px;font-weight:600;margin-bottom:12px">Добавить пользователя</div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:12px">Добавить по username</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
           <div style="flex:1;min-width:180px">
             <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Telegram username</label>
@@ -947,6 +959,71 @@ export class SettingsHubModule {
       </div>
     ` : '';
 
+    const activeLink = this.inviteLinks[0] ?? null;
+    const inviteLinkHtml = canManage ? `
+      <div class="sh-card" style="margin-top:24px;border:1.5px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+          <div style="width:36px;height:36px;border-radius:10px;background:#005bff18;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <svg viewBox="0 0 20 20" fill="none" stroke="#005bff" stroke-width="1.6" stroke-linecap="round" width="20" height="20"><path d="M13 7l2.5-2.5a2.121 2.121 0 0 1 3 3L16 10M7 13l-2.5 2.5a2.121 2.121 0 0 1-3-3L4 10M8 12l4-4"/></svg>
+          </div>
+          <div>
+            <div style="font-size:13px;font-weight:700">Ссылка-приглашение</div>
+            <div style="font-size:11px;color:var(--muted)">Отправь ссылку — и человек сразу попадёт в компанию после входа</div>
+          </div>
+        </div>
+        ${activeLink ? `
+          <div style="background:var(--surface2,var(--bg2));border-radius:10px;padding:12px 14px;margin-bottom:12px">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:500">Ссылка для приглашения</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="sh-invite-link-url" class="ym-input" readonly
+                value="${this.esc(companyService.buildInviteUrl(activeLink.token))}"
+                style="flex:1;font-size:12px;font-family:monospace;cursor:text;background:var(--bg,#fff)"
+                onclick="this.select()">
+              <button onclick="window.settingsHub.copyInviteLink()"
+                style="flex-shrink:0;display:flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;background:#005bff;color:#fff;border:none;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" width="14" height="14"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M3 11V3a1 1 0 0 1 1-1h8"/></svg>
+                Скопировать
+              </button>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px">
+              <span>Роль:</span>
+              <strong style="color:var(--text)">${roleLabel(activeLink.role as CompanyRole)}</strong>
+            </div>
+            <div style="width:1px;height:14px;background:var(--border)"></div>
+            <div style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px">
+              <span>Использований:</span>
+              <strong style="color:var(--text)">${activeLink.use_count}</strong>
+            </div>
+            <button onclick="window.settingsHub.revokeInviteLink('${this.esc(activeLink.id)}')"
+              style="margin-left:auto;font-size:12px;color:var(--red);background:none;border:none;cursor:pointer;padding:4px 0">
+              Отозвать ссылку
+            </button>
+          </div>
+        ` : `
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+            <div>
+              <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Роль для новых участников</label>
+              <select id="sh-link-role" class="ym-input" style="min-width:180px">
+                <option value="admin">Администратор</option>
+                <option value="manager" selected>Менеджер</option>
+                <option value="viewer">Наблюдатель</option>
+              </select>
+            </div>
+            <button onclick="window.settingsHub.createInviteLink()"
+              style="display:flex;align-items:center;gap:6px;padding:8px 18px;border-radius:8px;background:#005bff;color:#fff;border:none;cursor:pointer;font-size:13px;font-weight:600">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="14" height="14"><path d="M8 3v10M3 8h10"/></svg>
+              Создать ссылку
+            </button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:10px">
+            После создания ссылки скопируй её и отправь тем, кого хочешь добавить в команду.
+          </div>
+        `}
+      </div>
+    ` : '';
+
     return `
       <div class="sh-page">
         <div class="sh-page-head">
@@ -958,6 +1035,7 @@ export class SettingsHubModule {
           ${pendingHtml}
         </div>
         ${addFormHtml}
+        ${inviteLinkHtml}
       </div>
     `;
   }
@@ -1007,6 +1085,44 @@ export class SettingsHubModule {
     } catch (e: any) {
       window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
     }
+  }
+
+  async createInviteLink(): Promise<void> {
+    const cid = companyService.getActiveId();
+    if (!cid) return;
+    const roleEl = document.getElementById('sh-link-role') as HTMLSelectElement | null;
+    const role = (roleEl?.value ?? 'manager') as CompanyRole;
+    try {
+      await companyService.createInviteLink(cid, role);
+      window.app?.toast?.('Ссылка создана', 'success');
+      this.loadTeamData();
+    } catch (e: any) {
+      window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
+    }
+  }
+
+  async revokeInviteLink(linkId: string): Promise<void> {
+    if (!confirm('Отозвать ссылку? Все, кто её получил, больше не смогут по ней войти.')) return;
+    try {
+      await companyService.deactivateInviteLink(linkId);
+      this.inviteLinks = this.inviteLinks.filter(l => l.id !== linkId);
+      window.app?.toast?.('Ссылка отозвана', 'success');
+      this.loadTeamData();
+    } catch (e: any) {
+      window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
+    }
+  }
+
+  copyInviteLink(): void {
+    const input = document.getElementById('sh-invite-link-url') as HTMLInputElement | null;
+    if (!input) return;
+    navigator.clipboard.writeText(input.value).then(() => {
+      window.app?.toast?.('Ссылка скопирована', 'success');
+    }).catch(() => {
+      input.select();
+      document.execCommand('copy');
+      window.app?.toast?.('Ссылка скопирована', 'success');
+    });
   }
 
   // ── Appearance ────────────────────────────────────────────────────────────

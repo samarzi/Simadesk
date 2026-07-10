@@ -1,6 +1,6 @@
 import { Box, Sheet, Product } from '@/types';
 import { debug } from '@/utils/debug';
-import { supaFetch, supaFetchAll, getAuthHeaders, REST_URL } from './supabaseClient';
+import { dbFetch, dbFetchAll, getAuthHeaders, REST_URL } from './dbClient';
 import { companyService } from './companyService';
 
 class ApiService {
@@ -22,14 +22,14 @@ class ApiService {
     this.setLoading(true);
     debug.api(options.method || 'GET', endpoint, options.body);
     try {
-      return await supaFetch<T>(endpoint, options);
+      return await dbFetch<T>(endpoint, options);
     } finally {
       this.setLoading(false);
     }
   }
 
   async fetchAll<T>(endpoint: string): Promise<T[]> {
-    return supaFetchAll<T>(endpoint);
+    return dbFetchAll<T>(endpoint);
   }
 
   private cid(): string | null {

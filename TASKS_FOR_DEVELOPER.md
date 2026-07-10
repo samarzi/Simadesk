@@ -41,8 +41,8 @@
    - Netlify Dashboard → Site settings → Environment variables
    - Добавить переменные:
      ```
-     VITE_SUPA_URL=https://rdqwzojrsmbdxiczqjci.supabase.co
-     VITE_SUPA_KEY=<новый_ключ>
+     VITE_API_URL=https://simadesk.ru
+     VITE_API_KEY=<новый_ключ>
      VITE_TG_BOT_USERNAME=simadesk_bot
      ```
    - Vite автоматически подхватит `VITE_*` переменные при сборке
@@ -86,11 +86,11 @@
 **Шаг 2 — Запустить SQL-миграции:**
 - В репозитории уже есть файлы в `migrations/`:
   ```
-  supabase_multiuser.sql
-  supabase_stores_multiuser.sql
-  supabase_companies_fix.sql
-  supabase_rls_fix.sql
-  supabase_marketplace_rls.sql
+  multiuser.sql
+  stores_multiuser.sql
+  companies_fix.sql
+  rls_fix.sql
+  marketplace_rls.sql
   ```
 - Выполнить их по порядку в Supabase SQL Editor
 - Проверить что таблицы `users`, `companies`, `company_members`, `sessions` созданы

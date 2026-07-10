@@ -6,7 +6,7 @@
  * цифры из финотчётов МП.
  */
 
-import { supaFetch } from './supabaseClient';
+import { dbFetch } from './dbClient';
 import { companyService } from './companyService';
 
 export type Marketplace = 'ozon' | 'yandex' | 'wb';
@@ -100,7 +100,7 @@ export const mpTransactionsDb = {
     let all: MpTransaction[] = [];
     let offset = 0;
     while (true) {
-      const batch = await supaFetch<MpTransaction[]>(
+      const batch = await dbFetch<MpTransaction[]>(
         `mp_transactions?store_id=in.(${ids})&operation_date=gte.${encodeURIComponent(dateFrom)}&operation_date=lte.${encodeURIComponent(dateTo)}&order=operation_date.desc&limit=${PAGE}&offset=${offset}`,
       );
       all = all.concat(batch);
@@ -114,7 +114,7 @@ export const mpTransactionsDb = {
 
   /** Узнать дату последней синхронизации для магазина. */
   async getLastSync(storeId: string): Promise<string | null> {
-    const rows = await supaFetch<Array<{ operation_date: string; synced_at: string }>>(
+    const rows = await dbFetch<Array<{ operation_date: string; synced_at: string }>>(
       `mp_transactions?store_id=eq.${storeId}&select=operation_date,synced_at&order=operation_date.desc&limit=1`,
     );
     if (!rows.length) return null;
@@ -123,7 +123,7 @@ export const mpTransactionsDb = {
 
   /** Узнать самую раннюю дату транзакции для магазина. */
   async getEarliestDate(storeId: string): Promise<string | null> {
-    const rows = await supaFetch<Array<{ operation_date: string }>>(
+    const rows = await dbFetch<Array<{ operation_date: string }>>(
       `mp_transactions?store_id=eq.${storeId}&select=operation_date&order=operation_date.asc&limit=1`,
     );
     if (!rows.length) return null;
@@ -132,7 +132,7 @@ export const mpTransactionsDb = {
 
   /** Узнать самую позднюю дату транзакции для магазина. */
   async getLatestDate(storeId: string): Promise<string | null> {
-    const rows = await supaFetch<Array<{ operation_date: string }>>(
+    const rows = await dbFetch<Array<{ operation_date: string }>>(
       `mp_transactions?store_id=eq.${storeId}&select=operation_date&order=operation_date.desc&limit=1`,
     );
     if (!rows.length) return null;
@@ -171,7 +171,7 @@ export const mpTransactionsDb = {
       let attempt = 0;
       while (true) {
         try {
-          await supaFetch('mp_transactions?on_conflict=store_id,mp_transaction_id', {
+          await dbFetch('mp_transactions?on_conflict=store_id,mp_transaction_id', {
             method: 'POST',
             headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
             body: JSON.stringify(slice),
@@ -196,14 +196,14 @@ export const mpTransactionsDb = {
 
   /** Удалить все транзакции магазина (для full re-sync). */
   async clearStore(storeId: string): Promise<void> {
-    await supaFetch(`mp_transactions?store_id=eq.${storeId}`, { method: 'DELETE' });
+    await dbFetch(`mp_transactions?store_id=eq.${storeId}`, { method: 'DELETE' });
   },
 
   /** Статистика синхронизации по магазинам. */
   async getSyncStats(storeIds: string[]): Promise<Record<string, { count: number; latest: string | null; earliest: string | null }>> {
     if (!storeIds.length) return {};
     const ids = storeIds.join(',');
-    const rows = await supaFetch<Array<{ store_id: string; operation_date: string }>>(
+    const rows = await dbFetch<Array<{ store_id: string; operation_date: string }>>(
       `mp_transactions?store_id=in.(${ids})&select=store_id,operation_date&order=operation_date.desc&limit=20000`,
     );
     const stats: Record<string, { count: number; latest: string | null; earliest: string | null }> = {};

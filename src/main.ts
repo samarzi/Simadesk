@@ -3,6 +3,7 @@ import './styles/ozon.css';
 import './styles/auth.css';
 import './styles/catalog-mp.css';
 import './styles/products-hub.css';
+import './styles/storefront.css';
 
 // Apply saved theme immediately (before DOMContentLoaded to avoid flash)
 if (localStorage.getItem('simadesk_theme') === 'light') {
@@ -39,8 +40,10 @@ import { StockModule } from './modules/StockModule';
 import { CatalogMpModule } from './modules/CatalogMpModule';
 import { ProducersModule } from './modules/ProducersModule';
 import { ProductsHubModule } from './modules/ProductsHubModule';
+import { SimaStoreModule } from './modules/SimaStoreModule';
 import { orderSyncService } from './services/orderSyncService';
 import { companyService } from './services/companyService';
+import { renderPublicStorefront } from './pages/storefrontPage';
 
 // Экспортируем функцию получения per-company ключа dock-конфига (используется в inline-скрипте)
 (window as any).getDockStorageKey = () => {
@@ -90,6 +93,13 @@ function bootApp(): void {
   init('catalog-section',        (el) => new CatalogMpModule(el),       'catalogMpModule');
   init('producers-section',      (el) => new ProducersModule(el),       'producersModule');
   init('products-hub-section',   (el) => new ProductsHubModule(el),     'productsHubModule');
+  // SimaStore — передаём companyId при инициализации
+  const _simaStoreEl = document.getElementById('simastore-section');
+  if (_simaStoreEl) {
+    const _sm = new SimaStoreModule();
+    _sm.init('simastore-section', companyService.getActiveId() ?? '');
+    (window as any).simaStoreModule = _sm;
+  }
 
   // Apply dock autohide setting on boot
   if (localStorage.getItem('settings_dock_autohide') === 'on') {
@@ -105,10 +115,53 @@ function bootApp(): void {
 
 // ── Auth gate ──────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  // ── Public SimaStore route: /s/:slug — no auth required ───────────────────
+  const _pathMatch = window.location.pathname.match(/^\/([a-z0-9][a-z0-9-]{1,48}[a-z0-9])$/);
+  if (_pathMatch) {
+    // Hide all app chrome — only show the public storefront
+    document.querySelector<HTMLElement>('.app')!.style.display = 'none';
+    document.getElementById('auth-gate')!.style.display = 'none';
+    document.getElementById('company-gate')!.style.display = 'none';
+    await renderPublicStorefront(_pathMatch[1]);
+    return;
+  }
+
+  // Capture ?invite=TOKEN from URL before anything else, then clean the URL
+  const _urlParams = new URLSearchParams(window.location.search);
+  const _inviteToken = _urlParams.get('invite');
+  if (_inviteToken) {
+    sessionStorage.setItem('pending_invite', _inviteToken);
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+
   const authGateEl    = document.getElementById('auth-gate')!;
   const companyGateEl = document.getElementById('company-gate')!;
   const switcherEl    = document.getElementById('company-switcher')!;
   const mainAppEl     = document.querySelector<HTMLElement>('.app')!;
+
+  // After login+company-boot: claim any pending invite link
+  async function claimPendingInvite(): Promise<void> {
+    const token = sessionStorage.getItem('pending_invite');
+    if (!token) return;
+    sessionStorage.removeItem('pending_invite');
+    try {
+      const result = await companyService.claimInviteLink(token);
+      if (result?.success) {
+        window.app?.toast?.('Вы вступили в компанию!', 'success');
+        // Reload company list so the new company appears
+        await companyModule.boot();
+      } else if (result?.error) {
+        const msgs: Record<string, string> = {
+          invalid_link: 'Ссылка недействительна или была отозвана',
+          link_expired: 'Срок действия ссылки истёк',
+          link_exhausted: 'Лимит использований ссылки исчерпан',
+        };
+        window.app?.toast?.(msgs[result.error] ?? 'Не удалось применить ссылку-приглашение', 'error');
+      }
+    } catch (e) {
+      console.warn('[invite] claim failed', e);
+    }
+  }
 
   // Company module wired up at top-level (available before auth completes)
   const companyModule = new CompanyModule(
@@ -118,6 +171,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Company selected → show the main app
       mainAppEl.style.display = '';
       bootApp();
+      // Claim invite after app boots (so toast is visible)
+      setTimeout(claimPendingInvite, 300);
+      // Process pending Yandex account link (came back from Yandex OAuth while logged in)
+      const _pendingYaLink = sessionStorage.getItem('pending_ya_link');
+      if (_pendingYaLink) {
+        sessionStorage.removeItem('pending_ya_link');
+        // Small delay so all modules (profileModule) are ready
+        setTimeout(() => authModule.startYandexLink(_pendingYaLink), 400);
+      }
     },
   );
   window.companyModule = companyModule;
@@ -129,18 +191,40 @@ document.addEventListener('DOMContentLoaded', async () => {
     await companyModule.boot();
   });
 
+  // ── Yandex OAuth callback — читаем ДО проверки авторизации ──────────────────
+  // Яндекс возвращает #access_token=... в hash, независимо от состояния сессии.
+  const _yaHashParams = new URLSearchParams(window.location.hash.slice(1));
+  const _yandexOAuthToken = _yaHashParams.get('access_token');
+  if (_yandexOAuthToken) {
+    // Очищаем hash немедленно чтобы не мешал дальнейшей логике
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    if (authService.isLoggedIn()) {
+      // Пользователь уже залогинен → это привязка, сохраняем токен до буta приложения
+      sessionStorage.setItem('pending_ya_link', _yandexOAuthToken);
+    } else {
+      // Не залогинен → вход через Яндекс (обычный flow через authModule)
+      sessionStorage.setItem('pending_ya_login', _yandexOAuthToken);
+    }
+  }
+
   // ── Decision tree ───────────────────────────────────────────────────────────
   if (!authService.isLoggedIn()) {
-    // Not logged in → show login screen
     mainAppEl.style.display = 'none';
-    authModule.show();
+    // Если есть pending login-токен — сразу логинимся без показа экрана
+    const _yaLogin = sessionStorage.getItem('pending_ya_login');
+    if (_yaLogin) {
+      sessionStorage.removeItem('pending_ya_login');
+      authModule.show(_yaLogin);
+    } else {
+      authModule.show();
+    }
     return;
   }
 
   // Token may be expired → try refresh silently
   const token = await authService.getValidToken();
   if (!token) {
-    // Refresh failed → show login
+    // Refresh failed → show login (but preserve pending link token for after re-login)
     mainAppEl.style.display = 'none';
     authModule.show();
     return;
@@ -178,6 +262,7 @@ declare global {
     catalogMpModule: import('./modules/CatalogMpModule').CatalogMpModule;
     producersModule: import('./modules/ProducersModule').ProducersModule;
     productsHubModule: import('./modules/ProductsHubModule').ProductsHubModule;
+    simaStoreModule: SimaStoreModule;
     taskManagerModule: import('./modules/TaskManagerModule').TaskManagerModule;
     ensureDockExpandedForPage?: (page: string) => void;
     __showMetricTip?: (id: string) => void;

@@ -7,7 +7,7 @@
 import { fetchWbCurrentPrices } from '@/services/wbApi';
 import { ozonApi } from '@/services/ozonApi';
 import { yandexApi } from '@/services/yandexApi';
-import { supaFetch } from '@/services/supabaseClient';
+import { dbFetch } from '@/services/dbClient';
 import type { WbStore } from '@/types/wb';
 import type { OzonStore } from '@/types/ozon';
 import type { YandexStore } from '@/types/yandex';
@@ -33,7 +33,7 @@ export async function fetchWbBuyerPrices(nmIds: number[]): Promise<Map<number, B
   if (nmIds.length === 0) return result;
   try {
     const inList = nmIds.join(',');
-    const rows = await supaFetch<Array<{ nm_id: number; buyer_price: number; checked_at: string }>>(
+    const rows = await dbFetch<Array<{ nm_id: number; buyer_price: number; checked_at: string }>>(
       `wb_buyer_prices?select=nm_id,buyer_price,checked_at&nm_id=in.(${inList})`,
     );
     const staleBefore = Date.now() - BUYER_PRICE_STALE_MS;
@@ -84,7 +84,7 @@ export async function fetchOzonBuyerPrices(items: Array<{ offerId: string; produ
   if (byProductId.size === 0) return result;
   try {
     const inList = [...byProductId.keys()].join(',');
-    const rows = await supaFetch<Array<{ product_id: number; buyer_price: number; checked_at: string }>>(
+    const rows = await dbFetch<Array<{ product_id: number; buyer_price: number; checked_at: string }>>(
       `ozon_buyer_prices?select=product_id,buyer_price,checked_at&product_id=in.(${inList})`,
     );
     const staleBefore = Date.now() - BUYER_PRICE_STALE_MS;
@@ -139,7 +139,7 @@ export async function fetchYmBuyerPrices(items: Array<{ offerId: string; marketS
   if (bySku.size === 0) return result;
   try {
     const inList = [...bySku.keys()].join(',');
-    const rows = await supaFetch<Array<{
+    const rows = await dbFetch<Array<{
       market_sku: number;
       buyer_price: number;
       checked_at: string;

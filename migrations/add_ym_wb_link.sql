@@ -1,5 +1,5 @@
 -- Migration: add YM and WB link fields to boxes table
--- Run in Supabase SQL editor: https://supabase.com/dashboard/project/rdqwzojrsmbdxiczqjci/sql
+
 
 ALTER TABLE boxes
   ADD COLUMN IF NOT EXISTS ym_linked     BOOLEAN  DEFAULT FALSE,

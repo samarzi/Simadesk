@@ -9,6 +9,12 @@
 
 import { showToast } from '@/utils/toast';
 import { detectSimaDeskExtension } from '@/services/extensionDetect';
+import { companyService } from '@/services/companyService';
+import { taskDb, reminderDb } from '@/services/taskDb';
+import { producerDb, producerFieldDb } from '@/services/producerDb';
+import { costPriceDb } from '@/services/costPriceDb';
+import { autoReplyDb } from '@/services/autoReplyDb';
+import { customColumnsDb } from '@/services/customColumnsDb';
 
 export class SettingsModule {
   private el: HTMLElement;
@@ -156,9 +162,17 @@ export class SettingsModule {
           <div class="settings-row clickable" onclick="window.settingsModule.exportData()">
             <div class="settings-row-info">
               <div class="settings-row-label">Экспорт данных</div>
-              <div class="settings-row-desc">Скачать все данные компании в JSON</div>
+              <div class="settings-row-desc">Скачать задачи, напоминания, производителей, себестоимости и шаблоны ответов в JSON</div>
             </div>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          </div>
+
+          <div class="settings-row clickable" onclick="window.settingsModule.importData()">
+            <div class="settings-row-info">
+              <div class="settings-row-label">Импорт данных</div>
+              <div class="settings-row-desc">Восстановить задачи, напоминания, производителей, себестоимости и шаблоны из JSON-файла</div>
+            </div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5-5 5 5M12 3v12"/></svg>
           </div>
         </div>
 
@@ -196,13 +210,181 @@ export class SettingsModule {
 
   clearCache(): void {
     if (!confirm('Очистить локальный кэш? Данные будут перезагружены с сервера.')) return;
-    const keep = ['supabase_session', 'active_company_id', 'last_page'];
+    const keep = ['server_session', 'active_company_id', 'last_page'];
     const keys = Object.keys(localStorage).filter(k => !keep.includes(k));
     keys.forEach(k => localStorage.removeItem(k));
     showToast('Кэш очищен', 'success');
   }
 
-  exportData(): void {
-    showToast('Экспорт пока не доступен', 'info');
+  async exportData(): Promise<void> {
+    const company = companyService.getActive();
+    if (!company) { showToast('Нет активной компании', 'error'); return; }
+
+    showToast('Подготовка экспорта…', 'info');
+
+    try {
+      const [tasks, reminders, producers, producerFieldDefs] = await Promise.all([
+        taskDb.getTasks(),
+        reminderDb.getReminders(),
+        producerDb.list(),
+        producerFieldDb.list(),
+      ]);
+
+      const payload = {
+        _version: 1,
+        _exported_at: new Date().toISOString(),
+        _company_id: company.id,
+        _company_name: company.name,
+        tasks,
+        reminders,
+        producers,
+        producerFieldDefs,
+        costPrices: costPriceDb.all(),
+        autoReply: {
+          settings: autoReplyDb.getSettings(),
+          templates: autoReplyDb.getTemplates(),
+        },
+        customColumns: {
+          columns: customColumnsDb.getColumns(),
+          values: customColumnsDb.getAllValues(),
+        },
+      };
+
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const date = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `simadesk-export-${date}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      showToast('Данные экспортированы', 'success');
+    } catch (e) {
+      console.error('[exportData]', e);
+      showToast('Ошибка при экспорте', 'error');
+    }
+  }
+
+  importData(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+
+      let payload: any;
+      try {
+        payload = JSON.parse(await file.text());
+      } catch {
+        showToast('Неверный формат файла', 'error');
+        return;
+      }
+
+      if (payload._version !== 1) {
+        showToast('Несовместимая версия файла', 'error');
+        return;
+      }
+
+      if (!companyService.getActive()) { showToast('Нет активной компании', 'error'); return; }
+
+      const taskCount = Array.isArray(payload.tasks) ? payload.tasks.length : 0;
+      const reminderCount = Array.isArray(payload.reminders) ? payload.reminders.length : 0;
+      const producerCount = Array.isArray(payload.producers) ? payload.producers.length : 0;
+
+      if (!confirm(
+        `Импортировать данные из файла?\n` +
+        `Источник: ${payload._company_name ?? 'неизвестно'} (${payload._exported_at?.slice(0, 10) ?? '?'})\n\n` +
+        `Будет создано: задач — ${taskCount}, напоминаний — ${reminderCount}, производителей — ${producerCount}.\n` +
+        `Себестоимости, шаблоны ответов и пользовательские колонки будут перезаписаны.`,
+      )) return;
+
+      showToast('Импорт…', 'info');
+
+      try {
+        // Задачи — создаём новые записи (parent_id обнуляется, т.к. ID изменятся)
+        if (Array.isArray(payload.tasks) && payload.tasks.length > 0) {
+          for (const t of payload.tasks) {
+            const { id: _id, company_id: _cid, created_at: _ca, updated_at: _ua, parent_id: _pid, ...fields } = t;
+            await taskDb.createTask(fields as any);
+          }
+        }
+
+        // Напоминания — создаём новые (task_id обнуляется, т.к. ID задач изменились)
+        if (Array.isArray(payload.reminders) && payload.reminders.length > 0) {
+          for (const r of payload.reminders) {
+            const { id: _id, company_id: _cid, created_at: _ca, task_id: _tid, ...fields } = r;
+            await reminderDb.createReminder({ ...fields, task_id: null });
+          }
+        }
+
+        // Производители — создаём новые записи
+        if (Array.isArray(payload.producers) && payload.producers.length > 0) {
+          for (const p of payload.producers) {
+            const { id: _id, company_id: _cid, created_at: _ca, updated_at: _ua, ...fields } = p;
+            await producerDb.create(fields as any);
+          }
+        }
+
+        // Поля производителей — создаём новые
+        if (Array.isArray(payload.producerFieldDefs) && payload.producerFieldDefs.length > 0) {
+          for (const f of payload.producerFieldDefs) {
+            const { id: _id, company_id: _cid, created_at: _ca, ...fields } = f;
+            await producerFieldDb.create(fields as any);
+          }
+        }
+
+        // Себестоимости — перезаписываем локально
+        if (Array.isArray(payload.costPrices) && payload.costPrices.length > 0) {
+          costPriceDb.bulkSet(
+            payload.costPrices.map((e: any) => ({ vendorCode: e.vendorCode, cost: e.cost })),
+          );
+        }
+
+        // Шаблоны автоответа — заменяем полностью
+        if (payload.autoReply) {
+          if (payload.autoReply.settings) {
+            autoReplyDb.setSettings(payload.autoReply.settings);
+          }
+          if (Array.isArray(payload.autoReply.templates)) {
+            for (const t of payload.autoReply.templates) {
+              autoReplyDb.addTemplate({ text: t.text, ratings: t.ratings });
+            }
+          }
+        }
+
+        // Пользовательские колонки — сначала структура, потом значения
+        if (Array.isArray(payload.customColumns?.columns)) {
+          for (const col of payload.customColumns.columns) {
+            if (!col.system) {
+              customColumnsDb.addColumn({
+                label: col.label,
+                data_type: col.data_type,
+                show_in_table: col.show_in_table,
+                description: col.description,
+                box_id: col.box_id ?? null,
+                order: col.order ?? 0,
+              });
+            }
+          }
+        }
+        // структура: { [columnId]: { [offerId]: value } }
+        if (payload.customColumns?.values) {
+          const vals: Record<string, Record<string, any>> = payload.customColumns.values;
+          for (const [columnId, rows] of Object.entries(vals)) {
+            for (const [offerId, val] of Object.entries(rows as Record<string, any>)) {
+              customColumnsDb.setValue(offerId, columnId, val);
+            }
+          }
+        }
+
+        showToast('Импорт завершён', 'success');
+      } catch (e) {
+        console.error('[importData]', e);
+        showToast('Ошибка при импорте', 'error');
+      }
+    };
+    input.click();
   }
 }

@@ -50,7 +50,7 @@ export interface RepricerRule {
   // МРЦ
   mrcItems?: MrcItem[];
   /** Серверное состояние мониторинга МРЦ по ячейкам (ключ — MrcItem.key). Пишет и читает
-   *  supabase/functions/mrc-scan; клиент — только для отображения paused-бейджа и ручного
+   *  backend/functions/mrc-scan; клиент — только для отображения paused-бейджа и ручного
    *  снятия паузы (см. MrcGrid/RepricerModule.clearMrcPause). */
   mrcState?: Record<string, MrcCellState>;
   createdAt: string;
@@ -173,7 +173,7 @@ export interface BuyerPriceInfo {
   fresh: boolean;
 }
 
-/** Серверное состояние мониторинга одной ячейки МРЦ (supabase/functions/mrc-scan),
+/** Серверное состояние мониторинга одной ячейки МРЦ (backend/functions/mrc-scan),
  *  хранится в RepricerRule.mrcState по ключу MrcItem.key. */
 export interface MrcCellState {
   lastUpdateAt: string | null;

@@ -581,8 +581,8 @@ export class AnalyticsModule {
     const order = this.orders.find(o => o.order_id === orderId);
     if (!order) return;
     try {
-      const { supaFetch } = await import('@/services/supabaseClient');
-      const txs = await supaFetch<any[]>(
+      const { dbFetch } = await import('@/services/dbClient');
+      const txs = await dbFetch<any[]>(
         `mp_transactions?posting_number=eq.${encodeURIComponent(orderId)}&order=operation_date.asc`,
       );
       // Открываем во всплывающем окне

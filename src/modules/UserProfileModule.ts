@@ -8,7 +8,7 @@
 
 import { debug } from '@/utils/debug';
 import { authService, AuthUser } from '@/services/authService';
-import { supaFetch } from '@/services/supabaseClient';
+import { dbFetch } from '@/services/dbClient';
 import { showToast } from '@/utils/toast';
 
 export class UserProfileModule {
@@ -47,8 +47,8 @@ export class UserProfileModule {
     try {
       const uid = localUser?.id;
       const rows = uid
-        ? await supaFetch<any[]>(`users?id=eq.${uid}&select=*&limit=1`)
-        : await supaFetch<any[]>('users?select=*&limit=1');
+        ? await dbFetch<any[]>(`users?id=eq.${uid}&select=*&limit=1`)
+        : await dbFetch<any[]>('users?select=*&limit=1');
       dbUser = rows?.[0] ?? null;
     } catch { /* offline — используем кэш */ }
 
@@ -171,7 +171,7 @@ export class UserProfileModule {
       btn.textContent = '...';
       try {
         // Сохраняем в таблицу users
-        await supaFetch(`users?id=eq.${authService.getUser()?.id}`, {
+        await dbFetch(`users?id=eq.${authService.getUser()?.id}`, {
           method: 'PATCH',
           body: JSON.stringify({ display_name: name || null }),
         });

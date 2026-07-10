@@ -3,7 +3,7 @@
  * Все таблицы привязаны к company_id и защищены RLS.
  */
 
-import { supaFetch, supaFetchAll } from './supabaseClient';
+import { dbFetch, dbFetchAll } from './dbClient';
 import { companyService } from './companyService';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -115,14 +115,14 @@ function first<T>(r: T | T[]): T { return Array.isArray(r) ? r[0] : r; }
 
 export const producerDb = {
   async list(): Promise<Producer[]> {
-    return supaFetch<Producer[]>(
+    return dbFetch<Producer[]>(
       `producers?company_id=eq.${cid()}&order=name.asc`,
       { method: 'GET' },
     );
   },
 
   async create(p: Omit<Producer, 'id' | 'company_id' | 'created_at' | 'updated_at'>): Promise<Producer> {
-    const r = await supaFetch<Producer | Producer[]>('producers', {
+    const r = await dbFetch<Producer | Producer[]>('producers', {
       method: 'POST',
       body: JSON.stringify({ ...p, company_id: cid() }),
     });
@@ -130,7 +130,7 @@ export const producerDb = {
   },
 
   async update(id: string, patch: Partial<Producer>): Promise<Producer> {
-    const r = await supaFetch<Producer | Producer[]>(
+    const r = await dbFetch<Producer | Producer[]>(
       `producers?id=eq.${id}&company_id=eq.${cid()}`,
       { method: 'PATCH', body: JSON.stringify(patch) },
     );
@@ -138,7 +138,7 @@ export const producerDb = {
   },
 
   async remove(id: string): Promise<void> {
-    await supaFetch(`producers?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
+    await dbFetch(`producers?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
   },
 };
 
@@ -146,14 +146,14 @@ export const producerDb = {
 
 export const producerFieldDb = {
   async list(): Promise<ProducerFieldDef[]> {
-    return supaFetch<ProducerFieldDef[]>(
+    return dbFetch<ProducerFieldDef[]>(
       `producer_field_defs?company_id=eq.${cid()}&order=sort_order.asc`,
       { method: 'GET' },
     );
   },
 
   async create(f: Omit<ProducerFieldDef, 'id' | 'company_id' | 'created_at'>): Promise<ProducerFieldDef> {
-    const r = await supaFetch<ProducerFieldDef | ProducerFieldDef[]>('producer_field_defs', {
+    const r = await dbFetch<ProducerFieldDef | ProducerFieldDef[]>('producer_field_defs', {
       method: 'POST',
       body: JSON.stringify({ ...f, company_id: cid() }),
     });
@@ -161,7 +161,7 @@ export const producerFieldDb = {
   },
 
   async update(id: string, patch: Partial<ProducerFieldDef>): Promise<ProducerFieldDef> {
-    const r = await supaFetch<ProducerFieldDef | ProducerFieldDef[]>(
+    const r = await dbFetch<ProducerFieldDef | ProducerFieldDef[]>(
       `producer_field_defs?id=eq.${id}&company_id=eq.${cid()}`,
       { method: 'PATCH', body: JSON.stringify(patch) },
     );
@@ -169,7 +169,7 @@ export const producerFieldDb = {
   },
 
   async remove(id: string): Promise<void> {
-    await supaFetch(`producer_field_defs?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
+    await dbFetch(`producer_field_defs?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
   },
 
   /** Гарантирует наличие системного поля «Себестоимость». */
@@ -194,11 +194,11 @@ export const producerProductDb = {
   async list(producer_id?: string, archived = false): Promise<ProducerProduct[]> {
     let q = `producer_products?company_id=eq.${cid()}&is_archived=eq.${archived}&order=created_at.desc`;
     if (producer_id) q += `&producer_id=eq.${producer_id}`;
-    return supaFetchAll<ProducerProduct>(q);
+    return dbFetchAll<ProducerProduct>(q);
   },
 
   async create(p: Omit<ProducerProduct, 'id' | 'company_id' | 'created_at' | 'updated_at'>): Promise<ProducerProduct> {
-    const r = await supaFetch<ProducerProduct | ProducerProduct[]>('producer_products', {
+    const r = await dbFetch<ProducerProduct | ProducerProduct[]>('producer_products', {
       method: 'POST',
       body: JSON.stringify({ ...p, company_id: cid() }),
     });
@@ -209,11 +209,11 @@ export const producerProductDb = {
   async bulkCreate(products: Array<Omit<ProducerProduct, 'id' | 'company_id' | 'created_at' | 'updated_at'>>): Promise<void> {
     if (products.length === 0) return;
     const payload = products.map(p => ({ ...p, company_id: cid() }));
-    await supaFetch('producer_products', { method: 'POST', body: JSON.stringify(payload) });
+    await dbFetch('producer_products', { method: 'POST', body: JSON.stringify(payload) });
   },
 
   async update(id: string, patch: Partial<ProducerProduct>): Promise<ProducerProduct> {
-    const r = await supaFetch<ProducerProduct | ProducerProduct[]>(
+    const r = await dbFetch<ProducerProduct | ProducerProduct[]>(
       `producer_products?id=eq.${id}&company_id=eq.${cid()}`,
       { method: 'PATCH', body: JSON.stringify(patch) },
     );
@@ -221,13 +221,13 @@ export const producerProductDb = {
   },
 
   async remove(id: string): Promise<void> {
-    await supaFetch(`producer_products?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
+    await dbFetch(`producer_products?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
   },
 
   async bulkArchive(ids: string[], archived: boolean): Promise<void> {
     if (ids.length === 0) return;
     const filter = `id=in.(${ids.join(',')})&company_id=eq.${cid()}`;
-    await supaFetch(`producer_products?${filter}`, {
+    await dbFetch(`producer_products?${filter}`, {
       method: 'PATCH',
       body: JSON.stringify({ is_archived: archived }),
     });
@@ -239,7 +239,7 @@ export const producerProductDb = {
     for (let i = 0; i < ids.length; i += CHUNK) {
       const chunk = ids.slice(i, i + CHUNK);
       const filter = `id=in.(${chunk.join(',')})&company_id=eq.${cid()}`;
-      await supaFetch(`producer_products?${filter}`, { method: 'DELETE' });
+      await dbFetch(`producer_products?${filter}`, { method: 'DELETE' });
     }
   },
 };
@@ -248,13 +248,13 @@ export const producerProductDb = {
 
 export const producerMappingDb = {
   async list(): Promise<ProducerMapping[]> {
-    return supaFetchAll<ProducerMapping>(
+    return dbFetchAll<ProducerMapping>(
       `producer_mappings?company_id=eq.${cid()}&order=created_at.desc`,
     );
   },
 
   async create(m: Omit<ProducerMapping, 'id' | 'company_id' | 'created_at'>): Promise<ProducerMapping> {
-    const r = await supaFetch<ProducerMapping | ProducerMapping[]>('producer_mappings', {
+    const r = await dbFetch<ProducerMapping | ProducerMapping[]>('producer_mappings', {
       method: 'POST',
       body: JSON.stringify({ ...m, company_id: cid() }),
     });
@@ -262,7 +262,7 @@ export const producerMappingDb = {
   },
 
   async update(id: string, patch: Partial<Omit<ProducerMapping, 'id' | 'company_id' | 'created_at'>>): Promise<ProducerMapping> {
-    const r = await supaFetch<ProducerMapping | ProducerMapping[]>(
+    const r = await dbFetch<ProducerMapping | ProducerMapping[]>(
       `producer_mappings?id=eq.${id}&company_id=eq.${cid()}`,
       { method: 'PATCH', body: JSON.stringify(patch) },
     );
@@ -276,12 +276,12 @@ export const producerMappingDb = {
     const company_id = cid();
     for (let i = 0; i < mappings.length; i += CHUNK) {
       const payload = mappings.slice(i, i + CHUNK).map(m => ({ ...m, company_id }));
-      await supaFetch('producer_mappings', { method: 'POST', body: JSON.stringify(payload) });
+      await dbFetch('producer_mappings', { method: 'POST', body: JSON.stringify(payload) });
     }
   },
 
   async remove(id: string): Promise<void> {
-    await supaFetch(`producer_mappings?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
+    await dbFetch(`producer_mappings?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
   },
 
   /** Удаляет много связок чанками по id (кратно быстрее, чем по одной). */
@@ -291,12 +291,12 @@ export const producerMappingDb = {
     for (let i = 0; i < ids.length; i += CHUNK) {
       const chunk = ids.slice(i, i + CHUNK);
       const filter = `id=in.(${chunk.join(',')})&company_id=eq.${cid()}`;
-      await supaFetch(`producer_mappings?${filter}`, { method: 'DELETE' });
+      await dbFetch(`producer_mappings?${filter}`, { method: 'DELETE' });
     }
   },
 
   async removeByArticle(article: string): Promise<void> {
-    await supaFetch(
+    await dbFetch(
       `producer_mappings?marketplace_article=eq.${encodeURIComponent(article)}&company_id=eq.${cid()}`,
       { method: 'DELETE' },
     );
@@ -309,11 +309,11 @@ export const producerOrderDb = {
   async list(status?: ProducerOrder['status']): Promise<ProducerOrder[]> {
     let q = `producer_orders?company_id=eq.${cid()}&order=created_at.desc`;
     if (status) q += `&status=eq.${status}`;
-    return supaFetchAll<ProducerOrder>(q);
+    return dbFetchAll<ProducerOrder>(q);
   },
 
   async create(o: Omit<ProducerOrder, 'id' | 'company_id' | 'created_at' | 'updated_at'>): Promise<ProducerOrder> {
-    const r = await supaFetch<ProducerOrder | ProducerOrder[]>('producer_orders', {
+    const r = await dbFetch<ProducerOrder | ProducerOrder[]>('producer_orders', {
       method: 'POST',
       body: JSON.stringify({ ...o, company_id: cid() }),
     });
@@ -323,27 +323,27 @@ export const producerOrderDb = {
   async createBulk(orders: Array<Omit<ProducerOrder, 'id' | 'company_id' | 'created_at' | 'updated_at'>>): Promise<void> {
     if (orders.length === 0) return;
     const payload = orders.map(o => ({ ...o, company_id: cid() }));
-    await supaFetch('producer_orders', { method: 'POST', body: JSON.stringify(payload) });
+    await dbFetch('producer_orders', { method: 'POST', body: JSON.stringify(payload) });
   },
 
   async updateStatus(ids: string[], status: ProducerOrder['status']): Promise<void> {
     if (ids.length === 0) return;
     const filter = `id=in.(${ids.join(',')})&company_id=eq.${cid()}`;
-    await supaFetch(`producer_orders?${filter}`, {
+    await dbFetch(`producer_orders?${filter}`, {
       method: 'PATCH',
       body: JSON.stringify({ status }),
     });
   },
 
   async updateNotes(id: string, notes: string): Promise<void> {
-    await supaFetch(`producer_orders?id=eq.${id}&company_id=eq.${cid()}`, {
+    await dbFetch(`producer_orders?id=eq.${id}&company_id=eq.${cid()}`, {
       method: 'PATCH',
       body: JSON.stringify({ notes }),
     });
   },
 
   async remove(id: string): Promise<void> {
-    await supaFetch(`producer_orders?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
+    await dbFetch(`producer_orders?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
   },
 };
 
@@ -351,14 +351,14 @@ export const producerOrderDb = {
 
 export const producerDocDb = {
   async list(): Promise<ProducerDocument[]> {
-    return supaFetch<ProducerDocument[]>(
+    return dbFetch<ProducerDocument[]>(
       `producer_documents?company_id=eq.${cid()}&order=created_at.desc&limit=200`,
       { method: 'GET' },
     );
   },
 
   async create(d: Omit<ProducerDocument, 'id' | 'company_id' | 'created_at'>): Promise<ProducerDocument> {
-    const r = await supaFetch<ProducerDocument | ProducerDocument[]>('producer_documents', {
+    const r = await dbFetch<ProducerDocument | ProducerDocument[]>('producer_documents', {
       method: 'POST',
       body: JSON.stringify({ ...d, company_id: cid() }),
     });
@@ -366,6 +366,6 @@ export const producerDocDb = {
   },
 
   async remove(id: string): Promise<void> {
-    await supaFetch(`producer_documents?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
+    await dbFetch(`producer_documents?id=eq.${id}&company_id=eq.${cid()}`, { method: 'DELETE' });
   },
 };

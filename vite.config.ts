@@ -8,8 +8,8 @@ import type { IncomingMessage, ServerResponse } from 'http'
 // Runs inside Vite dev server — no extra port needed.
 // In production the request goes to Supabase Edge Function instead.
 function localAuthPlugin(env: Record<string, string>): Plugin {
-  const SUPA_URL  = env.VITE_SUPA_URL;
-  const SUPA_KEY  = env.VITE_SUPA_KEY;
+  const API_URL  = env.VITE_API_URL;
+  const API_KEY  = env.VITE_API_KEY;
   const BOT_TOKEN = env.BOT_TOKEN || env.VITE_BOT_TOKEN_DEV || '';
 
   async function verifyTelegramWidget(data: Record<string, string>): Promise<boolean> {
@@ -45,7 +45,7 @@ function localAuthPlugin(env: Record<string, string>): Plugin {
     id: number; first_name?: string; last_name?: string;
     username?: string; photo_url?: string;
   }): Promise<{ access_token: string; refresh_token: string; user_id: string } | null> {
-    const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY || '';
+    const serviceKey = env.SERVICE_ROLE_KEY || '';
     if (!serviceKey) {
       // No service role key in dev — return mock session
       return {
@@ -64,7 +64,7 @@ function localAuthPlugin(env: Record<string, string>): Plugin {
 
     // Find existing user
     const existingRes = await fetch(
-      `${SUPA_URL}/rest/v1/users?telegram_id=eq.${telegramUser.id}&select=id`,
+      `${API_URL}/rest/v1/users?telegram_id=eq.${telegramUser.id}&select=id`,
       { headers: adminHeaders }
     );
     const existing = await existingRes.json().catch(() => []);
@@ -74,7 +74,7 @@ function localAuthPlugin(env: Record<string, string>): Plugin {
 
     if (Array.isArray(existing) && existing.length > 0) {
       userId = existing[0].id;
-      await fetch(`${SUPA_URL}/rest/v1/users?id=eq.${userId}`, {
+      await fetch(`${API_URL}/rest/v1/users?id=eq.${userId}`, {
         method: 'PATCH',
         headers: adminHeaders,
         body: JSON.stringify({ last_login_at: new Date().toISOString() }),
@@ -82,7 +82,7 @@ function localAuthPlugin(env: Record<string, string>): Plugin {
     } else {
       // Create auth user
       const fakeEmail = `tg${telegramUser.id}@simadesk.app`;
-      const authFetch = await fetch(`${SUPA_URL}/auth/v1/admin/users`, {
+      const authFetch = await fetch(`${API_URL}/auth/v1/admin/users`, {
         method: 'POST',
         headers: { ...adminHeaders, 'apikey': serviceKey },
         body: JSON.stringify({
@@ -96,7 +96,7 @@ function localAuthPlugin(env: Record<string, string>): Plugin {
       if (!authRes?.id) return null;
       userId = authRes.id;
 
-      const insRes = await fetch(`${SUPA_URL}/rest/v1/users`, {
+      const insRes = await fetch(`${API_URL}/rest/v1/users`, {
         method: 'POST',
         headers: adminHeaders,
         body: JSON.stringify({
@@ -113,7 +113,7 @@ function localAuthPlugin(env: Record<string, string>): Plugin {
     }
 
     // Generate magic link and exchange for session
-    const linkFetch = await fetch(`${SUPA_URL}/auth/v1/admin/generate_link`, {
+    const linkFetch = await fetch(`${API_URL}/auth/v1/admin/generate_link`, {
       method: 'POST',
       headers: { ...adminHeaders, 'apikey': serviceKey },
       body: JSON.stringify({ type: 'magiclink', email: `tg${telegramUser.id}@simadesk.app` }),
@@ -122,8 +122,8 @@ function localAuthPlugin(env: Record<string, string>): Plugin {
     if (!linkFetch.ok) console.error('[dev-auth] generate_link failed:', linkFetch.status, linkRes);
 
     // Сырой REST-ответ GoTrue отдаёт hashed_token в корне объекта, БЕЗ обёртки
-    // properties — в отличие от supabase-js SDK (используется в проде в
-    // supabase/functions/telegram-auth), который сам оборачивает ответ в
+    // properties — в отличие от server SDK (используется в проде в
+    // backend/functions/telegram-auth), который сам оборачивает ответ в
     // { properties: {...} }. Смотрим оба варианта на случай будущих изменений API.
     const hashedToken = linkRes?.hashed_token ?? linkRes?.properties?.hashed_token;
     if (!hashedToken) {
@@ -131,9 +131,9 @@ function localAuthPlugin(env: Record<string, string>): Plugin {
       return null;
     }
 
-    const sessFetch = await fetch(`${SUPA_URL}/auth/v1/verify`, {
+    const sessFetch = await fetch(`${API_URL}/auth/v1/verify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPA_KEY },
+      headers: { 'Content-Type': 'application/json', 'apikey': API_KEY },
       body: JSON.stringify({ token_hash: hashedToken, type: 'magiclink' }),
     });
     const sessRes = await sessFetch.json().catch(() => null);
@@ -254,7 +254,10 @@ export default defineConfig(({ mode }) => {
       sourcemap: true,
       chunkSizeWarningLimit: 600,
       rollupOptions: {
-        input: { main: resolve(__dirname, 'index.html') },
+        input: {
+          main:       resolve(__dirname, 'index.html'),
+          storefront: resolve(__dirname, 'storefront.html'),
+        },
         output: { manualChunks: { xlsx: ['xlsx'] } },
       },
     },

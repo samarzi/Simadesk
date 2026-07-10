@@ -11,7 +11,7 @@
  *   created_at  timestamptz
  */
 
-import { supaFetch } from './supabaseClient';
+import { dbFetch } from './dbClient';
 import { companyService } from './companyService';
 
 export interface WarehouseScanRecord {
@@ -29,7 +29,7 @@ export const warehouseScanDb = {
   getScans: async (platform: 'yandex' | 'ozon'): Promise<WarehouseScanRecord[]> => {
     const cid = companyService.getActiveId();
     if (!cid) return [];
-    return supaFetch<WarehouseScanRecord[]>(
+    return dbFetch<WarehouseScanRecord[]>(
       `warehouse_scans?company_id=eq.${cid}&platform=eq.${platform}&select=*&order=created_at.desc`
     );
   },
@@ -43,7 +43,7 @@ export const warehouseScanDb = {
   }): Promise<WarehouseScanRecord> => {
     const cid = companyService.getActiveId();
     if (!cid) throw new Error('Не выбрана компания');
-    const r = await supaFetch<WarehouseScanRecord[]>('warehouse_scans', {
+    const r = await dbFetch<WarehouseScanRecord[]>('warehouse_scans', {
       method: 'POST',
       body: JSON.stringify({
         company_id: cid,
@@ -58,7 +58,7 @@ export const warehouseScanDb = {
 
   /** Переименовать скан */
   renameScan: async (id: string, name: string): Promise<void> => {
-    await supaFetch(`warehouse_scans?id=eq.${id}`, {
+    await dbFetch(`warehouse_scans?id=eq.${id}`, {
       method: 'PATCH',
       body: JSON.stringify({ name }),
     });
@@ -66,5 +66,5 @@ export const warehouseScanDb = {
 
   /** Удалить скан */
   deleteScan: (id: string): Promise<void> =>
-    supaFetch(`warehouse_scans?id=eq.${id}`, { method: 'DELETE' }),
+    dbFetch(`warehouse_scans?id=eq.${id}`, { method: 'DELETE' }),
 };
