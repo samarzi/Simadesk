@@ -12,6 +12,9 @@ interface Settings {
   whatsapp?: string;
   phone?: string;
   website?: string;
+  show_price_filter?: boolean;
+  show_brand_filter?: boolean;
+  show_category_filter?: boolean;
 }
 interface Product {
   source: string;
@@ -26,9 +29,13 @@ interface Product {
   image_url?: string;
   vendor_code?: string;
   brand?: string;
-  description?: string;
+  category?: string;
   custom_url?: string;
   custom_price?: number;
+  weight_kg?: number | null;
+  height_cm?: number | null;
+  width_cm?: number | null;
+  length_cm?: number | null;
 }
 interface GroupedProduct {
   key: string;
@@ -36,9 +43,13 @@ interface GroupedProduct {
   title: string;
   images: string[];
   brand?: string;
-  description?: string;
+  category?: string;
   price_min: number;
   price_max: number;
+  weight_kg?: number | null;
+  height_cm?: number | null;
+  width_cm?: number | null;
+  length_cm?: number | null;
   entries: Product[]; // sorted cheapest first
 }
 interface Banner { id: number; title?: string; image_url: string; link_url?: string; }
@@ -63,11 +74,13 @@ function fmtRange(min: number, max: number): string {
   return min === max ? fmt(min) : `${fmt(min)} — ${fmt(max)}`;
 }
 function getImages(p: Product): string[] {
+  const validUrl = (u: unknown): u is string =>
+    typeof u === 'string' && u.length > 0 && (u.startsWith('http') || u.startsWith('//'));
   if (Array.isArray(p.images) && p.images.length) {
-    const filtered = p.images.filter(Boolean);
+    const filtered = p.images.filter(validUrl);
     if (filtered.length) return filtered;
   }
-  if (p.image_url) return [p.image_url];
+  if (validUrl(p.image_url)) return [p.image_url];
   return [];
 }
 function buildEntryUrl(p: Product): string {
@@ -90,8 +103,11 @@ function groupProducts(products: Product[]): GroupedProduct[] {
     if (!map.has(key)) {
       map.set(key, {
         key, vendor_code: vc, title: p.title,
-        images: imgs, brand: p.brand, description: p.description,
-        price_min: p.price, price_max: p.price, entries: [p],
+        images: imgs, brand: p.brand, category: p.category,
+        price_min: p.price, price_max: p.price,
+        weight_kg: p.weight_kg, height_cm: p.height_cm,
+        width_cm: p.width_cm, length_cm: p.length_cm,
+        entries: [p],
       });
     } else {
       const g = map.get(key)!;
@@ -100,8 +116,12 @@ function groupProducts(products: Product[]): GroupedProduct[] {
       g.price_max = Math.max(g.price_max, p.price);
       if (imgs.length > g.images.length) {
         g.images = imgs; g.title = p.title;
-        g.brand = p.brand; g.description = p.description;
+        g.brand = p.brand; g.category = p.category;
       }
+      if (!g.weight_kg && p.weight_kg) g.weight_kg = p.weight_kg;
+      if (!g.height_cm && p.height_cm) g.height_cm = p.height_cm;
+      if (!g.width_cm  && p.width_cm)  g.width_cm  = p.width_cm;
+      if (!g.length_cm && p.length_cm) g.length_cm = p.length_cm;
     }
   }
   for (const g of map.values()) g.entries.sort((a, b) => a.price - b.price);
@@ -277,12 +297,6 @@ function injectCSS(): void {
   background:hsl(var(--secondary)); border:1.5px solid hsl(var(--border)); transition:background .15s; cursor:pointer;
 }
 .ss-btn-sec:hover { background:hsl(var(--accent)); }
-.ss-tabs-bar { display:flex; border-bottom:1px solid hsl(var(--border)/.5); margin-bottom:1rem; }
-.ss-tab-btn { padding:.6rem 1rem; font-size:.875rem; font-weight:600; border:none; background:none; cursor:pointer; color:hsl(var(--muted-foreground)); border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .15s,border-color .15s; }
-.ss-tab-btn.active { color:hsl(var(--primary)); border-bottom-color:hsl(var(--primary)); }
-.ss-tab-pane { display:none; }
-.ss-tab-pane.active { display:block; }
-.ss-tab-pane p { font-size:.875rem; line-height:1.7; color:hsl(var(--muted-foreground)); white-space:pre-wrap; }
 .ss-mobile-bar {
   position:fixed; bottom:0; left:0; right:0; z-index:50;
   background:hsl(var(--background)/.95); backdrop-filter:blur(16px);
@@ -308,6 +322,32 @@ function injectCSS(): void {
   transition:background .15s,color .15s;
 }
 .ss-src-tab.active { background:hsl(var(--background)); color:hsl(var(--primary)); box-shadow:0 1px 4px rgba(0,0,0,.3); }
+
+.ss-filters-bar { display:flex; flex-wrap:wrap; gap:.5rem .75rem; margin-bottom:.75rem; align-items:flex-start; }
+.ss-filter-group { display:flex; flex-direction:column; gap:.3rem; }
+.ss-filter-label { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:hsl(var(--muted-foreground)); }
+.ss-price-row { display:flex; align-items:center; gap:.35rem; }
+.ss-price-inp {
+  width:90px; padding:.3rem .5rem; border-radius:.5rem;
+  background:hsl(var(--muted)/.4); border:1px solid hsl(var(--border)/.5);
+  color:hsl(var(--foreground)); font-size:.8rem;
+  outline:none;
+}
+.ss-price-inp:focus { border-color:hsl(var(--primary)/.5); }
+.ss-price-sep { color:hsl(var(--muted-foreground)); font-size:.8rem; }
+.ss-chips { display:flex; flex-wrap:wrap; gap:.3rem; }
+.ss-chip {
+  padding:.2rem .55rem; border-radius:999px; font-size:.72rem; font-weight:700;
+  background:hsl(var(--muted)/.4); border:1px solid hsl(var(--border)/.5);
+  color:hsl(var(--foreground)/.8); cursor:pointer; transition:all .15s;
+}
+.ss-chip:hover { background:hsl(var(--primary)/.15); border-color:hsl(var(--primary)/.4); }
+.ss-chip.active { background:hsl(var(--primary)/.2); border-color:hsl(var(--primary)/.6); color:hsl(var(--primary)); }
+.ss-chip-reset {
+  padding:.2rem .55rem; border-radius:999px; font-size:.72rem; font-weight:700;
+  background:hsl(0 60% 50%/.15); border:1px solid hsl(0 60% 50%/.3);
+  color:hsl(0 60% 60%); cursor:pointer; align-self:flex-end;
+}
 
 .ss-grid {
   display:grid;
@@ -477,7 +517,7 @@ function renderCard(group: GroupedProduct): string {
 <div class="ss-card" data-key="${esc(group.key)}">
   <div class="ss-card-img">
     ${img
-      ? `<img src="${esc(img)}" alt="${esc(group.title)}" loading="lazy">`
+      ? `<img src="${esc(img)}" alt="${esc(group.title)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling&&(this.nextElementSibling.style.display='flex')" style="display:block"><div style="display:none;width:100%;height:100%;align-items:center;justify-content:center;color:hsl(var(--foreground)/.15)"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`
       : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:hsl(var(--foreground)/.15)"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`}
     <div class="ss-card-grad"></div>
     <div style="position:absolute;top:.4rem;right:.4rem;display:flex;flex-direction:column;gap:.2rem;align-items:flex-end">${badgesHtml}</div>
@@ -522,14 +562,14 @@ function headerHtml(s: Settings, showBack: boolean, backLabel = 'Назад'): s
 
   return `
 <header class="nav-modern" style="position:sticky;top:0;z-index:50">
-  <div style="position:relative;max-width:1400px;margin:0 auto;padding:0 1rem;height:3.5rem;display:flex;align-items:center">
+  <div style="position:relative;height:3.5rem">
     ${showBack ? `
-    <button id="ss-back-to-home" style="position:absolute;left:1rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:hsl(var(--primary));font-weight:700;font-size:.8rem;display:flex;align-items:center;gap:.3rem;white-space:nowrap;z-index:2;padding:.2rem .4rem;border-radius:.4rem">
+    <button id="ss-back-to-home" style="position:absolute;left:.75rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:hsl(var(--primary));font-weight:700;font-size:.8rem;display:flex;align-items:center;gap:.3rem;white-space:nowrap;z-index:2;padding:.2rem .4rem;border-radius:.4rem">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
       ${esc(backLabel)}
     </button>` : ''}
-    <div style="flex:1;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:.5rem;${showBack ? 'padding-left:5rem' : ''}">
-      <div style="display:flex;align-items:center;gap:.5rem;overflow:hidden;min-width:0">
+    <div style="max-width:1400px;margin:0 auto;padding:0 1rem;height:100%;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:.5rem">
+      <div style="display:flex;align-items:center;gap:.5rem;overflow:hidden;min-width:0;${showBack ? 'padding-left:4rem' : ''}">
         ${logoHtml}
         <span style="font-size:1.1rem;font-weight:800;color:hsl(var(--foreground));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2">${esc(s.store_name)}</span>
       </div>
@@ -716,6 +756,8 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
       ${hasSrc('yandex') ? `<button class="ss-src-tab" data-src="yandex">Яндекс</button>` : ''}
     </div>
 
+    <div id="ss-filters-bar"></div>
+
     <div class="ss-grid" id="ss-cat-grid">${renderSkeletons(12)}</div>
   </div>
 
@@ -725,18 +767,62 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
 </div>`;
 
   const PAGE_SIZE = 24;
-  let currentSrc = 'all';
-  let searchQ    = '';
+  let currentSrc  = 'all';
+  let searchQ     = '';
   let currentPage = 0;
   let lazyObserver: IntersectionObserver | null = null;
+  let filterPriceMin: number | null = null;
+  let filterPriceMax: number | null = null;
+  let filterBrand   = '';
+  let filterCat     = '';
+
+  const allBrands     = [...new Set(groups.map(g => g.brand).filter((b): b is string => !!b))].sort();
+  const allCategories = [...new Set(groups.map(g => g.category).filter((c): c is string => !!c))].sort();
+
+  const showPrice = s.show_price_filter !== false;
+  const showBrand = !!s.show_brand_filter && allBrands.length > 1;
+  const showCat   = !!s.show_category_filter && allCategories.length > 1;
+
+  function renderFiltersBar(): void {
+    const bar = document.getElementById('ss-filters-bar');
+    if (!bar || (!showPrice && !showBrand && !showCat)) return;
+    const hasActive = filterPriceMin != null || filterPriceMax != null || filterBrand || filterCat;
+    bar.innerHTML = `<div class="ss-filters-bar">
+      ${showPrice ? `<div class="ss-filter-group">
+        <div class="ss-filter-label">Цена, ₽</div>
+        <div class="ss-price-row">
+          <input class="ss-price-inp" id="sf-pmin" type="number" placeholder="от" value="${filterPriceMin ?? ''}">
+          <span class="ss-price-sep">—</span>
+          <input class="ss-price-inp" id="sf-pmax" type="number" placeholder="до" value="${filterPriceMax ?? ''}">
+        </div>
+      </div>` : ''}
+      ${showBrand ? `<div class="ss-filter-group">
+        <div class="ss-filter-label">Бренд</div>
+        <div class="ss-chips">
+          ${allBrands.map(b => `<button class="ss-chip${filterBrand===b?' active':''}" data-brand="${esc(b)}">${esc(b)}</button>`).join('')}
+        </div>
+      </div>` : ''}
+      ${showCat ? `<div class="ss-filter-group">
+        <div class="ss-filter-label">Категория</div>
+        <div class="ss-chips">
+          ${allCategories.map(c => `<button class="ss-chip${filterCat===c?' active':''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}
+        </div>
+      </div>` : ''}
+      ${hasActive ? `<button class="ss-chip-reset" id="sf-reset">✕ Сбросить</button>` : ''}
+    </div>`;
+  }
 
   function filtered(): GroupedProduct[] {
     const q = searchQ.trim().toLowerCase();
     return groups.filter(g => {
-      const matchSrc = currentSrc === 'all' || g.entries.some(e => e.source === currentSrc);
-      const matchQ   = !q || g.title.toLowerCase().includes(q) || g.vendor_code.toLowerCase().includes(q) ||
-                       g.entries.some(e => e.title.toLowerCase().includes(q));
-      return matchSrc && matchQ;
+      const matchSrc   = currentSrc === 'all' || g.entries.some(e => e.source === currentSrc);
+      const matchQ     = !q || g.title.toLowerCase().includes(q) || g.vendor_code.toLowerCase().includes(q) ||
+                         g.entries.some(e => e.title.toLowerCase().includes(q));
+      const matchPMin  = filterPriceMin == null || g.price_max >= filterPriceMin;
+      const matchPMax  = filterPriceMax == null || g.price_min <= filterPriceMax;
+      const matchBrand = !filterBrand || (g.brand ?? '') === filterBrand;
+      const matchCat   = !filterCat   || (g.category ?? '') === filterCat;
+      return matchSrc && matchQ && matchPMin && matchPMax && matchBrand && matchCat;
     });
   }
 
@@ -790,7 +876,7 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
     if (count) count.textContent = String(f.length);
   }
 
-  requestAnimationFrame(() => refreshGrid());
+  requestAnimationFrame(() => { renderFiltersBar(); refreshGrid(); });
 
   document.getElementById('ss-search')?.addEventListener('input', (e) => {
     searchQ = (e.target as HTMLInputElement).value;
@@ -799,8 +885,43 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
 
   document.getElementById('ss-back-to-home')?.addEventListener('click', onBack);
 
+  // Price filter (debounced)
+  let priceTimer = 0;
+  root.addEventListener('input', (e) => {
+    const inp = e.target as HTMLInputElement;
+    if (inp.id === 'sf-pmin' || inp.id === 'sf-pmax') {
+      clearTimeout(priceTimer);
+      priceTimer = window.setTimeout(() => {
+        filterPriceMin = inp.id === 'sf-pmin' ? (inp.value ? Number(inp.value) : null) : filterPriceMin;
+        filterPriceMax = inp.id === 'sf-pmax' ? (inp.value ? Number(inp.value) : null) : filterPriceMax;
+        renderFiltersBar(); refreshGrid();
+      }, 400);
+    }
+  });
+
   root.addEventListener('click', (e) => {
     const t = e.target as HTMLElement;
+
+    // Brand chip
+    const brandChip = t.closest('[data-brand]') as HTMLElement|null;
+    if (brandChip) {
+      const b = brandChip.dataset.brand!;
+      filterBrand = filterBrand === b ? '' : b;
+      renderFiltersBar(); refreshGrid(); return;
+    }
+    // Category chip
+    const catChip = t.closest('[data-cat]') as HTMLElement|null;
+    if (catChip) {
+      const c = catChip.dataset.cat!;
+      filterCat = filterCat === c ? '' : c;
+      renderFiltersBar(); refreshGrid(); return;
+    }
+    // Reset
+    if ((t as HTMLElement).id === 'sf-reset') {
+      filterPriceMin = null; filterPriceMax = null;
+      filterBrand = ''; filterCat = '';
+      renderFiltersBar(); refreshGrid(); return;
+    }
 
     const tab = t.closest('.ss-src-tab') as HTMLElement|null;
     if (tab && tab.dataset.src) {
@@ -900,23 +1021,14 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
         ${buyButtonsHtml}
         ${customBtnHtml}
       </div>
-      <div class="ss-tabs-bar">
-        <button class="ss-tab-btn active" data-tab="desc">Описание</button>
-        <button class="ss-tab-btn" data-tab="spec">Характеристики</button>
-      </div>
-      <div class="ss-tab-pane active" id="ss-pane-desc">
-        ${group.description
-          ? `<p>${esc(group.description)}</p>`
-          : `<p style="color:hsl(var(--muted-foreground));font-style:italic">Описание не добавлено</p>`}
-      </div>
-      <div class="ss-tab-pane" id="ss-pane-spec">
-        <div style="display:flex;flex-direction:column;gap:.25rem">
-          ${group.vendor_code ? `<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0;border-bottom:1px solid hsl(var(--border)/.3)"><span style="color:hsl(var(--muted-foreground))">Артикул</span><span style="font-weight:600">${esc(group.vendor_code)}</span></div>` : ''}
-          ${group.brand ? `<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0;border-bottom:1px solid hsl(var(--border)/.3)"><span style="color:hsl(var(--muted-foreground))">Бренд</span><span style="font-weight:600">${esc(group.brand)}</span></div>` : ''}
-          <div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0">
-            <span style="color:hsl(var(--muted-foreground))">Площадки</span>
-            <span style="font-weight:600">${[...new Set(group.entries.map(e => BADGE[e.source]??e.source))].join(', ')}</span>
-          </div>
+      <div style="display:flex;flex-direction:column;gap:.25rem;margin-top:.5rem">
+        ${group.vendor_code ? `<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0;border-bottom:1px solid hsl(var(--border)/.3)"><span style="color:hsl(var(--muted-foreground))">Артикул</span><span style="font-weight:600">${esc(group.vendor_code)}</span></div>` : ''}
+        ${group.brand ? `<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0;border-bottom:1px solid hsl(var(--border)/.3)"><span style="color:hsl(var(--muted-foreground))">Бренд</span><span style="font-weight:600">${esc(group.brand)}</span></div>` : ''}
+        ${group.weight_kg  ? `<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0;border-bottom:1px solid hsl(var(--border)/.3)"><span style="color:hsl(var(--muted-foreground))">Вес</span><span style="font-weight:600">${group.weight_kg} кг</span></div>` : ''}
+        ${(group.length_cm || group.width_cm || group.height_cm) ? `<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0;border-bottom:1px solid hsl(var(--border)/.3)"><span style="color:hsl(var(--muted-foreground))">Габариты (ДxШxВ)</span><span style="font-weight:600">${[group.length_cm,group.width_cm,group.height_cm].map(v=>v??'—').join(' × ')} см</span></div>` : ''}
+        <div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0">
+          <span style="color:hsl(var(--muted-foreground))">Площадки</span>
+          <span style="font-weight:600">${[...new Set(group.entries.map(e => BADGE[e.source]??e.source))].join(', ')}</span>
         </div>
       </div>
     </div>
@@ -1003,7 +1115,7 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
   }
 
   panel.querySelector('#ss-det-back')?.addEventListener('click', () => {
-    closePanel(true);
+    history.back();
   });
 
   const onPop = (e: PopStateEvent) => {
@@ -1035,7 +1147,7 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
     panel.classList.remove('animating');
     panel.style.transform = '';
     const dx = e.changedTouches[0].clientX - swipeStartX;
-    if (swipeIsH && dx / window.innerWidth > 0.4) { closePanel(true); }
+    if (swipeIsH && dx / window.innerWidth > 0.4) { history.back(); }
   }, { passive:true });
 }
 
@@ -1090,7 +1202,7 @@ async function init(): Promise<void> {
   function openProduct(key: string): void {
     const group = groups.find(g => g.key === key);
     if (!group) return;
-    history.replaceState({ productKey: key }, '', `/${slug}/product/${encodeURIComponent(key)}`);
+    history.pushState({ productKey: key }, '', `/${slug}/product/${encodeURIComponent(key)}`);
     openDetail(group, groups, slug, () => {
       history.replaceState({}, '', view === 'catalog' ? `/${slug}/catalog` : `/${slug}`);
     });
