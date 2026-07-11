@@ -17,6 +17,7 @@ const LOCKABLE_NAV_IDS = [
   'nav-catalog', 'nav-orders', 'nav-stock', 'nav-producers',
   'nav-analytics', 'nav-repricer', 'nav-reviews', 'nav-chats',
   'dock-more-btn', 'nav-sku-audit', 'nav-automation', 'nav-logs',
+  'nav-simastore',
 ];
 
 /** Есть ли хотя бы один подключённый магазин (Ozon/WB/ЯМ) у текущей компании. */

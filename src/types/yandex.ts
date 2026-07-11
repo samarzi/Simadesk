@@ -65,6 +65,7 @@ export interface YandexProduct {
   market_sku?: number | null;   // SKU маркета
   market_model_id?: number | null; // ID модели маркета (для ссылки на карточку)
   category_id?: number | null;
+  category_name?: string;
   archived?: boolean;
   stock_total?: number;         // суммарный остаток
   stock_available?: number;     // FIT + AVAILABLE

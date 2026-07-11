@@ -9,9 +9,24 @@ export interface StorefrontSettings {
   tagline: string;
   telegram: string;
   whatsapp: string;
+  phone?: string;
   website: string;
+  logo_url?: string | null;
+  show_price_filter: boolean;
+  show_brand_filter: boolean;
+  show_category_filter: boolean;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface StorefrontGroup {
+  id: string;
+  company_id: string;
+  name: string;
+  cover_url: string;
+  sort_order: number;
+  vendor_codes?: string[];
+  created_at?: string;
 }
 
 export interface StorefrontProduct {
@@ -25,6 +40,7 @@ export interface StorefrontProduct {
   discount: number;
   vendor_code: string;
   brand: string;
+  category: string;
   is_hidden: boolean;
   custom_url: string;
   custom_price: number | null;
@@ -71,13 +87,13 @@ export const storefrontDb = {
   async getProducts(companyId: string): Promise<StorefrontProduct[]> {
     const [wb, ozon, yandex] = await Promise.allSettled([
       dbFetch<any[]>(
-        `wb_stores?company_id=eq.${companyId}&select=id,wb_products(nm_id,title,pictures,price,discount,vendor_code,brand)`,
+        `wb_stores?company_id=eq.${companyId}&select=id,wb_products(nm_id,title,pictures,price,discount,vendor_code,brand,subject)`,
       ),
       dbFetch<any[]>(
-        `ozon_stores?company_id=eq.${companyId}&select=id,ozon_products(product_id,sku,name,images,price,old_price,offer_id)`,
+        `ozon_stores?company_id=eq.${companyId}&select=id,ozon_products(product_id,sku,name,images,price,old_price,offer_id,category)`,
       ),
       dbFetch<any[]>(
-        `yandex_stores?company_id=eq.${companyId}&select=id,yandex_products(market_sku,market_model_id,name,pictures,basic_price,vendor_code,vendor,archived)`,
+        `yandex_stores?company_id=eq.${companyId}&select=id,yandex_products(market_sku,market_model_id,name,pictures,basic_price,vendor_code,vendor,archived,category_name)`,
       ),
     ]);
 
@@ -98,6 +114,7 @@ export const storefrontDb = {
             discount: p.discount || 0,
             vendor_code: p.vendor_code ?? '',
             brand: p.brand ?? '',
+            category: p.subject ?? '',
             is_hidden: false,
             custom_url: '',
             custom_price: null,
@@ -125,6 +142,7 @@ export const storefrontDb = {
             discount: oldPrice > 0 && oldPrice > p.price ? Math.round((1 - p.price / oldPrice) * 100) : 0,
             vendor_code: p.offer_id ?? '',
             brand: '',
+            category: p.category ?? '',
             is_hidden: false,
             custom_url: '',
             custom_price: null,
@@ -152,6 +170,7 @@ export const storefrontDb = {
             discount: 0,
             vendor_code: p.vendor_code ?? '',
             brand: p.vendor ?? '',
+            category: p.category_name ?? '',
             is_hidden: false,
             custom_url: '',
             custom_price: null,
@@ -262,6 +281,84 @@ export const storefrontDb = {
       throw new Error((err as { message?: string }).message || `Upload failed: ${res.status}`);
     }
     return `${apiUrl}/storage/v1/object/public/storefront-banners/${path}`;
+  },
+
+  // ── Groups ────────────────────────────────────────────────────────────────
+
+  async getGroups(companyId: string): Promise<StorefrontGroup[]> {
+    const rows = await dbFetch<StorefrontGroup[]>(
+      `storefront_groups?company_id=eq.${companyId}&order=sort_order.asc,created_at.asc`,
+    );
+    return rows ?? [];
+  },
+
+  async addGroup(companyId: string, name: string, coverUrl = '', sortOrder = 0): Promise<StorefrontGroup> {
+    const rows = await dbFetch<StorefrontGroup[]>('storefront_groups', {
+      method: 'POST',
+      body: JSON.stringify({ company_id: companyId, name, cover_url: coverUrl, sort_order: sortOrder }),
+    }, { 'Prefer': 'return=representation' });
+    return rows[0];
+  },
+
+  async updateGroup(id: string, data: { name?: string; cover_url?: string }): Promise<void> {
+    await dbFetch(`storefront_groups?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }, { 'Prefer': 'return=minimal' });
+  },
+
+  async deleteGroup(id: string): Promise<void> {
+    await dbFetch(`storefront_groups?id=eq.${id}`, { method: 'DELETE' });
+  },
+
+  async updateGroupOrder(items: { id: string; sort_order: number }[]): Promise<void> {
+    await Promise.all(items.map(({ id, sort_order }) =>
+      dbFetch(`storefront_groups?id=eq.${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ sort_order }),
+      }, { 'Prefer': 'return=minimal' }),
+    ));
+  },
+
+  async getGroupItems(groupId: string): Promise<string[]> {
+    const rows = await dbFetch<{ vendor_code: string }[]>(
+      `storefront_group_items?group_id=eq.${groupId}&select=vendor_code`,
+    );
+    return (rows ?? []).map(r => r.vendor_code);
+  },
+
+  async setProductGroup(companyId: string, vendorCode: string, groupId: string | null): Promise<void> {
+    // Remove from any current group belonging to this company
+    const groups = await dbFetch<{ id: string }[]>(
+      `storefront_groups?company_id=eq.${companyId}&select=id`,
+    );
+    const ids = (groups ?? []).map(g => g.id);
+    if (ids.length > 0) {
+      await dbFetch(
+        `storefront_group_items?group_id=in.(${ids.join(',')})&vendor_code=eq.${encodeURIComponent(vendorCode)}`,
+        { method: 'DELETE' },
+      );
+    }
+    if (groupId) {
+      await dbFetch('storefront_group_items', {
+        method: 'POST',
+        body: JSON.stringify({ group_id: groupId, vendor_code: vendorCode }),
+      }, { 'Prefer': 'return=minimal' });
+    }
+  },
+
+  async getAllGroupItems(companyId: string): Promise<Map<string, string>> {
+    const groups = await dbFetch<{ id: string }[]>(
+      `storefront_groups?company_id=eq.${companyId}&select=id`,
+    );
+    const ids = (groups ?? []).map(g => g.id);
+    if (!ids.length) return new Map();
+    const rows = await dbFetch<{ group_id: string; vendor_code: string }[]>(
+      `storefront_group_items?group_id=in.(${ids.join(',')})&select=group_id,vendor_code`,
+    );
+    const map = new Map<string, string>(); // vendor_code → group_id
+    for (const r of (rows ?? [])) map.set(r.vendor_code, r.group_id);
+    return map;
   },
 
   buildBuyUrl(p: StorefrontProduct): string {

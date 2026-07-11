@@ -10,6 +10,7 @@ interface Settings {
   logo_url?: string;
   telegram?: string;
   whatsapp?: string;
+  phone?: string;
   website?: string;
 }
 interface Product {
@@ -81,6 +82,8 @@ function buildEntryUrl(p: Product): string {
 function groupProducts(products: Product[]): GroupedProduct[] {
   const map = new Map<string, GroupedProduct>();
   for (const p of products) {
+    const effectivePrice = p.custom_price != null ? p.custom_price : p.price;
+    if (effectivePrice <= 0) continue;
     const vc = (p.vendor_code ?? '').trim().toLowerCase();
     const key = vc ? `v:${vc}` : `s:${p.source}:${p.source_id}`;
     const imgs = getImages(p);
@@ -115,45 +118,39 @@ function injectCSS(): void {
 @keyframes ss-fadein { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
 @keyframes slideInScale { from{opacity:0;transform:translateY(30px) scale(.9)} to{opacity:1;transform:none} }
 @keyframes slideInLeft  { from{opacity:0;transform:translateX(-20px)} to{opacity:1;transform:none} }
-
-.ss-car { position:relative; overflow:hidden; border-radius:1rem; }
-.ss-car-track { display:flex; will-change:transform; transition:transform .45s cubic-bezier(.25,.46,.45,.94); }
-.ss-car-slide { flex:0 0 100%; position:relative; }
-.ss-car-slide a { display:block; width:100%; }
-.ss-car-slide img { width:100%; height:100%; object-fit:cover; display:block; border-radius:1rem; }
-.ss-car-btn {
-  position:absolute; top:50%; transform:translateY(-50%);
-  width:2.5rem; height:2.5rem; border-radius:50%;
-  background:rgba(0,0,0,.5); backdrop-filter:blur(8px);
-  border:1px solid rgba(255,255,255,.15);
-  color:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center;
-  font-size:1.1rem; z-index:5;
-  opacity:0; transition:opacity .2s;
+@keyframes ss-brand-shimmer {
+  0%   { background-position:0% 50%; }
+  50%  { background-position:100% 50%; }
+  100% { background-position:0% 50%; }
 }
-.ss-car:hover .ss-car-btn { opacity:1; }
-.ss-car-prev { left:.75rem; }
-.ss-car-next { right:.75rem; }
-.ss-car-btn:hover { background:rgba(0,0,0,.75); }
-.ss-car-dots { position:absolute; bottom:.75rem; left:50%; transform:translateX(-50%); display:flex; gap:.35rem; z-index:5; }
-.ss-car-dot { width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,.4); border:none; cursor:pointer; padding:0; transition:background .2s,width .2s; }
-.ss-car-dot.active { background:#00FFCC; width:18px; border-radius:3px; }
-
-.ss-car-desktop { display:none; }
-@media (min-width:1024px) {
-  .ss-car-mobile  { display:none; }
-  .ss-car-desktop { display:grid; grid-template-columns:1fr 2fr 1fr; gap:1rem; }
-  .ss-car-side    { position:relative; cursor:pointer; border-radius:1rem; overflow:hidden; }
-  .ss-car-side img{ width:100%; height:100%; object-fit:cover; display:block; filter:brightness(.5) saturate(.7); transition:filter .2s; }
-  .ss-car-side:hover img { filter:brightness(.65) saturate(.9); }
-  .ss-car-side-arrow {
-    position:absolute; top:50%; transform:translateY(-50%);
-    width:2.5rem; height:2.5rem; border-radius:50%;
-    background:rgba(0,0,0,.6); backdrop-filter:blur(8px);
-    color:#fff; display:flex; align-items:center; justify-content:center; font-size:1.2rem;
-  }
-  .ss-car-side-prev .ss-car-side-arrow { left:50%; transform:translate(-50%,-50%); }
-  .ss-car-side-next .ss-car-side-arrow { left:50%; transform:translate(-50%,-50%); }
+.ss-header-brand {
+  font-weight:800;
+  background:linear-gradient(90deg,#00FFCC,#00CCAA,#7FFFD4,#00CED1,#00FFCC);
+  background-size:300% 300%;
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+  animation:ss-brand-shimmer 5s ease infinite;
+  letter-spacing:.04em;
 }
+
+/* ── Banner carousel ── */
+.ss-banner-grid { display:grid; grid-template-columns:1fr; gap:1rem; margin-bottom:.5rem; }
+@media(min-width:1024px) { .ss-banner-grid { grid-template-columns:1fr 2fr 1fr; } }
+.ss-banner-side {
+  display:none; border-radius:1rem; overflow:hidden; height:320px;
+  position:relative; cursor:pointer; flex-shrink:0;
+}
+@media(min-width:1024px) { .ss-banner-side { display:block; } }
+.ss-banner-side img { width:100%;height:100%;object-fit:cover;display:block; }
+.ss-banner-side-ov { position:absolute;inset:0;background:rgba(0,0,0,.4);border-radius:1rem;transition:background .25s; }
+.ss-banner-side:hover .ss-banner-side-ov { background:rgba(0,0,0,.2); }
+.ss-banner-main { display:block;border-radius:1rem;overflow:hidden;height:200px;transition:opacity .3s; }
+@media(min-width:640px) { .ss-banner-main { height:280px; } }
+@media(min-width:1024px) { .ss-banner-main { height:320px; } }
+.ss-banner-main img { width:100%;height:100%;object-fit:cover;display:block; }
+.ss-ban-dots { display:flex;justify-content:center;gap:.5rem;margin-top:.75rem; }
+@media(min-width:1024px) { .ss-ban-dots { display:none; } }
+.ss-car-dot { width:8px;height:8px;border-radius:50%;background:hsl(var(--muted-foreground)/.3);border:none;cursor:pointer;padding:0;transition:all .2s; }
+.ss-car-dot.active { background:hsl(var(--primary));transform:scale(1.25); }
 
 .ss-skel { background:hsl(var(--muted)/.5); border-radius:.875rem; overflow:hidden; animation:ss-shimmer 1.4s ease-in-out infinite; }
 .ss-skel-img  { aspect-ratio:3/4; background:hsl(var(--muted)/.7); }
@@ -379,82 +376,55 @@ class Carousel {
   private mount(): void {
     const { banners } = this;
     const n = banners.length;
-    const mobileHtml = `
-<div class="ss-car ss-car-mobile" style="aspect-ratio:2/1;max-height:260px">
-  <div class="ss-car-track" style="height:100%">
-    ${banners.map(b => `
-      <div class="ss-car-slide" style="height:100%">
-        <a href="${esc(b.link_url||'#')}" ${b.link_url&&b.link_url!=='#'?'target="_blank" rel="noopener"':'onclick="return false"'} style="height:100%;display:block">
-          <img src="${esc(b.image_url)}" alt="banner" loading="lazy" style="height:100%;width:100%;object-fit:cover;border-radius:1rem">
-        </a>
-      </div>`).join('')}
-  </div>
-  ${n>1?`<button class="ss-car-btn ss-car-prev">&#8592;</button><button class="ss-car-btn ss-car-next">&#8594;</button>`:'' }
-  <div class="ss-car-dots">
-    ${banners.map((_,i)=>`<button class="ss-car-dot${i===0?' active':''}" data-i="${i}"></button>`).join('')}
-  </div>
-</div>`;
-
-    const prevB = banners[(0-1+n)%n];
+    const cur = banners[0];
+    const prevB = banners[(n-1)%n];
     const nextB = banners[1%n];
-    const desktopHtml = n >= 2 ? `
-<div class="ss-car-desktop" style="height:320px">
-  <div class="ss-car-side ss-car-side-prev" id="ss-car-prev" style="height:100%">
-    <img id="ss-car-prev-img" src="${esc(prevB.image_url)}" alt="prev" style="height:100%">
-    <div class="ss-car-side-arrow">&#8592;</div>
-  </div>
-  <div class="ss-car" id="ss-car-main" style="height:100%;grid-column:span 2">
-    <div class="ss-car-track" style="height:100%">
-      ${banners.map(b=>`
-        <div class="ss-car-slide" style="height:100%">
-          <a href="${esc(b.link_url||'#')}" ${b.link_url&&b.link_url!=='#'?'target="_blank" rel="noopener"':'onclick="return false"'} style="height:100%;display:block">
-            <img src="${esc(b.image_url)}" alt="banner" loading="lazy" style="height:100%;width:100%;object-fit:cover;border-radius:0">
-          </a>
-        </div>`).join('')}
-    </div>
-    <div class="ss-car-dots">
-      ${banners.map((_,i)=>`<button class="ss-car-dot${i===0?' active':''}" data-i="dt-${i}"></button>`).join('')}
-    </div>
-  </div>
-  <div class="ss-car-side ss-car-side-next" id="ss-car-next" style="height:100%">
-    <img id="ss-car-next-img" src="${esc(nextB.image_url)}" alt="next" style="height:100%">
-    <div class="ss-car-side-arrow">&#8594;</div>
-  </div>
-</div>` : `
-<div class="ss-car-desktop" style="height:320px">
-  <div style="grid-column:span 2;position:relative;border-radius:1rem;overflow:hidden;height:100%">
-    <a href="${esc(banners[0].link_url||'#')}" style="display:block;height:100%">
-      <img src="${esc(banners[0].image_url)}" alt="banner" style="width:100%;height:100%;object-fit:cover">
+    const linkAttrs = (b: Banner) => b.link_url && b.link_url !== '#'
+      ? `href="${esc(b.link_url)}" target="_blank" rel="noopener"`
+      : `href="#" onclick="return false"`;
+
+    this.el.innerHTML = `
+<div class="ss-banner-grid">
+  ${n > 1 ? `
+  <div class="ss-banner-side" id="ss-ban-prev">
+    <img id="ss-ban-prev-img" src="${esc(prevB.image_url)}" alt="" loading="lazy">
+    <div class="ss-banner-side-ov"></div>
+  </div>` : ''}
+  <div${n === 1 ? ' style="grid-column:1/-1"' : ''}>
+    <a ${linkAttrs(cur)} id="ss-ban-link" class="ss-banner-main">
+      <img id="ss-ban-main-img" src="${esc(cur.image_url)}" alt="banner" loading="eager">
     </a>
   </div>
-</div>`;
-
-    this.el.innerHTML = mobileHtml + desktopHtml;
+  ${n > 1 ? `
+  <div class="ss-banner-side" id="ss-ban-next">
+    <img id="ss-ban-next-img" src="${esc(nextB.image_url)}" alt="" loading="lazy">
+    <div class="ss-banner-side-ov"></div>
+  </div>` : ''}
+</div>
+${n > 1 ? `
+<div class="ss-ban-dots">
+  ${banners.map((_,i)=>`<button class="ss-car-dot${i===0?' active':''}" data-i="${i}"></button>`).join('')}
+</div>` : ''}`;
     this.bindAll();
   }
 
   private bindAll(): void {
-    const { banners } = this;
-    const n = banners.length;
-    const mob = this.el.querySelector('.ss-car-mobile .ss-car-track') as HTMLElement|null;
-    this.el.querySelector('.ss-car-prev')?.addEventListener('click', () => this.go(this.idx-1));
-    this.el.querySelector('.ss-car-next')?.addEventListener('click', () => this.go(this.idx+1));
-    this.el.querySelectorAll('.ss-car-dot[data-i]').forEach(d => {
-      d.addEventListener('click', () => {
-        const v = (d as HTMLElement).dataset.i ?? '0';
-        this.go(parseInt(v.replace('dt-',''), 10));
-      });
+    const n = this.banners.length;
+    if (n < 2) return;
+    this.el.querySelector('#ss-ban-prev')?.addEventListener('click', () => this.go(this.idx-1));
+    this.el.querySelector('#ss-ban-next')?.addEventListener('click', () => this.go(this.idx+1));
+    this.el.querySelectorAll('.ss-car-dot').forEach(d => {
+      d.addEventListener('click', () => this.go(parseInt((d as HTMLElement).dataset.i ?? '0', 10)));
     });
-    if (mob && n > 1) {
+    const main = this.el.querySelector('.ss-banner-main') as HTMLElement|null;
+    if (main) {
       let sx = 0;
-      mob.addEventListener('touchstart', (e:TouchEvent) => { sx = e.changedTouches[0].clientX; }, { passive:true });
-      mob.addEventListener('touchend',   (e:TouchEvent) => {
+      main.addEventListener('touchstart', (e:TouchEvent) => { sx = e.changedTouches[0].clientX; }, { passive:true });
+      main.addEventListener('touchend',   (e:TouchEvent) => {
         const dx = e.changedTouches[0].clientX - sx;
         if (Math.abs(dx) > 40) this.go(this.idx + (dx < 0 ? 1 : -1));
       }, { passive:true });
     }
-    this.el.querySelector('#ss-car-prev')?.addEventListener('click', () => this.go(this.idx-1));
-    this.el.querySelector('#ss-car-next')?.addEventListener('click', () => this.go(this.idx+1));
   }
 
   private go(idx: number): void {
@@ -467,16 +437,20 @@ class Carousel {
   private update(): void {
     const { banners, idx } = this;
     const n = banners.length;
-    const mobTrack = this.el.querySelector('.ss-car-mobile .ss-car-track') as HTMLElement|null;
-    if (mobTrack) mobTrack.style.transform = `translateX(-${idx*100}%)`;
-    this.el.querySelectorAll('.ss-car-dot:not([data-i^="dt-"])').forEach((d,i) => d.classList.toggle('active', i===idx));
-    const dtTrack = this.el.querySelector('#ss-car-main .ss-car-track') as HTMLElement|null;
-    if (dtTrack) dtTrack.style.transform = `translateX(-${idx*100}%)`;
-    this.el.querySelectorAll('.ss-car-dot[data-i^="dt-"]').forEach((d,i) => d.classList.toggle('active', i===idx));
-    const prevImg = this.el.querySelector('#ss-car-prev-img') as HTMLImageElement|null;
-    const nextImg = this.el.querySelector('#ss-car-next-img') as HTMLImageElement|null;
-    if (prevImg) prevImg.src = banners[((idx-1)+n)%n].image_url;
-    if (nextImg) nextImg.src = banners[(idx+1)%n].image_url;
+    const cur = banners[idx];
+    const prevB = banners[((idx-1)+n)%n];
+    const nextB = banners[(idx+1)%n];
+    const linkAttrs = (b: Banner) => b.link_url && b.link_url !== '#'
+      ? `href="${esc(b.link_url)}" target="_blank" rel="noopener"` : `href="#"`;
+    const mainImg = this.el.querySelector('#ss-ban-main-img') as HTMLImageElement|null;
+    const mainLink = this.el.querySelector('#ss-ban-link') as HTMLAnchorElement|null;
+    const prevImg = this.el.querySelector('#ss-ban-prev-img') as HTMLImageElement|null;
+    const nextImg = this.el.querySelector('#ss-ban-next-img') as HTMLImageElement|null;
+    if (mainImg) { mainLink?.setAttribute('href', cur.link_url||'#'); mainImg.src = cur.image_url; }
+    if (prevImg) prevImg.src = prevB.image_url;
+    if (nextImg) nextImg.src = nextB.image_url;
+    this.el.querySelectorAll('.ss-car-dot').forEach((d,i) => d.classList.toggle('active', i===idx));
+    void linkAttrs; // suppress unused warning
   }
 
   private start(): void {
@@ -538,26 +512,30 @@ function headerHtml(s: Settings, showBack: boolean, backLabel = 'Назад'): s
   const contacts = [
     s.telegram ? `<a href="https://t.me/${esc(s.telegram.replace(/^@/,''))}" target="_blank" rel="noopener" class="ss-contact" style="color:rgb(38,160,218);background:rgba(38,160,218,.12);border:1px solid rgba(38,160,218,.25)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Telegram</a>` : '',
     s.whatsapp  ? `<a href="https://wa.me/${esc(s.whatsapp.replace(/\D/g,''))}" target="_blank" rel="noopener" class="ss-contact" style="color:rgb(37,211,102);background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.25)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg> WhatsApp</a>` : '',
+    s.phone     ? `<a href="tel:${esc(s.phone.replace(/\s/g,''))}" class="ss-contact" style="color:rgb(99,179,120);background:rgba(99,179,120,.12);border:1px solid rgba(99,179,120,.25)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.8 19.79 19.79 0 012 1.17 2 2 0 013.07 1a3.12 3.12 0 012 0h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L9.91 8.1a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg> Позвонить</a>` : '',
     s.website   ? `<a href="${esc(s.website.startsWith('http')?s.website:'https://'+s.website)}" target="_blank" rel="noopener" class="ss-contact" style="color:hsl(var(--primary));background:hsl(var(--primary)/.1);border:1px solid hsl(var(--border))"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg> Сайт</a>` : '',
   ].filter(Boolean).join('');
 
+  const logoHtml = s.logo_url
+    ? `<img src="${esc(s.logo_url)}" alt="logo" style="width:2.5rem;height:2.5rem;border-radius:.625rem;object-fit:cover;flex-shrink:0">`
+    : `<div style="width:2.5rem;height:2.5rem;border-radius:.625rem;background:linear-gradient(135deg,#00FFCC,#00CCAA);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.1rem;color:#000;flex-shrink:0">${esc(s.store_name.charAt(0).toUpperCase())}</div>`;
+
   return `
 <header class="nav-modern" style="position:sticky;top:0;z-index:50">
-  <div style="display:flex;align-items:center;justify-content:space-between;padding:.625rem 1rem;height:3.5rem;max-width:1400px;margin:0 auto">
-    <div style="display:flex;align-items:center;gap:.75rem">
-      ${showBack ? `<button id="ss-back-to-home" style="background:none;border:none;cursor:pointer;color:hsl(var(--primary));font-weight:700;font-size:.875rem;display:flex;align-items:center;gap:.35rem">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
-        ${esc(backLabel)}
-      </button>` : ''}
-      <div style="display:flex;align-items:center;gap:.625rem">
-        <div style="width:2.25rem;height:2.25rem;border-radius:.625rem;background:linear-gradient(135deg,#00FFCC,#00CCAA);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1rem;color:#000;flex-shrink:0">S</div>
-        <div>
-          <div style="font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.12em;color:hsl(var(--muted-foreground));line-height:1">SimaStore</div>
-          <div style="font-size:.95rem;font-weight:800;color:hsl(var(--foreground));line-height:1.25">${esc(s.store_name)}</div>
-        </div>
+  <div style="position:relative;max-width:1400px;margin:0 auto;padding:0 1rem;height:3.5rem;display:flex;align-items:center">
+    ${showBack ? `
+    <button id="ss-back-to-home" style="position:absolute;left:1rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:hsl(var(--primary));font-weight:700;font-size:.8rem;display:flex;align-items:center;gap:.3rem;white-space:nowrap;z-index:2;padding:.2rem .4rem;border-radius:.4rem">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+      ${esc(backLabel)}
+    </button>` : ''}
+    <div style="flex:1;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:.5rem;${showBack ? 'padding-left:5rem' : ''}">
+      <div style="display:flex;align-items:center;gap:.5rem;overflow:hidden;min-width:0">
+        ${logoHtml}
+        <span style="font-size:1.1rem;font-weight:800;color:hsl(var(--foreground));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2">${esc(s.store_name)}</span>
       </div>
+      <span class="ss-header-brand" style="font-size:1.15rem;padding:0 .5rem;white-space:nowrap">SimaStore</span>
+      ${contacts ? `<div style="display:flex;align-items:center;gap:.4rem;justify-content:flex-end;overflow:hidden">${contacts}</div>` : '<div></div>'}
     </div>
-    ${contacts?`<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">${contacts}</div>`:''}
   </div>
 </header>`;
 }
@@ -617,9 +595,19 @@ function renderHowItWorks(): string {
 
 // ─── Homepage view ────────────────────────────────────────────────────────────
 
+function shuffleSlice<T>(arr: T[], n: number): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, n);
+}
+
 function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups: GroupedProduct[], onCatalog: () => void): Carousel|null {
-  const { settings: s, products, banners } = data;
-  const featured = groups.slice(0, 12);
+  const { settings: s, banners } = data;
+  const RECOMMENDED_COUNT = 12;
+  const featured = groups.length > RECOMMENDED_COUNT ? shuffleSlice(groups, RECOMMENDED_COUNT) : [...groups];
 
   document.title = `${s.store_name} — SimaStore`;
 
@@ -628,13 +616,23 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
   ${headerHtml(s, false)}
 
   ${banners.length > 0 ? `
-  <div style="border-bottom:1px solid hsl(var(--border)/.5);padding:.75rem 0 .75rem">
+  <div style="padding:.5rem 0 .75rem">
     <div style="max-width:1400px;margin:0 auto;padding:0 .75rem" id="ss-banner-area"></div>
   </div>` : ''}
 
   <section style="padding:.75rem 0 .5rem">
     <div style="max-width:1400px;margin:0 auto;padding:0 .75rem">
       ${featured.length > 0 ? `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.625rem;flex-wrap:wrap;gap:.5rem">
+        <div style="display:flex;align-items:center;gap:.5rem">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:hsl(var(--primary))"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          <span style="font-size:.875rem;font-weight:700;color:hsl(var(--foreground))">Рекомендуем</span>
+        </div>
+        <button id="ss-refresh-rec" style="background:none;border:1px solid hsl(var(--border)/.5);border-radius:.5rem;padding:.2rem .5rem;font-size:.75rem;color:hsl(var(--muted-foreground));cursor:pointer;display:flex;align-items:center;gap:.3rem">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+          Обновить
+        </button>
+      </div>
       <div class="ss-grid" id="ss-home-grid">
         ${featured.map(g => renderCard(g)).join('')}
       </div>` : `
@@ -648,7 +646,7 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
       <div style="padding:1.5rem 0 .5rem">
         <button class="ss-catalog-btn" id="ss-to-catalog">
           <span>Весь каталог</span>
-          <span style="font-size:.9rem;opacity:.7">(${groups.length} ${groups.length === products.length ? 'товаров' : 'позиций'})</span>
+          <span style="font-size:.9rem;opacity:.7">(${groups.length} позиций)</span>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </button>
       </div>` : ''}
@@ -669,6 +667,12 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
   }
 
   document.getElementById('ss-to-catalog')?.addEventListener('click', onCatalog);
+
+  document.getElementById('ss-refresh-rec')?.addEventListener('click', () => {
+    const newFeatured = groups.length > RECOMMENDED_COUNT ? shuffleSlice(groups, RECOMMENDED_COUNT) : [...groups];
+    const grid = document.getElementById('ss-home-grid');
+    if (grid) grid.innerHTML = newFeatured.map(g => renderCard(g)).join('');
+  });
 
   root.addEventListener('click', (e) => {
     const card = (e.target as HTMLElement).closest('.ss-card') as HTMLElement|null;
@@ -720,8 +724,11 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
   </footer>
 </div>`;
 
+  const PAGE_SIZE = 24;
   let currentSrc = 'all';
   let searchQ    = '';
+  let currentPage = 0;
+  let lazyObserver: IntersectionObserver | null = null;
 
   function filtered(): GroupedProduct[] {
     const q = searchQ.trim().toLowerCase();
@@ -733,10 +740,42 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
     });
   }
 
+  function renderPage(f: GroupedProduct[], page: number, grid: HTMLElement): void {
+    const start = page * PAGE_SIZE;
+    const slice = f.slice(start, start + PAGE_SIZE);
+    if (page === 0) {
+      grid.innerHTML = slice.map(g => renderCard(g)).join('');
+    } else {
+      slice.forEach(g => { grid.insertAdjacentHTML('beforeend', renderCard(g)); });
+    }
+    const sentinel = document.getElementById('ss-cat-sentinel');
+    sentinel?.remove();
+    lazyObserver?.disconnect();
+    lazyObserver = null;
+    if (start + slice.length < f.length) {
+      const s = document.createElement('div');
+      s.id = 'ss-cat-sentinel';
+      s.style.cssText = 'height:1px;margin-top:1rem';
+      grid.parentElement?.insertBefore(s, grid.nextSibling);
+      lazyObserver = new IntersectionObserver(entries => {
+        if (!entries[0].isIntersecting) return;
+        lazyObserver?.disconnect();
+        lazyObserver = null;
+        currentPage++;
+        renderPage(filtered(), currentPage, grid);
+      }, { rootMargin: '300px' });
+      lazyObserver.observe(s);
+    }
+  }
+
   function refreshGrid(): void {
     const grid  = document.getElementById('ss-cat-grid');
     const count = document.getElementById('ss-count');
     const f = filtered();
+    currentPage = 0;
+    document.getElementById('ss-cat-sentinel')?.remove();
+    lazyObserver?.disconnect();
+    lazyObserver = null;
     if (grid) {
       if (f.length === 0) {
         grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:3rem 1rem">
@@ -745,7 +784,7 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
           <p style="color:hsl(var(--muted-foreground));font-size:.875rem">Попробуйте изменить запрос или сбросить фильтр</p>
         </div>`;
       } else {
-        grid.innerHTML = f.map(g => renderCard(g)).join('');
+        renderPage(f, 0, grid);
       }
     }
     if (count) count.textContent = String(f.length);
@@ -964,7 +1003,6 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
   }
 
   panel.querySelector('#ss-det-back')?.addEventListener('click', () => {
-    history.back();
     closePanel(true);
   });
 
@@ -997,7 +1035,7 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
     panel.classList.remove('animating');
     panel.style.transform = '';
     const dx = e.changedTouches[0].clientX - swipeStartX;
-    if (swipeIsH && dx / window.innerWidth > 0.4) { history.back(); closePanel(true); }
+    if (swipeIsH && dx / window.innerWidth > 0.4) { closePanel(true); }
   }, { passive:true });
 }
 
@@ -1052,18 +1090,20 @@ async function init(): Promise<void> {
   function openProduct(key: string): void {
     const group = groups.find(g => g.key === key);
     if (!group) return;
-    history.pushState({ productKey: key }, '', `/${slug}/product/${encodeURIComponent(key)}`);
+    history.replaceState({ productKey: key }, '', `/${slug}/product/${encodeURIComponent(key)}`);
     openDetail(group, groups, slug, () => {
       history.replaceState({}, '', view === 'catalog' ? `/${slug}/catalog` : `/${slug}`);
     });
   }
+
+  // Single persistent listener — never removed, catches events from home and catalog pages
+  root.addEventListener('open-product', ((e: CustomEvent) => openProduct(e.detail.key)) as EventListener);
 
   function showHome(): void {
     view = 'home';
     history.replaceState({}, '', `/${slug}`);
     carousel?.destroy();
     carousel = mountHomePage(root, data!, slug, groups, showCatalog);
-    root.addEventListener('open-product', ((e: CustomEvent) => openProduct(e.detail.key)) as EventListener, { once:true });
   }
 
   function showCatalog(): void {
@@ -1072,7 +1112,6 @@ async function init(): Promise<void> {
     carousel?.destroy();
     carousel = null;
     mountCatalogPage(root, data!, slug, groups, showHome);
-    root.addEventListener('open-product', ((e: CustomEvent) => openProduct(e.detail.key)) as EventListener, { once:true });
   }
 
   const isProduct = parts[1] === 'product' && parts[2];

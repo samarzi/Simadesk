@@ -1,5 +1,5 @@
 import { storefrontDb } from '../services/storefrontDb';
-import type { StorefrontSettings, StorefrontProduct, StorefrontBanner } from '../services/storefrontDb';
+import type { StorefrontSettings, StorefrontProduct, StorefrontBanner, StorefrontGroup } from '../services/storefrontDb';
 import { showToast } from '../utils/toast';
 
 function esc(s: unknown): string {
@@ -162,6 +162,17 @@ html.light .vs-hero-logo{color:#000}
 .vs-badge.ozon{background:rgba(0,91,255,.08);color:rgb(100,150,255)}
 .vs-badge.yandex{background:rgba(255,172,0,.1);color:rgb(210,150,0)}
 
+/* Groups grid */
+.vs-grp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+.vs-grp-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r3);overflow:hidden;transition:all .15s}
+.vs-grp-card:hover{border-color:var(--border2);box-shadow:0 4px 20px rgba(0,0,0,.25)}
+.vs-grp-img{aspect-ratio:16/6;background:var(--bg3);overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center;color:var(--text3)}
+.vs-grp-img img{width:100%;height:100%;object-fit:cover;display:block}
+.vs-grp-body{padding:12px 14px}
+.vs-grp-name{font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px}
+.vs-grp-meta{font-size:11px;color:var(--text2)}
+.vs-grp-actions{display:flex;align-items:center;gap:4px;padding:10px 12px;border-top:1px solid var(--border)}
+.vs-grp-idx{font-size:10px;font-weight:700;color:var(--text3);flex:1}
 /* Banners grid */
 .vs-bn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
 .vs-bn-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r3);overflow:hidden;transition:all .15s}
@@ -237,7 +248,9 @@ export class SimaStoreModule {
   private settings: StorefrontSettings | null = null;
   private products: StorefrontProduct[] = [];
   private banners: StorefrontBanner[] = [];
-  private tab: 'overview'|'settings'|'banners'|'products' = 'overview';
+  private groups: StorefrontGroup[] = [];
+  private groupItems: Map<string, string> = new Map(); // vendor_code → group_id
+  private tab: 'overview'|'settings'|'banners'|'groups'|'products' = 'overview';
   private slugTimer: ReturnType<typeof setTimeout> | null = null;
   private slugOk: boolean | null = null;
   private prodSearch = '';
@@ -255,15 +268,19 @@ export class SimaStoreModule {
   hide(): void { this.el.style.display = 'none'; }
 
   private async load(): Promise<void> {
-    const [s, products, overrides, banners] = await Promise.all([
+    const [s, products, overrides, banners, groups, groupItems] = await Promise.all([
       storefrontDb.get(this.companyId),
       storefrontDb.getProducts(this.companyId),
       storefrontDb.getOverrides(this.companyId),
       storefrontDb.getBanners(this.companyId),
+      storefrontDb.getGroups(this.companyId),
+      storefrontDb.getAllGroupItems(this.companyId),
     ]);
-    this.settings = s;
-    this.products = products;
-    this.banners  = banners;
+    this.settings   = s;
+    this.products   = products;
+    this.banners    = banners;
+    this.groups     = groups;
+    this.groupItems = groupItems;
     for (const p of this.products) {
       const ov = overrides.get(`${p.source}:${p.source_id}`);
       if (ov) Object.assign(p, ov);
@@ -282,13 +299,14 @@ export class SimaStoreModule {
   private render(): void {
     this.injectCSS();
     const slug = this.settings?.slug ?? '';
-    const url  = slug ? `${window.location.origin}/s/${slug}` : '';
+    const url  = slug ? `${window.location.origin}/${slug}` : '';
     this.el.innerHTML = `<div class="vs"><div class="vs-inner">
       ${this.renderHero(url)}
       ${this.renderTabs()}
       <div id="vs-overview" class="vs-panel ${this.tab==='overview'?'on':''}">${this.renderOverview(url)}</div>
       <div id="vs-settings" class="vs-panel ${this.tab==='settings'?'on':''}">${this.renderSettings()}</div>
       <div id="vs-banners"  class="vs-panel ${this.tab==='banners' ?'on':''}">${this.renderBannersPanel()}</div>
+      <div id="vs-groups"   class="vs-panel ${this.tab==='groups'  ?'on':''}">${this.renderGroupsPanel()}</div>
       <div id="vs-products" class="vs-panel ${this.tab==='products'?'on':''}">${this.renderProductsPanel()}</div>
     </div></div>`;
     this.bind();
@@ -320,6 +338,7 @@ export class SimaStoreModule {
       ['overview', 'chart',  'Обзор',     null],
       ['settings', 'gear',   'Настройки', null],
       ['banners',  'image',  'Баннеры',   this.banners.length],
+      ['groups',   'store',  'Группы',    this.groups.length],
       ['products', 'pkg',    'Товары',    this.products.length],
     ];
     return `<nav class="vs-tabs">${tabs.map(([id, ico, lbl, cnt]) =>
@@ -427,6 +446,16 @@ export class SimaStoreModule {
     </div>`;
   }
 
+  private filterToggle(id: string, title: string, sub: string, checked: boolean): string {
+    return `<div class="vs-toggle-row" style="margin-bottom:0">
+      <div class="vs-toggle-info">
+        <div class="vs-toggle-ttl">${esc(title)}</div>
+        <div class="vs-toggle-sub">${esc(sub)}</div>
+      </div>
+      <label class="vs-sw"><input type="checkbox" id="${id}" ${checked?'checked':''}><span class="vs-sw-t"></span></label>
+    </div>`;
+  }
+
   /* ── Settings ────────────────────────────────────────────────────────────── */
   private renderSettings(): string {
     const s = this.settings;
@@ -453,7 +482,7 @@ export class SimaStoreModule {
           <div class="vs-field">
             <label class="vs-label" for="vs-slug">Адрес магазина <span>только a–z, 0–9, дефис</span></label>
             <div class="vs-slug-row">
-              <span class="vs-slug-pfx">${esc(window.location.origin)}/s/</span>
+              <span class="vs-slug-pfx">${esc(window.location.origin)}/</span>
               <input class="vs-slug-inp" id="vs-slug" type="text" placeholder="my-store" value="${v('slug')}">
             </div>
             <div id="vs-slug-hint" class="vs-hint"></div>
@@ -474,10 +503,21 @@ export class SimaStoreModule {
             <input class="vs-inp" id="vs-wa" type="tel" placeholder="+7 999 123-45-67" value="${v('whatsapp')}">
           </div>
           <div class="vs-field">
+            <label class="vs-label" for="vs-ph">Позвонить <span>номер телефона для кнопки «Позвонить»</span></label>
+            <input class="vs-inp" id="vs-ph" type="tel" placeholder="+7 999 123-45-67" value="${v('phone')}">
+          </div>
+          <div class="vs-field">
             <label class="vs-label" for="vs-web">Сайт <span>необязательно</span></label>
             <input class="vs-inp" id="vs-web" type="url" placeholder="https://mystore.ru" value="${v('website')}">
           </div>
         </div>
+      </div>
+
+      <div class="vs-sec">${ic(I.search,14)} Фильтры на витрине</div>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
+        ${this.filterToggle('vs-fprice',    'Фильтр по цене',       'Ползунок «от/до» над каталогом',      !!s?.show_price_filter)}
+        ${this.filterToggle('vs-fbrand',    'Фильтр по бренду',     'Чипы с брендами товаров',             !!s?.show_brand_filter)}
+        ${this.filterToggle('vs-fcat',      'Фильтр по категориям', 'Чипы из категорий WB/Ozon/ЯМ',       !!s?.show_category_filter)}
       </div>
 
       <div style="margin-top:8px;padding-top:20px;border-top:1px solid var(--border)">
@@ -488,7 +528,7 @@ export class SimaStoreModule {
   /* ── Banners panel ───────────────────────────────────────────────────────── */
   private renderBannersPanel(): string {
     return `<div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
         <div>
           <div style="font-size:18px;font-weight:800;color:var(--text)">Баннеры</div>
           <div style="font-size:13px;color:var(--text2);margin-top:3px">
@@ -496,6 +536,14 @@ export class SimaStoreModule {
           </div>
         </div>
         <button class="vs-btn vs-btn-pri" id="vs-bn-add">${ic(I.plus)} Добавить баннер</button>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:20px;display:flex;gap:12px;align-items:flex-start">
+        <span style="font-size:18px;flex-shrink:0">📐</span>
+        <div style="font-size:12px;color:var(--text2);line-height:1.6">
+          <span style="font-weight:700;color:var(--text)">Рекомендуемый размер баннера:</span> <strong>1400 × 320 px</strong> (соотношение ~4:1).<br>
+          На мобильных — центральная часть, на десктопе — полная ширина в связке с соседними баннерами (1:2:1).<br>
+          Форматы: <strong>JPG, PNG, WebP</strong>. Размер файла — до <strong>2 МБ</strong>.
+        </div>
       </div>
       <div id="vs-bn-list">${this.renderBannerList()}</div>
     </div>`;
@@ -535,6 +583,127 @@ export class SimaStoreModule {
         </div>
       </div>`;
     }).join('')}</div>`;
+  }
+
+  /* ── Groups panel ───────────────────────────────────────────────────────── */
+  private renderGroupsPanel(): string {
+    return `<div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+        <div>
+          <div style="font-size:18px;font-weight:800;color:var(--text)">Группы товаров</div>
+          <div style="font-size:13px;color:var(--text2);margin-top:3px">
+            Объединяйте товары в коллекции — они выводятся как разделы витрины
+          </div>
+        </div>
+        <button class="vs-btn vs-btn-pri" id="vs-grp-add">${ic(I.plus)} Создать группу</button>
+      </div>
+      <div id="vs-grp-list">${this.renderGroupList()}</div>
+    </div>`;
+  }
+
+  private renderGroupList(): string {
+    if (!this.groups.length) {
+      return `<div class="vs-empty">
+        <div class="vs-empty-ico">${ic(I.store, 52)}</div>
+        <div class="vs-empty-ttl">Групп пока нет</div>
+        <div class="vs-empty-sub">Создайте первую группу и назначьте товары во вкладке «Товары»</div>
+        <button class="vs-btn vs-btn-pri" id="vs-grp-add2">${ic(I.plus)} Создать первую группу</button>
+      </div>`;
+    }
+    // Count items per group
+    const counts = new Map<string, number>();
+    for (const gid of this.groupItems.values()) {
+      counts.set(gid, (counts.get(gid) ?? 0) + 1);
+    }
+    return `<div class="vs-grp-grid">${this.groups.map((g, i) =>
+      `<div class="vs-grp-card" data-gid="${esc(g.id)}">
+        <div class="vs-grp-img">
+          ${g.cover_url
+            ? `<img src="${esc(g.cover_url)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+            : ic(I.store, 32)}
+        </div>
+        <div class="vs-grp-body">
+          <div class="vs-grp-name">${esc(g.name)}</div>
+          <div class="vs-grp-meta">${counts.get(g.id) ?? 0} товаров · Позиция ${i + 1}</div>
+        </div>
+        <div class="vs-grp-actions">
+          <span class="vs-grp-idx">#${i+1}</span>
+          <button class="vs-ico-btn" data-gact="up"   title="Вверх" ${i===0?'disabled style="opacity:.25"':''}>${ic(I.up,14)}</button>
+          <button class="vs-ico-btn" data-gact="down" title="Вниз"  ${i===this.groups.length-1?'disabled style="opacity:.25"':''}>${ic(I.down,14)}</button>
+          <button class="vs-ico-btn hi"  data-gact="edit"  title="Переименовать">${ic(I.edit,14)}</button>
+          <button class="vs-ico-btn del" data-gact="del"   title="Удалить">${ic(I.trash,14)}</button>
+        </div>
+      </div>`
+    ).join('')}</div>`;
+  }
+
+  private openGroupModal(group: StorefrontGroup | null): void {
+    document.getElementById('vs-grp-modal')?.remove();
+    const isEdit = !!group;
+    const div = document.createElement('div');
+    div.id = 'vs-grp-modal';
+    div.className = 'vs-modal-bg';
+    div.innerHTML = `<div class="vs-modal" style="max-width:440px">
+      <div class="vs-modal-hdr">
+        <div class="vs-modal-ico">${ic(I.store,18)}</div>
+        <div class="vs-modal-ttl">${isEdit ? 'Редактировать группу' : 'Новая группа'}</div>
+        <button class="vs-ico-btn" id="vs-gm-close">${ic(I.x,16)}</button>
+      </div>
+      <div class="vs-modal-body">
+        <div class="vs-field">
+          <label class="vs-label" for="vs-gm-name">Название группы</label>
+          <input class="vs-inp" id="vs-gm-name" type="text" placeholder="Столы и стулья" value="${esc(group?.name??'')}">
+        </div>
+        <div class="vs-field">
+          <label class="vs-label" for="vs-gm-cover">Обложка группы <span>URL изображения</span></label>
+          <input class="vs-inp" id="vs-gm-cover" type="url" placeholder="https://…/image.jpg" value="${esc(group?.cover_url??'')}">
+          <div class="vs-hint">Рекомендуемый формат: 1440×450 px (16:5). Отображается над карточками группы на витрине.</div>
+        </div>
+      </div>
+      <div class="vs-modal-footer">
+        <button class="vs-btn vs-btn-pri" id="vs-gm-save" style="flex:1">${ic(I.check)} ${isEdit?'Сохранить':'Создать группу'}</button>
+        <button class="vs-btn vs-btn-sec" id="vs-gm-cancel">Отмена</button>
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+    document.body.style.overflow = 'hidden';
+    const close = () => { div.remove(); document.body.style.overflow = ''; };
+    div.addEventListener('click', e => { if (e.target === div) close(); });
+    div.querySelector('#vs-gm-close')?.addEventListener('click', close);
+    div.querySelector('#vs-gm-cancel')?.addEventListener('click', close);
+    div.querySelector('#vs-gm-save')?.addEventListener('click', async () => {
+      const name  = (div.querySelector('#vs-gm-name')  as HTMLInputElement).value.trim();
+      const cover = (div.querySelector('#vs-gm-cover') as HTMLInputElement).value.trim();
+      if (!name) { showToast('Введите название группы', 'error'); return; }
+      try {
+        if (group) {
+          await storefrontDb.updateGroup(group.id, { name, cover_url: cover });
+          showToast('Группа обновлена', 'success');
+        } else {
+          await storefrontDb.addGroup(this.companyId, name, cover, this.groups.length);
+          showToast('Группа создана', 'success');
+        }
+        close();
+        await this.reloadGroups();
+      } catch { showToast('Ошибка сохранения', 'error'); }
+    });
+  }
+
+  private async reloadGroups(): Promise<void> {
+    this.groups     = await storefrontDb.getGroups(this.companyId);
+    this.groupItems = await storefrontDb.getAllGroupItems(this.companyId);
+    const list = document.getElementById('vs-grp-list');
+    if (list) list.innerHTML = this.renderGroupList();
+    const cnt = document.querySelector('[data-tab="groups"] .vs-tab-cnt');
+    if (cnt) cnt.textContent = String(this.groups.length);
+    // Refresh group selects in products table
+    document.querySelectorAll('.vs-grp-sel').forEach(sel => {
+      const s = sel as HTMLSelectElement;
+      const vc = s.dataset.vc!;
+      const currentGid = this.groupItems.get(vc) ?? '';
+      s.innerHTML = this.groupSelectOptions(currentGid);
+    });
+    document.getElementById('vs-grp-add2')?.addEventListener('click', () => this.openGroupModal(null));
   }
 
   /* ── Banner modal ────────────────────────────────────────────────────────── */
@@ -757,6 +926,11 @@ export class SimaStoreModule {
     document.getElementById('vs-bn-add2')?.addEventListener('click', () => this.openModal(null));
   }
 
+  private groupSelectOptions(currentGid: string): string {
+    return `<option value="">—</option>` +
+      this.groups.map(g => `<option value="${esc(g.id)}" ${currentGid===g.id?'selected':''}>${esc(g.name)}</option>`).join('');
+  }
+
   /* ── Products panel ──────────────────────────────────────────────────────── */
   private renderProductsPanel(): string {
     const counts: Record<string, number> = {};
@@ -793,6 +967,7 @@ export class SimaStoreModule {
             <th>Площадка</th>
             <th>Цена</th>
             <th style="text-align:center">Виден</th>
+            ${this.groups.length ? `<th>Группа</th>` : ''}
             <th>Свой сайт <span style="font-weight:400;text-transform:none;font-size:9px;opacity:.6">(ссылка + цена)</span></th>
           </tr></thead>
           <tbody id="vs-ptbody">${this.renderProdRows()}</tbody>
@@ -834,6 +1009,16 @@ export class SimaStoreModule {
             <input type="checkbox" class="vs-vis" ${!p.is_hidden?'checked':''}><span class="vs-sw-t"></span>
           </label>
         </td>
+        ${this.groups.length ? (() => {
+          const vcKey = p.vendor_code.trim().toLowerCase() || `__${p.source}:${p.source_id}`;
+          const currentGid = this.groupItems.get(vcKey) ?? '';
+          return `<td>
+            <select class="vs-url-inp vs-grp-sel" style="width:120px;padding:5px 8px;cursor:pointer"
+              data-vc="${esc(vcKey)}" data-src="${esc(p.source)}" data-id="${esc(p.source_id)}">
+              ${this.groupSelectOptions(currentGid)}
+            </select>
+          </td>`;
+        })() : ''}
         <td>
           <input type="url" class="vs-url-inp" placeholder="https://сайт.ру/товар"
             value="${esc(p.custom_url??'')}" data-src="${esc(p.source)}" data-id="${esc(p.source_id)}">
@@ -857,7 +1042,7 @@ export class SimaStoreModule {
     document.getElementById('vs-copy')?.addEventListener('click', () => {
       const slug = this.settings?.slug;
       if (slug) {
-        navigator.clipboard.writeText(`${window.location.origin}/s/${slug}`);
+        navigator.clipboard.writeText(`${window.location.origin}/${slug}`);
         showToast('Ссылка скопирована', 'success');
       }
     });
@@ -869,6 +1054,44 @@ export class SimaStoreModule {
       this.validateSlug(v);
     });
     document.getElementById('vs-save')?.addEventListener('click', () => this.save());
+
+    // Groups
+    const grpAdd = () => this.openGroupModal(null);
+    document.getElementById('vs-grp-add')?.addEventListener('click', grpAdd);
+    document.getElementById('vs-grp-add2')?.addEventListener('click', grpAdd);
+
+    document.getElementById('vs-grp-list')?.addEventListener('click', async (e) => {
+      const btn = (e.target as HTMLElement).closest('[data-gact]') as HTMLElement|null;
+      if (!btn) return;
+      const row = btn.closest('[data-gid]') as HTMLElement|null;
+      if (!row) return;
+      const id  = row.dataset.gid!;
+      const idx = this.groups.findIndex(g => g.id === id);
+      if (idx < 0) return;
+      const act = btn.dataset.gact!;
+      if (act === 'edit') { this.openGroupModal(this.groups[idx]); return; }
+      if (act === 'del') {
+        if (!confirm(`Удалить группу «${this.groups[idx].name}»? Товары останутся в каталоге.`)) return;
+        await storefrontDb.deleteGroup(id);
+        showToast('Группа удалена', 'success');
+        await this.reloadGroups();
+        return;
+      }
+      if (act === 'up'   && idx > 0)                          { await this.swapGrp(idx, idx-1); return; }
+      if (act === 'down' && idx < this.groups.length-1)       { await this.swapGrp(idx, idx+1); return; }
+    });
+
+    // Group select in products table
+    document.getElementById('vs-ptbody')?.addEventListener('change', async (e) => {
+      const sel = e.target as HTMLSelectElement;
+      if (!sel.classList.contains('vs-grp-sel')) return;
+      const vc    = sel.dataset.vc!;
+      const gid   = sel.value || null;
+      await storefrontDb.setProductGroup(this.companyId, vc, gid);
+      if (gid) this.groupItems.set(vc, gid);
+      else     this.groupItems.delete(vc);
+      showToast(gid ? 'Товар добавлен в группу' : 'Товар убран из группы', 'success');
+    });
 
     const bnAdd = () => this.openModal(null);
     document.getElementById('vs-bn-add')?.addEventListener('click', bnAdd);
@@ -1000,6 +1223,14 @@ export class SimaStoreModule {
     }, 500);
   }
 
+  private async swapGrp(a: number, b: number): Promise<void> {
+    [this.groups[a], this.groups[b]] = [this.groups[b], this.groups[a]];
+    await storefrontDb.updateGroupOrder(
+      this.groups.map((g, i) => ({ id: g.id, sort_order: i })),
+    );
+    await this.reloadGroups();
+  }
+
   private async save(): Promise<void> {
     const g   = (id: string) => (document.getElementById(id) as HTMLInputElement|null)?.value?.trim() ?? '';
     const slug = g('vs-slug');
@@ -1007,15 +1238,20 @@ export class SimaStoreModule {
     const btn = document.getElementById('vs-save') as HTMLButtonElement|null;
     if (btn) { btn.disabled = true; btn.textContent = 'Сохраняем…'; }
     try {
+      const cb = (id: string) => (document.getElementById(id) as HTMLInputElement|null)?.checked ?? false;
       await storefrontDb.save({
-        company_id: this.companyId,
-        is_enabled: (document.getElementById('vs-enabled') as HTMLInputElement)?.checked ?? false,
-        slug:       slug || (null as unknown as string),
-        store_name: g('vs-name'),
-        tagline:    g('vs-tagline'),
-        telegram:   g('vs-tg'),
-        whatsapp:   g('vs-wa'),
-        website:    g('vs-web'),
+        company_id:           this.companyId,
+        is_enabled:           cb('vs-enabled'),
+        slug:                 slug || (null as unknown as string),
+        store_name:           g('vs-name'),
+        tagline:              g('vs-tagline'),
+        telegram:             g('vs-tg'),
+        whatsapp:             g('vs-wa'),
+        phone:                g('vs-ph'),
+        website:              g('vs-web'),
+        show_price_filter:    cb('vs-fprice'),
+        show_brand_filter:    cb('vs-fbrand'),
+        show_category_filter: cb('vs-fcat'),
       });
       this.settings = await storefrontDb.get(this.companyId);
       showToast('Настройки сохранены', 'success');

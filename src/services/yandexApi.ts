@@ -846,6 +846,7 @@ export async function fetchAllYandexProducts(
       market_sku: raw.mapping?.marketSku ?? null,
       market_model_id: raw.mapping?.marketModelId ?? null,
       category_id: raw.mapping?.marketCategoryId ?? offer.marketCategoryId ?? null,
+      category_name: offer.category ?? '',
       archived: !!offer.archived,
       stock_total: stocks?.total ?? 0,
       stock_available: stocks?.available ?? 0,

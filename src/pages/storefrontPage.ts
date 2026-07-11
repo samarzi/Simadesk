@@ -1,7 +1,7 @@
-import type { StorefrontProduct, StorefrontBanner } from '../services/storefrontDb';
+import type { StorefrontProduct, StorefrontBanner, StorefrontGroup } from '../services/storefrontDb';
 
 const API_URL = import.meta.env.VITE_API_URL as string;
-const API_KEY = import.meta.env.VITE_API_KEY as string;
+const API_KEY  = import.meta.env.VITE_API_KEY  as string;
 const REST_URL = `${API_URL}/rest/v1`;
 
 const MP_LABEL: Record<string, string> = { wb: 'Wildberries', ozon: 'Ozon', yandex: 'Яндекс Маркет' };
@@ -10,7 +10,7 @@ function esc(s: string): string {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 function fmt(n: number): string {
-  return Math.round(n).toLocaleString('ru-RU') + ' ₽';
+  return Math.round(n).toLocaleString('ru-RU') + ' ₽';
 }
 
 function buildBuyUrl(p: StorefrontProduct): string {
@@ -26,19 +26,18 @@ interface ProductGroup {
   key: string;
   title: string;
   brand: string;
+  category: string;
   image: string | null;
   minPrice: number;
   maxPrice: number;
-  variants: StorefrontProduct[];  // one per source, best price wins
+  variants: StorefrontProduct[];
   customUrl: string;
   customPrice: number | null;
 }
 
 function groupProducts(all: StorefrontProduct[]): ProductGroup[] {
   const visible = all.filter(p => !p.is_hidden);
-
-  // Group by vendor_code
-  const byKey = new Map<string, StorefrontProduct[]>();
+  const byKey   = new Map<string, StorefrontProduct[]>();
   for (const p of visible) {
     const key = p.vendor_code.trim().toLowerCase() || `__${p.source}:${p.source_id}`;
     if (!byKey.has(key)) byKey.set(key, []);
@@ -47,35 +46,30 @@ function groupProducts(all: StorefrontProduct[]): ProductGroup[] {
 
   const groups: ProductGroup[] = [];
   for (const [key, items] of byKey) {
-    // 1 артикул = 1 маркетплейс: для каждого source берём товар с наилучшей ценой
     const bestPerSource = new Map<string, StorefrontProduct>();
     for (const p of items) {
       const price = p.custom_price ?? p.price;
-      const cur = bestPerSource.get(p.source);
+      const cur   = bestPerSource.get(p.source);
       if (!cur || price < (cur.custom_price ?? cur.price)) bestPerSource.set(p.source, p);
     }
     const variants = [...bestPerSource.values()];
 
-    // Лучшее изображение — от варианта с наибольшим количеством фоток
     const withMostImages = variants.reduce((best, p) =>
       p.images.length > best.images.length ? p : best, variants[0]);
     const image = withMostImages.images[0] ?? null;
 
-    // Диапазон цен
-    const prices = variants.map(p => p.custom_price ?? p.price);
+    const prices   = variants.map(p => p.custom_price ?? p.price);
     const minPrice = Math.min(...prices);
     const maxPrice = Math.max(...prices);
+    const title    = variants.reduce((best, p) => p.title.length > best.length ? p.title : best, '');
+    const brand    = variants.find(p => p.brand)?.brand ?? '';
+    const category = variants.find(p => p.category)?.category ?? '';
 
-    // Лучший заголовок — самый длинный
-    const title = variants.reduce((best, p) => p.title.length > best.length ? p.title : best, '');
-    const brand = variants.find(p => p.brand)?.brand ?? '';
-
-    // custom_url — берём из любого варианта
     const withCustomUrl = variants.find(p => p.custom_url);
-    const customUrl = withCustomUrl?.custom_url ?? '';
+    const customUrl   = withCustomUrl?.custom_url ?? '';
     const customPrice = withCustomUrl?.custom_price ?? null;
 
-    groups.push({ key, title, brand, image, minPrice, maxPrice, variants, customUrl, customPrice });
+    groups.push({ key, title, brand, category, image, minPrice, maxPrice, variants, customUrl, customPrice });
   }
 
   return groups;
@@ -124,7 +118,7 @@ class BannerCarousel {
 
   private render() {
     if (!this.total) { this.el.style.display = 'none'; return; }
-    const b = this.banners;
+    const b  = this.banners;
     const pi = this.prev(this.idx);
     const ni = this.next(this.idx);
 
@@ -152,13 +146,12 @@ class BannerCarousel {
   }
 
   private updateDOM() {
-    const b = this.banners;
-    const pi = this.prev(this.idx);
-    const ni = this.next(this.idx);
-
-    const prevEl  = this.el.querySelector('.ssc-prev .ssc-side-img img') as HTMLImageElement|null;
-    const nextEl  = this.el.querySelector('.ssc-next .ssc-side-img img') as HTMLImageElement|null;
-    const mainImg = this.el.querySelector('.ssc-main img') as HTMLImageElement|null;
+    const b   = this.banners;
+    const pi  = this.prev(this.idx);
+    const ni  = this.next(this.idx);
+    const prevEl   = this.el.querySelector('.ssc-prev .ssc-side-img img') as HTMLImageElement|null;
+    const nextEl   = this.el.querySelector('.ssc-next .ssc-side-img img') as HTMLImageElement|null;
+    const mainImg  = this.el.querySelector('.ssc-main img') as HTMLImageElement|null;
     const mainWrap = this.el.querySelector('.ssc-main > *') as HTMLElement|null;
 
     if (prevEl)  prevEl.src = b[pi].image_url;
@@ -170,38 +163,32 @@ class BannerCarousel {
         mainImg.classList.remove('ssc-fade');
       }, 160);
     }
-    if (mainWrap) {
-      if (b[this.idx].link_url && b[this.idx].link_url !== '/') {
-        (mainWrap as HTMLAnchorElement).href = b[this.idx].link_url;
-      }
+    if (mainWrap && b[this.idx].link_url && b[this.idx].link_url !== '/') {
+      (mainWrap as HTMLAnchorElement).href = b[this.idx].link_url;
     }
-
     this.el.querySelectorAll('.ssc-dot').forEach((d, i) =>
       d.classList.toggle('on', i === this.idx));
   }
 
   private bind() {
     this.el.addEventListener('click', (e) => {
-      const t = e.target as HTMLElement;
+      const t    = e.target as HTMLElement;
       const side = t.closest('[data-go]') as HTMLElement|null;
       if (side) { side.dataset.go === 'prev' ? this.goPrev() : this.goNext(); return; }
       const dot = t.closest('[data-dot]') as HTMLElement|null;
-      if (dot) { this.go(Number(dot.dataset.dot)); return; }
+      if (dot)  { this.go(Number(dot.dataset.dot)); return; }
     });
-
     this.el.addEventListener('touchstart', (e) => {
       this.touchStartX = e.touches[0].clientX;
       this.touchStartY = e.touches[0].clientY;
       this.isHorizontal = false;
     }, { passive: true });
-
     this.el.addEventListener('touchmove', (e) => {
       const dx = Math.abs(e.touches[0].clientX - this.touchStartX);
       const dy = Math.abs(e.touches[0].clientY - this.touchStartY);
       if (!this.isHorizontal && dx > dy && dx > 8) this.isHorizontal = true;
       if (this.isHorizontal) e.preventDefault();
     }, { passive: false });
-
     this.el.addEventListener('touchend', (e) => {
       if (!this.isHorizontal) return;
       const dx = e.changedTouches[0].clientX - this.touchStartX;
@@ -244,15 +231,14 @@ function renderCard(g: ProductGroup): string {
 /* ── Product modal ─────────────────────────────────────────────────────────── */
 
 function openProductModal(g: ProductGroup) {
-  const existing = document.getElementById('ssp-modal');
-  if (existing) existing.remove();
+  document.getElementById('ssp-modal')?.remove();
 
   const priceStr = g.minPrice === g.maxPrice
     ? fmt(g.minPrice)
     : `${fmt(g.minPrice)} – ${fmt(g.maxPrice)}`;
 
   const mpButtons = g.variants.map(v => {
-    const url = buildBuyUrl(v);
+    const url   = buildBuyUrl(v);
     const price = v.custom_price ?? v.price;
     return `<a href="${esc(url)}" class="ssp-mp-btn ${v.source}" target="_blank" rel="noopener">
       <span class="ssp-mp-name">${esc(MP_LABEL[v.source] ?? v.source)}</span>
@@ -266,7 +252,7 @@ function openProductModal(g: ProductGroup) {
   </a>` : '';
 
   const div = document.createElement('div');
-  div.id = 'ssp-modal';
+  div.id    = 'ssp-modal';
   div.className = 'ssp-modal-bg';
   div.innerHTML = `<div class="ssp-modal" role="dialog" aria-modal="true">
     <button class="ssp-modal-close" id="ssp-modal-close" aria-label="Закрыть">✕</button>
@@ -280,10 +266,7 @@ function openProductModal(g: ProductGroup) {
       <div class="ssp-modal-title">${esc(g.title)}</div>
       <div class="ssp-modal-price">${esc(priceStr)}</div>
       <div class="ssp-modal-subtitle">Выберите магазин</div>
-      <div class="ssp-mp-list">
-        ${mpButtons}
-        ${websiteBtn}
-      </div>
+      <div class="ssp-mp-list">${mpButtons}${websiteBtn}</div>
     </div>
   </div>`;
 
@@ -297,30 +280,140 @@ function openProductModal(g: ProductGroup) {
 
   div.addEventListener('click', (e) => { if (e.target === div) close(); });
   document.getElementById('ssp-modal-close')?.addEventListener('click', close);
-  document.addEventListener('keydown', function esc(e) {
-    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); }
+  document.addEventListener('keydown', function onEsc(e) {
+    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); }
   });
 
   requestAnimationFrame(() => div.classList.add('open'));
 }
 
-/* ── Grid render ───────────────────────────────────────────────────────────── */
+/* ── Filters ───────────────────────────────────────────────────────────────── */
 
-function renderGrid(groups: ProductGroup[], query: string, source: string): string {
-  const q = query.toLowerCase().trim();
-  const filtered = groups.filter(g => {
-    if (source !== 'all' && !g.variants.some(v => v.source === source)) return false;
-    if (q && !g.title.toLowerCase().includes(q) && !g.key.includes(q)) return false;
+interface Filters {
+  query:    string;
+  source:   string;
+  priceMin: number | null;
+  priceMax: number | null;
+  brand:    string;
+  category: string;
+}
+
+function filterGroups(groups: ProductGroup[], f: Filters): ProductGroup[] {
+  const q = f.query.toLowerCase().trim();
+  return groups.filter(g => {
+    if (f.source !== 'all' && !g.variants.some(v => v.source === f.source)) return false;
+    if (q && !g.title.toLowerCase().includes(q) && !g.key.includes(q))       return false;
+    if (f.priceMin != null && g.maxPrice < f.priceMin) return false;
+    if (f.priceMax != null && g.minPrice > f.priceMax) return false;
+    if (f.brand    && g.brand !== f.brand)     return false;
+    if (f.category && g.category !== f.category) return false;
     return true;
   });
+}
 
-  if (!filtered.length) return `<div class="ssp-empty">
+function renderFilters(
+  groups: ProductGroup[],
+  f: Filters,
+  settings: { show_price_filter: boolean; show_brand_filter: boolean; show_category_filter: boolean },
+): string {
+  const allPrices = groups.flatMap(g => [g.minPrice, g.maxPrice]);
+  const absMin    = allPrices.length ? Math.floor(Math.min(...allPrices)) : 0;
+  const absMax    = allPrices.length ? Math.ceil(Math.max(...allPrices))  : 999999;
+
+  const brands     = [...new Set(groups.map(g => g.brand).filter(Boolean))].sort();
+  const categories = [...new Set(groups.map(g => g.category).filter(Boolean))].sort();
+
+  const hasFilters = settings.show_price_filter || settings.show_brand_filter || settings.show_category_filter;
+  if (!hasFilters) return '';
+
+  return `<div class="ss-filters" id="ss-filters">
+    ${settings.show_price_filter ? `
+    <div class="ss-filter-group">
+      <div class="ss-filter-label">Цена</div>
+      <div class="ss-price-inputs">
+        <input type="number" class="ss-price-inp" id="sf-pmin" placeholder="от" min="${absMin}" max="${absMax}" value="${f.priceMin ?? ''}">
+        <span class="ss-price-sep">—</span>
+        <input type="number" class="ss-price-inp" id="sf-pmax" placeholder="до" min="${absMin}" max="${absMax}" value="${f.priceMax ?? ''}">
+        <span class="ss-price-cur">₽</span>
+      </div>
+    </div>` : ''}
+
+    ${settings.show_brand_filter && brands.length > 1 ? `
+    <div class="ss-filter-group">
+      <div class="ss-filter-label">Бренд</div>
+      <div class="ss-filter-chips">
+        ${brands.map(b => `<button class="ss-chip ${f.brand===b?'on':''}" data-brand="${esc(b)}">${esc(b)}</button>`).join('')}
+      </div>
+    </div>` : ''}
+
+    ${settings.show_category_filter && categories.length > 1 ? `
+    <div class="ss-filter-group">
+      <div class="ss-filter-label">Категория</div>
+      <div class="ss-filter-chips">
+        ${categories.map(c => `<button class="ss-chip ${f.category===c?'on':''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}
+      </div>
+    </div>` : ''}
+
+    ${(f.priceMin != null || f.priceMax != null || f.brand || f.category)
+      ? `<button class="ss-chip ss-chip-reset" id="sf-reset">✕ Сбросить фильтры</button>`
+      : ''}
+  </div>`;
+}
+
+/* ── Groups sections (when no active filter) ───────────────────────────────── */
+
+function renderGroupSections(
+  groups: ProductGroup[],
+  storefrontGroups: StorefrontGroup[],
+): string {
+  if (!storefrontGroups.length) return renderFlatGrid(groups);
+
+  // Build vendor_code → group map
+  const vcToGroup = new Map<string, StorefrontGroup>();
+  for (const sg of storefrontGroups) {
+    for (const vc of (sg.vendor_codes ?? [])) vcToGroup.set(vc, sg);
+  }
+
+  const groupedKeys  = new Set<string>();
+  let html = '';
+
+  for (const sg of storefrontGroups) {
+    const vcs      = new Set(sg.vendor_codes ?? []);
+    const inGroup  = groups.filter(g => vcs.has(g.key));
+    if (!inGroup.length) continue;
+    inGroup.forEach(g => groupedKeys.add(g.key));
+
+    const cover = sg.cover_url
+      ? `<div class="ssp-section-cover" style="background-image:url('${esc(sg.cover_url)}')">
+           <div class="ssp-section-cover-dim"></div>
+           <div class="ssp-section-name">${esc(sg.name)}</div>
+         </div>`
+      : `<div class="ssp-section-hdr"><div class="ssp-section-name-plain">${esc(sg.name)}</div></div>`;
+
+    html += `<div class="ssp-section" id="sg-${esc(sg.id)}">
+      ${cover}
+      <div class="ssp-grid">${inGroup.map(renderCard).join('')}</div>
+    </div>`;
+  }
+
+  const ungrouped = groups.filter(g => !groupedKeys.has(g.key));
+  if (ungrouped.length) {
+    html += `<div class="ssp-section">
+      ${storefrontGroups.length > 0 ? `<div class="ssp-section-hdr"><div class="ssp-section-name-plain">Остальные товары</div></div>` : ''}
+      <div class="ssp-grid">${ungrouped.map(renderCard).join('')}</div>
+    </div>`;
+  }
+
+  return html || `<div class="ssp-empty"><div class="ssp-empty-ico">📦</div><div class="ssp-empty-title">Нет товаров</div></div>`;
+}
+
+function renderFlatGrid(groups: ProductGroup[]): string {
+  if (!groups.length) return `<div class="ssp-empty">
     <div class="ssp-empty-ico">🔍</div>
     <div class="ssp-empty-title">Ничего не найдено</div>
     <div class="ssp-empty-sub">Попробуйте изменить запрос или сбросить фильтр</div>
   </div>`;
-
-  return filtered.map(renderCard).join('');
+  return `<div class="ssp-grid">${groups.map(renderCard).join('')}</div>`;
 }
 
 /* ── Main entry ────────────────────────────────────────────────────────────── */
@@ -348,12 +441,12 @@ export async function renderPublicStorefront(slug: string): Promise<void> {
     data = { error: 'network' };
   }
 
-  if (data?.error) {
+  if (!data || data.error) {
     app.innerHTML = `<div class="ss-wrap">
       <div class="ss-state" style="min-height:80vh">
         <div class="ss-state-icon">🏪</div>
         <div class="ss-state-title">Магазин не найден</div>
-        <div class="ss-state-sub">Проверьте адрес или попросите владельца магазина поделиться правильной ссылкой</div>
+        <div class="ss-state-sub">Проверьте адрес или попросите владельца поделиться правильной ссылкой</div>
       </div>
     </div>`;
     document.title = 'SimaStore — магазин не найден';
@@ -361,11 +454,14 @@ export async function renderPublicStorefront(slug: string): Promise<void> {
   }
 
   const s = data.settings as {
-    store_name:string; tagline:string;
-    telegram:string; whatsapp:string; website:string; slug:string; logo_url?:string|null;
+    store_name: string; tagline: string;
+    telegram: string; whatsapp: string; website: string; slug: string;
+    logo_url?: string|null;
+    show_price_filter: boolean; show_brand_filter: boolean; show_category_filter: boolean;
   };
-  const rawProducts: StorefrontProduct[] = data.products ?? [];
-  const banners: StorefrontBanner[] = (data.banners ?? []).filter((b: StorefrontBanner) => b.is_active);
+  const rawProducts: StorefrontProduct[]  = data.products ?? [];
+  const banners: StorefrontBanner[]       = (data.banners ?? []).filter((b: StorefrontBanner) => b.is_active);
+  const storefrontGroups: StorefrontGroup[] = data.groups ?? [];
   const groups = groupProducts(rawProducts);
 
   document.title = s.store_name;
@@ -376,8 +472,14 @@ export async function renderPublicStorefront(slug: string): Promise<void> {
     s.website   ? `<a href="${esc(s.website.startsWith('http')?s.website:'https://'+s.website)}" class="ss-contact-btn web" target="_blank" rel="noopener">🌐 Сайт</a>` : '',
   ].filter(Boolean).join('');
 
-  const sources = [...new Set(rawProducts.map(p => p.source))];
-  const hasSrc = (src: string) => sources.includes(src as any);
+  const sources  = [...new Set(rawProducts.map(p => p.source))];
+  const hasSrc   = (src: string) => sources.includes(src as any);
+
+  const filters: Filters = { query: '', source: 'all', priceMin: null, priceMax: null, brand: '', category: '' };
+  const hasAnyFilter = () =>
+    filters.query || filters.source !== 'all' ||
+    filters.priceMin != null || filters.priceMax != null ||
+    filters.brand || filters.category;
 
   app.innerHTML = `
     <header class="ss-header">
@@ -404,42 +506,84 @@ export async function renderPublicStorefront(slug: string): Promise<void> {
         </div>
         <div class="ss-tabs">
           <button class="ss-tab active" data-src="all">Все <span class="ss-tab-cnt">${groups.length}</span></button>
-          ${hasSrc('wb')     ? `<button class="ss-tab" data-src="wb">WB</button>` : ''}
-          ${hasSrc('ozon')   ? `<button class="ss-tab" data-src="ozon">Ozon</button>` : ''}
+          ${hasSrc('wb')     ? `<button class="ss-tab" data-src="wb">WB</button>`       : ''}
+          ${hasSrc('ozon')   ? `<button class="ss-tab" data-src="ozon">Ozon</button>`   : ''}
           ${hasSrc('yandex') ? `<button class="ss-tab" data-src="yandex">Яндекс</button>` : ''}
         </div>
       </div>
 
-      <div class="ssp-grid" id="ssp-grid">${renderGrid(groups, '', 'all')}</div>
+      ${renderFilters(groups, filters, s)}
+
+      <div id="ssp-content">${renderGroupSections(groups, storefrontGroups)}</div>
 
       <footer class="ss-footer">Powered by <a href="/" target="_blank">SimaDesk</a></footer>
     </div>`;
 
-  // Инициализируем карусель
-  const carouselEl = document.getElementById('ssc-root');
-  if (carouselEl && banners.length) new BannerCarousel(carouselEl, banners);
-
-  // Поиск и фильтр
-  let currentSrc = 'all';
-  let currentQ   = '';
+  if (banners.length) {
+    const carouselEl = document.getElementById('ssc-root');
+    if (carouselEl) new BannerCarousel(carouselEl, banners);
+  }
 
   function refresh() {
-    document.getElementById('ssp-grid')!.innerHTML = renderGrid(groups, currentQ, currentSrc);
+    const active = filterGroups(groups, filters);
+    const content = document.getElementById('ssp-content')!;
+
+    if (hasAnyFilter()) {
+      content.innerHTML = renderFlatGrid(active);
+    } else {
+      content.innerHTML = renderGroupSections(groups, storefrontGroups);
+    }
     bindCards();
+    // Refresh filter panel to update chip states / reset button
+    const filtersEl = document.getElementById('ss-filters');
+    if (filtersEl) filtersEl.outerHTML = renderFilters(groups, filters, s);
+    bindFilters();
   }
 
   function bindCards() {
     document.querySelectorAll('.ssp-card').forEach(card => {
       card.addEventListener('click', () => {
         const key = (card as HTMLElement).dataset.key!;
-        const g = groups.find(x => x.key === key);
+        const g   = groups.find(x => x.key === key);
         if (g) openProductModal(g);
       });
     });
   }
 
+  function bindFilters() {
+    document.getElementById('sf-pmin')?.addEventListener('change', (e) => {
+      const v = (e.target as HTMLInputElement).value;
+      filters.priceMin = v ? Number(v) : null;
+      refresh();
+    });
+    document.getElementById('sf-pmax')?.addEventListener('change', (e) => {
+      const v = (e.target as HTMLInputElement).value;
+      filters.priceMax = v ? Number(v) : null;
+      refresh();
+    });
+    document.querySelectorAll('[data-brand]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const b = (btn as HTMLElement).dataset.brand!;
+        filters.brand = filters.brand === b ? '' : b;
+        refresh();
+      });
+    });
+    document.querySelectorAll('[data-cat]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const c = (btn as HTMLElement).dataset.cat!;
+        filters.category = filters.category === c ? '' : c;
+        refresh();
+      });
+    });
+    document.getElementById('sf-reset')?.addEventListener('click', () => {
+      filters.priceMin = null; filters.priceMax = null;
+      filters.brand = ''; filters.category = '';
+      refresh();
+    });
+  }
+
   document.getElementById('ssp-search')?.addEventListener('input', (e) => {
-    currentQ = (e.target as HTMLInputElement).value;
+    filters.query = (e.target as HTMLInputElement).value;
     refresh();
   });
 
@@ -447,10 +591,11 @@ export async function renderPublicStorefront(slug: string): Promise<void> {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.ss-tab').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      currentSrc = (btn as HTMLElement).dataset.src ?? 'all';
+      filters.source = (btn as HTMLElement).dataset.src ?? 'all';
       refresh();
     });
   });
 
+  bindFilters();
   bindCards();
 }
