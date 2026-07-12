@@ -136,6 +136,8 @@ function injectCSS(): void {
 @keyframes ss-spin { to { transform: rotate(360deg); } }
 @keyframes ss-shimmer { 0%,100%{opacity:.5} 50%{opacity:1} }
 @keyframes ss-fadein { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+@keyframes ss-float-in  { from{opacity:0;transform:translateY(-110%)} to{opacity:1;transform:translateY(0)} }
+@keyframes ss-float-out { from{opacity:1;transform:translateY(0)} to{opacity:0;transform:translateY(-110%)} }
 @keyframes slideInScale { from{opacity:0;transform:translateY(30px) scale(.9)} to{opacity:1;transform:none} }
 @keyframes slideInLeft  { from{opacity:0;transform:translateX(-20px)} to{opacity:1;transform:none} }
 @keyframes ss-brand-shimmer {
@@ -178,8 +180,15 @@ function injectCSS(): void {
   -webkit-mask-image:linear-gradient(to right,transparent 0,#000 6%,#000 94%,transparent 100%); }
 .ss-rec-track { display:flex; gap:.75rem; width:max-content; will-change:transform; }
 .ss-rec-track .ss-card { width:148px; flex-shrink:0; }
-.ss-rec-track .ss-card .ss-card-img { aspect-ratio:1/1; }
-.ss-rec-track .ss-card .ss-card-body { display:none; }
+.ss-rec-track .ss-card .ss-card-img img { transform:scale(1.25); }
+.ss-rec-track .ss-card .ss-card-price-row { display:none; }
+.ss-rec-track .ss-card .ss-card-buy { display:none; }
+.ss-rec-track .ss-card .ss-card-body { padding:.4rem .5rem .5rem; }
+.ss-rec-track .ss-card .ss-card-title {
+  display:block; height:2.7em; overflow:hidden;
+  mask-image:linear-gradient(to bottom,#000 40%,transparent 100%);
+  -webkit-mask-image:linear-gradient(to bottom,#000 40%,transparent 100%);
+}
 
 .ss-skel { background:hsl(var(--muted)/.5); border-radius:.875rem; overflow:hidden; animation:ss-shimmer 1.4s ease-in-out infinite; }
 .ss-skel-img  { aspect-ratio:3/4; background:hsl(var(--muted)/.7); }
@@ -266,13 +275,12 @@ function injectCSS(): void {
 .ss-gal-main::-webkit-scrollbar { display:none; }
 .ss-gal-slide { flex:0 0 100%; scroll-snap-align:start; }
 .ss-gal-slide img { width:100%; height:100%; object-fit:cover; display:block; }
-.ss-gal-nav { position:absolute; top:50%; transform:translateY(-50%); z-index:5;
-  width:2.25rem; height:3.5rem; border:none; cursor:pointer;
-  background:rgba(0,0,0,.45); color:#fff; display:flex; align-items:center; justify-content:center;
-  -webkit-tap-highlight-color:transparent; transition:background .15s; }
-.ss-gal-nav:hover { background:rgba(0,0,0,.65); }
-.ss-gal-nav-prev { left:0; border-radius:0 .5rem .5rem 0; }
-.ss-gal-nav-next { right:0; border-radius:.5rem 0 0 .5rem; }
+.ss-gal-nav { position:absolute; top:0; bottom:0; z-index:5;
+  width:30%; border:none; cursor:pointer;
+  background:transparent; color:transparent;
+  -webkit-tap-highlight-color:transparent; }
+.ss-gal-nav-prev { left:0; }
+.ss-gal-nav-next { right:0; }
 .ss-gal-dots { display:flex; justify-content:center; gap:.35rem; margin-top:.5rem; }
 .ss-gal-dot { width:5px; height:5px; border-radius:50%; background:hsl(var(--foreground)/.2); transition:background .2s,transform .2s; cursor:pointer; border:none; padding:0; }
 .ss-gal-dot.active { background:hsl(var(--primary)); transform:scale(1.4); }
@@ -333,6 +341,56 @@ function injectCSS(): void {
 .ss-search:focus { border-color:hsl(var(--primary)/.5); }
 .ss-search::placeholder { color:hsl(var(--muted-foreground)); }
 
+/* ── Floating glass search bar ── */
+.ss-float-bar {
+  position:fixed; top:0; left:0; right:0; z-index:80;
+  padding:.625rem 1rem;
+  background:rgba(10,10,14,.72);
+  backdrop-filter:blur(24px) saturate(180%);
+  -webkit-backdrop-filter:blur(24px) saturate(180%);
+  border-bottom:1px solid rgba(255,255,255,.08);
+  box-shadow:0 4px 32px rgba(0,0,0,.35);
+  display:flex; align-items:center; gap:.625rem;
+  pointer-events:none; opacity:0; transform:translateY(-110%);
+  transition:none;
+}
+.ss-float-bar.visible {
+  animation:ss-float-in .28s cubic-bezier(.22,.68,0,1.2) forwards;
+  pointer-events:auto;
+}
+.ss-float-bar.hiding {
+  animation:ss-float-out .2s ease-in forwards;
+  pointer-events:none;
+}
+.ss-float-inp {
+  flex:1; padding:.55rem 1rem .55rem 2.25rem;
+  background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.12);
+  border-radius:.875rem; color:#f0f0f2; font-size:.875rem; outline:none;
+  transition:border-color .15s, background .15s;
+}
+.ss-float-inp:focus { border-color:rgba(212,240,0,.5); background:rgba(255,255,255,.1); }
+.ss-float-inp::placeholder { color:rgba(240,240,242,.35); }
+.ss-float-ico {
+  position:absolute; left:.75rem; top:50%; transform:translateY(-50%);
+  width:1rem; height:1rem; color:rgba(240,240,242,.35); pointer-events:none;
+}
+.ss-float-clear {
+  width:2rem; height:2rem; border-radius:50%; border:none; cursor:pointer;
+  background:rgba(255,255,255,.1); color:rgba(240,240,242,.6);
+  display:none; align-items:center; justify-content:center; font-size:.85rem;
+  transition:background .15s;
+  flex-shrink:0;
+}
+.ss-float-clear.visible { display:flex; }
+.ss-float-clear:hover { background:rgba(255,255,255,.18); color:#f0f0f2; }
+.ss-float-count {
+  font-size:.72rem; font-weight:800; white-space:nowrap;
+  padding:.2rem .5rem; border-radius:999px;
+  background:rgba(212,240,0,.15); border:1px solid rgba(212,240,0,.25);
+  color:#d4f000; flex-shrink:0;
+}
+@media (max-width:480px) { .ss-float-count { display:none; } }
+
 .ss-src-tab {
   flex:1; height:2.5rem; font-size:.875rem; font-weight:600;
   border:none; background:none; cursor:pointer;
@@ -341,18 +399,36 @@ function injectCSS(): void {
 }
 .ss-src-tab.active { background:hsl(var(--background)); color:hsl(var(--primary)); box-shadow:0 1px 4px rgba(0,0,0,.3); }
 
+/* ── Filter modal ── */
+.ss-filter-overlay { display:none; position:fixed; inset:0; z-index:200; background:rgba(0,0,0,.5); }
+.ss-filter-overlay.open { display:flex; align-items:flex-end; }
+.ss-filter-drawer { width:100%; background:hsl(var(--background)); border-radius:1.25rem 1.25rem 0 0; max-height:85vh; display:flex; flex-direction:column; animation:slideUp .22s ease; }
+@keyframes slideUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
+@keyframes slideRight { from { transform:translateX(100%); } to { transform:translateX(0); } }
+@media(min-width:640px) {
+  .ss-filter-overlay.open { align-items:flex-start; justify-content:flex-end; }
+  .ss-filter-drawer { width:360px; height:100%; max-height:none; border-radius:0; animation:slideRight .22s ease; }
+}
+.ss-filter-drawer-hdr { display:flex; align-items:center; justify-content:space-between; padding:.875rem 1rem .625rem; border-bottom:1px solid hsl(var(--border)/.4); flex-shrink:0; }
+.ss-filter-drawer-body { overflow-y:auto; padding:.875rem 1rem; flex:1; display:flex; flex-direction:column; gap:1rem; }
+.ss-filter-drawer-footer { display:flex; gap:.5rem; padding:.75rem 1rem env(safe-area-inset-bottom,.5rem); border-top:1px solid hsl(var(--border)/.4); flex-shrink:0; }
+.ss-filter-pill { display:flex; align-items:center; gap:.5rem; width:100%; padding:.625rem 1rem; border-radius:.875rem; border:1.5px solid hsl(var(--border)/.7); background:hsl(var(--muted)/.4); cursor:pointer; font-size:.875rem; font-weight:700; color:hsl(var(--foreground)); transition:background .15s; }
+.ss-filter-pill.has-active { border-color:hsl(var(--primary)/.6); color:hsl(var(--primary)); }
+.ss-filter-cnt { background:hsl(var(--primary)); color:#000; border-radius:999px; padding:.05rem .375rem; font-size:.68rem; font-weight:900; margin-left:auto; }
 .ss-filters-bar { display:flex; flex-wrap:wrap; gap:.5rem .75rem; margin-bottom:.75rem; align-items:flex-start; }
 .ss-filter-group { display:flex; flex-direction:column; gap:.3rem; }
 .ss-filter-label { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:hsl(var(--muted-foreground)); }
 .ss-price-row { display:flex; align-items:center; gap:.35rem; }
 .ss-price-inp {
-  width:90px; padding:.3rem .5rem; border-radius:.5rem;
+  width:110px; padding:.3rem .5rem; border-radius:.5rem;
   background:hsl(var(--muted)/.4); border:1px solid hsl(var(--border)/.5);
   color:hsl(var(--foreground)); font-size:.8rem;
-  outline:none;
+  outline:none; -moz-appearance:textfield;
 }
+.ss-price-inp::-webkit-outer-spin-button,
+.ss-price-inp::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
 .ss-price-inp:focus { border-color:hsl(var(--primary)/.5); }
-.ss-dim-inp { width:58px !important; }
+.ss-dim-inp { width:72px !important; }
 .ss-price-sep { color:hsl(var(--muted-foreground)); font-size:.8rem; }
 .ss-chips { display:flex; flex-wrap:wrap; gap:.3rem; }
 .ss-chip {
@@ -380,22 +456,29 @@ function injectCSS(): void {
 
 /* ── Header classes ── */
 .ss-hdr-inner {
-  display:flex; align-items:center; height:3.5rem; padding:0 .75rem; gap:.5rem;
-  max-width:1400px; margin:0 auto; position:relative;
+  display:grid; grid-template-columns:2.5rem 1fr;
+  align-items:center; height:3.5rem; padding:0 .75rem; gap:.35rem;
+  max-width:1400px; margin:0 auto;
 }
-@media(min-width:640px) { .ss-hdr-inner { padding:0 1rem; } }
-.ss-hdr-back-cell { flex-shrink:0; display:flex; align-items:center; }
-.ss-back-btn { background:none; border:none; cursor:pointer; color:hsl(var(--primary)); padding:.25rem .3rem; border-radius:.4rem; display:flex; align-items:center; gap:.2rem; transition:background .15s; white-space:nowrap; font-weight:700; font-size:.75rem; }
+.ss-hdr-back-cell { display:flex; align-items:center; }
+.ss-back-btn { background:none; border:none; cursor:pointer; color:hsl(var(--primary)); padding:.3rem; border-radius:.4rem; display:flex; align-items:center; gap:.2rem; transition:background .15s; font-weight:700; font-size:.75rem; }
 .ss-back-btn:hover { background:hsl(var(--primary)/.1); }
-.ss-hdr-logo-cell { display:flex; align-items:center; gap:.5rem; overflow:hidden; min-width:0; max-width:45%; }
+.ss-back-label { display:none; }
+@media(min-width:640px) { .ss-back-label { display:inline; white-space:nowrap; } }
+.ss-hdr-logo-cell { display:flex; align-items:center; gap:.5rem; overflow:hidden; min-width:0; }
 .ss-logo-img { width:2rem; height:2rem; border-radius:.5rem; object-fit:cover; flex-shrink:0; }
 .ss-logo-init { width:2rem; height:2rem; border-radius:.5rem; background:linear-gradient(135deg,#00FFCC,#00CCAA); display:flex; align-items:center; justify-content:center; font-weight:900; font-size:.875rem; color:#000; flex-shrink:0; }
 @media(min-width:640px) { .ss-logo-img,.ss-logo-init { width:2.5rem; height:2.5rem; border-radius:.625rem; font-size:1.1rem; } }
-.ss-hdr-name { font-size:1.8rem; font-weight:800; color:hsl(var(--foreground)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-@media(min-width:640px) { .ss-hdr-name { font-size:2.2rem; } .ss-hdr-logo-cell { max-width:none; } }
-.ss-hdr-brand-cell { position:absolute; left:50%; transform:translateX(-50%); white-space:nowrap; pointer-events:none; }
-.ss-hdr-contacts-cell { display:none; margin-left:auto; }
-@media(min-width:640px) { .ss-hdr-contacts-cell { display:flex; align-items:center; gap:.4rem; } }
+.ss-hdr-name { font-size:.95rem; font-weight:800; color:hsl(var(--foreground)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@media(min-width:640px) { .ss-hdr-name { font-size:1.3rem; } }
+/* SimaStore + contacts hidden on mobile, shown on desktop */
+.ss-hdr-brand-cell { display:none; }
+.ss-hdr-contacts-cell { display:none; }
+@media(min-width:640px) {
+  .ss-hdr-inner { grid-template-columns:2.5rem minmax(0,1fr) auto minmax(0,1fr); padding:0 1rem; }
+  .ss-hdr-brand-cell { display:flex; align-items:center; justify-content:center; white-space:nowrap; }
+  .ss-hdr-contacts-cell { display:flex; align-items:center; gap:.4rem; justify-content:flex-end; overflow:hidden; min-width:0; }
+}
 
 /* ── Mobile contact bar ── */
 .ss-mob-contacts { display:flex; gap:.5rem; overflow-x:auto; padding:.5rem .75rem .625rem; scrollbar-width:none; }
@@ -612,8 +695,8 @@ function headerHtml(s: Settings, showBack: boolean, backLabel = 'Назад'): s
   <div class="ss-hdr-inner">
     <div class="ss-hdr-back-cell">
       ${showBack ? `<button id="ss-back-to-home" class="ss-back-btn">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
-        <span>${esc(backLabel)}</span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+        <span class="ss-back-label">${esc(backLabel)}</span>
       </button>` : ''}
     </div>
     <div class="ss-hdr-logo-cell">
@@ -813,18 +896,17 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
       <span id="ss-count" style="padding:.2rem .625rem;border-radius:999px;font-size:.75rem;font-weight:800;background:hsl(var(--primary)/.1);border:1px solid hsl(var(--primary)/.2);color:hsl(var(--primary))">${groups.length}</span>
     </div>
 
-    <div style="position:sticky;top:3.5rem;z-index:40;background:hsl(var(--background));padding:.5rem 0 .375rem;margin:0 -.75rem .375rem;padding-left:.75rem;padding-right:.75rem;border-bottom:1px solid hsl(var(--border)/.3)">
+    <div id="ss-search-anchor" style="margin-bottom:.75rem">
       <div style="position:relative;margin-bottom:.5rem">
         <svg style="position:absolute;left:.75rem;top:50%;transform:translateY(-50%);width:1rem;height:1rem;color:hsl(var(--foreground)/.4);pointer-events:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input id="ss-search" type="search" placeholder="Поиск товаров..." class="ss-search">
       </div>
-
       <div style="display:flex;gap:.5rem;padding:.375rem;background:hsl(var(--muted)/.5);border-radius:1rem;border:1px solid hsl(var(--border)/.4)">
-      <button class="ss-src-tab active" data-src="all">Все</button>
-      ${hasSrc('wb')     ? `<button class="ss-src-tab" data-src="wb">WB</button>` : ''}
-      ${hasSrc('ozon')   ? `<button class="ss-src-tab" data-src="ozon">Ozon</button>` : ''}
-      ${hasSrc('yandex') ? `<button class="ss-src-tab" data-src="yandex">Яндекс</button>` : ''}
-    </div>
+        <button class="ss-src-tab active" data-src="all">Все</button>
+        ${hasSrc('wb')     ? `<button class="ss-src-tab" data-src="wb">WB</button>` : ''}
+        ${hasSrc('ozon')   ? `<button class="ss-src-tab" data-src="ozon">Ozon</button>` : ''}
+        ${hasSrc('yandex') ? `<button class="ss-src-tab" data-src="yandex">Яндекс</button>` : ''}
+      </div>
     </div>
 
     <div id="ss-filters-bar"></div>
@@ -835,6 +917,20 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
   <footer style="text-align:center;padding:1.5rem;font-size:.75rem;color:hsl(var(--muted-foreground));border-top:1px solid hsl(var(--border)/.4)">
     Powered by <a href="https://simadesk.ru" style="color:hsl(var(--primary));font-weight:700;text-decoration:none">SimaDesk</a>
   </footer>
+
+  <div class="ss-filter-overlay" id="ss-filter-overlay">
+    <div class="ss-filter-drawer">
+      <div class="ss-filter-drawer-hdr">
+        <span style="font-size:1rem;font-weight:800">Фильтры</span>
+        <button id="ss-filter-close" style="background:none;border:none;cursor:pointer;color:hsl(var(--foreground));font-size:1.25rem;padding:.25rem .5rem;border-radius:.4rem">✕</button>
+      </div>
+      <div class="ss-filter-drawer-body" id="ss-filters-bar"></div>
+      <div class="ss-filter-drawer-footer">
+        <button id="sf-reset" style="flex:1;padding:.65rem;border-radius:.75rem;border:1.5px solid hsl(var(--border)/.6);background:none;cursor:pointer;font-weight:700;font-size:.875rem;color:hsl(var(--foreground))">Сбросить</button>
+        <button id="ss-filter-apply" style="flex:2;padding:.65rem;border-radius:.75rem;border:none;background:hsl(var(--primary));cursor:pointer;font-weight:800;font-size:.875rem;color:#000">Применить</button>
+      </div>
+    </div>
+  </div>
 </div>`;
 
   const PAGE_SIZE = 24;
@@ -846,10 +942,38 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
   let filterPriceMax: number | null = null;
   let filterBrand   = '';
   let filterCat     = '';
-  let filterH: number | null = null; // высота, см
-  let filterW: number | null = null; // ширина, см
-  let filterL: number | null = null; // длина, см
-  let filterKg: number | null = null; // вес, кг
+  let filterH: number | null = null;
+  let filterW: number | null = null;
+  let filterL: number | null = null;
+  let filterKg: number | null = null;
+
+  // Restore filter state from URL on load
+  {
+    const qp = new URLSearchParams(location.search);
+    const pn = (k: string) => { const v = qp.get(k); return v ? Number(v) || null : null; };
+    filterPriceMin = pn('pmin');
+    filterPriceMax = pn('pmax');
+    filterBrand    = qp.get('brand') || '';
+    filterCat      = qp.get('cat')   || '';
+    filterH        = pn('h');
+    filterW        = pn('w');
+    filterL        = pn('l');
+    filterKg       = pn('kg');
+  }
+
+  function updateFilterUrl(): void {
+    const qp = new URLSearchParams();
+    if (filterPriceMin != null) qp.set('pmin', String(filterPriceMin));
+    if (filterPriceMax != null) qp.set('pmax', String(filterPriceMax));
+    if (filterBrand)            qp.set('brand', filterBrand);
+    if (filterCat)              qp.set('cat',   filterCat);
+    if (filterH  != null)       qp.set('h',  String(filterH));
+    if (filterW  != null)       qp.set('w',  String(filterW));
+    if (filterL  != null)       qp.set('l',  String(filterL));
+    if (filterKg != null)       qp.set('kg', String(filterKg));
+    const qs = qp.toString();
+    history.replaceState({}, '', `/${_slug}/catalog${qs ? '?' + qs : ''}`);
+  }
 
   const hasDims = groups.some(g => g.height_cm || g.width_cm || g.length_cm || g.weight_kg);
 
@@ -860,27 +984,45 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
   const showBrand = !!s.show_brand_filter && allBrands.length > 1;
   const showCat   = !!s.show_category_filter && allCategories.length > 1;
 
+  const hasAnyFilter = showPrice || showBrand || showCat || hasDims;
+
+  function activeFilterCount(): number {
+    return [filterPriceMin, filterPriceMax, filterBrand || null, filterCat || null,
+            filterH, filterW, filterL, filterKg].filter(v => v != null).length;
+  }
+
   function renderFiltersBar(): void {
+    // Update pill button
+    const triggerRow = document.getElementById('ss-filter-trigger-row');
+    if (triggerRow && hasAnyFilter) {
+      const cnt = activeFilterCount();
+      triggerRow.innerHTML = `
+        <button class="ss-filter-pill${cnt > 0 ? ' has-active' : ''}" id="ss-open-filters">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+          Фильтры${cnt > 0 ? `<span class="ss-filter-cnt">${cnt}</span>` : ''}
+        </button>
+        ${filterBrand ? `<button class="ss-chip active" data-brand="${esc(filterBrand)}">${esc(filterBrand)} ×</button>` : ''}
+        ${filterCat   ? `<button class="ss-chip active" data-cat="${esc(filterCat)}">${esc(filterCat)} ×</button>` : ''}`;
+    }
+    // Update modal body
     const bar = document.getElementById('ss-filters-bar');
-    if (!bar || (!showPrice && !showBrand && !showCat && !hasDims)) return;
-    const hasActive = filterPriceMin != null || filterPriceMax != null || filterBrand || filterCat ||
-                      filterH != null || filterW != null || filterL != null || filterKg != null;
-    bar.innerHTML = `<div class="ss-filters-bar">
+    if (!bar) return;
+    bar.innerHTML = `
       ${showPrice ? `<div class="ss-filter-group">
         <div class="ss-filter-label">Цена, ₽</div>
         <div class="ss-price-row">
-          <input class="ss-price-inp" id="sf-pmin" type="number" placeholder="от" value="${filterPriceMin ?? ''}">
+          <input class="ss-price-inp" id="sf-pmin" type="text" inputmode="numeric" placeholder="от" value="${filterPriceMin ?? ''}">
           <span class="ss-price-sep">—</span>
-          <input class="ss-price-inp" id="sf-pmax" type="number" placeholder="до" value="${filterPriceMax ?? ''}">
+          <input class="ss-price-inp" id="sf-pmax" type="text" inputmode="numeric" placeholder="до" value="${filterPriceMax ?? ''}">
         </div>
       </div>` : ''}
       ${hasDims ? `<div class="ss-filter-group">
         <div class="ss-filter-label">Габариты (макс.), см / кг</div>
         <div class="ss-price-row" style="gap:.3rem;flex-wrap:wrap">
-          <input class="ss-price-inp ss-dim-inp" id="sf-h" type="number" min="0" placeholder="В" title="Высота, см" value="${filterH ?? ''}">
-          <input class="ss-price-inp ss-dim-inp" id="sf-w" type="number" min="0" placeholder="Ш" title="Ширина, см" value="${filterW ?? ''}">
-          <input class="ss-price-inp ss-dim-inp" id="sf-l" type="number" min="0" placeholder="Д" title="Длина, см" value="${filterL ?? ''}">
-          <input class="ss-price-inp ss-dim-inp" id="sf-kg" type="number" min="0" step="0.1" placeholder="кг" title="Вес, кг" value="${filterKg ?? ''}">
+          <input class="ss-price-inp ss-dim-inp" id="sf-h" type="text" inputmode="numeric" placeholder="В, см" value="${filterH ?? ''}">
+          <input class="ss-price-inp ss-dim-inp" id="sf-w" type="text" inputmode="numeric" placeholder="Ш, см" value="${filterW ?? ''}">
+          <input class="ss-price-inp ss-dim-inp" id="sf-l" type="text" inputmode="numeric" placeholder="Д, см" value="${filterL ?? ''}">
+          <input class="ss-price-inp ss-dim-inp" id="sf-kg" type="text" inputmode="decimal" placeholder="кг" value="${filterKg ?? ''}">
         </div>
       </div>` : ''}
       ${showBrand ? `<div class="ss-filter-group">
@@ -894,9 +1036,17 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
         <div class="ss-chips">
           ${allCategories.map(c => `<button class="ss-chip${filterCat===c?' active':''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}
         </div>
-      </div>` : ''}
-      ${hasActive ? `<button class="ss-chip-reset" id="sf-reset">✕ Сбросить</button>` : ''}
-    </div>`;
+      </div>` : ''}`;
+  }
+
+  function openFilterModal(): void {
+    renderFiltersBar();
+    document.getElementById('ss-filter-overlay')?.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeFilterModal(): void {
+    document.getElementById('ss-filter-overlay')?.classList.remove('open');
+    document.body.style.overflow = '';
   }
 
   function filtered(): GroupedProduct[] {
@@ -969,55 +1119,127 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
 
   requestAnimationFrame(() => { renderFiltersBar(); refreshGrid(); });
 
+  // ── Floating glass search bar ─────────────────────────────────────────────
+  const floatBar = document.createElement('div');
+  floatBar.className = 'ss-float-bar';
+  floatBar.innerHTML = `
+    <div style="position:relative;flex:1">
+      <svg class="ss-float-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+      </svg>
+      <input id="ss-float-inp" class="ss-float-inp" type="search" placeholder="Поиск в каталоге…" autocomplete="off">
+    </div>
+    <button id="ss-float-clear" class="ss-float-clear" aria-label="Сбросить">✕</button>
+    <span id="ss-float-count" class="ss-float-count">${groups.length}</span>`;
+  document.body.appendChild(floatBar);
+
+  let floatVisible = false;
+  const floatInp   = document.getElementById('ss-float-inp')   as HTMLInputElement;
+  const floatClear = document.getElementById('ss-float-clear') as HTMLButtonElement;
+  const floatCount = document.getElementById('ss-float-count') as HTMLElement;
+
+  const syncCount = () => { floatCount.textContent = String(filtered().length); };
+
+  const obs = new IntersectionObserver(([entry]) => {
+    const show = !entry.isIntersecting;
+    if (show === floatVisible) return;
+    floatVisible = show;
+    floatBar.classList.remove('visible', 'hiding');
+    if (show) {
+      floatBar.classList.add('visible');
+      floatInp.value = searchQ;
+      floatClear.classList.toggle('visible', !!searchQ);
+      syncCount();
+    } else {
+      floatBar.classList.add('hiding');
+      floatBar.addEventListener('animationend', () => {
+        if (!floatVisible) floatBar.classList.remove('hiding');
+      }, { once: true });
+    }
+  }, { threshold: 0, rootMargin: '-56px 0px 0px 0px' });
+
+  obs.observe(document.getElementById('ss-search-anchor') ?? document.body);
+
+  floatInp.addEventListener('input', () => {
+    searchQ = floatInp.value;
+    const m = document.getElementById('ss-search') as HTMLInputElement | null;
+    if (m) m.value = searchQ;
+    floatClear.classList.toggle('visible', !!searchQ);
+    syncCount(); refreshGrid();
+  });
+
+  floatClear.addEventListener('click', () => {
+    searchQ = ''; floatInp.value = '';
+    const m = document.getElementById('ss-search') as HTMLInputElement | null;
+    if (m) m.value = '';
+    floatClear.classList.remove('visible');
+    syncCount(); refreshGrid();
+  });
+  // ─────────────────────────────────────────────────────────────────────────
+
   document.getElementById('ss-search')?.addEventListener('input', (e) => {
     searchQ = (e.target as HTMLInputElement).value;
+    if (floatVisible) { floatInp.value = searchQ; floatClear.classList.toggle('visible', !!searchQ); syncCount(); }
     refreshGrid();
   });
 
-  document.getElementById('ss-back-to-home')?.addEventListener('click', onBack);
+  document.getElementById('ss-back-to-home')?.addEventListener('click', () => {
+    obs.disconnect(); floatBar.remove(); onBack();
+  });
 
-  // Numeric filter inputs (debounced)
+  // Numeric filter inputs (debounced) — do NOT re-render filter bar on input
+  // to avoid destroying focus while user is typing
   let filterTimer = 0;
   root.addEventListener('input', (e) => {
     const inp = e.target as HTMLInputElement;
     const id = inp.id;
     if (!['sf-pmin','sf-pmax','sf-h','sf-w','sf-l','sf-kg'].includes(id)) return;
+    // Strip non-numeric characters except dots/commas
+    inp.value = inp.value.replace(/[^0-9.,]/g, '');
     clearTimeout(filterTimer);
     filterTimer = window.setTimeout(() => {
-      const v = inp.value ? Number(inp.value) : null;
+      const v = inp.value ? Number(inp.value.replace(',', '.')) : null;
       if (id === 'sf-pmin') filterPriceMin = v;
       if (id === 'sf-pmax') filterPriceMax = v;
       if (id === 'sf-h')    filterH  = v;
       if (id === 'sf-w')    filterW  = v;
       if (id === 'sf-l')    filterL  = v;
       if (id === 'sf-kg')   filterKg = v;
-      renderFiltersBar(); refreshGrid();
-    }, 400);
+      updateFilterUrl();
+      refreshGrid(); // don't call renderFiltersBar() — it destroys focus
+    }, 500);
   });
 
   root.addEventListener('click', (e) => {
     const t = e.target as HTMLElement;
+
+    // Open filter modal
+    if (t.closest('#ss-open-filters')) { openFilterModal(); return; }
+
+    // Close filter modal (close btn or backdrop)
+    if (t.id === 'ss-filter-close' || t.id === 'ss-filter-apply') { closeFilterModal(); updateFilterUrl(); renderFiltersBar(); return; }
+    if (t.id === 'ss-filter-overlay') { closeFilterModal(); updateFilterUrl(); renderFiltersBar(); return; }
 
     // Brand chip
     const brandChip = t.closest('[data-brand]') as HTMLElement|null;
     if (brandChip) {
       const b = brandChip.dataset.brand!;
       filterBrand = filterBrand === b ? '' : b;
-      renderFiltersBar(); refreshGrid(); return;
+      updateFilterUrl(); renderFiltersBar(); refreshGrid(); return;
     }
     // Category chip
     const catChip = t.closest('[data-cat]') as HTMLElement|null;
     if (catChip) {
       const c = catChip.dataset.cat!;
       filterCat = filterCat === c ? '' : c;
-      renderFiltersBar(); refreshGrid(); return;
+      updateFilterUrl(); renderFiltersBar(); refreshGrid(); return;
     }
     // Reset
-    if ((t as HTMLElement).id === 'sf-reset') {
+    if (t.id === 'sf-reset') {
       filterPriceMin = null; filterPriceMax = null;
       filterBrand = ''; filterCat = '';
       filterH = null; filterW = null; filterL = null; filterKg = null;
-      renderFiltersBar(); refreshGrid(); return;
+      updateFilterUrl(); renderFiltersBar(); refreshGrid(); return;
     }
 
     const tab = t.closest('.ss-src-tab') as HTMLElement|null;
@@ -1028,7 +1250,6 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
       refreshGrid();
       return;
     }
-
   });
 }
 
