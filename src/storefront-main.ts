@@ -136,8 +136,8 @@ function injectCSS(): void {
 @keyframes ss-spin { to { transform: rotate(360deg); } }
 @keyframes ss-shimmer { 0%,100%{opacity:.5} 50%{opacity:1} }
 @keyframes ss-fadein { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
-@keyframes ss-float-in  { from{opacity:0;transform:translateX(-50%) translateY(calc(-110% - 1rem))} to{opacity:1;transform:translateX(-50%) translateY(0)} }
-@keyframes ss-float-out { from{opacity:1;transform:translateX(-50%) translateY(0)} to{opacity:0;transform:translateX(-50%) translateY(calc(-110% - 1rem))} }
+@keyframes ss-float-in  { from{opacity:0;transform:translateX(-50%) translateY(calc(-200% - 4.5rem))} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+@keyframes ss-float-out { from{opacity:1;transform:translateX(-50%) translateY(0)} to{opacity:0;transform:translateX(-50%) translateY(calc(-200% - 4.5rem))} }
 @keyframes slideInScale { from{opacity:0;transform:translateY(30px) scale(.9)} to{opacity:1;transform:none} }
 @keyframes slideInLeft  { from{opacity:0;transform:translateX(-20px)} to{opacity:1;transform:none} }
 @keyframes ss-brand-shimmer {
@@ -180,7 +180,8 @@ function injectCSS(): void {
   -webkit-mask-image:linear-gradient(to right,transparent 0,#000 6%,#000 94%,transparent 100%); }
 .ss-rec-track { display:flex; gap:.75rem; width:max-content; will-change:transform; }
 .ss-rec-track .ss-card { width:148px; flex-shrink:0; }
-.ss-rec-track .ss-card .ss-card-img img { transform:scale(1.25); }
+.ss-rec-track .ss-card .ss-card-img { overflow:hidden; }
+.ss-rec-track .ss-card .ss-card-img img { transform:scale(1.6); transform-origin:center center; }
 .ss-rec-track .ss-card .ss-card-price-row { display:none; }
 .ss-rec-track .ss-card .ss-card-buy { display:none; }
 .ss-rec-track .ss-card .ss-card-body { padding:.4rem .5rem .5rem; }
@@ -306,7 +307,7 @@ function injectCSS(): void {
 .ss-meta { display:flex; flex-direction:column; gap:.4rem; margin-bottom:1rem; }
 .ss-meta-row { font-size:.8rem; color:hsl(var(--muted-foreground)); }
 .ss-meta-row span { color:hsl(var(--foreground)); font-weight:600; }
-.ss-buy-col { display:flex; flex-direction:column; gap:.6rem; margin-bottom:1.5rem; }
+.ss-buy-col { display:none; flex-direction:column; gap:.6rem; margin-bottom:1.5rem; }
 .ss-btn-pri {
   display:flex; align-items:center; justify-content:center; gap:.5rem;
   padding:.9rem 1.5rem; border-radius:.875rem; font-weight:800; font-size:.95rem;
@@ -343,10 +344,10 @@ function injectCSS(): void {
 
 /* ── Floating glass search bar ── */
 .ss-float-bar {
-  position:fixed; top:1rem; left:50%; z-index:80;
-  transform:translateX(-50%) translateY(calc(-110% - 1rem));
-  width:min(560px,calc(100vw - 2rem));
-  padding:.45rem .45rem .45rem .45rem;
+  position:fixed; top:4.5rem; left:50%; z-index:45;
+  transform:translateX(-50%) translateY(calc(-200% - 4.5rem));
+  width:min(520px,calc(100vw - 2rem));
+  padding:.28rem .28rem .28rem .28rem;
   background:rgba(255,255,255,.12);
   backdrop-filter:blur(32px) saturate(200%);
   -webkit-backdrop-filter:blur(32px) saturate(200%);
@@ -369,7 +370,7 @@ function injectCSS(): void {
   pointer-events:none;
 }
 .ss-float-inp {
-  flex:1; padding:.6rem .75rem .6rem 2.1rem;
+  flex:1; padding:.42rem .75rem .42rem 2.1rem;
   background:transparent; border:none;
   color:#f0f0f2; font-size:.9rem; font-weight:500; outline:none;
   min-width:0;
@@ -460,8 +461,8 @@ function injectCSS(): void {
 
 /* ── Header classes ── */
 .ss-hdr-inner {
-  display:grid; grid-template-columns:1fr;
-  align-items:center; height:3.5rem; padding:0 .75rem; gap:.35rem;
+  display:grid; grid-template-columns:1fr auto;
+  align-items:center; height:3.5rem; padding:0 .75rem; gap:.5rem;
   max-width:1400px; margin:0 auto;
 }
 .ss-hdr-logo-cell { display:flex; align-items:center; gap:.5rem; overflow:hidden; min-width:0; }
@@ -472,12 +473,12 @@ function injectCSS(): void {
 @media(min-width:640px) { .ss-logo-img,.ss-logo-init { width:2.5rem; height:2.5rem; border-radius:.625rem; font-size:1.1rem; } }
 .ss-hdr-name { font-size:.95rem; font-weight:800; color:hsl(var(--foreground)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 @media(min-width:640px) { .ss-hdr-name { font-size:1.3rem; } }
-/* SimaStore + contacts hidden on mobile, shown on desktop */
-.ss-hdr-brand-cell { display:none; }
+/* Mobile: SimaStore on right, no contacts. Desktop: 3-column with contacts */
+.ss-hdr-brand-cell { display:flex; align-items:center; white-space:nowrap; flex-shrink:0; }
 .ss-hdr-contacts-cell { display:none; }
 @media(min-width:640px) {
   .ss-hdr-inner { grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); padding:0 1rem; }
-  .ss-hdr-brand-cell { display:flex; align-items:center; justify-content:center; white-space:nowrap; }
+  .ss-hdr-brand-cell { justify-content:center; }
   .ss-hdr-contacts-cell { display:flex; align-items:center; gap:.4rem; justify-content:flex-end; overflow:hidden; min-width:0; }
 }
 
@@ -1339,7 +1340,7 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
         ${group.vendor_code ? `<div class="ss-meta-row">Артикул: <span>${esc(group.vendor_code)}</span></div>` : ''}
         ${group.brand ? `<div class="ss-meta-row">Бренд: <span>${esc(group.brand)}</span></div>` : ''}
       </div>
-      <div class="ss-buy-col" id="ss-buy-desktop" style="display:none">
+      <div class="ss-buy-col" id="ss-buy-desktop">
         ${buyButtonsHtml}
         ${customBtnHtml}
       </div>
@@ -1370,9 +1371,6 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
 
   document.body.appendChild(panel);
   requestAnimationFrame(() => requestAnimationFrame(() => { panel.classList.add('open'); }));
-
-  const buyDesktop = panel.querySelector('#ss-buy-desktop') as HTMLElement|null;
-  if (buyDesktop) buyDesktop.style.display = 'flex';
 
   // Gallery sync
   const galMain = panel.querySelector('#ss-gal-main') as HTMLElement|null;
