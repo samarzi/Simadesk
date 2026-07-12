@@ -156,7 +156,7 @@ function injectCSS(): void {
 .ss-banner-grid { display:grid; grid-template-columns:1fr; gap:1rem; margin-bottom:.5rem; }
 @media(min-width:1024px) { .ss-banner-grid { grid-template-columns:1fr 2fr 1fr; } }
 .ss-banner-side {
-  display:none; border-radius:1rem; overflow:hidden; height:320px;
+  display:none; border-radius:1rem; overflow:hidden; height:220px;
   position:relative; cursor:pointer; flex-shrink:0;
 }
 @media(min-width:1024px) { .ss-banner-side { display:block; } }
@@ -165,12 +165,21 @@ function injectCSS(): void {
 .ss-banner-side:hover .ss-banner-side-ov { background:rgba(0,0,0,.2); }
 .ss-banner-main { display:block;border-radius:1rem;overflow:hidden;height:200px;transition:opacity .3s; }
 @media(min-width:640px) { .ss-banner-main { height:280px; } }
-@media(min-width:1024px) { .ss-banner-main { height:320px; } }
+@media(min-width:1024px) { .ss-banner-main { height:220px; } }
 .ss-banner-main img { width:100%;height:100%;object-fit:cover;display:block; }
 .ss-ban-dots { display:flex;justify-content:center;gap:.5rem;margin-top:.75rem; }
 @media(min-width:1024px) { .ss-ban-dots { display:none; } }
 .ss-car-dot { width:8px;height:8px;border-radius:50%;background:hsl(var(--muted-foreground)/.3);border:none;cursor:pointer;padding:0;transition:all .2s; }
 .ss-car-dot.active { background:hsl(var(--primary));transform:scale(1.25); }
+
+/* ── Rec carousel ── */
+.ss-rec-wrap { overflow:hidden; position:relative;
+  mask-image:linear-gradient(to right,transparent 0,#000 6%,#000 94%,transparent 100%);
+  -webkit-mask-image:linear-gradient(to right,transparent 0,#000 6%,#000 94%,transparent 100%); }
+.ss-rec-track { display:flex; gap:.75rem; width:max-content; will-change:transform; }
+.ss-rec-track .ss-card { width:148px; flex-shrink:0; }
+.ss-rec-track .ss-card .ss-card-img { aspect-ratio:1/1; }
+.ss-rec-track .ss-card .ss-card-body { display:none; }
 
 .ss-skel { background:hsl(var(--muted)/.5); border-radius:.875rem; overflow:hidden; animation:ss-shimmer 1.4s ease-in-out infinite; }
 .ss-skel-img  { aspect-ratio:3/4; background:hsl(var(--muted)/.7); }
@@ -184,13 +193,14 @@ function injectCSS(): void {
   position:relative;
 }
 .ss-card:hover { transform:translateY(-3px); box-shadow:0 12px 40px rgba(0,0,0,.4); }
+.ss-rec-track .ss-card:hover { transform:none; }
 .ss-card-img  { position:relative; aspect-ratio:3/4; background:hsl(var(--muted)/.3); overflow:hidden; }
 .ss-card-img img { width:100%; height:100%; object-fit:cover; }
 .ss-card-grad { position:absolute; inset:0; background:linear-gradient(to top,rgba(0,0,0,.6) 0%,rgba(0,0,0,.2) 40%,transparent 100%); pointer-events:none; }
 .ss-card-body { padding:.5rem .625rem .375rem; }
 .ss-card-title { font-size:.75rem; font-weight:700; line-height:1.3; color:hsl(var(--foreground)); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:2em; }
 .ss-card-price-row { display:flex; align-items:center; gap:.35rem; flex-wrap:wrap; padding:.35rem 0 .25rem; }
-.ss-card-buy { padding:.25rem .5rem 1px; }
+.ss-card-buy { padding:.25rem .5rem .5rem; }
 .ss-card-buy-btn {
   display:flex; align-items:center; justify-content:center;
   width:100%; height:1.75rem; font-size:10px; font-weight:700;
@@ -250,11 +260,19 @@ function injectCSS(): void {
 .ss-gal-main {
   display:flex; overflow-x:auto; scroll-snap-type:x mandatory;
   scroll-behavior:smooth; -webkit-overflow-scrolling:touch;
-  aspect-ratio:3/4; border-radius:1rem; overflow:hidden;
+  aspect-ratio:1/1; border-radius:1rem; overflow:hidden;
 }
+@media(min-width:640px) { .ss-gal-main { aspect-ratio:3/4; } }
 .ss-gal-main::-webkit-scrollbar { display:none; }
 .ss-gal-slide { flex:0 0 100%; scroll-snap-align:start; }
-.ss-gal-slide img { width:100%; height:100%; object-fit:contain; background:hsl(var(--muted)/.3); }
+.ss-gal-slide img { width:100%; height:100%; object-fit:cover; display:block; }
+.ss-gal-nav { position:absolute; top:50%; transform:translateY(-50%); z-index:5;
+  width:2.25rem; height:3.5rem; border:none; cursor:pointer;
+  background:rgba(0,0,0,.45); color:#fff; display:flex; align-items:center; justify-content:center;
+  -webkit-tap-highlight-color:transparent; transition:background .15s; }
+.ss-gal-nav:hover { background:rgba(0,0,0,.65); }
+.ss-gal-nav-prev { left:0; border-radius:0 .5rem .5rem 0; }
+.ss-gal-nav-next { right:0; border-radius:.5rem 0 0 .5rem; }
 .ss-gal-dots { display:flex; justify-content:center; gap:.35rem; margin-top:.5rem; }
 .ss-gal-dot { width:5px; height:5px; border-radius:50%; background:hsl(var(--foreground)/.2); transition:background .2s,transform .2s; cursor:pointer; border:none; padding:0; }
 .ss-gal-dot.active { background:hsl(var(--primary)); transform:scale(1.4); }
@@ -334,6 +352,7 @@ function injectCSS(): void {
   outline:none;
 }
 .ss-price-inp:focus { border-color:hsl(var(--primary)/.5); }
+.ss-dim-inp { width:58px !important; }
 .ss-price-sep { color:hsl(var(--muted-foreground)); font-size:.8rem; }
 .ss-chips { display:flex; flex-wrap:wrap; gap:.3rem; }
 .ss-chip {
@@ -359,10 +378,34 @@ function injectCSS(): void {
 @media (min-width:1024px) { .ss-grid{grid-template-columns:repeat(5,1fr);gap:.75rem;} }
 @media (min-width:1280px) { .ss-grid{grid-template-columns:repeat(6,1fr);} }
 
+/* ── Header classes ── */
+.ss-hdr-inner {
+  display:flex; align-items:center; height:3.5rem; padding:0 .75rem; gap:.5rem;
+  max-width:1400px; margin:0 auto; position:relative;
+}
+@media(min-width:640px) { .ss-hdr-inner { padding:0 1rem; } }
+.ss-hdr-back-cell { flex-shrink:0; display:flex; align-items:center; }
+.ss-back-btn { background:none; border:none; cursor:pointer; color:hsl(var(--primary)); padding:.25rem .3rem; border-radius:.4rem; display:flex; align-items:center; gap:.2rem; transition:background .15s; white-space:nowrap; font-weight:700; font-size:.75rem; }
+.ss-back-btn:hover { background:hsl(var(--primary)/.1); }
+.ss-hdr-logo-cell { display:flex; align-items:center; gap:.5rem; overflow:hidden; min-width:0; max-width:45%; }
+.ss-logo-img { width:2rem; height:2rem; border-radius:.5rem; object-fit:cover; flex-shrink:0; }
+.ss-logo-init { width:2rem; height:2rem; border-radius:.5rem; background:linear-gradient(135deg,#00FFCC,#00CCAA); display:flex; align-items:center; justify-content:center; font-weight:900; font-size:.875rem; color:#000; flex-shrink:0; }
+@media(min-width:640px) { .ss-logo-img,.ss-logo-init { width:2.5rem; height:2.5rem; border-radius:.625rem; font-size:1.1rem; } }
+.ss-hdr-name { font-size:1.8rem; font-weight:800; color:hsl(var(--foreground)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@media(min-width:640px) { .ss-hdr-name { font-size:2.2rem; } .ss-hdr-logo-cell { max-width:none; } }
+.ss-hdr-brand-cell { position:absolute; left:50%; transform:translateX(-50%); white-space:nowrap; pointer-events:none; }
+.ss-hdr-contacts-cell { display:none; margin-left:auto; }
+@media(min-width:640px) { .ss-hdr-contacts-cell { display:flex; align-items:center; gap:.4rem; } }
+
+/* ── Mobile contact bar ── */
+.ss-mob-contacts { display:flex; gap:.5rem; overflow-x:auto; padding:.5rem .75rem .625rem; scrollbar-width:none; }
+.ss-mob-contacts::-webkit-scrollbar { display:none; }
+@media(min-width:640px) { .ss-mob-contacts { display:none; } }
+
 .ss-contact {
   display:inline-flex; align-items:center; gap:.35rem;
-  padding:.3rem .75rem; border-radius:999px; font-size:.75rem; font-weight:700;
-  text-decoration:none; transition:opacity .15s;
+  padding:.3rem .625rem; border-radius:999px; font-size:.75rem; font-weight:700;
+  text-decoration:none; transition:opacity .15s; white-space:nowrap; flex-shrink:0;
 }
 .ss-contact:hover { opacity:.85; }
 
@@ -548,34 +591,37 @@ function renderSkeletons(n = 12): string {
 
 // ─── Shared header ────────────────────────────────────────────────────────────
 
-function headerHtml(s: Settings, showBack: boolean, backLabel = 'Назад'): string {
-  const contacts = [
+function contactLinksHtml(s: Settings): string {
+  return [
     s.telegram ? `<a href="https://t.me/${esc(s.telegram.replace(/^@/,''))}" target="_blank" rel="noopener" class="ss-contact" style="color:rgb(38,160,218);background:rgba(38,160,218,.12);border:1px solid rgba(38,160,218,.25)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Telegram</a>` : '',
     s.whatsapp  ? `<a href="https://wa.me/${esc(s.whatsapp.replace(/\D/g,''))}" target="_blank" rel="noopener" class="ss-contact" style="color:rgb(37,211,102);background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.25)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg> WhatsApp</a>` : '',
     s.phone     ? `<a href="tel:${esc(s.phone.replace(/\s/g,''))}" class="ss-contact" style="color:rgb(99,179,120);background:rgba(99,179,120,.12);border:1px solid rgba(99,179,120,.25)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.8 19.79 19.79 0 012 1.17 2 2 0 013.07 1a3.12 3.12 0 012 0h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L9.91 8.1a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg> Позвонить</a>` : '',
     s.website   ? `<a href="${esc(s.website.startsWith('http')?s.website:'https://'+s.website)}" target="_blank" rel="noopener" class="ss-contact" style="color:hsl(var(--primary));background:hsl(var(--primary)/.1);border:1px solid hsl(var(--border))"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg> Сайт</a>` : '',
   ].filter(Boolean).join('');
+}
 
+function headerHtml(s: Settings, showBack: boolean, backLabel = 'Назад'): string {
   const logoHtml = s.logo_url
-    ? `<img src="${esc(s.logo_url)}" alt="logo" style="width:2.5rem;height:2.5rem;border-radius:.625rem;object-fit:cover;flex-shrink:0">`
-    : `<div style="width:2.5rem;height:2.5rem;border-radius:.625rem;background:linear-gradient(135deg,#00FFCC,#00CCAA);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.1rem;color:#000;flex-shrink:0">${esc(s.store_name.charAt(0).toUpperCase())}</div>`;
+    ? `<img src="${esc(s.logo_url)}" alt="logo" class="ss-logo-img">`
+    : `<div class="ss-logo-init">${esc(s.store_name.charAt(0).toUpperCase())}</div>`;
+
+  const contacts = contactLinksHtml(s);
 
   return `
 <header class="nav-modern" style="position:sticky;top:0;z-index:50">
-  <div style="position:relative;height:3.5rem">
-    ${showBack ? `
-    <button id="ss-back-to-home" style="position:absolute;left:.75rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:hsl(var(--primary));font-weight:700;font-size:.8rem;display:flex;align-items:center;gap:.3rem;white-space:nowrap;z-index:2;padding:.2rem .4rem;border-radius:.4rem">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
-      ${esc(backLabel)}
-    </button>` : ''}
-    <div style="max-width:1400px;margin:0 auto;padding:0 1rem;height:100%;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:.5rem">
-      <div style="display:flex;align-items:center;gap:.5rem;overflow:hidden;min-width:0;${showBack ? 'padding-left:4rem' : ''}">
-        ${logoHtml}
-        <span style="font-size:1.1rem;font-weight:800;color:hsl(var(--foreground));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2">${esc(s.store_name)}</span>
-      </div>
-      <span class="ss-header-brand" style="font-size:1.15rem;padding:0 .5rem;white-space:nowrap">SimaStore</span>
-      ${contacts ? `<div style="display:flex;align-items:center;gap:.4rem;justify-content:flex-end;overflow:hidden">${contacts}</div>` : '<div></div>'}
+  <div class="ss-hdr-inner">
+    <div class="ss-hdr-back-cell">
+      ${showBack ? `<button id="ss-back-to-home" class="ss-back-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+        <span>${esc(backLabel)}</span>
+      </button>` : ''}
     </div>
+    <div class="ss-hdr-logo-cell">
+      ${logoHtml}
+      <span class="ss-hdr-name">${esc(s.store_name)}</span>
+    </div>
+    <span class="ss-header-brand ss-hdr-brand-cell" style="font-size:1.1rem;padding:0 .25rem;white-space:nowrap">SimaStore</span>
+    ${contacts ? `<div class="ss-hdr-contacts-cell">${contacts}</div>` : ''}
   </div>
 </header>`;
 }
@@ -596,11 +642,6 @@ function renderHowItWorks(): string {
   <div class="ss-hiw-bg1"></div>
   <div class="ss-hiw-bg2"></div>
   <div style="max-width:1400px;margin:0 auto;padding:0 1rem">
-    <div style="text-align:center">
-      <div class="ss-hiw-badge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> <span>Как сделать заказ</span></div>
-      <h2 class="ss-hiw-title">Как это работает?</h2>
-      <p class="ss-hiw-sub">Находи и покупай товары из маркетплейсов в 4 шага</p>
-    </div>
     <div class="ss-hiw-steps">
       <div class="ss-hiw-line"></div>
       ${steps.map((s,i) => `
@@ -609,8 +650,7 @@ function renderHowItWorks(): string {
           <span style="position:relative;z-index:1;display:flex;align-items:center;justify-content:center">${s.icon}</span>
           <div class="ss-hiw-num" style="background:${s.num_bg}">${s.n}</div>
         </div>
-        <h3 style="font-size:.875rem;font-weight:800;margin-bottom:.35rem;color:hsl(var(--foreground))">${s.title}</h3>
-        <p style="font-size:.75rem;color:hsl(var(--muted-foreground));line-height:1.5">${s.desc}</p>
+        <h3 style="font-size:.875rem;font-weight:800;color:hsl(var(--foreground))">${s.title}</h3>
       </div>`).join('')}
     </div>
     <div class="ss-hiw-steps-mob">
@@ -622,8 +662,7 @@ function renderHowItWorks(): string {
             <div class="ss-hiw-mob-num">${s.n}</div>
           </div>
           <div>
-            <div style="font-size:.875rem;font-weight:800;margin-bottom:.2rem;color:hsl(var(--foreground))">${s.title}</div>
-            <div style="font-size:.75rem;color:hsl(var(--muted-foreground));line-height:1.5">${s.desc}</div>
+            <div style="font-size:.875rem;font-weight:800;color:hsl(var(--foreground))">${s.title}</div>
           </div>
         </div>
         ${i<steps.length-1?'<div class="ss-hiw-connector"></div>':''}
@@ -644,16 +683,19 @@ function shuffleSlice<T>(arr: T[], n: number): T[] {
   return copy.slice(0, n);
 }
 
-function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups: GroupedProduct[], onCatalog: () => void): Carousel|null {
+function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups: GroupedProduct[], onCatalog: () => void): (() => void) | null {
   const { settings: s, banners } = data;
   const RECOMMENDED_COUNT = 12;
   const featured = groups.length > RECOMMENDED_COUNT ? shuffleSlice(groups, RECOMMENDED_COUNT) : [...groups];
+  const mobContacts = contactLinksHtml(s);
 
   document.title = `${s.store_name} — SimaStore`;
 
   root.innerHTML = `
 <div style="min-height:100vh;background:hsl(var(--background));color:hsl(var(--foreground))">
   ${headerHtml(s, false)}
+
+  ${mobContacts ? `<div class="ss-mob-contacts">${mobContacts}</div>` : ''}
 
   ${banners.length > 0 ? `
   <div style="padding:.5rem 0 .75rem">
@@ -663,18 +705,12 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
   <section style="padding:.75rem 0 .5rem">
     <div style="max-width:1400px;margin:0 auto;padding:0 .75rem">
       ${featured.length > 0 ? `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.625rem;flex-wrap:wrap;gap:.5rem">
-        <div style="display:flex;align-items:center;gap:.5rem">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:hsl(var(--primary))"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-          <span style="font-size:.875rem;font-weight:700;color:hsl(var(--foreground))">Рекомендуем</span>
-        </div>
-        <button id="ss-refresh-rec" style="background:none;border:1px solid hsl(var(--border)/.5);border-radius:.5rem;padding:.2rem .5rem;font-size:.75rem;color:hsl(var(--muted-foreground));cursor:pointer;display:flex;align-items:center;gap:.3rem">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
-          Обновить
-        </button>
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.625rem">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:hsl(var(--primary))"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        <span style="font-size:.875rem;font-weight:700;color:hsl(var(--foreground))">Рекомендуем</span>
       </div>
-      <div class="ss-grid" id="ss-home-grid">
-        ${featured.map(g => renderCard(g)).join('')}
+      <div class="ss-rec-wrap" id="ss-rec-carousel">
+        <div class="ss-rec-track" id="ss-rec-track"></div>
       </div>` : `
       <div style="text-align:center;padding:3rem 1rem">
         <div style="display:flex;justify-content:center;margin-bottom:.75rem;color:hsl(var(--foreground)/.2)"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg></div>
@@ -700,29 +736,62 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
   </footer>
 </div>`;
 
-  let carousel: Carousel|null = null;
+  let bannerCarousel: Carousel|null = null;
   if (banners.length > 0) {
     const area = document.getElementById('ss-banner-area');
-    if (area) carousel = new Carousel(area, banners);
+    if (area) bannerCarousel = new Carousel(area, banners);
   }
 
   document.getElementById('ss-to-catalog')?.addEventListener('click', onCatalog);
 
-  document.getElementById('ss-refresh-rec')?.addEventListener('click', () => {
-    const newFeatured = groups.length > RECOMMENDED_COUNT ? shuffleSlice(groups, RECOMMENDED_COUNT) : [...groups];
-    const grid = document.getElementById('ss-home-grid');
-    if (grid) grid.innerHTML = newFeatured.map(g => renderCard(g)).join('');
-  });
+  // Rec carousel animation
+  let recRaf = 0;
+  const track = document.getElementById('ss-rec-track');
+  const featuredWithPhoto = featured.filter(g => g.images[0]);
+  if (track && featuredWithPhoto.length > 0) {
+    const items = [...featuredWithPhoto, ...featuredWithPhoto];
+    track.innerHTML = items.map(g => {
+      const img = g.images[0] ?? null;
+      return `<div class="ss-card" data-key="${esc(g.key)}" data-from-home="1">
+  <div class="ss-card-img">
+    ${img
+      ? `<img src="${esc(img)}" alt="${esc(g.title)}" loading="lazy" style="display:block">`
+      : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:hsl(var(--foreground)/.15)"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg></div>`}
+    <div class="ss-card-grad"></div>
+  </div>
+  <div class="ss-card-body">
+    <div class="ss-card-title">${esc(g.title)}</div>
+    <div class="ss-card-price-row">
+      <span style="${PRICE_GRAD};font-size:.85rem;font-weight:900">${fmtRange(g.price_min, g.price_max)}</span>
+    </div>
+  </div>
+</div>`;
+    }).join('');
 
-  root.addEventListener('click', (e) => {
-    const card = (e.target as HTMLElement).closest('.ss-card') as HTMLElement|null;
-    if (card) {
-      const key = card.dataset.key;
-      if (key) root.dispatchEvent(new CustomEvent('open-product', { detail: { key }, bubbles: true }));
-    }
-  });
+    const trackEl = track;
+    requestAnimationFrame(() => {
+      if (!trackEl.isConnected) return;
+      const singleWidth = trackEl.scrollWidth / 2;
+      let pos = 0;
+      const speed = 0.5;
+      function tick() {
+        if (!trackEl.isConnected) return;
+        pos += speed;
+        if (pos >= singleWidth) pos -= singleWidth;
+        trackEl.style.transform = `translateX(-${pos}px)`;
+        recRaf = requestAnimationFrame(tick);
+      }
+      recRaf = requestAnimationFrame(tick);
+      const wrap = document.getElementById('ss-rec-carousel');
+      wrap?.addEventListener('mouseenter', () => cancelAnimationFrame(recRaf));
+      wrap?.addEventListener('mouseleave', () => { recRaf = requestAnimationFrame(tick); });
+    });
+  }
 
-  return carousel;
+  return () => {
+    bannerCarousel?.destroy();
+    cancelAnimationFrame(recRaf);
+  };
 }
 
 // ─── Catalog view ─────────────────────────────────────────────────────────────
@@ -744,16 +813,18 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
       <span id="ss-count" style="padding:.2rem .625rem;border-radius:999px;font-size:.75rem;font-weight:800;background:hsl(var(--primary)/.1);border:1px solid hsl(var(--primary)/.2);color:hsl(var(--primary))">${groups.length}</span>
     </div>
 
-    <div style="position:relative;margin-bottom:.75rem">
-      <svg style="position:absolute;left:.75rem;top:50%;transform:translateY(-50%);width:1rem;height:1rem;color:hsl(var(--foreground)/.4);pointer-events:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-      <input id="ss-search" type="search" placeholder="Поиск товаров..." class="ss-search">
-    </div>
+    <div style="position:sticky;top:3.5rem;z-index:40;background:hsl(var(--background));padding:.5rem 0 .375rem;margin:0 -.75rem .375rem;padding-left:.75rem;padding-right:.75rem;border-bottom:1px solid hsl(var(--border)/.3)">
+      <div style="position:relative;margin-bottom:.5rem">
+        <svg style="position:absolute;left:.75rem;top:50%;transform:translateY(-50%);width:1rem;height:1rem;color:hsl(var(--foreground)/.4);pointer-events:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input id="ss-search" type="search" placeholder="Поиск товаров..." class="ss-search">
+      </div>
 
-    <div style="display:flex;gap:.5rem;padding:.375rem;background:hsl(var(--muted)/.5);border-radius:1rem;border:1px solid hsl(var(--border)/.4);margin-bottom:.75rem">
+      <div style="display:flex;gap:.5rem;padding:.375rem;background:hsl(var(--muted)/.5);border-radius:1rem;border:1px solid hsl(var(--border)/.4)">
       <button class="ss-src-tab active" data-src="all">Все</button>
       ${hasSrc('wb')     ? `<button class="ss-src-tab" data-src="wb">WB</button>` : ''}
       ${hasSrc('ozon')   ? `<button class="ss-src-tab" data-src="ozon">Ozon</button>` : ''}
       ${hasSrc('yandex') ? `<button class="ss-src-tab" data-src="yandex">Яндекс</button>` : ''}
+    </div>
     </div>
 
     <div id="ss-filters-bar"></div>
@@ -775,6 +846,12 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
   let filterPriceMax: number | null = null;
   let filterBrand   = '';
   let filterCat     = '';
+  let filterH: number | null = null; // высота, см
+  let filterW: number | null = null; // ширина, см
+  let filterL: number | null = null; // длина, см
+  let filterKg: number | null = null; // вес, кг
+
+  const hasDims = groups.some(g => g.height_cm || g.width_cm || g.length_cm || g.weight_kg);
 
   const allBrands     = [...new Set(groups.map(g => g.brand).filter((b): b is string => !!b))].sort();
   const allCategories = [...new Set(groups.map(g => g.category).filter((c): c is string => !!c))].sort();
@@ -785,8 +862,9 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
 
   function renderFiltersBar(): void {
     const bar = document.getElementById('ss-filters-bar');
-    if (!bar || (!showPrice && !showBrand && !showCat)) return;
-    const hasActive = filterPriceMin != null || filterPriceMax != null || filterBrand || filterCat;
+    if (!bar || (!showPrice && !showBrand && !showCat && !hasDims)) return;
+    const hasActive = filterPriceMin != null || filterPriceMax != null || filterBrand || filterCat ||
+                      filterH != null || filterW != null || filterL != null || filterKg != null;
     bar.innerHTML = `<div class="ss-filters-bar">
       ${showPrice ? `<div class="ss-filter-group">
         <div class="ss-filter-label">Цена, ₽</div>
@@ -794,6 +872,15 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
           <input class="ss-price-inp" id="sf-pmin" type="number" placeholder="от" value="${filterPriceMin ?? ''}">
           <span class="ss-price-sep">—</span>
           <input class="ss-price-inp" id="sf-pmax" type="number" placeholder="до" value="${filterPriceMax ?? ''}">
+        </div>
+      </div>` : ''}
+      ${hasDims ? `<div class="ss-filter-group">
+        <div class="ss-filter-label">Габариты (макс.), см / кг</div>
+        <div class="ss-price-row" style="gap:.3rem;flex-wrap:wrap">
+          <input class="ss-price-inp ss-dim-inp" id="sf-h" type="number" min="0" placeholder="В" title="Высота, см" value="${filterH ?? ''}">
+          <input class="ss-price-inp ss-dim-inp" id="sf-w" type="number" min="0" placeholder="Ш" title="Ширина, см" value="${filterW ?? ''}">
+          <input class="ss-price-inp ss-dim-inp" id="sf-l" type="number" min="0" placeholder="Д" title="Длина, см" value="${filterL ?? ''}">
+          <input class="ss-price-inp ss-dim-inp" id="sf-kg" type="number" min="0" step="0.1" placeholder="кг" title="Вес, кг" value="${filterKg ?? ''}">
         </div>
       </div>` : ''}
       ${showBrand ? `<div class="ss-filter-group">
@@ -822,7 +909,11 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
       const matchPMax  = filterPriceMax == null || g.price_min <= filterPriceMax;
       const matchBrand = !filterBrand || (g.brand ?? '') === filterBrand;
       const matchCat   = !filterCat   || (g.category ?? '') === filterCat;
-      return matchSrc && matchQ && matchPMin && matchPMax && matchBrand && matchCat;
+      const matchH     = filterH  == null || !g.height_cm || g.height_cm  <= filterH;
+      const matchW     = filterW  == null || !g.width_cm  || g.width_cm   <= filterW;
+      const matchL     = filterL  == null || !g.length_cm || g.length_cm  <= filterL;
+      const matchKg    = filterKg == null || !g.weight_kg || g.weight_kg  <= filterKg;
+      return matchSrc && matchQ && matchPMin && matchPMax && matchBrand && matchCat && matchH && matchW && matchL && matchKg;
     });
   }
 
@@ -885,18 +976,23 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
 
   document.getElementById('ss-back-to-home')?.addEventListener('click', onBack);
 
-  // Price filter (debounced)
-  let priceTimer = 0;
+  // Numeric filter inputs (debounced)
+  let filterTimer = 0;
   root.addEventListener('input', (e) => {
     const inp = e.target as HTMLInputElement;
-    if (inp.id === 'sf-pmin' || inp.id === 'sf-pmax') {
-      clearTimeout(priceTimer);
-      priceTimer = window.setTimeout(() => {
-        filterPriceMin = inp.id === 'sf-pmin' ? (inp.value ? Number(inp.value) : null) : filterPriceMin;
-        filterPriceMax = inp.id === 'sf-pmax' ? (inp.value ? Number(inp.value) : null) : filterPriceMax;
-        renderFiltersBar(); refreshGrid();
-      }, 400);
-    }
+    const id = inp.id;
+    if (!['sf-pmin','sf-pmax','sf-h','sf-w','sf-l','sf-kg'].includes(id)) return;
+    clearTimeout(filterTimer);
+    filterTimer = window.setTimeout(() => {
+      const v = inp.value ? Number(inp.value) : null;
+      if (id === 'sf-pmin') filterPriceMin = v;
+      if (id === 'sf-pmax') filterPriceMax = v;
+      if (id === 'sf-h')    filterH  = v;
+      if (id === 'sf-w')    filterW  = v;
+      if (id === 'sf-l')    filterL  = v;
+      if (id === 'sf-kg')   filterKg = v;
+      renderFiltersBar(); refreshGrid();
+    }, 400);
   });
 
   root.addEventListener('click', (e) => {
@@ -920,6 +1016,7 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
     if ((t as HTMLElement).id === 'sf-reset') {
       filterPriceMin = null; filterPriceMax = null;
       filterBrand = ''; filterCat = '';
+      filterH = null; filterW = null; filterL = null; filterKg = null;
       renderFiltersBar(); refreshGrid(); return;
     }
 
@@ -932,11 +1029,6 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
       return;
     }
 
-    const card = t.closest('.ss-card') as HTMLElement|null;
-    if (card) {
-      const key = card.dataset.key;
-      if (key) root.dispatchEvent(new CustomEvent('open-product', { detail: { key }, bubbles: true }));
-    }
   });
 }
 
@@ -996,6 +1088,13 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
             <div class="ss-gal-main" id="ss-gal-main">
               ${imgs.map(img => `<div class="ss-gal-slide"><img src="${esc(img)}" alt="photo" loading="lazy"></div>`).join('')}
             </div>
+            ${imgs.length > 1 ? `
+            <button class="ss-gal-nav ss-gal-nav-prev" id="ss-gal-prev" aria-label="Предыдущее фото">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <button class="ss-gal-nav ss-gal-nav-next" id="ss-gal-next" aria-label="Следующее фото">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>` : ''}
             <div class="ss-gal-dots" id="ss-gal-dots">
               ${imgs.map((_,i) => `<button class="ss-gal-dot${i===0?' active':''}" data-gi="${i}"></button>`).join('')}
             </div>
@@ -1055,7 +1154,9 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
   // Gallery sync
   const galMain = panel.querySelector('#ss-gal-main') as HTMLElement|null;
   if (galMain && imgs.length > 1) {
+    let galIdx = 0;
     const syncIdx = (idx: number) => {
+      galIdx = idx;
       panel.querySelectorAll('.ss-gal-dot').forEach((d,i) => d.classList.toggle('active', i===idx));
       panel.querySelectorAll('.ss-gal-thumb').forEach((t,i) => t.classList.toggle('active', i===idx));
     };
@@ -1068,6 +1169,16 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
         galMain.scrollTo({ left: i * galMain.clientWidth, behavior:'smooth' });
         syncIdx(i);
       });
+    });
+    panel.querySelector('#ss-gal-prev')?.addEventListener('click', () => {
+      const idx = (galIdx - 1 + imgs.length) % imgs.length;
+      galMain.scrollTo({ left: idx * galMain.clientWidth, behavior:'smooth' });
+      syncIdx(idx);
+    });
+    panel.querySelector('#ss-gal-next')?.addEventListener('click', () => {
+      const idx = (galIdx + 1) % imgs.length;
+      galMain.scrollTo({ left: idx * galMain.clientWidth, behavior:'smooth' });
+      syncIdx(idx);
     });
   }
 
@@ -1197,7 +1308,7 @@ async function init(): Promise<void> {
 
   type View = 'home' | 'catalog';
   let view: View = 'home';
-  let carousel: Carousel | null = null;
+  let pageCleanup: (() => void) | null = null;
 
   function openProduct(key: string): void {
     const group = groups.find(g => g.key === key);
@@ -1208,21 +1319,33 @@ async function init(): Promise<void> {
     });
   }
 
-  // Single persistent listener — never removed, catches events from home and catalog pages
-  root.addEventListener('open-product', ((e: CustomEvent) => openProduct(e.detail.key)) as EventListener);
+  root.addEventListener('click', (e) => {
+    const card = (e.target as HTMLElement).closest('[data-key]') as HTMLElement | null;
+    if (!card) return;
+    const key = card.dataset.key;
+    if (!key) return;
+    if (card.dataset.fromHome) {
+      const group = groups.find(g => g.key === key);
+      if (!group) return;
+      history.pushState({ productKey: key }, '', `/${slug}/product/${encodeURIComponent(key)}`);
+      openDetail(group, groups, slug, () => { showCatalog(); });
+    } else {
+      openProduct(key);
+    }
+  });
 
   function showHome(): void {
     view = 'home';
     history.replaceState({}, '', `/${slug}`);
-    carousel?.destroy();
-    carousel = mountHomePage(root, data!, slug, groups, showCatalog);
+    pageCleanup?.();
+    pageCleanup = mountHomePage(root, data!, slug, groups, showCatalog);
   }
 
   function showCatalog(): void {
     view = 'catalog';
     history.replaceState({}, '', `/${slug}/catalog`);
-    carousel?.destroy();
-    carousel = null;
+    pageCleanup?.();
+    pageCleanup = null;
     mountCatalogPage(root, data!, slug, groups, showHome);
   }
 
