@@ -136,8 +136,8 @@ function injectCSS(): void {
 @keyframes ss-spin { to { transform: rotate(360deg); } }
 @keyframes ss-shimmer { 0%,100%{opacity:.5} 50%{opacity:1} }
 @keyframes ss-fadein { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
-@keyframes ss-float-in  { from{opacity:0;transform:translateY(-110%)} to{opacity:1;transform:translateY(0)} }
-@keyframes ss-float-out { from{opacity:1;transform:translateY(0)} to{opacity:0;transform:translateY(-110%)} }
+@keyframes ss-float-in  { from{opacity:0;transform:translateX(-50%) translateY(calc(-110% - 1rem))} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+@keyframes ss-float-out { from{opacity:1;transform:translateX(-50%) translateY(0)} to{opacity:0;transform:translateX(-50%) translateY(calc(-110% - 1rem))} }
 @keyframes slideInScale { from{opacity:0;transform:translateY(30px) scale(.9)} to{opacity:1;transform:none} }
 @keyframes slideInLeft  { from{opacity:0;transform:translateX(-20px)} to{opacity:1;transform:none} }
 @keyframes ss-brand-shimmer {
@@ -343,50 +343,54 @@ function injectCSS(): void {
 
 /* ── Floating glass search bar ── */
 .ss-float-bar {
-  position:fixed; top:0; left:0; right:0; z-index:80;
-  padding:.625rem 1rem;
-  background:rgba(10,10,14,.72);
-  backdrop-filter:blur(24px) saturate(180%);
-  -webkit-backdrop-filter:blur(24px) saturate(180%);
-  border-bottom:1px solid rgba(255,255,255,.08);
-  box-shadow:0 4px 32px rgba(0,0,0,.35);
-  display:flex; align-items:center; gap:.625rem;
-  pointer-events:none; opacity:0; transform:translateY(-110%);
+  position:fixed; top:1rem; left:50%; z-index:80;
+  transform:translateX(-50%) translateY(calc(-110% - 1rem));
+  width:min(560px,calc(100vw - 2rem));
+  padding:.45rem .45rem .45rem .45rem;
+  background:rgba(255,255,255,.12);
+  backdrop-filter:blur(32px) saturate(200%);
+  -webkit-backdrop-filter:blur(32px) saturate(200%);
+  border:1px solid rgba(255,255,255,.22);
+  border-radius:999px;
+  box-shadow:
+    0 8px 32px rgba(0,0,0,.45),
+    inset 0 1px 0 rgba(255,255,255,.3),
+    inset 0 -1px 0 rgba(0,0,0,.15);
+  display:flex; align-items:center; gap:.5rem;
+  pointer-events:none; opacity:0;
   transition:none;
 }
 .ss-float-bar.visible {
-  animation:ss-float-in .28s cubic-bezier(.22,.68,0,1.2) forwards;
+  animation:ss-float-in .32s cubic-bezier(.34,1.56,.64,1) forwards;
   pointer-events:auto;
 }
 .ss-float-bar.hiding {
-  animation:ss-float-out .2s ease-in forwards;
+  animation:ss-float-out .22s cubic-bezier(.4,0,.6,1) forwards;
   pointer-events:none;
 }
 .ss-float-inp {
-  flex:1; padding:.55rem 1rem .55rem 2.25rem;
-  background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.12);
-  border-radius:.875rem; color:#f0f0f2; font-size:.875rem; outline:none;
-  transition:border-color .15s, background .15s;
+  flex:1; padding:.6rem .75rem .6rem 2.1rem;
+  background:transparent; border:none;
+  color:#f0f0f2; font-size:.9rem; font-weight:500; outline:none;
+  min-width:0;
 }
-.ss-float-inp:focus { border-color:rgba(212,240,0,.5); background:rgba(255,255,255,.1); }
-.ss-float-inp::placeholder { color:rgba(240,240,242,.35); }
+.ss-float-inp::placeholder { color:rgba(240,240,242,.45); }
 .ss-float-ico {
-  position:absolute; left:.75rem; top:50%; transform:translateY(-50%);
-  width:1rem; height:1rem; color:rgba(240,240,242,.35); pointer-events:none;
+  position:absolute; left:1.1rem; top:50%; transform:translateY(-50%);
+  width:1rem; height:1rem; color:rgba(240,240,242,.55); pointer-events:none; flex-shrink:0;
 }
 .ss-float-clear {
-  width:2rem; height:2rem; border-radius:50%; border:none; cursor:pointer;
-  background:rgba(255,255,255,.1); color:rgba(240,240,242,.6);
-  display:none; align-items:center; justify-content:center; font-size:.85rem;
-  transition:background .15s;
-  flex-shrink:0;
+  width:1.75rem; height:1.75rem; border-radius:50%; border:none; cursor:pointer;
+  background:rgba(255,255,255,.15); color:rgba(240,240,242,.7);
+  display:none; align-items:center; justify-content:center; font-size:.75rem;
+  transition:background .15s; flex-shrink:0; margin-right:.1rem;
 }
 .ss-float-clear.visible { display:flex; }
-.ss-float-clear:hover { background:rgba(255,255,255,.18); color:#f0f0f2; }
+.ss-float-clear:hover { background:rgba(255,255,255,.28); color:#f0f0f2; }
 .ss-float-count {
-  font-size:.72rem; font-weight:800; white-space:nowrap;
-  padding:.2rem .5rem; border-radius:999px;
-  background:rgba(212,240,0,.15); border:1px solid rgba(212,240,0,.25);
+  font-size:.7rem; font-weight:800; white-space:nowrap;
+  padding:.25rem .6rem; border-radius:999px; margin-right:.35rem;
+  background:rgba(212,240,0,.2); border:1px solid rgba(212,240,0,.3);
   color:#d4f000; flex-shrink:0;
 }
 @media (max-width:480px) { .ss-float-count { display:none; } }
@@ -456,16 +460,13 @@ function injectCSS(): void {
 
 /* ── Header classes ── */
 .ss-hdr-inner {
-  display:grid; grid-template-columns:2.5rem 1fr;
+  display:grid; grid-template-columns:1fr;
   align-items:center; height:3.5rem; padding:0 .75rem; gap:.35rem;
   max-width:1400px; margin:0 auto;
 }
-.ss-hdr-back-cell { display:flex; align-items:center; }
-.ss-back-btn { background:none; border:none; cursor:pointer; color:hsl(var(--primary)); padding:.3rem; border-radius:.4rem; display:flex; align-items:center; gap:.2rem; transition:background .15s; font-weight:700; font-size:.75rem; }
-.ss-back-btn:hover { background:hsl(var(--primary)/.1); }
-.ss-back-label { display:none; }
-@media(min-width:640px) { .ss-back-label { display:inline; white-space:nowrap; } }
 .ss-hdr-logo-cell { display:flex; align-items:center; gap:.5rem; overflow:hidden; min-width:0; }
+.ss-hdr-logo-btn { background:none; border:none; cursor:pointer; padding:0; text-align:left; transition:opacity .15s; }
+.ss-hdr-logo-btn:hover { opacity:.8; }
 .ss-logo-img { width:2rem; height:2rem; border-radius:.5rem; object-fit:cover; flex-shrink:0; }
 .ss-logo-init { width:2rem; height:2rem; border-radius:.5rem; background:linear-gradient(135deg,#00FFCC,#00CCAA); display:flex; align-items:center; justify-content:center; font-weight:900; font-size:.875rem; color:#000; flex-shrink:0; }
 @media(min-width:640px) { .ss-logo-img,.ss-logo-init { width:2.5rem; height:2.5rem; border-radius:.625rem; font-size:1.1rem; } }
@@ -475,7 +476,7 @@ function injectCSS(): void {
 .ss-hdr-brand-cell { display:none; }
 .ss-hdr-contacts-cell { display:none; }
 @media(min-width:640px) {
-  .ss-hdr-inner { grid-template-columns:2.5rem minmax(0,1fr) auto minmax(0,1fr); padding:0 1rem; }
+  .ss-hdr-inner { grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); padding:0 1rem; }
   .ss-hdr-brand-cell { display:flex; align-items:center; justify-content:center; white-space:nowrap; }
   .ss-hdr-contacts-cell { display:flex; align-items:center; gap:.4rem; justify-content:flex-end; overflow:hidden; min-width:0; }
 }
@@ -683,26 +684,27 @@ function contactLinksHtml(s: Settings): string {
   ].filter(Boolean).join('');
 }
 
-function headerHtml(s: Settings, showBack: boolean, backLabel = 'Назад'): string {
+function headerHtml(s: Settings, showBack: boolean, _backLabel = 'Назад'): string {
   const logoHtml = s.logo_url
     ? `<img src="${esc(s.logo_url)}" alt="logo" class="ss-logo-img">`
     : `<div class="ss-logo-init">${esc(s.store_name.charAt(0).toUpperCase())}</div>`;
 
   const contacts = contactLinksHtml(s);
 
+  const logoCell = showBack
+    ? `<button id="ss-back-to-home" class="ss-hdr-logo-cell ss-hdr-logo-btn">
+        ${logoHtml}
+        <span class="ss-hdr-name">${esc(s.store_name)}</span>
+      </button>`
+    : `<div class="ss-hdr-logo-cell">
+        ${logoHtml}
+        <span class="ss-hdr-name">${esc(s.store_name)}</span>
+      </div>`;
+
   return `
 <header class="nav-modern" style="position:sticky;top:0;z-index:50">
   <div class="ss-hdr-inner">
-    <div class="ss-hdr-back-cell">
-      ${showBack ? `<button id="ss-back-to-home" class="ss-back-btn">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
-        <span class="ss-back-label">${esc(backLabel)}</span>
-      </button>` : ''}
-    </div>
-    <div class="ss-hdr-logo-cell">
-      ${logoHtml}
-      <span class="ss-hdr-name">${esc(s.store_name)}</span>
-    </div>
+    ${logoCell}
     <span class="ss-header-brand ss-hdr-brand-cell" style="font-size:1.1rem;padding:0 .25rem;white-space:nowrap">SimaStore</span>
     ${contacts ? `<div class="ss-hdr-contacts-cell">${contacts}</div>` : ''}
   </div>
@@ -909,7 +911,7 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
       </div>
     </div>
 
-    <div id="ss-filters-bar"></div>
+    <div id="ss-filter-trigger-row" style="margin-bottom:.75rem"></div>
 
     <div class="ss-grid" id="ss-cat-grid">${renderSkeletons(12)}</div>
   </div>
