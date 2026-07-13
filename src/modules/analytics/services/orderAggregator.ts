@@ -78,7 +78,7 @@ function mapWbStatus(s: string): OrderStatus {
   switch (s) {
     case 'new':         return 'processing';
     case 'confirm':     return 'processing';
-    case 'complete':    return 'in_delivery';
+    case 'complete':    return 'delivered';
     case 'cancel':      return 'cancelled';
     case 'arbitration': return 'processing';
     default:            return 'unknown';
@@ -279,7 +279,7 @@ export function aggregateOrders(input: AggregateInput): Order[] {
 
     const items = buildItems(store.mp,
       (tx0.items_json ?? []).map(it => ({
-        vendor_code: String(it.sku ?? ''),
+        vendor_code: it.vendor_code ?? String(it.sku ?? ''),
         mp_sku: String(it.sku ?? ''),
         name: it.name,
         quantity: it.quantity ?? 1,

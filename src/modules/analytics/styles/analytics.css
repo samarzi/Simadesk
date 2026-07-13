@@ -108,7 +108,23 @@ html.light .an2 {
 }
 .an2-period-custom input::-webkit-calendar-picker-indicator { filter: invert(0.6); cursor: pointer; }
 
-/* Icon button (refresh, settings, sync) */
+/* Update / sync button (labeled, single) */
+.an2-update-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px;
+  font-size: 12px; font-weight: 700; font-family: inherit;
+  color: var(--text2);
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 9px; cursor: pointer;
+  transition: all .15s ease;
+  white-space: nowrap;
+}
+.an2-update-btn:hover:not(:disabled) { color: var(--text); border-color: var(--border2); transform: translateY(-1px); }
+.an2-update-btn:active:not(:disabled) { transform: translateY(0); }
+.an2-update-btn.busy { color: var(--text3); cursor: default; }
+.an2-update-btn .spin { animation: an-spin .8s linear infinite; }
+
+/* Icon button (settings) */
 .an2-icon-btn {
   width: 30px; height: 30px;
   display: inline-flex; align-items: center; justify-content: center;

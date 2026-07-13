@@ -7,7 +7,7 @@ import { debug } from '@/utils/debug';
 import { WbStore, WbProduct } from '@/types/wb';
 import { wbDb } from '@/services/wbDb';
 import { refreshNavLockState } from '@/modules/NavigationModule';
-import { wbApi, fetchAllWbProducts } from '@/services/wbApi';
+import { wbApi, fetchAllWbProducts, isWbCoolingDown, wbCooldownRemaining } from '@/services/wbApi';
 import { I } from '@/utils/icons';
 import { copyButton } from '@/utils/copyButton';
 
@@ -406,12 +406,22 @@ export class WbModule {
   async syncStore(storeId: string): Promise<void> {
     const store = this.stores.find(s => s.id === storeId);
     if (!store || this.syncing[storeId]) return;
+    if (isWbCoolingDown()) {
+      this.lastError = `WB ограничил запросы — подождите ещё ${wbCooldownRemaining()} сек. и попробуйте снова.`;
+      this.render();
+      return;
+    }
     this.syncing[storeId] = true; this.render();
     try {
       const products = await fetchAllWbProducts(store);
       // If API returned empty (rate-limit, 429) — keep existing data in DB
       if (products.length > 0) {
         await wbDb.replaceStoreProducts(storeId, products);
+      } else {
+        // Empty could mean rate limit or no products — show warning if cooldown activated during sync
+        if (isWbCoolingDown()) {
+          this.lastError = `WB ограничил запросы во время синхронизации. Данные не обновлены. Подождите ${wbCooldownRemaining()} сек.`;
+        }
       }
       this.products = await wbDb.getProducts();
     } catch (err: any) {

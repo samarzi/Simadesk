@@ -247,6 +247,9 @@ export default defineConfig(({ mode }) => {
         '/wb-adv':         { target: 'https://advert-api.wildberries.ru',   changeOrigin: true, secure: true, rewrite: (p) => p.replace(/^\/wb-adv/, ''),        configure: (proxy: any) => { proxy.on('proxyReq', (r: any) => { r.removeHeader('origin'); r.removeHeader('referer'); }); } },
         '/wb-search':      { target: 'https://search.wb.ru',                  changeOrigin: true, secure: true, rewrite: (p) => p.replace(/^\/wb-search/, ''),       configure: (proxy: any) => { proxy.on('proxyReq', (r: any) => { r.removeHeader('origin'); r.removeHeader('referer'); }); } },
         '/wb-prices':      { target: 'https://discounts-prices-api.wildberries.ru', changeOrigin: true, secure: true, rewrite: (p) => p.replace(/^\/wb-prices/, ''), configure: (proxy: any) => { proxy.on('proxyReq', (r: any) => { r.removeHeader('origin'); r.removeHeader('referer'); }); } },
+        '/wb-feedback':    { target: 'https://feedbacks-api.wildberries.ru',       changeOrigin: true, secure: true, rewrite: (p) => p.replace(/^\/wb-feedback/, ''),    configure: (proxy: any) => { proxy.on('proxyReq', (r: any) => { r.removeHeader('origin'); r.removeHeader('referer'); }); } },
+        '/wb-buyer-chat':  { target: 'https://buyer-chat-api.wildberries.ru',      changeOrigin: true, secure: true, rewrite: (p) => p.replace(/^\/wb-buyer-chat/, ''),  configure: (proxy: any) => { proxy.on('proxyReq', (r: any) => { r.removeHeader('origin'); r.removeHeader('referer'); }); } },
+        '/wb-card':        { target: 'https://card.wb.ru',                         changeOrigin: true, secure: true, rewrite: (p) => p.replace(/^\/wb-card/, ''),        configure: (proxy: any) => { proxy.on('proxyReq', (r: any) => { r.removeHeader('origin'); r.removeHeader('referer'); }); } },
       },
     },
     build: {

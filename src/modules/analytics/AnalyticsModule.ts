@@ -840,15 +840,23 @@ export class AnalyticsModule {
 
         ${this._renderLoadMeta()}
 
-        <button class="an2-icon-btn ${this.syncing || this._autoSyncing ? 'spinning' : ''}"
-          onclick="window.analyticsModule?.syncFinances()"
-          title="${this._autoSyncing ? 'Идёт авто-синхронизация финотчёта…' : 'Подтянуть финотчёт из МП'}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        </button>
-
-        <button class="an2-icon-btn ${this.loading ? 'spinning' : ''}" onclick="window.analyticsModule?.refresh()" title="Обновить">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 11-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
-        </button>
+        ${(() => {
+          const busy = this.syncing || this._autoSyncing || this.loading;
+          const label = (this.syncing || this._autoSyncing) ? 'Синхронизируется…' : this.loading ? 'Загружается…' : 'Обновить';
+          const title = (this.syncing || this._autoSyncing)
+            ? 'Идёт синхронизация финотчёта из маркетплейса…'
+            : this.loading ? 'Загружаем данные…'
+            : 'Подтянуть финотчёт из маркетплейса и обновить аналитику';
+          return `
+            <button class="an2-update-btn${busy ? ' busy' : ''}"
+              onclick="${busy ? '' : 'window.analyticsModule?.syncFinances()'}"
+              title="${title}"
+              ${busy ? 'disabled' : ''}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="${busy ? 'spin' : ''}"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              <span>${label}</span>
+            </button>
+          `;
+        })()}
 
         <button class="an2-icon-btn" onclick="window.analyticsModule?.openSettings()" title="Настройки">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 110-4h.09A1.65 1.65 0 004.6 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V2a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H22a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>

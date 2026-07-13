@@ -786,15 +786,21 @@ export async function fetchAllYandexProducts(
   signal?: AbortSignal,
   maxPages = 200,
 ): Promise<YandexProduct[]> {
-  if (!store.business_id || !store.campaign_id) {
-    throw new Error('У магазина нет business_id или campaign_id');
+  if (!store.campaign_id) {
+    throw new Error('У магазина не задан campaign_id');
+  }
+  // Если business_id не сохранён — пробуем получить его на лету
+  if (!store.business_id) {
+    const bid = await yandexApi.getBusinessId(store.api_key, store.campaign_id);
+    if (!bid) throw new Error('Не удалось определить business_id магазина. Проверьте API-ключ или пересохраните магазин.');
+    store = { ...store, business_id: bid };
   }
   // 1) Все товары
   const all: any[] = [];
   let token = '';
   for (let i = 0; i < maxPages; i++) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    const { offers, nextPageToken } = await yandexApi.getOfferMappings(store.api_key, store.business_id, token, signal);
+    const { offers, nextPageToken } = await yandexApi.getOfferMappings(store.api_key, store.business_id!, token, signal);
     all.push(...offers);
     if (!nextPageToken || nextPageToken === token) break;
     token = nextPageToken;
@@ -807,7 +813,7 @@ export async function fetchAllYandexProducts(
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     let chunk: { warehouses: any[]; nextPageToken: string };
     try {
-      chunk = await yandexApi.getStocks(store.api_key, store.campaign_id, stockToken, signal);
+      chunk = await yandexApi.getStocks(store.api_key, store.campaign_id!, stockToken, signal);
     } catch {
       break; // если у тарифа нет доступа — просто без остатков
     }

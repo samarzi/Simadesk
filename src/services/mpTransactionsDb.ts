@@ -40,7 +40,7 @@ export interface MpTransaction {
   operation_type_name: string | null;
   operation_date: string;          // ISO
   posting_number: string | null;
-  items_json: Array<{ name: string; sku: number | string; quantity?: number }> | null;
+  items_json: Array<{ name: string; sku: number | string; quantity?: number; vendor_code?: string }> | null;
   accruals_for_sale: number;
   sale_commission: number;          // обычно отрицательная
   delivery_charge: number;          // обычно отрицательная

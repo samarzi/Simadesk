@@ -106,7 +106,7 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
             <div style="margin-top:5px;color:var(--text3);font-size:10.5px">
               ${(window as any).analyticsModule?._autoSyncing
                 ? `<span style="display:inline-flex;align-items:center;gap:6px;color:#60a5fa"><span class="an2-mini-spinner"></span>Подтягиваем финотчёт за период из Ozon/WB/ЯМ…</span>`
-                : `Идёт автоматическая синхронизация. Если процент не растёт — нажми <span style="color:var(--text2)">↻</span> или проверь доступ API в Маркетплейсах.`}
+                : `Нажми кнопку <strong style="color:var(--text2)">Обновить</strong> чтобы подтянуть финотчёт из маркетплейса. Если не помогает — проверь API-ключ в разделе «Маркетплейсы».`}
             </div>
           ` : ''}
           ${hasMissing ? `<div${lowReportPct ? ' style="margin-top:6px"' : ''}>В <strong>${k.missing_cogs_orders}</strong> заказах не указана себестоимость — прибыль занижена.</div>` : ''}
