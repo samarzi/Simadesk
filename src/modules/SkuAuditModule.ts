@@ -16,13 +16,21 @@ import { skuEditLog, type EditField } from '@/services/skuEditLog';
 import { helpBtn } from '@/services/helpModal';
 import type { OzonStore } from '@/types/ozon';
 import type { YandexStore } from '@/types/yandex';
+// import type { WbStore } from '@/types/wb'; // Reserved for future WB inline editing
 
 type Marketplace = 'wb' | 'ozon' | 'yandex';
+
+interface StoreInfo {
+  id: string;
+  name: string;
+  mp: Marketplace;
+}
 
 interface AuditItem {
   id: string;               // nmId / offer_id / offer_id
   marketplace: Marketplace;
   storeId: string;
+  storeName: string;        // название магазина
   title: string;
   vendorCode: string;
   brand: string;
@@ -54,10 +62,14 @@ export class SkuAuditModule {
   private sortKey: SortKey = 'score';
   private sortDir: 'asc' | 'desc' = 'asc';
   private gradeFilter: '' | 'A' | 'B' | 'C' | 'D' = '';
-  // Stores cached for editing
+  // Stores cached for editing and filters
+  private allStores: StoreInfo[] = [];
   private ozonStores: OzonStore[] = [];
+  // private wbStores: WbStore[] = []; // Reserved for WB inline editing (requires full card data + content API v2)
   private ymStores: YandexStore[] = [];
+  // Filters
   private mpFilter: '' | Marketplace = '';
+  private storeFilter = ''; // store ID
 
   constructor(container: HTMLElement) { this.container = container; }
 
@@ -81,31 +93,37 @@ export class SkuAuditModule {
         ozonDb.getStores().catch(() => []),
         yandexDb.getStores().catch(() => []),
       ]);
-      void wbSt; // WB editing requires full card data — reserved for future use
+      
+      // this.wbStores = wbSt; // Reserved for future WB inline editing
       this.ozonStores = ozSt;
       this.ymStores = ymSt;
+      
+      // Сохраняем все магазины для фильтра
+      this.allStores = [
+        ...wbSt.map(s => ({ id: s.id, name: s.name, mp: 'wb' as Marketplace })),
+        ...ozSt.map(s => ({ id: s.id, name: s.name, mp: 'ozon' as Marketplace })),
+        ...ymSt.map(s => ({ id: s.id, name: s.name, mp: 'yandex' as Marketplace })),
+      ];
+
+      // Создаём карту для быстрого поиска названия магазина
+      const storeNameMap = new Map<string, string>();
+      this.allStores.forEach(s => storeNameMap.set(s.id, s.name));
 
       const audited: AuditItem[] = [];
 
       for (const p of wbProducts) {
-        audited.push(this.auditWb(p));
+        audited.push(this.auditWb(p, storeNameMap.get(p.store_id) || 'Без названия'));
       }
       for (const p of ozonProducts) {
-        audited.push(this.auditOzon(p));
+        audited.push(this.auditOzon(p, storeNameMap.get(p.store_id) || 'Без названия'));
       }
       for (const p of yandexProducts) {
-        audited.push(this.auditYandex(p));
+        audited.push(this.auditYandex(p, storeNameMap.get(p.store_id) || 'Без названия'));
       }
 
-      // Дедупликация: в пределах каждого маркетплейса — один артикул один раз
-      // (убираем дубли из разных магазинов одного МП)
-      const seen = new Map<string, boolean>(); // "mp:vendorCode" -> true
-      this.items = audited.filter(item => {
-        const key = `${item.marketplace}:${(item.vendorCode || item.id || '').toLowerCase().trim()}`;
-        if (seen.has(key)) return false;
-        seen.set(key, true);
-        return true;
-      });
+      // ИСПРАВЛЕНИЕ: убираем дедупликацию по vendorCode — каждый товар уникален по (marketplace, storeId, id)
+      // Разные магазины могут иметь одинаковые артикулы, и это нормально!
+      this.items = audited;
     } catch (e) {
       console.error('[SkuAudit]', e);
     }
@@ -129,7 +147,7 @@ export class SkuAuditModule {
     return s >= 80 ? 'A' : s >= 60 ? 'B' : s >= 40 ? 'C' : 'D';
   }
 
-  private auditWb(p: any): AuditItem {
+  private auditWb(p: any, storeName: string): AuditItem {
     const photoCount = p.pictures?.length ?? 0;
     const titleLen = (p.title ?? '').length;
     const { score, issues, tips } = this.score([
@@ -164,6 +182,7 @@ export class SkuAuditModule {
       id: String(p.nm_id),
       marketplace: 'wb',
       storeId: p.store_id,
+      storeName,
       title: p.title || '—',
       vendorCode: p.vendor_code || '',
       brand: p.brand || '',
@@ -173,10 +192,11 @@ export class SkuAuditModule {
       price: p.price ?? null,
       stock: p.stock_total ?? 0,
       score, grade: this.grade(score), issues, tips,
+      rawPictures: p.pictures ?? [],
     };
   }
 
-  private auditOzon(p: any): AuditItem {
+  private auditOzon(p: any, storeName: string): AuditItem {
     const photoCount = p.images?.length ?? 0;
     const nameLen = (p.name ?? '').length;
     const { score, issues, tips } = this.score([
@@ -210,6 +230,7 @@ export class SkuAuditModule {
       id: p.offer_id,
       marketplace: 'ozon',
       storeId: p.store_id,
+      storeName,
       title: p.name || '—',
       vendorCode: p.offer_id || '',
       brand: '',
@@ -224,7 +245,7 @@ export class SkuAuditModule {
     };
   }
 
-  private auditYandex(p: any): AuditItem {
+  private auditYandex(p: any, storeName: string): AuditItem {
     const photoCount = p.pictures?.length ?? 0;
     const nameLen = (p.name ?? '').length;
     const { score, issues, tips } = this.score([
@@ -257,6 +278,7 @@ export class SkuAuditModule {
       id: p.offer_id,
       marketplace: 'yandex',
       storeId: p.store_id,
+      storeName,
       title: p.name || '—',
       vendorCode: p.offer_id || '',
       brand: p.vendor || '',
@@ -266,6 +288,7 @@ export class SkuAuditModule {
       price: p.basic_price ?? null,
       stock: p.stock_total ?? 0,
       score, grade: this.grade(score), issues, tips,
+      rawPictures: p.pictures ?? [],
     };
   }
 
@@ -276,6 +299,7 @@ export class SkuAuditModule {
   private get filtered(): AuditItem[] {
     let list = [...this.items];
     if (this.mpFilter) list = list.filter(i => i.marketplace === this.mpFilter);
+    if (this.storeFilter) list = list.filter(i => i.storeId === this.storeFilter);
     if (this.gradeFilter) list = list.filter(i => i.grade === this.gradeFilter);
     if (this.search) {
       const q = this.search.toLowerCase();
@@ -283,6 +307,7 @@ export class SkuAuditModule {
         i.title.toLowerCase().includes(q) ||
         i.vendorCode.toLowerCase().includes(q) ||
         i.brand.toLowerCase().includes(q) ||
+        i.storeName.toLowerCase().includes(q) ||
         i.id.toLowerCase().includes(q),
       );
     }
@@ -301,7 +326,16 @@ export class SkuAuditModule {
 
   setSearch(q: string) { this.search = q; this.render(); }
   setGradeFilter(g: string) { this.gradeFilter = g as any; this.render(); }
-  setMpFilter(mp: string) { this.mpFilter = mp as any; this.render(); }
+  setMpFilter(mp: string) { 
+    this.mpFilter = mp as any; 
+    // Сбрасываем фильтр магазина если сменили МП
+    if (mp && this.storeFilter) {
+      const store = this.allStores.find(s => s.id === this.storeFilter);
+      if (!store || store.mp !== mp) this.storeFilter = '';
+    }
+    this.render(); 
+  }
+  setStoreFilter(storeId: string) { this.storeFilter = storeId; this.render(); }
   setSort(key: SortKey) {
     if (this.sortKey === key) this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
     else { this.sortKey = key; this.sortDir = 'asc'; }
@@ -340,6 +374,12 @@ export class SkuAuditModule {
     const wbCount = this.items.filter(i => i.marketplace === 'wb').length;
     const ozonCount = this.items.filter(i => i.marketplace === 'ozon').length;
     const yandexCount = this.items.filter(i => i.marketplace === 'yandex').length;
+
+    // Группировка по магазинам для дропдауна
+    const storesForFilter = this.allStores.filter(s => {
+      if (!this.mpFilter) return true;
+      return s.mp === this.mpFilter;
+    });
 
     const sortArrow = (k: SortKey) => this.sortKey === k ? (this.sortDir === 'asc' ? ' ↑' : ' ↓') : '';
 
@@ -405,11 +445,24 @@ export class SkuAuditModule {
             ` : '').join('')}
           </div>
 
-          <!-- Toolbar -->
-          <div style="display:flex;align-items:center;gap:8px;padding:10px 24px;border-bottom:1px solid var(--border)">
-            <input type="text" class="oz-search" placeholder="Поиск по названию, ID, бренду…"
+          <!-- Toolbar with filters -->
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 24px;border-bottom:1px solid var(--border);flex-wrap:wrap">
+            <input type="text" class="oz-search" placeholder="Поиск по названию, ID, магазину…"
               value="${this.search}" oninput="window.skuAuditModule.setSearch(this.value)"
-              style="flex:1;max-width:360px">
+              style="flex:1;max-width:360px;min-width:180px">
+            
+            ${storesForFilter.length > 0 ? `
+              <select onchange="window.skuAuditModule.setStoreFilter(this.value)" 
+                style="padding:7px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;cursor:pointer">
+                <option value="">Все магазины${this.mpFilter ? ' (' + MP_LABEL[this.mpFilter] + ')' : ''}</option>
+                ${storesForFilter.map(s => `
+                  <option value="${s.id}" ${this.storeFilter === s.id ? 'selected' : ''}>
+                    ${s.name}${!this.mpFilter ? ' · ' + MP_LABEL[s.mp] : ''}
+                  </option>
+                `).join('')}
+              </select>
+            ` : ''}
+            
             <span style="font-size:12px;color:var(--text-2);margin-left:auto">${list.length.toLocaleString('ru')} из ${total}</span>
           </div>
 
@@ -419,6 +472,7 @@ export class SkuAuditModule {
               <thead>
                 <tr style="background:var(--bg-2);position:sticky;top:0;z-index:1">
                   <th style="padding:10px 24px;text-align:left;font-weight:600;color:var(--text-2);cursor:pointer" onclick="window.skuAuditModule.setSort('mp')">МП${sortArrow('mp')}</th>
+                  <th style="padding:10px 8px;text-align:left;font-weight:600;color:var(--text-2)">Магазин</th>
                   <th style="padding:10px 8px;text-align:left;font-weight:600;color:var(--text-2);cursor:pointer" onclick="window.skuAuditModule.setSort('title')">Товар${sortArrow('title')}</th>
                   <th style="padding:10px 12px;text-align:center;font-weight:600;color:var(--text-2);cursor:pointer" onclick="window.skuAuditModule.setSort('photos')">Фото${sortArrow('photos')}</th>
                   <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--text-2)">Проблемы</th>
@@ -473,6 +527,9 @@ export class SkuAuditModule {
         onclick="window.skuAuditModule.openDetail('${item.id.replace(/'/g, "\\'")}','${item.marketplace}')">
         <td style="padding:10px 24px">
           <span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:10px;white-space:nowrap;background:${MP_COLOR[item.marketplace]}18;color:${MP_COLOR[item.marketplace]}">${MP_LABEL[item.marketplace]}</span>
+        </td>
+        <td style="padding:10px 8px">
+          <div style="font-size:11px;color:var(--text-2);font-weight:600;margin-bottom:4px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${item.storeName}">${item.storeName}</div>
         </td>
         <td style="padding:10px 8px">
           <div style="display:flex;align-items:center;gap:10px">
@@ -729,7 +786,7 @@ export class SkuAuditModule {
     try {
       setStatus('Отправляем в ' + (mp === 'wb' ? 'WB' : mp === 'ozon' ? 'Ozon' : 'ЯМ') + '…');
 
-      const nextStepsMsg = `Изменение отправлено. <b>Маркетплейс может применить его не сразу</b> — проверка модератора занимает от нескольких минут до 24 часов. Нажмите <b>«↻ Обновить из МП»</b> сверху, чтобы загрузить актуальные данные.`;
+      const nextStepsMsg = `Изменение отправлено. <b>Маркетплейс может применить его не сразу</b> — проверка модератора занимает от нескольких минут до 24 часов. Сейчас загрузим актуальные данные из МП.`;
 
       if (mp === 'ozon') {
         const store = this.ozonStores.find(s => s.id === item.storeId);
@@ -739,6 +796,7 @@ export class SkuAuditModule {
         if (field === 'name') {
           const newName = (document.getElementById(`ief-${productId}-name`) as HTMLTextAreaElement)?.value.trim();
           if (!newName) throw new Error('Название не может быть пустым');
+          if (newName.length > 500) throw new Error('Название слишком длинное (макс. 500 символов)');
           if (newName === item.title) throw new Error('Название не изменилось');
           logEntry.oldValue = item.title;
           logEntry.newValue = newName;
@@ -750,6 +808,7 @@ export class SkuAuditModule {
           const raw = (document.getElementById(`ief-${productId}-photos`) as HTMLTextAreaElement)?.value;
           const urls = raw.split('\n').map(u => u.trim()).filter(u => u.startsWith('http'));
           if (!urls.length) throw new Error('Нет валидных ссылок на фото');
+          if (urls.length > 15) throw new Error('Максимум 15 фото для Ozon');
           logEntry.oldValue = (item.rawImages ?? []).join(',');
           logEntry.newValue = urls.join(',');
           if (logEntry.oldValue === logEntry.newValue) throw new Error('Фото не изменились');
@@ -786,6 +845,7 @@ export class SkuAuditModule {
         if (field === 'name') {
           const newName = (document.getElementById(`ief-${productId}-name`) as HTMLTextAreaElement)?.value.trim();
           if (!newName) throw new Error('Название не может быть пустым');
+          if (newName.length > 512) throw new Error('Название слишком длинное (макс. 512 символов)');
           if (newName === item.title) throw new Error('Название не изменилось');
           const businessId = store.business_id ?? await yandexApi.getBusinessId(store.api_key, store.campaign_id!);
           if (!businessId) throw new Error('Не удалось получить business_id');
@@ -802,13 +862,15 @@ export class SkuAuditModule {
         }
       }
 
-      // ВАЖНО: НЕ обновляем item.title / item.brand / item.rawImages локально!
-      // Иначе reconcile получит совпадение newValue === currentValue и сразу пометит «обновлено»,
-      // хотя реальный МП может ещё не применить изменение.
-      // Статус обновится только после клика «↻ Обновить из МП» (перезагрузка с реальных данных).
+      // ИСПРАВЛЕНИЕ: автоматически перезагружаем данные из МП после успешной отправки
+      // Это нужно чтобы пользователь сразу увидел обновлённые данные
+      setTimeout(async () => {
+        setStatus('Загружаем актуальные данные из маркетплейса…');
+        await this.reload();
+        // Закрываем модальное окно после reload
+        document.querySelector('[style*="position:fixed"]')?.remove();
+      }, 2000);
 
-      // Перерисовываем чтобы показать бейдж «на модерации»
-      setTimeout(() => this.render(), 800);
     } catch (e: any) {
       try { skuEditLog.recordError(logEntry, e.message || String(e)); } catch (e) { debug.warn('[SkuAuditModule] swallowed error', e); }
       setStatus(`✗ ${e.message}`, false, true);
