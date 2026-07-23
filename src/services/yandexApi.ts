@@ -418,7 +418,7 @@ export const yandexApi = {
 
     // Вызываем оба метода — у разных типов кампаний работает разный
     await Promise.all([
-      yandexFetch(`/businesses/${businessId}/offer-mappings/update`, 'POST', apiKey, mappingsBody, signal)
+      yandexFetch(`/v2/businesses/${businessId}/offer-mappings/update`, 'POST', apiKey, mappingsBody, signal)
         .catch(e => console.warn('[YM] offer-mappings/update failed:', e?.message)),
       yandexFetch(`/v2/businesses/${businessId}/offer-prices/updates`, 'POST', apiKey, pricesBody, signal)
         .catch(e => console.warn('[YM] offer-prices/updates failed:', e?.message)),
@@ -439,7 +439,7 @@ export const yandexApi = {
     try {
       // Получаем список всех активных промо
       const resp = await yandexFetch<any>(
-        `/businesses/${businessId}/promos`,
+        `/v2/businesses/${businessId}/promos`,
         'POST',
         apiKey,
         { statuses: ['ACTIVE', 'UPCOMING'] },
@@ -452,7 +452,7 @@ export const yandexApi = {
         const promoId: string = promo.id;
         try {
           await yandexFetch(
-            `/businesses/${businessId}/promos/offers/delete`,
+            `/v2/businesses/${businessId}/promos/offers/delete`,
             'POST',
             apiKey,
             { promoId, deleteAllOffers: false, offerIds },
@@ -603,24 +603,25 @@ export const yandexApi = {
     signal?: AbortSignal,
     businessId?: number | null,
   ): Promise<void> {
-    const fbIdNum = Number(feedbackId);
-    if (!isFinite(fbIdNum) || fbIdNum <= 0) {
-      throw new Error(`Некорректный feedbackId: "${feedbackId}" — должен быть число`);
+    // feedbackId — Int64, не конвертируем в number чтобы не потерять точность
+    if (!feedbackId || feedbackId === '0') {
+      throw new Error(`Некорректный feedbackId: "${feedbackId}"`);
     }
+    console.log(`[YM replyFeedback] → businessId=${businessId} feedbackId=${feedbackId} mp=${campaignId ? 'campaign:'+campaignId : 'unknown'}`);
     if (businessId) {
       let firstErr: any = null;
       try {
         await yandexFetch(
-          `/businesses/${businessId}/goods-feedback/comments`,
+          `/businesses/${businessId}/goods-feedback/${feedbackId}/response`,
           'POST', apiKey,
-          { feedbackId: fbIdNum, comment: { text } },   // именно число!
+          { text },
           signal,
         );
+        console.log(`[YM replyFeedback] ✓ success via new endpoint`);
         return;
       } catch (e) {
         firstErr = e;
         console.warn('[YM replyFeedback] new endpoint failed:', (e as any)?.message);
-        // fallback to old endpoint only if not 403/permission
         const msg = String((e as any)?.message ?? '');
         if (msg.includes('403') || msg.includes('Forbidden') || msg.includes('Permission')) {
           throw e;
@@ -631,12 +632,14 @@ export const yandexApi = {
           `/v2/campaigns/${campaignId}/feedback/updates/${feedbackId}/respond`,
           'POST', apiKey, { text }, signal,
         );
-      } catch (e2) {
-        // Если оба упали — кидаем самую первую ошибку
+        console.log(`[YM replyFeedback] ✓ success via old endpoint`);
+      } catch (e2: any) {
+        console.error(`[YM replyFeedback] ✗ both endpoints failed`, firstErr?.message, e2?.message);
         throw firstErr ?? e2;
       }
       return;
     }
+    console.warn(`[YM replyFeedback] businessId is null — using old endpoint`);
     await yandexFetch(
       `/v2/campaigns/${campaignId}/feedback/updates/${feedbackId}/respond`,
       'POST', apiKey, { text }, signal,
@@ -822,8 +825,11 @@ export async function fetchAllYandexProducts(
         const cur = stocksMap.get(offer.offerId) ?? { total: 0, available: 0 };
         for (const s of offer.stocks ?? []) {
           const cnt = Number(s.count) || 0;
-          cur.total += cnt;
-          if (s.type === 'FIT' || s.type === 'AVAILABLE') cur.available += cnt;
+          // считаем только FIT/AVAILABLE — Яндекс ЛК показывает именно это
+          if (s.type === 'FIT' || s.type === 'AVAILABLE') {
+            cur.total += cnt;
+            cur.available += cnt;
+          }
         }
         stocksMap.set(offer.offerId, cur);
       }
