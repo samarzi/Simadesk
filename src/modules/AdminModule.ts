@@ -78,6 +78,13 @@ export class AdminModule {
   private liveChatLastMsgTime: string | null = null;
   private liveAttachFiles: SupportAttachment[] = [];
   private liveChatFilter: 'open' | 'all' = 'open';
+
+  /* support AI auto-reply */
+  private supAiEnabled: boolean = localStorage.getItem('sd_sup_ai_enabled') === '1';
+  private supAiModel: string = localStorage.getItem('sd_sup_ai_model') || 'anthropic/claude-haiku-4-5';
+  private supNeedsAttention: Set<string> = new Set();  // chat IDs flagged for human
+  private supAiProcessing: Set<string> = new Set();    // currently calling AI
+  private supAiHandled: Map<string, string> = new Map(); // chatId → last AI reply time
   private apiSearch = '';
   private apiFilter: 'all' | 'active' | 'trial' | 'expired' = 'all';
   private inlineEdit: string | null = null; // company_id being edited inline
@@ -1038,15 +1045,19 @@ export class AdminModule {
       const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Пользователь';
       const isActive = this.activeLiveChat?.id === c.id;
       const preview = c.last_message ? this.esc(c.last_message.slice(0, 60)) : '—';
-      const badge = c.unread_count > 0
+      const unreadBadge = c.unread_count > 0
         ? `<span class="adm-live-badge">${c.unread_count}</span>` : '';
+      const attBadge = this.supNeedsAttention.has(c.id)
+        ? `<span class="adm-live-attention" title="Нужен оператор">🔴</span>` : '';
+      const aiBadge = this.supAiHandled.has(c.id) && !this.supNeedsAttention.has(c.id)
+        ? `<span title="ИИ ответил" style="font-size:11px;opacity:0.6">🤖</span>` : '';
       const time = c.last_message_at ? supportChatService.fmtTime(c.last_message_at) : '';
       return `<div class="adm-live-chat-row${isActive ? ' active' : ''}" data-live-chat-id="${c.id}">
         <div class="adm-avatar-placeholder" style="width:36px;height:36px;font-size:14px;flex-shrink:0">${name[0].toUpperCase()}</div>
         <div class="adm-live-chat-row-body">
           <div class="adm-live-chat-row-head">
             <span class="adm-live-chat-name">${this.esc(name)}</span>
-            ${badge}
+            ${attBadge}${aiBadge}${unreadBadge}
             <span class="adm-live-chat-time">${time}</span>
           </div>
           <div class="adm-live-chat-reason">${REASON_LABELS[c.reason] ?? c.reason}</div>
@@ -1062,7 +1073,28 @@ export class AdminModule {
       ? this.renderLiveChatDetail(this.activeLiveChat)
       : `<div class="adm-live-empty" style="flex:1">Выберите чат слева</div>`;
 
-    return `<div class="adm-live-layout">
+    const aiModels = [
+      { id: 'anthropic/claude-haiku-4-5', label: 'Claude Haiku 4.5 (быстрый, дешёвый)' },
+      { id: 'anthropic/claude-sonnet-4-5', label: 'Claude Sonnet 4.5 (умнее)' },
+      { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini' },
+      { id: 'openai/gpt-4o', label: 'GPT-4o' },
+      { id: 'google/gemini-flash-1.5', label: 'Gemini Flash 1.5' },
+    ];
+
+    return `
+    <div class="adm-sup-ai-bar">
+      <label class="adm-sup-ai-toggle" title="ИИ автоматически отвечает на очевидные вопросы. Если не уверен — помечает чат 🔴">
+        <span class="adm-sup-ai-toggle-track${this.supAiEnabled ? ' on' : ''}" id="sup-ai-toggle-track">
+          <span class="adm-sup-ai-toggle-thumb"></span>
+        </span>
+        <span class="adm-sup-ai-toggle-label">AI-автоответы</span>
+      </label>
+      <select class="adm-input adm-sup-ai-model-sel" id="sup-ai-model-sel" style="width:auto;padding:4px 8px;font-size:12px">
+        ${aiModels.map(m => `<option value="${m.id}"${this.supAiModel === m.id ? ' selected' : ''}>${m.label}</option>`).join('')}
+      </select>
+      <span class="adm-sup-ai-hint">${this.supAiEnabled ? '🟢 Включено' : '⚫ Выключено'} · Нужна помощь: <b>${this.supNeedsAttention.size}</b></span>
+    </div>
+    <div class="adm-live-layout">
       <div class="adm-live-sidebar">
         <div class="adm-live-sidebar-head">
           <span>Чаты</span>
@@ -1122,6 +1154,23 @@ export class AdminModule {
   }
 
   private bindLiveChatEvents(): void {
+    // AI toggle
+    const aiTrack = this.el.querySelector<HTMLElement>('#sup-ai-toggle-track');
+    aiTrack?.addEventListener('click', () => {
+      this.supAiEnabled = !this.supAiEnabled;
+      localStorage.setItem('sd_sup_ai_enabled', this.supAiEnabled ? '1' : '0');
+      aiTrack.classList.toggle('on', this.supAiEnabled);
+      const hint = this.el.querySelector<HTMLElement>('.adm-sup-ai-hint');
+      if (hint) hint.innerHTML = `${this.supAiEnabled ? '🟢 Включено' : '⚫ Выключено'} · Нужна помощь: <b>${this.supNeedsAttention.size}</b>`;
+    });
+
+    // AI model selector
+    const modelSel = this.el.querySelector<HTMLSelectElement>('#sup-ai-model-sel');
+    modelSel?.addEventListener('change', () => {
+      this.supAiModel = modelSel.value;
+      localStorage.setItem('sd_sup_ai_model', this.supAiModel);
+    });
+
     // Filter toggle
     this.el.querySelectorAll<HTMLElement>('[data-live-filter]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -1308,6 +1357,32 @@ export class AdminModule {
           });
         }
 
+        // AI auto-reply: check all open chats for unanswered user messages
+        if (this.supAiEnabled) {
+          for (const chat of chats) {
+            if (this.supAiProcessing.has(chat.id)) continue;
+            // Only trigger if last message is from user
+            if (chat.last_message_role !== 'user') continue;
+            // Don't re-trigger if AI already replied recently
+            const lastAiTime = this.supAiHandled.get(chat.id);
+            if (lastAiTime && chat.last_message_at && lastAiTime >= chat.last_message_at) continue;
+            // Fetch full chat to get message history
+            supportChatService.adminGetChat(chat.id).then(full => {
+              if (!full?.messages?.length) return;
+              const msgs = full.messages;
+              const lastMsg = msgs.at(-1);
+              if (!lastMsg || lastMsg.sender_role !== 'user') return;
+              // Check for dissatisfaction after AI reply
+              if (this.supAiHandled.has(chat.id) && this.DISSATISFACTION_PATTERNS.test(lastMsg.content)) {
+                this.supNeedsAttention.add(chat.id);
+                this.updateAttentionBadge(chat.id);
+                return;
+              }
+              this.runSupAiReply(chat.id, msgs);
+            }).catch(() => {});
+          }
+        }
+
         // Poll new messages if a chat is open
         if (this.activeLiveChat) {
           const newMsgs = await supportChatService.getMessagesSince(this.activeLiveChat.id, this.liveChatLastMsgTime);
@@ -1346,6 +1421,93 @@ export class AdminModule {
 
   private stopLiveChatPolling(): void {
     if (this.liveChatPollTimer) { clearInterval(this.liveChatPollTimer); this.liveChatPollTimer = null; }
+  }
+
+  // ── Support AI auto-reply ────────────────────────────────────────────────────
+
+  private readonly SIMADESK_KNOWLEDGE = `SimaDesk — система управления маркетплейсами. Разделы:
+• Обзор (Дашборд) — сводка: выручка, заказы, остатки, задачи дня
+• Товары — управление карточками товаров WB/Ozon/Яндекс, цены, SEO, массовое редактирование
+• Остатки (Склад) — текущие остатки по складам, планирование поставок, риски обнуления
+• Заказы — все заказы с маркетплейсов в одном месте, статусы, фильтры
+• Аналитика — графики продаж, выручки, прибыли; сравнение периодов; ABC-анализ
+• Репрайсер — автоматическое изменение цен по правилам (конкуренты, маржа, акции)
+• Отзывы — мониторинг и быстрые ответы на отзывы покупателей
+• Реклама — управление рекламными кампаниями и ставками
+• Задачи — планировщик задач команды
+• Настройки — подключение магазинов WB/Ozon/Яндекс, API-ключи, тарифы
+• Редактор (Docs) — встроенный Excel/Word редактор для работы с файлами
+• Сима (ИИ-помощник) — AI-менеджер маркетплейсов, открывается кнопкой Сима
+
+Навигация: левое боковое меню, иконки разделов. Горячие клавиши: Alt+1…9.`;
+
+  private readonly DISSATISFACTION_PATTERNS = /не (то|так|правильно|понял|понимаю|помогло)|нет[,.]?\s*(не|это)|это не|не об этом|другой вопрос|вы не поняли|всё равно не|по-прежнему|так и не|не решил|не работает|не помогает/i;
+
+  private async runSupAiReply(chatId: string, messages: Array<{ sender_role: string; content: string }>): Promise<void> {
+    const apiKey = sessionStorage.getItem('sd_ai_key') || '';
+    if (!apiKey) return;
+
+    this.supAiProcessing.add(chatId);
+    try {
+      const history = messages.slice(-8).map(m => ({
+        role: m.sender_role === 'user' ? 'user' : 'assistant',
+        content: m.content || '',
+      }));
+
+      const systemPrompt = `Ты — сотрудник поддержки SimaDesk. Отвечай на русском языке, кратко и по делу.
+
+${this.SIMADESK_KNOWLEDGE}
+
+Правила:
+1. Если вопрос очевидный (про навигацию, где найти функцию, как что-то сделать в SimaDesk) — дай подробный ответ с указанием раздела.
+2. Если вопрос неоднозначный, требует доступа к данным пользователя, или ты не уверен — НЕ придумывай ответ.
+3. В конце ВСЕГДА добавь на отдельной строке: [УВЕРЕН:да] или [УВЕРЕН:нет]
+4. Не добавляй лишних извинений и вводных фраз. Начинай сразу с ответа.`;
+
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': window.location.origin,
+          'X-Title': 'SimaDesk Support AI',
+        },
+        body: JSON.stringify({
+          model: this.supAiModel,
+          messages: [{ role: 'system', content: systemPrompt }, ...history],
+          max_tokens: 600,
+          temperature: 0.3,
+        }),
+      });
+
+      if (!res.ok) return;
+      const data = await res.json();
+      let reply: string = data?.choices?.[0]?.message?.content ?? '';
+      if (!reply) return;
+
+      const confidentMatch = reply.match(/\[УВЕРЕН:(да|нет)\]/i);
+      const confident = confidentMatch?.[1]?.toLowerCase() === 'да';
+      reply = reply.replace(/\[УВЕРЕН:(да|нет)\]/gi, '').trim();
+
+      if (confident) {
+        await supportChatService.adminSendMessage(chatId, reply);
+        this.supAiHandled.set(chatId, new Date().toISOString());
+        this.supNeedsAttention.delete(chatId);
+      } else {
+        this.supNeedsAttention.add(chatId);
+        this.updateAttentionBadge(chatId);
+      }
+    } catch { /* ignore AI errors */ } finally {
+      this.supAiProcessing.delete(chatId);
+    }
+  }
+
+  private updateAttentionBadge(chatId: string): void {
+    const row = this.el.querySelector<HTMLElement>(`.adm-live-chat-row[data-live-chat-id="${chatId}"]`);
+    if (!row) return;
+    if (!row.querySelector('.adm-live-attention')) {
+      row.querySelector('.adm-live-chat-row-head')?.insertAdjacentHTML('afterbegin', '<span class="adm-live-attention" title="Нужен оператор">🔴</span>');
+    }
   }
 
   // ── SETTINGS ──────────────────────────────────────────────────────────────────
