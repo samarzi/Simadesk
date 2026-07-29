@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Тарифы — SimaDesk</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    :root {
+      --bg: #F2F1EC; --surface: #FFFFFF; --border: #DDD9D0;
+      --text: #181820; --muted: #6E6B7A; --accent: #1E3FB0;
+      --accent-dim: rgba(30,63,176,.08);
+      --free: #16a34a; --starter: #6366f1; --business: #7c3aed; --pro: #d97706; --max: #dc2626;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0E1016; --surface: #171B26; --border: #2A2F40;
+        --text: #DDE0EE; --muted: #7A80A0; --accent: #5C7CF0;
+        --accent-dim: rgba(92,124,240,.1);
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; font-size: 15px; line-height: 1.6; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 48px 24px 80px; }
+    .back { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); text-decoration: none; font-size: 13px; font-weight: 600; margin-bottom: 32px; }
+    .back:hover { opacity: .75; }
+    .logo { font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 8px; }
+    .header { text-align: center; margin-bottom: 16px; }
+    h1 { font-family: Georgia, serif; font-size: clamp(24px, 4vw, 36px); font-weight: 700; letter-spacing: -.02em; line-height: 1.15; margin-bottom: 12px; }
+    .subtitle { font-size: 15px; color: var(--muted); margin-bottom: 48px; }
+    .badge { display: inline-block; background: var(--accent-dim); color: var(--accent); font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px; margin-bottom: 12px; }
+
+    /* Grid */
+    .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 40px; }
+    .plan { background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px; padding: 20px 18px 22px; display: flex; flex-direction: column; position: relative; transition: border-color .2s; }
+    .plan:hover { border-color: var(--accent); }
+    .plan-dot { width: 8px; height: 8px; border-radius: 50%; margin-bottom: 14px; flex-shrink: 0; }
+    .plan-name { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+    .plan-revenue { font-size: 12px; color: var(--muted); margin-bottom: 16px; line-height: 1.4; }
+    .plan-price { font-family: Georgia, serif; font-size: 28px; font-weight: 700; letter-spacing: -.02em; margin-bottom: 4px; }
+    .plan-price span { font-size: 14px; font-weight: 400; color: var(--muted); }
+    .plan-note { font-size: 11px; color: var(--muted); margin-bottom: 18px; }
+    .plan-divider { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+    .plan-features { list-style: none; display: flex; flex-direction: column; gap: 7px; flex: 1; }
+    .plan-features li { font-size: 12px; color: var(--muted); display: flex; align-items: flex-start; gap: 6px; }
+    .plan-features li::before { content: "✓"; color: var(--accent); font-weight: 700; flex-shrink: 0; margin-top: 1px; }
+    .plan-features li.dim::before { content: "–"; color: var(--border); }
+    .plan-features li.dim { opacity: .5; }
+
+    /* Info blocks */
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 32px; }
+    @media (max-width: 600px) { .info-grid { grid-template-columns: 1fr; } .plans { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 420px) { .plans { grid-template-columns: 1fr; } }
+    .info-box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; font-size: 13px; }
+    .info-box strong { display: block; margin-bottom: 6px; font-size: 13px; }
+    .info-box p { color: var(--muted); line-height: 1.6; }
+
+    .faq { margin-bottom: 40px; }
+    .faq h2 { font-family: Georgia, serif; font-size: 20px; font-weight: 700; margin-bottom: 20px; }
+    .faq-item { border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .faq-item:last-child { border-bottom: none; }
+    .faq-q { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+    .faq-a { font-size: 13px; color: var(--muted); line-height: 1.6; }
+
+    .footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">← Назад в SimaDesk</a>
+
+  <div class="header">
+    <div class="logo">SimaDesk</div>
+    <div class="badge">Тарифы 2026</div>
+    <h1>Простая цена от оборота</h1>
+    <p class="subtitle">Платите пропорционально вашим продажам.<br>Тариф определяется автоматически по месячному обороту.</p>
+  </div>
+
+  <div class="plans">
+
+    <!-- Бесплатно -->
+    <div class="plan">
+      <div class="plan-dot" style="background:var(--free)"></div>
+      <div class="plan-name">Бесплатно</div>
+      <div class="plan-revenue">до 100 000 ₽/мес</div>
+      <div class="plan-price">0 <span>₽/мес</span></div>
+      <div class="plan-note">&nbsp;</div>
+      <hr class="plan-divider">
+      <ul class="plan-features">
+        <li>Все маркетплейсы (Ozon, WB, Яндекс)</li>
+        <li>Управление товарами</li>
+        <li>Аналитика продаж</li>
+        <li>Заказы и остатки</li>
+        <li class="dim">Репрайсер</li>
+        <li class="dim">Автобиддер</li>
+        <li class="dim">Уведомления в Telegram</li>
+      </ul>
+    </div>
+
+    <!-- Старт -->
+    <div class="plan">
+      <div class="plan-dot" style="background:var(--starter)"></div>
+      <div class="plan-name">Старт</div>
+      <div class="plan-revenue">100 000 — 500 000 ₽/мес</div>
+      <div class="plan-price">990 <span>₽/мес</span></div>
+      <div class="plan-note">≈ 33 ₽/день</div>
+      <hr class="plan-divider">
+      <ul class="plan-features">
+        <li>Все маркетплейсы (Ozon, WB, Яндекс)</li>
+        <li>Управление товарами</li>
+        <li>Аналитика продаж</li>
+        <li>Заказы и остатки</li>
+        <li>Репрайсер</li>
+        <li class="dim">Автобиддер</li>
+        <li>Уведомления в Telegram</li>
+      </ul>
+    </div>
+
+    <!-- Бизнес -->
+    <div class="plan">
+      <div class="plan-dot" style="background:var(--business)"></div>
+      <div class="plan-name">Бизнес</div>
+      <div class="plan-revenue">500 000 — 2 000 000 ₽/мес</div>
+      <div class="plan-price">2 490 <span>₽/мес</span></div>
+      <div class="plan-note">≈ 83 ₽/день</div>
+      <hr class="plan-divider">
+      <ul class="plan-features">
+        <li>Все маркетплейсы (Ozon, WB, Яндекс)</li>
+        <li>Управление товарами</li>
+        <li>Аналитика продаж</li>
+        <li>Заказы и остатки</li>
+        <li>Репрайсер</li>
+        <li>Автобиддер</li>
+        <li>Уведомления в Telegram</li>
+      </ul>
+    </div>
+
+    <!-- Про -->
+    <div class="plan">
+      <div class="plan-dot" style="background:var(--pro)"></div>
+      <div class="plan-name">Про</div>
+      <div class="plan-revenue">2 000 000 — 10 000 000 ₽/мес</div>
+      <div class="plan-price">4 990 <span>₽/мес</span></div>
+      <div class="plan-note">≈ 166 ₽/день</div>
+      <hr class="plan-divider">
+      <ul class="plan-features">
+        <li>Все маркетплейсы (Ozon, WB, Яндекс)</li>
+        <li>Управление товарами</li>
+        <li>Аналитика продаж</li>
+        <li>Заказы и остатки</li>
+        <li>Репрайсер</li>
+        <li>Автобиддер</li>
+        <li>Уведомления в Telegram</li>
+      </ul>
+    </div>
+
+    <!-- Макс -->
+    <div class="plan">
+      <div class="plan-dot" style="background:var(--max)"></div>
+      <div class="plan-name">Макс</div>
+      <div class="plan-revenue">от 10 000 000 ₽/мес</div>
+      <div class="plan-price">9 990 <span>₽/мес</span></div>
+      <div class="plan-note">≈ 333 ₽/день</div>
+      <hr class="plan-divider">
+      <ul class="plan-features">
+        <li>Все маркетплейсы (Ozon, WB, Яндекс)</li>
+        <li>Управление товарами</li>
+        <li>Аналитика продаж</li>
+        <li>Заказы и остатки</li>
+        <li>Репрайсер</li>
+        <li>Автобиддер</li>
+        <li>Уведомления в Telegram</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <div class="info-grid">
+    <div class="info-box">
+      <strong>Как определяется тариф?</strong>
+      <p>Система автоматически рассчитывает ваш тариф на основе суммарного оборота по всем подключённым маркетплейсам за последний месяц. Тариф обновляется ежемесячно.</p>
+    </div>
+    <div class="info-box">
+      <strong>14 дней бесплатно</strong>
+      <p>Новые пользователи получают 14-дневный пробный период с полным доступом ко всем функциям сервиса. Карта не требуется.</p>
+    </div>
+    <div class="info-box">
+      <strong>Оплата и возврат</strong>
+      <p>Оплата ежемесячно через ЮКасса (карты, СБП). Фискальные чеки по ФЗ-54 формируются автоматически. Возврат в течение 3 дней с первой оплаты — без вопросов.</p>
+    </div>
+    <div class="info-box">
+      <strong>Лицензионный платёж</strong>
+      <p>Платёж является лицензионным вознаграждением по договору на ПО (ГК РФ ст. 1235–1286). Физлица и ИП на УСН могут использовать это при расчёте налогов.</p>
+    </div>
+  </div>
+
+  <div class="faq">
+    <h2>Частые вопросы</h2>
+
+    <div class="faq-item">
+      <div class="faq-q">Что если оборот вырос и тариф изменился в середине месяца?</div>
+      <div class="faq-a">Тариф пересчитывается в начале следующего расчётного периода. В текущем месяце тариф остаётся прежним.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">Можно ли подключить сразу несколько маркетплейсов?</div>
+      <div class="faq-a">Да, на всех тарифах доступны Ozon, Wildberries и Яндекс Маркет без ограничений по количеству подключённых магазинов.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">Есть ли скидка при оплате за год?</div>
+      <div class="faq-a">Годовые тарифы находятся в разработке. Подпишитесь на уведомления в Telegram-боте — сообщим первыми.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">Что происходит с данными при отмене подписки?</div>
+      <div class="faq-a">Данные сохраняются. При возобновлении подписки вы продолжаете с того же места. Удаление данных — только по явному запросу через профиль.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">По каким вопросам обращаться в поддержку?</div>
+      <div class="faq-a">По вопросам оплаты, тарифов и возвратов: <a href="mailto:hello@simadesk.ru">hello@simadesk.ru</a> или через Telegram <a href="https://t.me/simadesk_bot" target="_blank" rel="noopener">@simadesk_bot</a>.</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    © 2026 SimaDesk · Мирзоев Расул Фажрудинович · Самозанятый · ИНН 052300979270<br>
+    <a href="/offer">Лицензионный договор</a> · <a href="/privacy">Политика конфиденциальности</a> · <a href="/">Войти в сервис</a>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SimaDesk — Маркетплейс-деск для продавцов</title>
+  <meta name="description" content="Аналитика, репрайсер, заказы, каталог и команда — всё в одном инструменте. Один тариф, все функции, честная цена по обороту.">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #05050a;
+      --bg2:     #0a0a12;
+      --card:    #0f0f18;
+      --card2:   #13131e;
+      --border:  rgba(255,255,255,.065);
+      --border2: rgba(255,255,255,.12);
+      --text:    #f0f0f5;
+      --text2:   rgba(240,240,245,.6);
+      --text3:   rgba(240,240,245,.33);
+      --accent:  #6366f1;
+      --accent2: rgba(99,102,241,.1);
+      --green:   #22c55e;
+      --green2:  rgba(34,197,94,.1);
+      --purple:  #a855f7;
+      --blue:    #3b82f6;
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* ── Scroll animations ── */
+    .reveal {
+      opacity: 0; transform: translateY(28px);
+      transition: opacity .65s cubic-bezier(.22,1,.36,1), transform .65s cubic-bezier(.22,1,.36,1);
+    }
+    .reveal.visible { opacity: 1; transform: none; }
+    .reveal-d1 { transition-delay: .05s; }
+    .reveal-d2 { transition-delay: .12s; }
+    .reveal-d3 { transition-delay: .19s; }
+    .reveal-d4 { transition-delay: .26s; }
+    .reveal-d5 { transition-delay: .33s; }
+    .reveal-d6 { transition-delay: .40s; }
+
+    /* ── Nav ── */
+    .nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 44px; height: 62px;
+      background: rgba(5,5,10,.7); backdrop-filter: blur(24px) saturate(1.4);
+      border-bottom: 1px solid rgba(255,255,255,.055);
+      transition: background .3s, border-color .3s;
+    }
+    .nav.scrolled { background: rgba(5,5,10,.92); border-color: rgba(255,255,255,.09); }
+    .nav-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-logo img { width: 28px; height: 28px; border-radius: 7px; }
+    .nav-logo-name { font-size: 16px; font-weight: 700; color: var(--text); }
+    .nav-links { display: flex; align-items: center; gap: 4px; }
+    .nav-link {
+      padding: 7px 14px; border-radius: 8px; font-size: 13.5px; font-weight: 500;
+      color: var(--text2); text-decoration: none; transition: all .15s;
+    }
+    .nav-link:hover { color: var(--text); background: rgba(255,255,255,.05); }
+    .nav-right { display: flex; align-items: center; gap: 8px; }
+    .nav-btn {
+      padding: 8px 18px; border-radius: 9px; font-size: 13.5px; font-weight: 600;
+      text-decoration: none; transition: all .15s; border: none; cursor: pointer; font-family: inherit;
+    }
+    .nav-btn.ghost { background: rgba(255,255,255,.06); color: var(--text2); }
+    .nav-btn.ghost:hover { background: rgba(255,255,255,.1); color: var(--text); }
+    .nav-btn.primary { background: var(--accent); color: #fff; }
+    .nav-btn.primary:hover { opacity: .86; }
+
+    /* ── Canvas bg ── */
+    #hero-canvas {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      pointer-events: none;
+    }
+
+    /* ── Hero ── */
+    .hero {
+      position: relative; padding: 160px 24px 120px; text-align: center; overflow: hidden;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column;
+    }
+    .hero-glow {
+      position: absolute; inset: 0; pointer-events: none;
+      background:
+        radial-gradient(ellipse 65% 55% at 50% -5%, rgba(99,102,241,.28) 0%, transparent 60%),
+        radial-gradient(ellipse 40% 30% at 80% 60%, rgba(168,85,247,.12) 0%, transparent 55%),
+        radial-gradient(ellipse 30% 25% at 15% 55%, rgba(59,130,246,.1) 0%, transparent 50%);
+    }
+    .hero-eyebrow {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 6px 16px; border-radius: 22px;
+      background: rgba(99,102,241,.12); border: 1px solid rgba(99,102,241,.24);
+      font-size: 12.5px; font-weight: 600; color: #a5b4fc;
+      letter-spacing: .04em; margin-bottom: 34px;
+      animation: fadeUp .8s cubic-bezier(.22,1,.36,1) both;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to   { opacity: 1; transform: none; }
+    }
+    .hero h1 {
+      font-size: clamp(42px, 7vw, 82px);
+      font-weight: 900; line-height: 1.03; letter-spacing: -.04em;
+      margin-bottom: 26px;
+      animation: fadeUp .9s .08s cubic-bezier(.22,1,.36,1) both;
+    }
+    .hero h1 .gr {
+      background: linear-gradient(125deg, #c7d2fe 0%, #818cf8 30%, #a78bfa 70%, #f0abfc 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .hero-sub {
+      font-size: clamp(16px, 2.2vw, 20px); color: var(--text2); line-height: 1.65;
+      max-width: 600px; margin: 0 auto 44px;
+      animation: fadeUp 1s .16s cubic-bezier(.22,1,.36,1) both;
+    }
+    .hero-cta {
+      display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
+      animation: fadeUp 1s .24s cubic-bezier(.22,1,.36,1) both;
+    }
+    .btn-hero-p {
+      padding: 15px 32px; border-radius: 12px;
+      background: linear-gradient(135deg, #6366f1, #818cf8);
+      color: #fff; font-size: 15.5px; font-weight: 700;
+      border: none; cursor: pointer; text-decoration: none; font-family: inherit;
+      box-shadow: 0 4px 28px rgba(99,102,241,.4);
+      transition: transform .15s, opacity .15s, box-shadow .15s;
+    }
+    .btn-hero-p:hover { transform: translateY(-2px); opacity: .9; box-shadow: 0 8px 40px rgba(99,102,241,.55); }
+    .btn-hero-s {
+      padding: 15px 32px; border-radius: 12px;
+      background: rgba(255,255,255,.06); color: var(--text2);
+      border: 1px solid var(--border2); font-size: 15.5px; font-weight: 600;
+      cursor: pointer; text-decoration: none; font-family: inherit;
+      transition: all .15s;
+    }
+    .btn-hero-s:hover { background: rgba(255,255,255,.1); color: var(--text); }
+    .hero-badges {
+      display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; margin-top: 50px;
+      animation: fadeUp 1s .36s cubic-bezier(.22,1,.36,1) both;
+    }
+    .hero-badge { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text3); }
+    .hero-badge svg { color: var(--green); flex-shrink: 0; }
+
+    /* ── Logos / trusted ── */
+    .trusted { padding: 0 24px 80px; text-align: center; }
+    .trusted-label { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text3); margin-bottom: 24px; }
+    .trusted-logos { display: flex; align-items: center; justify-content: center; gap: 40px; flex-wrap: wrap; }
+    .mp-logo {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 15px; font-weight: 700; color: rgba(255,255,255,.22);
+      transition: color .2s;
+    }
+    .mp-logo:hover { color: rgba(255,255,255,.45); }
+    .mp-logo svg { flex-shrink: 0; }
+
+    /* ── Stats ── */
+    .stats { padding: 0 24px 90px; }
+    .stats-inner { max-width: 900px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 20px; overflow: hidden; }
+    .stat-card { background: var(--card); padding: 28px 24px; text-align: center; }
+    .stat-val { font-size: 36px; font-weight: 900; letter-spacing: -.04em; margin-bottom: 6px; }
+    .stat-label { font-size: 13px; color: var(--text3); line-height: 1.4; }
+
+    /* ── Features showcase ── */
+    .showcase { padding: 0 24px 100px; max-width: 1080px; margin: 0 auto; }
+    .s-eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--text3); margin-bottom: 12px; text-align: center; }
+    .s-title { font-size: clamp(28px, 4vw, 42px); font-weight: 800; letter-spacing: -.03em; margin-bottom: 14px; text-align: center; line-height: 1.15; }
+    .s-sub { font-size: 16px; color: var(--text2); line-height: 1.65; text-align: center; max-width: 560px; margin: 0 auto 56px; }
+
+    .showcase-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    }
+    .sc-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 18px; padding: 26px 22px;
+      transition: border-color .2s, transform .2s;
+      cursor: default;
+    }
+    .sc-card:hover { border-color: var(--border2); transform: translateY(-3px); }
+    .sc-card.span2 { grid-column: span 2; }
+    .sc-icon {
+      width: 42px; height: 42px; border-radius: 12px;
+      display: flex; align-items: center; justify-content: center; margin-bottom: 16px;
+    }
+    .sc-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+    .sc-desc { font-size: 13px; color: var(--text2); line-height: 1.6; }
+    .sc-tag {
+      display: inline-block; margin-top: 12px; padding: 3px 10px; border-radius: 20px;
+      font-size: 11px; font-weight: 600; letter-spacing: .03em;
+    }
+    .sc-mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+    .sc-mini { background: var(--bg2); border-radius: 10px; padding: 10px 12px; font-size: 12px; color: var(--text2); }
+    .sc-mini strong { display: block; color: var(--text); font-weight: 600; margin-bottom: 2px; }
+
+    /* ── Pricing ── */
+    .pricing { padding: 0 24px 100px; max-width: 860px; margin: 0 auto; }
+    .toggle-wrap { display: flex; justify-content: center; align-items: center; gap: 14px; margin-bottom: 32px; }
+    .toggle-label { font-size: 13.5px; font-weight: 500; color: var(--text3); cursor: pointer; transition: color .15s; }
+    .toggle-label.on { color: var(--text); font-weight: 600; }
+    .toggle-pill {
+      width: 50px; height: 27px; border-radius: 14px;
+      background: var(--card2); border: 1px solid var(--border2);
+      cursor: pointer; position: relative; transition: background .22s;
+    }
+    .toggle-pill.on { background: var(--accent); border-color: var(--accent); }
+    .knob {
+      position: absolute; top: 3px; left: 3px;
+      width: 19px; height: 19px; border-radius: 50%;
+      background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.4);
+      transition: transform .22s cubic-bezier(.34,1.56,.64,1);
+    }
+    .toggle-pill.on .knob { transform: translateX(23px); }
+    .save-pill {
+      padding: 3px 10px; border-radius: 20px;
+      background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.22);
+      font-size: 11px; font-weight: 700; color: var(--green);
+    }
+
+    .pricing-statement {
+      background: linear-gradient(135deg, rgba(99,102,241,.12) 0%, rgba(168,85,247,.08) 100%);
+      border: 1px solid rgba(99,102,241,.2); border-radius: 20px; padding: 28px 32px;
+      margin-bottom: 20px; position: relative; overflow: hidden;
+    }
+    .pricing-statement::before {
+      content: ''; position: absolute; inset: 0;
+      background: radial-gradient(ellipse 80% 60% at 50% 130%, rgba(99,102,241,.12) 0%, transparent 60%);
+    }
+    .ps-tag {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 20px;
+      background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.22);
+      font-size: 11.5px; font-weight: 700; color: var(--green);
+      margin-bottom: 14px;
+    }
+    .ps-title { font-size: 20px; font-weight: 800; margin-bottom: 10px; letter-spacing: -.02em; }
+    .ps-text { font-size: 14px; color: var(--text2); line-height: 1.7; }
+    .ps-text strong { color: var(--text); }
+
+    .rev-table { border: 1px solid var(--border2); border-radius: 18px; overflow: hidden; }
+    .rev-head {
+      display: grid; grid-template-columns: 1fr 130px 140px;
+      padding: 12px 24px;
+      background: var(--card2);
+      font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text3);
+      border-bottom: 1px solid var(--border2);
+    }
+    .rev-head > *:not(:first-child) { text-align: right; }
+    .rev-row {
+      display: grid; grid-template-columns: 1fr 130px 140px;
+      align-items: center; padding: 0;
+      border-top: 1px solid var(--border);
+      transition: background .12s;
+      cursor: default;
+    }
+    .rev-row:first-of-type { border-top: none; }
+    .rev-row:hover { background: rgba(255,255,255,.022); }
+    .rev-cell { padding: 17px 24px; }
+    .rev-range { display: flex; align-items: center; gap: 11px; }
+    .rev-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .rev-name { font-size: 14.5px; color: var(--text); }
+    .rev-range-sub { font-size: 11.5px; color: var(--text3); margin-top: 2px; }
+    .rev-price { text-align: right; }
+    .rev-price-m { font-size: 18px; font-weight: 800; color: var(--text); transition: all .22s; white-space: nowrap; }
+    .rev-price-m.free { color: var(--green); }
+    .rev-price-y { font-size: 11.5px; color: var(--text3); margin-top: 2px; text-align: right; white-space: nowrap; display: none; }
+    .yearly .rev-price-y { display: block; }
+    .rev-save-cell { text-align: right; }
+    .rev-save-chip {
+      display: inline-flex; padding: 4px 11px; border-radius: 20px; white-space: nowrap;
+      font-size: 11.5px; font-weight: 700; color: var(--green);
+      background: rgba(34,197,94,.1); border: 1px solid rgba(34,197,94,.18);
+      opacity: 0; transition: opacity .25s;
+    }
+    .yearly .rev-save-chip { opacity: 1; }
+    .rev-free-always {
+      display: inline-flex; padding: 4px 11px; border-radius: 20px; white-space: nowrap;
+      font-size: 11.5px; font-weight: 700; color: var(--green);
+      background: rgba(34,197,94,.1); border: 1px solid rgba(34,197,94,.18);
+    }
+    .rev-note { margin-top: 16px; text-align: center; font-size: 13px; color: var(--text3); line-height: 1.65; }
+
+    /* ── Features list ── */
+    .features { padding: 0 24px 100px; max-width: 1000px; margin: 0 auto; }
+    .feat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .feat-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px 18px;
+      display: flex; gap: 14px; align-items: flex-start;
+      transition: border-color .15s, transform .2s;
+    }
+    .feat-card:hover { border-color: var(--border2); transform: translateY(-2px); }
+    .feat-icon { width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .feat-body { flex: 1; }
+    .feat-title { font-size: 13.5px; font-weight: 700; margin-bottom: 5px; }
+    .feat-desc { font-size: 12.5px; color: var(--text2); line-height: 1.55; }
+
+    /* ── How it works ── */
+    .how { padding: 0 24px 100px; max-width: 860px; margin: 0 auto; }
+    .how-timeline { position: relative; }
+    .how-timeline::before {
+      content: ''; position: absolute; left: 19px; top: 0; bottom: 0; width: 1px;
+      background: linear-gradient(to bottom, transparent, var(--border2) 15%, var(--border2) 85%, transparent);
+    }
+    .how-step { display: flex; gap: 24px; align-items: flex-start; padding: 0 0 36px; }
+    .how-step:last-child { padding-bottom: 0; }
+    .how-num-wrap { flex-shrink: 0; position: relative; z-index: 1; }
+    .how-num {
+      width: 39px; height: 39px; border-radius: 50%;
+      background: var(--card2); border: 1px solid var(--border2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 800; color: var(--accent);
+    }
+    .how-content { padding-top: 7px; }
+    .how-title { font-size: 16px; font-weight: 700; margin-bottom: 7px; }
+    .how-text { font-size: 14px; color: var(--text2); line-height: 1.65; }
+
+    /* ── FAQ ── */
+    .faq { padding: 0 24px 100px; max-width: 680px; margin: 0 auto; }
+    .faq-item { border-bottom: 1px solid var(--border); }
+    .faq-q {
+      width: 100%; background: none; border: none; text-align: left; padding: 20px 0;
+      cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      font-size: 15px; font-weight: 600; color: var(--text); font-family: inherit;
+      transition: color .15s;
+    }
+    .faq-q:hover { color: var(--accent); }
+    .faq-icon { flex-shrink: 0; color: var(--text3); transition: transform .22s, color .15s; }
+    .faq-item.open .faq-icon { transform: rotate(45deg); color: var(--accent); }
+    .faq-a {
+      max-height: 0; overflow: hidden;
+      font-size: 14px; color: var(--text2); line-height: 1.75;
+      transition: max-height .3s cubic-bezier(.4,0,.2,1), padding .3s;
+    }
+    .faq-item.open .faq-a { max-height: 300px; padding-bottom: 20px; }
+
+    /* ── CTA ── */
+    .cta-section { padding: 0 24px 120px; }
+    .cta-inner {
+      max-width: 700px; margin: 0 auto;
+      background: var(--card2); border: 1px solid rgba(99,102,241,.25); border-radius: 28px;
+      padding: 64px 48px; text-align: center; position: relative; overflow: hidden;
+    }
+    .cta-glow {
+      position: absolute; inset: 0; pointer-events: none;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(99,102,241,.22) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 30% at 80% 90%, rgba(168,85,247,.12) 0%, transparent 55%);
+    }
+    .cta-title { font-size: clamp(26px, 4vw, 38px); font-weight: 900; letter-spacing: -.04em; margin-bottom: 14px; line-height: 1.1; }
+    .cta-sub { font-size: 16px; color: var(--text2); line-height: 1.65; margin-bottom: 32px; max-width: 480px; margin-left: auto; margin-right: auto; }
+    .cta-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 28px; }
+    .btn-cta-p {
+      padding: 14px 32px; border-radius: 12px;
+      background: linear-gradient(135deg, #6366f1, #818cf8);
+      color: #fff; font-size: 15px; font-weight: 700;
+      border: none; cursor: pointer; text-decoration: none; font-family: inherit;
+      box-shadow: 0 4px 24px rgba(99,102,241,.35);
+      transition: transform .15s, opacity .15s;
+    }
+    .btn-cta-p:hover { transform: translateY(-2px); opacity: .88; }
+    .btn-cta-s {
+      padding: 14px 32px; border-radius: 12px;
+      background: rgba(255,255,255,.05); color: var(--text2);
+      border: 1px solid var(--border2); font-size: 15px; font-weight: 600;
+      cursor: pointer; text-decoration: none; font-family: inherit;
+      transition: all .15s;
+    }
+    .btn-cta-s:hover { background: rgba(255,255,255,.09); color: var(--text); }
+    .cta-trial { font-size: 13px; color: var(--text3); }
+    .cta-trial strong { color: var(--green); }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid var(--border); padding: 28px 44px;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px;
+    }
+    .footer-left { display: flex; align-items: center; gap: 20px; }
+    footer span { font-size: 13px; color: var(--text3); }
+    .footer-links { display: flex; gap: 22px; }
+    .footer-links a { font-size: 13px; color: var(--text3); text-decoration: none; transition: color .15s; }
+    .footer-links a:hover { color: var(--text2); }
+
+    /* ── Floating particles ── */
+    .particle {
+      position: fixed; width: 2px; height: 2px; border-radius: 50%; pointer-events: none;
+      background: rgba(99,102,241,.5);
+      animation: drift linear infinite;
+    }
+    @keyframes drift {
+      from { transform: translateY(100vh) translateX(0) scale(0); opacity: 0; }
+      10%  { opacity: 1; }
+      90%  { opacity: .5; }
+      to   { transform: translateY(-10vh) translateX(var(--dx, 0px)) scale(1.5); opacity: 0; }
+    }
+
+    /* ── Shimmer underline on title ── */
+    .shimmer-txt {
+      background: linear-gradient(90deg, #818cf8, #a78bfa, #f0abfc, #818cf8);
+      background-size: 300%;
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+      animation: shimmer 5s linear infinite;
+    }
+    @keyframes shimmer { to { background-position: 300%; } }
+
+    /* ── Glowing border on hover ── */
+    .glow-card {
+      position: relative;
+    }
+    .glow-card::after {
+      content: ''; position: absolute; inset: -1px; border-radius: inherit; opacity: 0;
+      background: linear-gradient(135deg, rgba(99,102,241,.4), rgba(168,85,247,.4));
+      transition: opacity .3s; pointer-events: none;
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: destination-out; mask-composite: exclude;
+      padding: 1px;
+    }
+    .glow-card:hover::after { opacity: 1; }
+
+    @media (max-width: 900px) {
+      .nav { padding: 0 22px; }
+      .nav-links { display: none; }
+      .showcase-grid { grid-template-columns: 1fr; }
+      .sc-card.span2 { grid-column: span 1; }
+      .feat-grid { grid-template-columns: 1fr; }
+      .stats-inner { grid-template-columns: repeat(2, 1fr); }
+      footer { padding: 20px; }
+      .cta-inner { padding: 42px 28px; }
+    }
+    @media (max-width: 600px) {
+      .hero { padding: 120px 20px 80px; }
+      .rev-head, .rev-row { grid-template-columns: 1fr auto; }
+      .rev-head > *:nth-child(3), .rev-save-cell { display: none; }
+      .stats-inner { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Particles -->
+<div id="particles"></div>
+
+<!-- Nav -->
+<nav class="nav" id="nav">
+  <a class="nav-logo" href="/">
+    <img src="/favicon.png" alt="SimaDesk">
+    <span class="nav-logo-name">SimaDesk</span>
+  </a>
+  <div class="nav-links">
+    <a class="nav-link" href="#features">Функции</a>
+    <a class="nav-link" href="#pricing">Тарифы</a>
+    <a class="nav-link" href="#how">Как работает</a>
+    <a class="nav-link" href="#faq">FAQ</a>
+  </div>
+  <div class="nav-right">
+    <a class="nav-btn ghost" href="/legal.html">Реквизиты</a>
+    <a class="nav-btn primary" href="/">Начать бесплатно</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <canvas id="hero-canvas"></canvas>
+  <div class="hero-glow"></div>
+  <div style="position:relative;z-index:1">
+    <div class="hero-eyebrow">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+      Маркетплейс-деск нового поколения
+    </div>
+    <h1>Всё что нужно продавцу<br><span class="gr">в одном окне</span></h1>
+    <p class="hero-sub">
+      Аналитика, репрайсер, заказы, остатки, каталог и команда — интегрированы с Ozon, Wildberries и Яндекс Маркет. Один инструмент вместо десяти таблиц.
+    </p>
+    <div class="hero-cta">
+      <a class="btn-hero-p" href="/">Начать бесплатно — 14 дней</a>
+      <a class="btn-hero-s" href="#features">Узнать больше</a>
+    </div>
+    <div class="hero-badges">
+      <div class="hero-badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        Без карты
+      </div>
+      <div class="hero-badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        Все функции бесплатно 14 дней
+      </div>
+      <div class="hero-badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        Тариф по обороту — не фиксированный
+      </div>
+      <div class="hero-badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        Неограниченная команда
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Trusted -->
+<div class="trusted reveal">
+  <div class="trusted-label">Интеграции с маркетплейсами</div>
+  <div class="trusted-logos">
+    <div class="mp-logo">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2H2v10l9.29 9.29a1 1 0 001.42 0l9-9a1 1 0 000-1.42z"/><circle cx="7" cy="7" r="1.2" fill="currentColor" stroke="none"/></svg>
+      Wildberries
+    </div>
+    <div class="mp-logo">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+      Ozon
+    </div>
+    <div class="mp-logo">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      Яндекс Маркет
+    </div>
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="stats reveal">
+  <div class="stats-inner">
+    <div class="stat-card">
+      <div class="stat-val" style="background:linear-gradient(135deg,#818cf8,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">3</div>
+      <div class="stat-label">Маркетплейса<br>в одном интерфейсе</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="background:linear-gradient(135deg,#22c55e,#4ade80);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">0₽</div>
+      <div class="stat-label">До 100к оборота<br>навсегда бесплатно</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="background:linear-gradient(135deg,#f59e0b,#fbbf24);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">14</div>
+      <div class="stat-label">Дней пробного<br>периода</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="background:linear-gradient(135deg,#ec4899,#f0abfc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">∞</div>
+      <div class="stat-label">Неограниченное<br>количество коллег</div>
+    </div>
+  </div>
+</div>
+
+<!-- Features showcase -->
+<section class="showcase" id="features">
+  <div class="s-eyebrow reveal">Возможности</div>
+  <h2 class="s-title reveal reveal-d1">Всё что нужно — <span class="shimmer-txt">уже внутри</span></h2>
+  <p class="s-sub reveal reveal-d2">Не нужно переключаться между вкладками. SimaDesk — единое рабочее место для всей команды</p>
+
+  <div class="showcase-grid">
+    <div class="sc-card glow-card reveal reveal-d1">
+      <div class="sc-icon" style="background:rgba(99,102,241,.12)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      </div>
+      <div class="sc-title">Аналитика продаж</div>
+      <div class="sc-desc">Выручка, прибыль, маржа и динамика по каждому товару и магазину. Финансовая картина одним взглядом.</div>
+      <div class="sc-tag" style="background:rgba(99,102,241,.1);color:#818cf8">Ozon · WB · Яндекс</div>
+    </div>
+    <div class="sc-card glow-card reveal reveal-d2">
+      <div class="sc-icon" style="background:rgba(34,197,94,.1)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      </div>
+      <div class="sc-title">Репрайсер цен</div>
+      <div class="sc-desc">Автоматически удерживает ваши позиции в поиске и защищает маржу от конкурентов. Работает 24/7.</div>
+      <div class="sc-tag" style="background:rgba(34,197,94,.1);color:#22c55e">Автопилот</div>
+    </div>
+    <div class="sc-card glow-card reveal reveal-d3">
+      <div class="sc-icon" style="background:rgba(245,158,11,.1)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>
+      </div>
+      <div class="sc-title">Управление заказами</div>
+      <div class="sc-desc">Все заказы с трёх маркетплейсов в одной таблице. Статусы, фильтры, экспорт в один клик.</div>
+    </div>
+    <div class="sc-card span2 glow-card reveal reveal-d1">
+      <div class="sc-icon" style="background:rgba(168,85,247,.1)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2"><path d="M12 2H2v10l9.29 9.29a1 1 0 001.42 0l9-9a1 1 0 000-1.42z"/><circle cx="7" cy="7" r="1" fill="#a855f7" stroke="none"/></svg>
+      </div>
+      <div class="sc-title">Публичный B2B-каталог</div>
+      <div class="sc-desc">Ваш персональный магазин на домене simadesk.ru/ваш-слаг. Покупатели могут просматривать ассортимент, цены и наличие без регистрации.</div>
+      <div class="sc-mini-grid">
+        <div class="sc-mini"><strong>Уникальный URL</strong>Ваш бренд-слаг</div>
+        <div class="sc-mini"><strong>Без регистрации</strong>Клиенты сразу видят товары</div>
+        <div class="sc-mini"><strong>Актуальные цены</strong>Из вашего каталога</div>
+        <div class="sc-mini"><strong>Фильтры и поиск</strong>По товарам и категориям</div>
+      </div>
+    </div>
+    <div class="sc-card glow-card reveal reveal-d2">
+      <div class="sc-icon" style="background:rgba(59,130,246,.1)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+      </div>
+      <div class="sc-title">Неограниченная команда</div>
+      <div class="sc-desc">Менеджеры, логисты, аналитики — добавляйте любое количество коллег с разными ролями.</div>
+      <div class="sc-tag" style="background:rgba(59,130,246,.1);color:#3b82f6">∞ участников</div>
+    </div>
+    <div class="sc-card glow-card reveal reveal-d3">
+      <div class="sc-icon" style="background:rgba(239,68,68,.09)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+      </div>
+      <div class="sc-title">Управление остатками</div>
+      <div class="sc-desc">Следите за стоками на складах всех маркетплейсов. Получайте предупреждения до того, как товар закончится.</div>
+    </div>
+    <div class="sc-card glow-card reveal reveal-d4">
+      <div class="sc-icon" style="background:rgba(34,197,94,.1)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/></svg>
+      </div>
+      <div class="sc-title">Менеджер задач</div>
+      <div class="sc-desc">Планируйте работу команды прямо в интерфейсе. Задачи, дедлайны, исполнители — без Trello и Notion.</div>
+    </div>
+    <div class="sc-card glow-card reveal reveal-d5">
+      <div class="sc-icon" style="background:rgba(245,158,11,.1)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      </div>
+      <div class="sc-title">Отзывы и чаты</div>
+      <div class="sc-desc">Управляйте отзывами покупателей и диалогами на всех маркетплейсах в одном окне.</div>
+    </div>
+    <div class="sc-card glow-card reveal reveal-d6">
+      <div class="sc-icon" style="background:rgba(99,102,241,.12)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><path d="M18 8h1a4 4 0 010 8h-1"/><path d="M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+      </div>
+      <div class="sc-title">Производители и поставщики</div>
+      <div class="sc-desc">База производителей с привязкой к товарным группам. Вся история поставок под рукой.</div>
+    </div>
+  </div>
+</section>
+
+<!-- Pricing -->
+<section class="pricing" id="pricing">
+  <div class="s-eyebrow reveal">Ценообразование</div>
+  <h2 class="s-title reveal reveal-d1">Один тариф.<br><span class="shimmer-txt">Честная цена</span></h2>
+  <p class="s-sub reveal reveal-d2">Не нужно выбирать план. Ваша цена определяется автоматически по обороту компании за 30 дней.</p>
+
+  <div class="pricing-statement reveal reveal-d2">
+    <div class="ps-tag">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+      Ключевое отличие SimaDesk
+    </div>
+    <div class="ps-title">Все функции доступны на любом уровне — включая бесплатный</div>
+    <div class="ps-text">
+      В SimaDesk <strong>нет скрытых функций за деньги</strong>. Аналитика, репрайсер, управление заказами, публичный каталог, неограниченная команда — всё доступно с первого дня, <strong>независимо от оборота</strong>. Тариф определяет только стоимость, но не возможности.
+    </div>
+  </div>
+
+  <div class="rev-table reveal reveal-d3">
+    <div class="rev-head" style="grid-template-columns:1fr auto">
+      <div>Оборот компании за 30 дней</div>
+      <div style="text-align:right">Цена в месяц</div>
+    </div>
+
+    <div class="rev-row" data-plan-key="free" style="grid-template-columns:1fr auto">
+      <div class="rev-cell">
+        <div class="rev-range">
+          <div class="rev-dot" style="background:#22c55e"></div>
+          <div>
+            <div class="rev-name">Бесплатный</div>
+            <div class="rev-range-sub plan-range">до 100 000 ₽</div>
+          </div>
+        </div>
+      </div>
+      <div class="rev-cell rev-price">
+        <div class="rev-price-m free plan-price">Бесплатно</div>
+        <div class="rev-range-sub" style="text-align:right;margin-top:3px">навсегда</div>
+      </div>
+    </div>
+
+    <div class="rev-row" data-plan-key="starter" style="grid-template-columns:1fr auto">
+      <div class="rev-cell">
+        <div class="rev-range">
+          <div class="rev-dot" style="background:#6366f1"></div>
+          <div>
+            <div class="rev-name">Стартер</div>
+            <div class="rev-range-sub plan-range">100 000 — 500 000 ₽</div>
+          </div>
+        </div>
+      </div>
+      <div class="rev-cell rev-price">
+        <div class="rev-price-m plan-price">990 ₽</div>
+      </div>
+    </div>
+
+    <div class="rev-row" data-plan-key="business" style="grid-template-columns:1fr auto">
+      <div class="rev-cell">
+        <div class="rev-range">
+          <div class="rev-dot" style="background:#8b5cf6"></div>
+          <div>
+            <div class="rev-name">Бизнес</div>
+            <div class="rev-range-sub plan-range">500 000 — 2 000 000 ₽</div>
+          </div>
+        </div>
+      </div>
+      <div class="rev-cell rev-price">
+        <div class="rev-price-m plan-price">2 490 ₽</div>
+      </div>
+    </div>
+
+    <div class="rev-row" data-plan-key="pro" style="grid-template-columns:1fr auto">
+      <div class="rev-cell">
+        <div class="rev-range">
+          <div class="rev-dot" style="background:#f59e0b"></div>
+          <div>
+            <div class="rev-name">Профессиональный</div>
+            <div class="rev-range-sub plan-range">2 000 000 — 10 000 000 ₽</div>
+          </div>
+        </div>
+      </div>
+      <div class="rev-cell rev-price">
+        <div class="rev-price-m plan-price">4 990 ₽</div>
+      </div>
+    </div>
+
+    <div class="rev-row" data-plan-key="max" style="grid-template-columns:1fr auto">
+      <div class="rev-cell">
+        <div class="rev-range">
+          <div class="rev-dot" style="background:#ef4444"></div>
+          <div>
+            <div class="rev-name">Максимум</div>
+            <div class="rev-range-sub plan-range">от 10 000 000 ₽</div>
+          </div>
+        </div>
+      </div>
+      <div class="rev-cell rev-price">
+        <div class="rev-price-m plan-price">9 990 ₽</div>
+      </div>
+    </div>
+  </div>
+  <div class="rev-note reveal">
+    Тариф пересчитывается автоматически каждые 30 дней по данным подключённых маркетплейсов.<br>
+    Промокоды вводятся в разделе «Тариф и оплата» в профиле.
+  </div>
+</section>
+
+<!-- Features list -->
+<section class="features" id="feat-list">
+  <div class="s-eyebrow reveal">Что входит</div>
+  <h2 class="s-title reveal reveal-d1">Все функции — каждому</h2>
+  <p class="s-sub reveal reveal-d2">Ни одна возможность не спрятана за платный уровень</p>
+
+  <div class="feat-grid">
+    <div class="feat-card reveal reveal-d1">
+      <div class="feat-icon" style="background:rgba(99,102,241,.1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></div>
+      <div class="feat-body"><div class="feat-title">Аналитика продаж</div><div class="feat-desc">Выручка, заказы, прибыль по каждому товару и магазину</div></div>
+    </div>
+    <div class="feat-card reveal reveal-d2">
+      <div class="feat-icon" style="background:rgba(34,197,94,.1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+      <div class="feat-body"><div class="feat-title">Репрайсер цен</div><div class="feat-desc">Автоматически держит позиции в поиске и защищает маржу</div></div>
+    </div>
+    <div class="feat-card reveal reveal-d3">
+      <div class="feat-icon" style="background:rgba(245,158,11,.1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg></div>
+      <div class="feat-body"><div class="feat-title">Заказы всех маркетплейсов</div><div class="feat-desc">Ozon, WB и Яндекс — все заказы в одной таблице</div></div>
+    </div>
+    <div class="feat-card reveal reveal-d1">
+      <div class="feat-icon" style="background:rgba(168,85,247,.1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2"><path d="M12 2H2v10l9.29 9.29a1 1 0 001.42 0l9-9a1 1 0 000-1.42z"/><circle cx="7" cy="7" r="1" fill="#a855f7" stroke="none"/></svg></div>
+      <div class="feat-body"><div class="feat-title">Публичный B2B-каталог</div><div class="feat-desc">Персональная витрина на вашем URL без регистрации</div></div>
+    </div>
+    <div class="feat-card reveal reveal-d2">
+      <div class="feat-icon" style="background:rgba(59,130,246,.1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg></div>
+      <div class="feat-body"><div class="feat-title">Неограниченная команда</div><div class="feat-desc">Без лимитов по числу участников — роли и права у каждого</div></div>
+    </div>
+    <div class="feat-card reveal reveal-d3">
+      <div class="feat-icon" style="background:rgba(239,68,68,.09)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg></div>
+      <div class="feat-body"><div class="feat-title">Управление остатками</div><div class="feat-desc">Стоки на складах всех МП + предупреждения о нехватке</div></div>
+    </div>
+    <div class="feat-card reveal reveal-d1">
+      <div class="feat-icon" style="background:rgba(34,197,94,.1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12l2 2 4-4"/></svg></div>
+      <div class="feat-body"><div class="feat-title">Менеджер задач</div><div class="feat-desc">Задачи с дедлайнами и исполнителями внутри платформы</div></div>
+    </div>
+    <div class="feat-card reveal reveal-d2">
+      <div class="feat-icon" style="background:rgba(245,158,11,.1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
+      <div class="feat-body"><div class="feat-title">Отзывы и чаты</div><div class="feat-desc">Управление отзывами и диалогами с покупателями со всех МП</div></div>
+    </div>
+    <div class="feat-card reveal reveal-d3">
+      <div class="feat-icon" style="background:rgba(99,102,241,.1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></div>
+      <div class="feat-body"><div class="feat-title">Финансовая аналитика</div><div class="feat-desc">Себестоимость, маржа, оборачиваемость и транзакции</div></div>
+    </div>
+    <div class="feat-card reveal reveal-d4">
+      <div class="feat-icon" style="background:rgba(59,130,246,.1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><path d="M18 8h1a4 4 0 010 8h-1M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg></div>
+      <div class="feat-body"><div class="feat-title">Производители</div><div class="feat-desc">База поставщиков, история поставок, привязка к группам товаров</div></div>
+    </div>
+    <div class="feat-card reveal reveal-d5">
+      <div class="feat-icon" style="background:rgba(239,68,68,.09)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8M8 9h2"/></svg></div>
+      <div class="feat-body"><div class="feat-title">Редактор документов</div><div class="feat-desc">Создавайте и редактируйте документы прямо в SimaDesk</div></div>
+    </div>
+    <div class="feat-card reveal reveal-d6">
+      <div class="feat-icon" style="background:rgba(168,85,247,.1)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013 11.91a19.79 19.79 0 01-3.07-8.72A2 2 0 011.91 1h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 8.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg></div>
+      <div class="feat-body"><div class="feat-title">Поддержка</div><div class="feat-desc">Отвечаем на вопросы прямо из приложения — без ботов и очередей</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section class="how" id="how">
+  <div class="s-eyebrow reveal">Как работает</div>
+  <h2 class="s-title reveal reveal-d1" style="margin-bottom:14px">Тариф считается сам</h2>
+  <p class="s-sub reveal reveal-d2" style="margin-bottom:52px">Вам ничего не нужно настраивать вручную — SimaDesk делает это за вас</p>
+
+  <div class="how-timeline">
+    <div class="how-step reveal">
+      <div class="how-num-wrap"><div class="how-num">1</div></div>
+      <div class="how-content">
+        <div class="how-title">Подключите маркетплейсы</div>
+        <div class="how-text">Добавьте API-ключи Ozon, Wildberries или Яндекс Маркет в разделе «API Маркет». Займёт меньше минуты на каждый. После этого SimaDesk начинает забирать данные о продажах и остатках.</div>
+      </div>
+    </div>
+    <div class="how-step reveal reveal-d1">
+      <div class="how-num-wrap"><div class="how-num">2</div></div>
+      <div class="how-content">
+        <div class="how-title">Система автоматически считает оборот</div>
+        <div class="how-text">SimaDesk суммирует выручку за последние 30 дней по всем подключённым магазинам всех маркетплейсов. Данные обновляются регулярно — вам ничего не нужно вводить вручную.</div>
+      </div>
+    </div>
+    <div class="how-step reveal reveal-d2">
+      <div class="how-num-wrap"><div class="how-num">3</div></div>
+      <div class="how-content">
+        <div class="how-title">Тариф назначается автоматически</div>
+        <div class="how-text">На основе оборота система определяет ваш уровень — от бесплатного до максимального. Каждая компания в SimaDesk считается отдельно. Если оборот вырос — тариф поднимается, если упал — снижается.</div>
+      </div>
+    </div>
+    <div class="how-step reveal reveal-d3">
+      <div class="how-num-wrap"><div class="how-num">4</div></div>
+      <div class="how-content">
+        <div class="how-title">14 дней бесплатного периода</div>
+        <div class="how-text">Каждая новая компания получает 14 дней полного доступа без оплаты — это время чтобы подключить маркетплейсы и убедиться что SimaDesk вам подходит. После пробного периода тариф рассчитывается по накопленным данным.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="faq" id="faq">
+  <div class="s-eyebrow reveal">Вопросы и ответы</div>
+  <h2 class="s-title reveal reveal-d1" style="margin-bottom:40px">Часто спрашивают</h2>
+
+  <div class="faq-item open reveal">
+    <button class="faq-q" onclick="faqToggle(this)">
+      Правда, что все функции доступны бесплатно?
+      <svg class="faq-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <div class="faq-a">Да. Бесплатный тариф — это не урезанная версия. Все функции: аналитика, репрайсер, заказы, каталог, команда, задачи — доступны с первого дня. Ограничение только одно: ваш оборот должен быть до 100 000 ₽/мес.</div>
+  </div>
+  <div class="faq-item reveal reveal-d1">
+    <button class="faq-q" onclick="faqToggle(this)">
+      Как узнать свой текущий тариф?
+      <svg class="faq-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <div class="faq-a">Откройте профиль и нажмите кнопку «Тариф и оплата». Там показан ваш текущий оборот, соответствующий уровень, дата следующего пересчёта и промокод-поле.</div>
+  </div>
+  <div class="faq-item reveal reveal-d2">
+    <button class="faq-q" onclick="faqToggle(this)">
+      Что будет, если оборот упадёт?
+      <svg class="faq-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <div class="faq-a">Тариф автоматически снизится при следующем пересчёте. Переплачивать за неиспользованную мощность не придётся — стоимость всегда соответствует реальному положению дел.</div>
+  </div>
+  <div class="faq-item reveal reveal-d3">
+    <button class="faq-q" onclick="faqToggle(this)">
+      Можно ли вести несколько компаний?
+      <svg class="faq-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <div class="faq-a">Да. Каждая компания в SimaDesk — отдельная единица со своим оборотом и своим тарифом. Если у вас три компании, каждая платит по своей ставке независимо от остальных. Переключение между компаниями — в один клик.</div>
+  </div>
+  <div class="faq-item reveal reveal-d4">
+    <button class="faq-q" onclick="faqToggle(this)">
+      Как работают промокоды?
+      <svg class="faq-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <div class="faq-a">Промокоды вводятся в разделе «Тариф и оплата» (кнопка в профиле). Скидка применяется к следующему расчётному периоду. Один промокод — одна компания, одно применение.</div>
+  </div>
+  <div class="faq-item reveal reveal-d6">
+    <button class="faq-q" onclick="faqToggle(this)">
+      Сколько человек можно добавить в команду?
+      <svg class="faq-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <div class="faq-a">Без ограничений. Добавляйте любое количество менеджеров, логистов, аналитиков и партнёров. Каждому можно назначить роль: владелец, администратор, менеджер или наблюдатель.</div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <div class="cta-inner reveal">
+    <div class="cta-glow"></div>
+    <div style="position:relative">
+      <div class="cta-title">Начните бесплатно прямо сейчас</div>
+      <div class="cta-sub">14 дней полного доступа. Никаких карт и ограничений. Подключите маркетплейсы — и SimaDesk сам всё посчитает.</div>
+      <div class="cta-actions">
+        <a class="btn-cta-p" href="/">Начать бесплатно — 14 дней</a>
+        <a class="btn-cta-s" href="mailto:samarziboy@gmail.com">Написать нам</a>
+      </div>
+      <div class="cta-trial">Кредитная карта не нужна · <strong>Все функции</strong> бесплатно в пробный период</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-left">
+    <a class="nav-logo" href="/">
+      <img src="/favicon.png" alt="SimaDesk" width="22" height="22" style="border-radius:5px">
+      <span style="font-size:14px;font-weight:700;color:var(--text3)">SimaDesk</span>
+    </a>
+    <span>© 2025</span>
+  </div>
+  <div class="footer-links">
+    <a href="/legal.html">Реквизиты</a>
+    <a href="mailto:samarziboy@gmail.com">Поддержка</a>
+    <a href="/">Войти</a>
+  </div>
+</footer>
+
+<script>
+/* ── Particles ── */
+(function() {
+  const wrap = document.getElementById('particles');
+  const colors = ['rgba(99,102,241,.6)', 'rgba(168,85,247,.5)', 'rgba(59,130,246,.5)', 'rgba(34,197,94,.4)'];
+  for (let i = 0; i < 22; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const size = Math.random() * 3 + 1;
+    const dur = Math.random() * 18 + 12;
+    const delay = Math.random() * 20;
+    const dx = (Math.random() - .5) * 200;
+    p.style.cssText = `left:${Math.random()*100}vw;width:${size}px;height:${size}px;`
+      + `background:${colors[Math.floor(Math.random()*colors.length)]};`
+      + `animation-duration:${dur}s;animation-delay:-${delay}s;--dx:${dx}px;`;
+    wrap.appendChild(p);
+  }
+})();
+
+/* ── Hero canvas ── */
+(function() {
+  const canvas = document.getElementById('hero-canvas');
+  const ctx = canvas.getContext('2d');
+  let w, h, nodes;
+  const N = 60;
+
+  function resize() {
+    w = canvas.width = canvas.offsetWidth;
+    h = canvas.height = canvas.offsetHeight;
+  }
+
+  function init() {
+    resize();
+    nodes = Array.from({length: N}, () => ({
+      x: Math.random() * w, y: Math.random() * h,
+      vx: (Math.random() - .5) * .4, vy: (Math.random() - .5) * .4,
+      r: Math.random() * 1.5 + .5,
+    }));
+  }
+
+  function tick() {
+    ctx.clearRect(0, 0, w, h);
+    nodes.forEach(n => {
+      n.x += n.vx; n.y += n.vy;
+      if (n.x < 0 || n.x > w) n.vx *= -1;
+      if (n.y < 0 || n.y > h) n.vy *= -1;
+    });
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (d < 130) {
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+          ctx.strokeStyle = `rgba(99,102,241,${.15 * (1 - d/130)})`;
+          ctx.lineWidth = .7;
+          ctx.stroke();
+        }
+      }
+    }
+    nodes.forEach(n => {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(99,102,241,.35)';
+      ctx.fill();
+    });
+    requestAnimationFrame(tick);
+  }
+
+  init();
+  tick();
+  window.addEventListener('resize', () => { resize(); nodes.forEach(n => { n.x = Math.min(n.x, w); n.y = Math.min(n.y, h); }); });
+})();
+
+/* ── Nav scroll ── */
+window.addEventListener('scroll', () => {
+  document.getElementById('nav').classList.toggle('scrolled', window.scrollY > 30);
+});
+
+/* ── Scroll reveal ── */
+(function() {
+  const els = document.querySelectorAll('.reveal');
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); } });
+  }, { threshold: .1, rootMargin: '0px 0px -40px 0px' });
+  els.forEach(el => io.observe(el));
+})();
+
+/* ── FAQ ── */
+function faqToggle(btn) {
+  const item = btn.closest('.faq-item');
+  const isOpen = item.classList.contains('open');
+  document.querySelectorAll('.faq-item.open').forEach(i => i.classList.remove('open'));
+  if (!isOpen) item.classList.add('open');
+}
+
+/* ── Counter animation ── */
+(function() {
+  const stat = document.querySelector('.stats-inner');
+  if (!stat) return;
+  const io = new IntersectionObserver(([e]) => {
+    if (!e.isIntersecting) return;
+    io.disconnect();
+  }, { threshold: .3 });
+  io.observe(stat);
+})();
+</script>
+<script type="module">
+// Sync plan prices from Supabase plan_configs table
+const API_URL = import.meta.env.VITE_API_URL;
+const API_KEY = import.meta.env.VITE_API_KEY;
+if (API_URL && API_KEY) {
+  fetch(`${API_URL}/rpc/get_plan_configs`, {
+    method: 'POST', body: '{}',
+    headers: {
+      'apikey': API_KEY,
+      'Authorization': `Bearer ${API_KEY}`,
+      'Content-Type': 'application/json',
+    }
+  })
+  .then(r => r.ok ? r.json() : null)
+  .then(plans => {
+    if (!Array.isArray(plans) || plans.length === 0) return;
+    document.querySelectorAll('.rev-row[data-plan-key]').forEach(row => {
+      const key = row.getAttribute('data-plan-key');
+      const plan = plans.find(p => p.key === key);
+      if (!plan) return;
+      const priceEl = row.querySelector('.plan-price');
+      const rangeEl = row.querySelector('.plan-range');
+      if (priceEl) {
+        if (plan.price_rub === 0) {
+          priceEl.textContent = 'Бесплатно';
+        } else {
+          priceEl.textContent = Number(plan.price_rub).toLocaleString('ru') + ' ₽';
+        }
+      }
+      if (rangeEl) {
+        const min = plan.revenue_min;
+        const max = plan.revenue_max;
+        if (key === 'free' || min === 0) {
+          rangeEl.textContent = 'до ' + Number(max ?? 100000).toLocaleString('ru') + ' ₽';
+        } else if (max) {
+          rangeEl.textContent = Number(min).toLocaleString('ru') + ' — ' + Number(max).toLocaleString('ru') + ' ₽';
+        } else {
+          rangeEl.textContent = 'от ' + Number(min).toLocaleString('ru') + ' ₽';
+        }
+      }
+    });
+  })
+  .catch(() => {});
+}
+</script>
+</body>
+</html>

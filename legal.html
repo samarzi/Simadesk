@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Реквизиты — SimaDesk</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #080809;
+      --card: #111113;
+      --border: rgba(255,255,255,.08);
+      --text: #f0f0f2;
+      --muted: rgba(255,255,255,.4);
+      --accent: #6366f1;
+    }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 40px 16px 80px;
+    }
+    .wrap {
+      max-width: 680px;
+      margin: 0 auto;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 48px;
+      text-decoration: none;
+    }
+    .logo img { width: 32px; height: 32px; border-radius: 8px; }
+    .logo span { font-size: 18px; font-weight: 700; color: var(--text); }
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 14px;
+      margin-bottom: 40px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .card-header {
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .row {
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    .row:last-child { border-bottom: none; }
+    .row-label {
+      font-size: 13px;
+      color: var(--muted);
+      min-width: 200px;
+      flex-shrink: 0;
+    }
+    .row-value {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .note {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.7;
+      padding: 20px 24px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-top: 8px;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    @media (max-width: 500px) {
+      .row { flex-direction: column; gap: 4px; }
+      .row-label { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <a class="logo" href="/">
+    <img src="/favicon.png" alt="SimaDesk">
+    <span>SimaDesk</span>
+  </a>
+  <div id="site-content">
+
+  <h1>Реквизиты</h1>
+  <p class="subtitle">Официальные реквизиты исполнителя услуг платформы SimaDesk</p>
+
+  <div class="card">
+    <div class="card-header">Исполнитель</div>
+    <div class="row">
+      <span class="row-label">Полное наименование</span>
+      <span class="row-value">Мирзоев Расул Фажрудинович</span>
+    </div>
+    <div class="row">
+      <span class="row-label">Правовой статус</span>
+      <span class="row-value">Самозанятый (плательщик налога на профессиональный доход)</span>
+    </div>
+    <div class="row">
+      <span class="row-label">ИНН</span>
+      <span class="row-value">052300979270</span>
+    </div>
+    <div class="row">
+      <span class="row-label">Место осуществления деятельности</span>
+      <span class="row-value">г. Москва, Россия</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Контактная информация</div>
+    <div class="row">
+      <span class="row-label">Электронная почта</span>
+      <span class="row-value"><a href="mailto:samarziboy@gmail.com">samarziboy@gmail.com</a></span>
+    </div>
+    <div class="row">
+      <span class="row-label">Сайт</span>
+      <span class="row-value"><a href="https://simadesk.ru">simadesk.ru</a></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Информация об услуге</div>
+    <div class="row">
+      <span class="row-label">Наименование услуги</span>
+      <span class="row-value">Доступ к SaaS-платформе SimaDesk для управления продажами на маркетплейсах</span>
+    </div>
+    <div class="row">
+      <span class="row-label">Описание</span>
+      <span class="row-value">Онлайн-сервис для управления товарным каталогом, заказами, аналитикой и репрайсингом на Ozon, Wildberries и Яндекс Маркет</span>
+    </div>
+    <div class="row">
+      <span class="row-label">Тип оплаты</span>
+      <span class="row-value">Ежемесячная подписка по тарифу, рассчитанному от оборота компании</span>
+    </div>
+    <div class="row">
+      <span class="row-label">Тарифы</span>
+      <span class="row-value"><a href="/pricing.html">Страница тарифов</a></span>
+    </div>
+  </div>
+
+  <p class="note">
+    Настоящая страница является официальным источником реквизитов исполнителя услуг платформы SimaDesk.
+    Оплата принимается через защищённый платёжный шлюз. Фискальные чеки формируются и направляются
+    на электронную почту покупателя в соответствии с Федеральным законом № 54-ФЗ.
+    По всем вопросам обращайтесь на <a href="mailto:samarziboy@gmail.com">samarziboy@gmail.com</a>.
+  </p>
+  </div><!-- #site-content -->
+</div>
+<script type="module">
+  const API = import.meta.env.VITE_API_URL;
+  const KEY = import.meta.env.VITE_API_KEY;
+  (async () => {
+    try {
+      const r = await fetch(API + '/rest/v1/rpc/get_site_content', {
+        method: 'POST', headers: { 'apikey': KEY, 'Content-Type': 'application/json' }, body: '{}'
+      });
+      const items = await r.json();
+      const item = Array.isArray(items) && items.find(i => i.key === 'legal_requisites');
+      if (item?.content) document.getElementById('site-content').innerHTML = item.content;
+    } catch {}
+  })();
+</script>
+</body>
+</html>
