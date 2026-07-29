@@ -1,7 +1,6 @@
 import './styles/main.css';
 import './styles/ozon.css';
 import './styles/auth.css';
-import './styles/catalog-mp.css';
 import './styles/products-hub.css';
 import './styles/storefront.css';
 import './styles/assistant.css';

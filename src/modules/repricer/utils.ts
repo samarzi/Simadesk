@@ -130,7 +130,7 @@ export function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
-/** Публичная ссылка на карточку товара (та же логика, что и в каталоге — см. CatalogMpModule.mpStorefrontUrl). */
+/** Публичная ссылка на карточку товара на маркетплейсе. */
 export function productPageUrl(
   mp: Mp, productId: string,
   opts: { ozonSku?: number | null; marketSku?: number | null; marketModelId?: number | null } = {},
