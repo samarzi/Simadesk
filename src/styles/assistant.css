@@ -177,10 +177,10 @@
   right: 16px;
   width: 390px;
   max-height: 610px;
-  background: rgba(11, 9, 20, 0.96);
+  background: rgba(14, 10, 28, 0.97);
   backdrop-filter: blur(40px) saturate(220%);
   -webkit-backdrop-filter: blur(40px) saturate(220%);
-  border: 1px solid rgba(140, 90, 255, 0.28);
+  border: 1px solid rgba(160, 100, 255, 0.38);
   border-radius: 22px;
   box-shadow:
     0 0 0 0.5px rgba(160,100,255,0.12),
