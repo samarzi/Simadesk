@@ -851,7 +851,7 @@ export class DocsModule {
       <div class="dx-fx-btn" title="Функции">fx</div>
       <input class="dx-formula-inp" id="docs-formula-inp" type="text" placeholder="Введите значение или формулу (=SUM(A1:A5))">
     </div>
-    <div class="docs-excel-wrap" id="docs-excel-wrap">
+    <div class="docs-excel-wrap" id="docs-excel-wrap" tabindex="0">
       <table class="docs-excel">
         <thead>
           <tr>
@@ -913,6 +913,11 @@ export class DocsModule {
     let selStart: { r: number; c: number } | null = null;
     let selEnd: { r: number; c: number } | null = null;
     let dragging = false;
+    let editMode = false;
+    let editTd: HTMLTableCellElement | null = null;
+    let editOrigVal = '';
+    const undoStack: Array<{data: CellData[][], r: number, c: number}> = [];
+    const redoStack: Array<{data: CellData[][], r: number, c: number}> = [];
 
     const getEC = (): ExcelContent => this.parseExcelContent(doc.content);
     const getSheet = (): SheetData => {
@@ -959,6 +964,81 @@ export class DocsModule {
     };
 
     const commit = () => saveGrid(grid());
+
+    const pushUndo = () => {
+      undoStack.push({ data: JSON.parse(JSON.stringify(grid())), r: curR, c: curC });
+      if (undoStack.length > 100) undoStack.shift();
+      redoStack.length = 0;
+    };
+    const restoreGridSnap = (snap: {data: CellData[][], r: number, c: number}) => {
+      if (vd) snap.data.forEach((row, ri) => row.forEach((cell, ci) => { if (vd[ri]) vd[ri][ci] = { ...cell }; }));
+      snap.data.forEach((row, ri) => {
+        row.forEach((cell, ci) => {
+          const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${ri}"][data-c="${ci}"]`);
+          if (!td) return;
+          if (cell.v.startsWith('=')) { td.dataset.formula = cell.v; td.innerText = this.evalFormula(cell.v, snap.data); }
+          else { delete td.dataset.formula; td.innerText = cell.v; }
+          td.style.cssText = cell.s ?? '';
+        });
+      });
+      saveGrid(snap.data);
+      curR = snap.r; curC = snap.c;
+      selStart = { r: snap.r, c: snap.c }; selEnd = { r: snap.r, c: snap.c };
+      applySel(); syncFormulaBar();
+    };
+    const doUndo = () => {
+      if (!undoStack.length) return;
+      redoStack.push({ data: JSON.parse(JSON.stringify(grid())), r: curR, c: curC });
+      restoreGridSnap(undoStack.pop()!);
+    };
+    const doRedo = () => {
+      if (!redoStack.length) return;
+      undoStack.push({ data: JSON.parse(JSON.stringify(grid())), r: curR, c: curC });
+      restoreGridSnap(redoStack.pop()!);
+    };
+    const getMaxRows = () => vd ? vd.length : body.querySelectorAll<HTMLTableRowElement>('tr[data-row]').length;
+    const getMaxCols = () => vd ? (vd[0]?.length ?? 0) : (body.querySelector<HTMLTableRowElement>('tr[data-row]')?.querySelectorAll('td').length ?? 0);
+    const navigateTo = (r: number, c: number, extendSel = false) => {
+      r = Math.max(0, Math.min(r, getMaxRows() - 1));
+      c = Math.max(0, Math.min(c, getMaxCols() - 1));
+      curR = r; curC = c;
+      if (extendSel && selStart) { selEnd = { r, c }; }
+      else { selStart = { r, c }; selEnd = { r, c }; }
+      applySel(); syncFormulaBar();
+      body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    };
+    const exitEdit = (doCommit = true, revert = false) => {
+      if (!editMode || !editTd) return;
+      const td = editTd;
+      editMode = false; editTd = null;
+      td.contentEditable = 'false';
+      td.classList.remove('dx-editing');
+      if (revert) {
+        if (editOrigVal.startsWith('=')) { td.dataset.formula = editOrigVal; td.innerText = this.evalFormula(editOrigVal, grid()); }
+        else { delete td.dataset.formula; td.innerText = editOrigVal; }
+      } else {
+        const txt = td.innerText;
+        if (txt.startsWith('=')) { td.dataset.formula = txt; td.innerText = this.evalFormula(txt, grid()); }
+        else delete td.dataset.formula;
+        if (doCommit) saveGrid(grid());
+      }
+      syncFormulaBar();
+    };
+    const enterEdit = (r: number, c: number, initChar = '') => {
+      if (editMode) exitEdit(true);
+      const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`);
+      if (!td) return;
+      editMode = true; editTd = td;
+      editOrigVal = td.dataset.formula ?? td.innerText;
+      td.contentEditable = 'true';
+      td.classList.add('dx-editing');
+      if (initChar) { pushUndo(); td.innerText = initChar; delete td.dataset.formula; }
+      td.focus();
+      const range = document.createRange(), sel = window.getSelection();
+      range.selectNodeContents(td); range.collapse(false);
+      sel?.removeAllRanges(); sel?.addRange(range);
+      syncFormulaBar();
+    };
 
     // Sheet tab switching
     this.root.querySelectorAll<HTMLElement>('.dx-sheet-tab').forEach(tab => {
@@ -1021,36 +1101,26 @@ export class DocsModule {
       if (formulaBar) formulaBar.value = td?.dataset.formula ?? td?.innerText ?? '';
     };
 
+    formulaBar?.addEventListener('focus', () => { exitEdit(false); });
     formulaBar?.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { formulaBar.blur(); return; }
       if (e.key !== 'Enter') return;
       e.preventDefault();
       const val = formulaBar.value;
       const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${curR}"][data-c="${curC}"]`);
       if (!td) return;
+      pushUndo();
       if (val.startsWith('=')) { td.dataset.formula = val; td.innerText = this.evalFormula(val, grid()); }
       else { delete td.dataset.formula; td.innerText = val; }
-      commit(); this.render();
+      saveGrid(grid());
+      formulaBar.blur();
+      navigateTo(curR + 1, curC);
     });
 
-    let commitTimer: ReturnType<typeof setTimeout> | null = null;
-    const debouncedCommit = () => {
-      if (commitTimer) clearTimeout(commitTimer);
-      commitTimer = setTimeout(() => { commit(); commitTimer = null; }, 400);
-    };
     body.addEventListener('input', () => {
       const td = document.activeElement as HTMLElement|null;
-      if(td&&td.tagName==='TD') delete (td as HTMLTableCellElement).dataset.formula;
-      debouncedCommit(); syncFormulaBar();
-    });
-    body.addEventListener('focusin', (e) => {
-      const td=(e.target as HTMLElement).closest('td'); if(!td) return;
-      curR=+(td.getAttribute('data-r')??'0'); curC=+(td.getAttribute('data-c')??'0');
-      selStart={r:curR,c:curC}; selEnd={r:curR,c:curC}; applySel(); syncFormulaBar();
-    });
-    body.addEventListener('focusout', (e) => {
-      const td=(e.target as HTMLElement).closest('td') as HTMLTableCellElement|null; if(!td) return;
-      const txt=td.innerText;
-      if(txt.startsWith('=')){td.dataset.formula=txt;td.innerText=this.evalFormula(txt,grid());commit();this.render();}
+      if (td && td.tagName === 'TD') delete (td as HTMLTableCellElement).dataset.formula;
+      syncFormulaBar();
     });
 
     const wrap = this.root.querySelector<HTMLElement>('#docs-excel-wrap');
@@ -1070,9 +1140,17 @@ export class DocsModule {
     };
 
     body.addEventListener('mousedown', (e) => {
-      const td=(e.target as HTMLElement).closest('td'); if(!td) return;
-      const r=+(td.getAttribute('data-r')??'0'), c=+(td.getAttribute('data-c')??'0');
-      selStart={r,c}; selEnd={r,c}; dragging=true;
+      const td = (e.target as HTMLElement).closest('td') as HTMLTableCellElement | null; if (!td) return;
+      const r = +(td.getAttribute('data-r') ?? '0'), c = +(td.getAttribute('data-c') ?? '0');
+      if (editMode) {
+        if (td !== editTd) exitEdit(true);
+        else return; // clicking inside the cell being edited — allow default
+      }
+      e.preventDefault();
+      curR = r; curC = c;
+      selStart = { r, c }; selEnd = { r, c }; dragging = true;
+      applySel(); syncFormulaBar();
+      wrap?.focus({ preventScroll: true });
     });
     body.addEventListener('mousemove', (e) => {
       if(!dragging||!selStart) return;
@@ -1092,7 +1170,13 @@ export class DocsModule {
       }
     });
     document.addEventListener('mouseup', () => {
-      if(dragging){ dragging=false; stopAutoScroll(); if(selStart&&selEnd)applySel(); }
+      if (dragging) { dragging = false; stopAutoScroll(); if (selStart && selEnd) applySel(); }
+    });
+
+    body.addEventListener('dblclick', (e) => {
+      const td = (e.target as HTMLElement).closest('td'); if (!td) return;
+      const r = +(td.getAttribute('data-r') ?? '0'), c = +(td.getAttribute('data-c') ?? '0');
+      enterEdit(r, c);
     });
 
     // Row/column/all selection by header click
@@ -1111,52 +1195,93 @@ export class DocsModule {
     });
 
     // Keyboard — (Ctrl on Win/Linux, Cmd on Mac)
-    const mod = (e: KeyboardEvent) => e.ctrlKey || e.metaKey;
+    const isMod = (e: KeyboardEvent) => e.ctrlKey || e.metaKey;
     const onKey = (e: KeyboardEvent) => {
-      if(this.root.style.display==='none') return;
-      const target=e.target as HTMLElement|null;
-      const active=document.activeElement as HTMLElement|null;
-      const inInput=active&&(active.tagName==='INPUT'||active.tagName==='TEXTAREA'||active.isContentEditable&&active.tagName!=='TD');
-      const targetIsInput=target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA');
-      if(inInput||targetIsInput) return;
-      const isEditing=target&&target.tagName==='TD'&&target.isContentEditable&&target===active;
-      if(mod(e)&&e.key==='f'){e.preventDefault();(this as any)._openFindPanel?.();return;}
-      if(mod(e)&&e.key==='h'){e.preventDefault();(this as any)._openFindPanel?.();return;}
-      if(mod(e)&&!isEditing){
-        if(e.key==='b'||e.key==='B'){e.preventDefault();selectedCells().forEach(c=>{c.style.fontWeight=c.style.fontWeight==='bold'?'':'bold';});commit();return;}
-        if(e.key==='i'||e.key==='I'){e.preventDefault();selectedCells().forEach(c=>{c.style.fontStyle=c.style.fontStyle==='italic'?'':'italic';});commit();return;}
-        if(e.key==='u'||e.key==='U'){e.preventDefault();selectedCells().forEach(c=>{c.style.textDecoration=c.style.textDecoration.includes('underline')?'':'underline';});commit();return;}
-      }
-      if((e.key==='Delete'||e.key==='Backspace')&&!isEditing&&!inInput&&selStart&&selEnd){
-        e.preventDefault();
-        const r1=Math.min(selStart.r,selEnd.r),r2=Math.max(selStart.r,selEnd.r);
-        const c1=Math.min(selStart.c,selEnd.c),c2=Math.max(selStart.c,selEnd.c);
-        for(let r=r1;r<=r2;r++) for(let c=c1;c<=c2;c++){
-          const td=body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`);
-          if(td) td.innerText='';
+      if (this.root.style.display === 'none') return;
+      const active = document.activeElement as HTMLElement | null;
+      const inExternal = active && !this.root.contains(active) &&
+        (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+      if (inExternal) return;
+      // Formula bar handles its own keys
+      if (active === formulaBar) return;
+
+      if (editMode) {
+        // In edit mode: only intercept navigation/escape keys
+        switch (e.key) {
+          case 'Escape': e.preventDefault(); exitEdit(false, true); return;
+          case 'Enter':
+            if (!e.shiftKey) { e.preventDefault(); const nextR = curR + 1; exitEdit(true); navigateTo(nextR, curC); }
+            return;
+          case 'Tab':
+            e.preventDefault(); { const nextC = curC + (e.shiftKey ? -1 : 1); exitEdit(true); navigateTo(curR, nextC); }
+            return;
         }
-        commit(); return;
+        return; // let typing, arrows, etc. work inside the cell
+      }
+
+      // ── Selection mode ──────────────────────────────────────────────────────
+      if (!selStart) return;
+
+      if (isMod(e) && e.key === 'f') { e.preventDefault(); (this as any)._openFindPanel?.(); return; }
+      if (isMod(e) && e.key === 'h') { e.preventDefault(); (this as any)._openFindPanel?.(); return; }
+      if (isMod(e) && e.key === 'z') { e.preventDefault(); doUndo(); return; }
+      if (isMod(e) && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); doRedo(); return; }
+      if (isMod(e)) {
+        if (e.key === 'b' || e.key === 'B') { e.preventDefault(); selectedCells().forEach(c => { c.style.fontWeight = c.style.fontWeight === 'bold' ? '' : 'bold'; }); saveGrid(grid()); return; }
+        if (e.key === 'i' || e.key === 'I') { e.preventDefault(); selectedCells().forEach(c => { c.style.fontStyle = c.style.fontStyle === 'italic' ? '' : 'italic'; }); saveGrid(grid()); return; }
+        if (e.key === 'u' || e.key === 'U') { e.preventDefault(); selectedCells().forEach(c => { c.style.textDecoration = c.style.textDecoration.includes('underline') ? '' : 'underline'; }); saveGrid(grid()); return; }
+        return;
+      }
+
+      switch (e.key) {
+        case 'ArrowUp':    e.preventDefault(); navigateTo(curR - 1, curC, e.shiftKey); return;
+        case 'ArrowDown':  e.preventDefault(); navigateTo(curR + 1, curC, e.shiftKey); return;
+        case 'ArrowLeft':  e.preventDefault(); navigateTo(curR, curC - 1, e.shiftKey); return;
+        case 'ArrowRight': e.preventDefault(); navigateTo(curR, curC + 1, e.shiftKey); return;
+        case 'Tab':    e.preventDefault(); navigateTo(curR, curC + (e.shiftKey ? -1 : 1)); return;
+        case 'Enter':
+        case 'F2':     e.preventDefault(); enterEdit(curR, curC); return;
+        case 'Delete':
+        case 'Backspace': {
+          e.preventDefault();
+          pushUndo();
+          const r1 = Math.min(selStart.r, selEnd?.r ?? curR), r2 = Math.max(selStart.r, selEnd?.r ?? curR);
+          const c1 = Math.min(selStart.c, selEnd?.c ?? curC), c2 = Math.max(selStart.c, selEnd?.c ?? curC);
+          for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) {
+            const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`);
+            if (td) { td.innerText = ''; delete td.dataset.formula; }
+          }
+          saveGrid(grid()); return;
+        }
+        default:
+          if (e.key.length === 1) { e.preventDefault(); enterEdit(curR, curC, e.key); }
       }
     };
     document.addEventListener('keydown', onKey);
     (this as any)._xlKeyHandler?.();
     (this as any)._xlKeyHandler = () => document.removeEventListener('keydown', onKey);
 
-    // Paste
-    body.addEventListener('paste', (e) => {
-      const text=e.clipboardData?.getData('text/plain');
-      if(!text||!text.includes('\t')) return;
+    // Paste (document-level so it works even when no cell has focus)
+    const onPaste = (e: ClipboardEvent) => {
+      if (this.root.style.display === 'none') return;
+      if (editMode) return; // let browser handle paste inside edit cell
+      const active = document.activeElement as HTMLElement | null;
+      if (active && !this.root.contains(active) && active !== document.body) return;
+      const text = e.clipboardData?.getData('text/plain');
+      if (!text || !text.includes('\t')) return;
       e.preventDefault();
-      const target=e.target as HTMLElement;
-      const startR=+(target.dataset.r??'0'), startC=+(target.dataset.c??'0');
-      text.split(/\r?\n/).forEach((line,dr) => {
-        line.split('\t').forEach((val,dc) => {
-          const cell=body.querySelector<HTMLTableCellElement>(`td[data-r="${startR+dr}"][data-c="${startC+dc}"]`);
-          if(cell) cell.innerText=val;
+      pushUndo();
+      text.split(/\r?\n/).forEach((line, dr) => {
+        line.split('\t').forEach((val, dc) => {
+          const cell = body.querySelector<HTMLTableCellElement>(`td[data-r="${curR + dr}"][data-c="${curC + dc}"]`);
+          if (cell) cell.innerText = val;
         });
       });
-      commit();
-    });
+      saveGrid(grid());
+    };
+    document.addEventListener('paste', onPaste);
+    (this as any)._xlPasteHandler?.();
+    (this as any)._xlPasteHandler = () => document.removeEventListener('paste', onPaste);
 
     // Column resize
     this.root.querySelectorAll<HTMLElement>('.dx-col-resize').forEach(handle => {
@@ -1714,9 +1839,9 @@ export class DocsModule {
     const styleAttr = combined ? ` style="${this.esc(combined)}"` : '';
     if (v.startsWith('=')) {
       const result = this.evalFormula(v, rows);
-      return `<td contenteditable="true" data-r="${r}" data-c="${c}" data-formula="${this.esc(v)}"${styleAttr}>${this.esc(result)}</td>`;
+      return `<td data-r="${r}" data-c="${c}" data-formula="${this.esc(v)}"${styleAttr}>${this.esc(result)}</td>`;
     }
-    return `<td contenteditable="true" data-r="${r}" data-c="${c}"${styleAttr}>${this.esc(v)}</td>`;
+    return `<td data-r="${r}" data-c="${c}"${styleAttr}>${this.esc(v)}</td>`;
   }
 
   private colLetter(n: number): string {

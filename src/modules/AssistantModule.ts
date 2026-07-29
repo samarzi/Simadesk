@@ -5,6 +5,7 @@ import { aiPage, aiGlow } from '@/services/aiPageContext';
 import { installGlobalAiActions } from '@/services/aiPageCapabilities';
 import { changeLog } from '@/modules/LogsModule';
 import { esc } from '@/utils/format';
+import { supportChatService, SupportMessage, SupportAttachment, SUPPORT_REASONS } from '@/services/supportChatService';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -156,6 +157,25 @@ const SYSTEM_PROMPT = `Ты — Сима, профессиональный AI-м
 - Максимум 3-5 пунктов действий, не длинные списки
 - Если нужно создать задачу — предложи через suggest_task или создай через create_task
 - Отвечай по-русски, профессионально, но без лишнего официоза
+
+## ОГРАНИЧЕНИЯ ТЕМАТИКИ
+Ты отвечаешь ТОЛЬКО на вопросы по темам:
+- Маркетплейсы: WB, Ozon, Яндекс Маркет, Авито и работа на них
+- SimaDesk: функции, разделы, как пользоваться сервисом
+- Аналитика продаж, юнит-экономика, ценообразование, маржа
+- Логистика: FBO, FBS, склады, остатки, поставки
+- Реклама на маркетплейсах (ДРР, CTR, кампании)
+- Работа с поставщиками и закупки
+- Онлайн-торговля, бизнес-процессы в e-commerce
+- Отзывы, репутация, рейтинги на МП
+
+Если вопрос НЕ связан с этими темами (история, политика, наука, знаменитости, математика общего плана, программирование не связанное с МП, и т.п.) — ответь СТРОГО и коротко:
+"Я ассистент SimaDesk — помогаю с маркетплейсами и работой сервиса. Задай вопрос о торговле на WB, Ozon, Яндекс Маркет или о функциях SimaDesk."
+Не объясняй почему не отвечаешь. Просто верни эту фразу и больше ничего.
+
+## ПЕРЕКЛЮЧЕНИЕ НА ПОДДЕРЖКУ
+Если пользователь говорит что хочет написать в поддержку, поговорить с оператором, жалуется что ты не помогаешь или что-то не работает в сервисе — ответь строго JSON:
+{"action":"open_support"}
 
 ## КНОПКИ-ПОДСКАЗКИ ПОСЛЕ ОТВЕТА
 После каждого обычного ответа (не JSON-команд навигации, создания задач или page_action) добавляй в самый конец ответа JSON с 2–3 короткими кнопками для продолжения диалога:
@@ -452,6 +472,15 @@ export class AssistantModule {
   private voiceOnboarded = !!localStorage.getItem('sd_voice_onboarded');
   private speakingBtn: HTMLElement | null = null;
 
+  // ── Support chat state ─────────────────────────────────────────────────────
+  private supportMode: 'ai' | 'support' = 'ai';
+  private supportChatId: string | null = null;
+  private supportReason: string = '';
+  private supportMessages: SupportMessage[] = [];
+  private supportPollTimer: ReturnType<typeof setInterval> | null = null;
+  private supportLastMsgTime: string | null = null;
+  private supportChatClosed = false;
+
   /** Call after DOM is ready. Safe to call multiple times — only creates panel once. */
   async init(): Promise<void> {
     // Expose early so admin panel and debug tools can access it
@@ -509,6 +538,11 @@ export class AssistantModule {
     panel.querySelector('.sd-ap-close')?.addEventListener('click', () => this.closePanel());
     panel.querySelector('.sd-ap-send-btn')?.addEventListener('click', () => this.handleSend());
     panel.querySelector('.sd-ap-mic-btn')?.addEventListener('click', () => this.toggleVoice());
+
+    // Mode tabs: Сима / Поддержка
+    panel.querySelectorAll<HTMLElement>('.sd-ap-mode-tab').forEach(tab => {
+      tab.addEventListener('click', () => this.switchSupportMode(tab.dataset.mode as 'ai' | 'support'));
+    });
 
     // Close panel on click outside (panel or toggle button)
     document.addEventListener('click', (e) => {
@@ -645,6 +679,10 @@ export class AssistantModule {
           <h3>Сима</h3>
           <p>AI-менеджер маркетплейсов</p>
         </div>
+        <div class="sd-ap-mode-tabs" id="sd-ap-mode-tabs">
+          <button class="sd-ap-mode-tab active" data-mode="ai">Сима</button>
+          <button class="sd-ap-mode-tab" data-mode="support">Поддержка</button>
+        </div>
         <div class="sd-ap-header-actions">
           <div class="sd-ap-status" id="sd-ap-status">Готова</div>
           <button class="sd-ap-btn sd-ap-tts-btn" title="Озвучка текста">
@@ -748,7 +786,8 @@ export class AssistantModule {
             <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
           </svg>
         </button>
-      </div>`;
+      </div>
+      <div id="sd-ap-sup-view" style="display:none;flex-direction:column;flex:1;min-height:0"></div>`;
   }
 
   private saveKeyFromPanel(): void {
@@ -830,19 +869,22 @@ export class AssistantModule {
       const dX = startX - e.clientX; // drag left → wider
       const newW = Math.max(340, Math.min(700, startW + dX));
       panel.style.width = newW + 'px';
-      localStorage.setItem('sd_ap_w', String(newW));
       if (!sidebar) {
         const dY = startY - e.clientY; // drag up → taller
         const newH = Math.max(400, Math.min(window.innerHeight - 80, startH + dY));
         panel.style.height = newH + 'px';
         panel.style.maxHeight = newH + 'px';
-        localStorage.setItem('sd_ap_h', String(newH));
       }
     };
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       document.body.style.userSelect = '';
+      // Save size only on release to avoid jitter from frequent localStorage writes
+      const w = parseInt(panel.style.width, 10);
+      const h = parseInt(panel.style.height, 10);
+      if (w >= 340 && w <= 700) localStorage.setItem('sd_ap_w', String(w));
+      if (h >= 400 && h <= window.innerHeight - 80) localStorage.setItem('sd_ap_h', String(h));
     };
 
     handle.addEventListener('mousedown', (e) => {
@@ -865,18 +907,20 @@ export class AssistantModule {
         const dX = startX - tt.clientX;
         const newW = Math.max(340, Math.min(700, startW + dX));
         panel.style.width = newW + 'px';
-        localStorage.setItem('sd_ap_w', String(newW));
         if (!sidebar) {
           const dY = startY - tt.clientY;
           const newH = Math.max(400, Math.min(window.innerHeight - 80, startH + dY));
           panel.style.height = newH + 'px';
           panel.style.maxHeight = newH + 'px';
-          localStorage.setItem('sd_ap_h', String(newH));
         }
       };
       const onTEnd = () => {
         document.removeEventListener('touchmove', onTMove);
         document.removeEventListener('touchend', onTEnd);
+        const w = parseInt(panel.style.width, 10);
+        const h = parseInt(panel.style.height, 10);
+        if (w >= 340 && w <= 700) localStorage.setItem('sd_ap_w', String(w));
+        if (h >= 400 && h <= window.innerHeight - 80) localStorage.setItem('sd_ap_h', String(h));
       };
       document.addEventListener('touchmove', onTMove, { passive: false });
       document.addEventListener('touchend', onTEnd);
@@ -1367,6 +1411,286 @@ export class AssistantModule {
     this.panel.style.setProperty('--arrow-left', arrowLeft + 'px');
   }
 
+  // ── Support chat ──────────────────────────────────────────────────────────────
+
+  openSupportChat(): void {
+    if (this.isOpen) {
+      this.switchSupportMode('support');
+    } else {
+      this.togglePanel();
+      setTimeout(() => this.switchSupportMode('support'), 350);
+    }
+  }
+
+  private switchSupportMode(mode: 'ai' | 'support'): void {
+    if (!this.panel) return;
+    this.supportMode = mode;
+
+    // Update tabs
+    this.panel.querySelectorAll<HTMLElement>('.sd-ap-mode-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.mode === mode);
+    });
+
+    const aiContent = this.panel.querySelector<HTMLElement>('.sd-ap-key-setup, .sd-ap-quick-actions, .sd-ap-hints, .sd-ap-page-actions, .sd-ap-messages, .sd-ap-attach-chips, .sd-ap-input-area');
+    const supView = this.panel.querySelector<HTMLElement>('#sd-ap-sup-view');
+
+    // Show/hide by class on a wrapper — use attribute selector on all AI-only elements
+    const aiEls = this.panel.querySelectorAll<HTMLElement>(
+      '.sd-ap-key-setup, .sd-ap-quick-actions, #sd-ap-page-actions, .sd-ap-hints, .sd-ap-messages, .sd-ap-attach-chips, .sd-ap-input-area'
+    );
+    aiEls.forEach(el => { el.style.display = mode === 'ai' ? '' : 'none'; });
+    void aiContent; // suppress unused warning
+
+    if (supView) {
+      supView.style.display = mode === 'support' ? 'flex' : 'none';
+      if (mode === 'support') this.renderSupportView(supView);
+    }
+
+    if (mode === 'ai') this.stopSupportPolling();
+  }
+
+  private renderSupportView(container: HTMLElement): void {
+    if (this.supportChatId && !this.supportChatClosed) {
+      this.renderSupportChat(container);
+    } else {
+      this.renderSupportReasonSelect(container);
+    }
+  }
+
+  private renderSupportReasonSelect(container: HTMLElement): void {
+    const reasons = Object.entries(SUPPORT_REASONS);
+    container.innerHTML = `
+      <div class="sd-sup-reason-screen">
+        <div class="sd-sup-reason-title">Выберите тему обращения</div>
+        <div class="sd-sup-reason-sub">Оператор поддержки ответит вам в этом чате</div>
+        <div class="sd-sup-reason-grid">
+          ${reasons.map(([key, label]) =>
+            `<button class="sd-sup-reason-btn" data-reason="${key}">${label}</button>`
+          ).join('')}
+        </div>
+        <div class="sd-sup-warn">⚠️ После завершения диалога история чата будет удалена</div>
+      </div>`;
+
+    container.querySelectorAll<HTMLElement>('.sd-sup-reason-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const reason = btn.dataset.reason!;
+        this.supportReason = reason;
+        try {
+          this.supportChatId = await supportChatService.createChat(reason);
+          this.supportMessages = [];
+          this.supportLastMsgTime = null;
+          this.supportChatClosed = false;
+          this.renderSupportChat(container);
+          this.startSupportPolling();
+        } catch (e) {
+          container.innerHTML = `<div class="sd-sup-error">Не удалось создать чат: ${e instanceof Error ? e.message : 'ошибка'}</div>`;
+        }
+      });
+    });
+  }
+
+  private renderSupportChat(container: HTMLElement): void {
+    const reasonLabel = SUPPORT_REASONS[this.supportReason] ?? this.supportReason;
+    container.innerHTML = `
+      <div class="sd-sup-chat-header">
+        <div class="sd-sup-chat-title">
+          <span>Поддержка SimaDesk</span>
+          <span class="sd-sup-chat-reason">${reasonLabel}</span>
+        </div>
+        <button class="sd-sup-close-btn" id="sd-sup-close-btn" title="Завершить диалог">Завершить</button>
+      </div>
+      <div class="sd-sup-messages" id="sd-sup-messages"></div>
+      <div class="sd-sup-attach-chips" id="sd-sup-attach-chips"></div>
+      <div class="sd-sup-input-area">
+        <button class="sd-sup-attach-btn" id="sd-sup-attach-btn" title="Прикрепить файл">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </button>
+        <input type="file" id="sd-sup-file-input" accept=".xlsx,.xls,.docx,.doc,.pdf,.jpg,.jpeg,.png,.webp,.gif,.txt,.csv" multiple style="display:none">
+        <textarea class="sd-sup-textarea" id="sd-sup-textarea" placeholder="Напишите сообщение…" rows="1"></textarea>
+        <button class="sd-sup-send-btn" id="sd-sup-send-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+          </svg>
+        </button>
+      </div>`;
+
+    this.renderSupportMessages();
+    this.bindSupportChatEvents(container);
+    this.startSupportPolling();
+  }
+
+  private supAttachFiles: SupportAttachment[] = [];
+
+  private bindSupportChatEvents(container: HTMLElement): void {
+    const textarea = container.querySelector<HTMLTextAreaElement>('#sd-sup-textarea');
+    const sendBtn  = container.querySelector('#sd-sup-send-btn');
+    const closeBtn = container.querySelector('#sd-sup-close-btn');
+    const attachBtn = container.querySelector('#sd-sup-attach-btn');
+    const fileInput = container.querySelector<HTMLInputElement>('#sd-sup-file-input');
+
+    this.supAttachFiles = [];
+
+    const doSend = async () => {
+      if (!textarea || !this.supportChatId) return;
+      const text = textarea.value.trim();
+      if (!text && this.supAttachFiles.length === 0) return;
+      textarea.value = '';
+      textarea.style.height = '';
+      const attachSnap = [...this.supAttachFiles];
+      this.supAttachFiles = [];
+      this.renderSupAttachChips(container);
+      try {
+        await supportChatService.sendMessage(this.supportChatId, text, attachSnap);
+        const msgs = await supportChatService.getMessagesSince(this.supportChatId);
+        this.supportMessages = msgs;
+        this.supportLastMsgTime = msgs[msgs.length - 1]?.created_at ?? null;
+        this.renderSupportMessages();
+      } catch { showToast('Ошибка отправки сообщения', 'error'); }
+    };
+
+    textarea?.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+    });
+    textarea?.addEventListener('input', () => {
+      if (textarea) { textarea.style.height = 'auto'; textarea.style.height = Math.min(textarea.scrollHeight, 100) + 'px'; }
+    });
+    sendBtn?.addEventListener('click', doSend);
+
+    closeBtn?.addEventListener('click', () => this.confirmCloseSupport(container));
+
+    attachBtn?.addEventListener('click', () => fileInput?.click());
+    fileInput?.addEventListener('change', () => {
+      const files = Array.from(fileInput?.files ?? []);
+      if (!files.length) return;
+      files.forEach(file => {
+        if (file.size > 5 * 1024 * 1024) { showToast('Файл слишком большой (макс 5 МБ)', 'error'); return; }
+        const reader = new FileReader();
+        if (file.type.startsWith('image/')) {
+          reader.onload = e => {
+            this.supAttachFiles.push({ name: file.name, kind: 'image', data: e.target?.result as string, size: file.size });
+            this.renderSupAttachChips(container);
+          };
+          reader.readAsDataURL(file);
+        } else {
+          reader.onload = e => {
+            this.supAttachFiles.push({ name: file.name, kind: 'text', data: e.target?.result as string, size: file.size });
+            this.renderSupAttachChips(container);
+          };
+          reader.readAsText(file);
+        }
+      });
+      if (fileInput) fileInput.value = '';
+    });
+  }
+
+  private renderSupAttachChips(container: HTMLElement): void {
+    const chips = container.querySelector('#sd-sup-attach-chips');
+    if (!chips) return;
+    chips.innerHTML = this.supAttachFiles.map((f, i) =>
+      `<div class="sd-ap-attach-chip">${f.kind === 'image' ? '🖼' : '📎'} ${f.name}
+        <button class="sd-ap-attach-chip-rm" data-idx="${i}">×</button>
+      </div>`
+    ).join('');
+    chips.querySelectorAll<HTMLElement>('.sd-ap-attach-chip-rm').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.supAttachFiles.splice(+(btn.dataset.idx!), 1);
+        this.renderSupAttachChips(container);
+      });
+    });
+  }
+
+  private renderSupportMessages(): void {
+    const el = this.panel?.querySelector<HTMLElement>('#sd-sup-messages');
+    if (!el) return;
+    if (this.supportMessages.length === 0) {
+      el.innerHTML = `<div class="sd-sup-empty">Напишите ваш вопрос — оператор ответит в ближайшее время</div>`;
+      return;
+    }
+    el.innerHTML = this.supportMessages.map(m => {
+      const isUser = m.sender_role === 'user';
+      const time = supportChatService.fmtTime(m.created_at);
+      const attachHtml = (m.attachments ?? []).map(a =>
+        a.kind === 'image'
+          ? `<img src="${a.data}" alt="${a.name}" class="sd-sup-msg-img">`
+          : `<div class="sd-sup-msg-file">📎 ${a.name}</div>`
+      ).join('');
+      return `<div class="sd-sup-msg ${isUser ? 'user' : 'admin'}">
+        <div class="sd-sup-bubble">${m.content ? m.content.replace(/\n/g, '<br>') : ''}${attachHtml}</div>
+        <div class="sd-sup-msg-time">${isUser ? '' : 'Поддержка · '}${time}</div>
+      </div>`;
+    }).join('');
+    el.scrollTop = el.scrollHeight;
+  }
+
+  private confirmCloseSupport(container: HTMLElement): void {
+    container.innerHTML = `
+      <div class="sd-sup-confirm-close">
+        <div class="sd-sup-confirm-icon">⚠️</div>
+        <div class="sd-sup-confirm-title">Завершить диалог?</div>
+        <div class="sd-sup-confirm-desc">История переписки будет безвозвратно удалена. Сохраните важную информацию заранее.</div>
+        <div class="sd-sup-confirm-btns">
+          <button class="sd-sup-confirm-yes">Да, завершить</button>
+          <button class="sd-sup-confirm-no">Отмена</button>
+        </div>
+      </div>`;
+    container.querySelector('.sd-sup-confirm-yes')?.addEventListener('click', async () => {
+      if (this.supportChatId) {
+        try { await supportChatService.closeMyChat(this.supportChatId); } catch {}
+      }
+      this.stopSupportPolling();
+      this.supportChatId = null;
+      this.supportMessages = [];
+      this.supportLastMsgTime = null;
+      this.supportChatClosed = false;
+      this.renderSupportReasonSelect(container);
+    });
+    container.querySelector('.sd-sup-confirm-no')?.addEventListener('click', () => {
+      this.renderSupportChat(container);
+    });
+  }
+
+  private startSupportPolling(): void {
+    this.stopSupportPolling();
+    if (!this.supportChatId) return;
+    this.supportPollTimer = setInterval(async () => {
+      if (!this.supportChatId || this.supportMode !== 'support') { this.stopSupportPolling(); return; }
+      try {
+        const newMsgs = await supportChatService.getMessagesSince(this.supportChatId, this.supportLastMsgTime);
+        if (newMsgs.length > 0) {
+          this.supportMessages = [...this.supportMessages, ...newMsgs];
+          this.supportLastMsgTime = newMsgs[newMsgs.length - 1].created_at;
+          this.renderSupportMessages();
+        }
+        // Check if chat was closed by admin
+        const chat = await supportChatService.getMyChat();
+        if (!chat && this.supportChatId) {
+          this.stopSupportPolling();
+          const supView = this.panel?.querySelector<HTMLElement>('#sd-ap-sup-view');
+          if (supView) {
+            supView.innerHTML = `<div class="sd-sup-closed-msg">
+              <div style="font-size:2rem">✅</div>
+              <div>Диалог завершён оператором</div>
+              <button class="sd-sup-reason-btn" id="sd-sup-new-chat">Написать снова</button>
+            </div>`;
+            supView.querySelector('#sd-sup-new-chat')?.addEventListener('click', () => {
+              this.supportChatId = null;
+              this.supportMessages = [];
+              this.supportLastMsgTime = null;
+              this.renderSupportReasonSelect(supView);
+            });
+          }
+          this.supportChatId = null;
+        }
+      } catch {}
+    }, 3000);
+  }
+
+  private stopSupportPolling(): void {
+    if (this.supportPollTimer) { clearInterval(this.supportPollTimer); this.supportPollTimer = null; }
+  }
+
   closePanel(): void {
     if (!this.panel) return;
     this.isOpen = false;
@@ -1693,6 +2017,14 @@ export class AssistantModule {
         const textPart = pageAct.raw ? replyNorm.split(pageAct.raw).join('').trim() : '';
         if (textPart) this.addAssistantMessage(textPart);
         await this.executePageAction(pageAct.name, pageAct.args, text);
+        return;
+      }
+
+      // open_support action
+      if (/"action"\s*:\s*"open_support"/.test(reply)) {
+        this.addAssistantMessage('Конечно! Переключаю на поддержку SimaDesk — там ответит живой оператор.');
+        setTimeout(() => this.switchSupportMode('support'), 600);
+        this.setStatus('Готова');
         return;
       }
 
