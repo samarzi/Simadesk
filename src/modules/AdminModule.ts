@@ -1,6 +1,6 @@
 import {
   adminService, AdminStats, AdminUser, AdminCompany, AdminCompanyWithApi, PromoCode, PromoRedemption,
-  SupportTicket, PlanConfig, AnalyticsData, SiteContent,
+  PlanConfig, AnalyticsData, SiteContent,
 } from '@/services/adminService';
 import { authService } from '@/services/authService';
 import { showToast } from '@/utils/toast';
@@ -10,6 +10,7 @@ import {
   QUADRANT_LABELS, STATUS_LABELS, QUADRANT_COLORS,
 } from '@/services/roadmapDb';
 import { debug } from '@/utils/debug';
+import { supportChatService, AdminSupportChat, SupportAttachment } from '@/services/supportChatService';
 
 type AdminTab = 'overview' | 'analytics' | 'users' | 'companies' | 'subscriptions' | 'promos' | 'support' | 'settings' | 'pages' | 'roadmap';
 
@@ -30,11 +31,6 @@ const TAB_META: Record<AdminTab, { title: string; desc: string; group: string }>
 const PLAN_COLORS: Record<string, string> = {
   free: '#6b7280', starter: '#3b82f6', business: '#6366f1', pro: '#8b5cf6', max: '#f59e0b',
 };
-const TICKET_STATUS: Record<string, { label: string; color: string }> = {
-  open:     { label: 'Открыт',   color: '#f59e0b' },
-  answered: { label: 'Отвечено', color: '#22c55e' },
-  closed:   { label: 'Закрыт',   color: '#6b7280' },
-};
 
 /* ── Picker state ── */
 interface PickerState {
@@ -53,13 +49,9 @@ export class AdminModule {
   private companiesTotal = 0;
   private companySearch = '';
   private promos: PromoCode[] = [];
-  private tickets: SupportTicket[] = [];
-  private ticketsTotal = 0;
-  private ticketFilter = '';
   private plans: PlanConfig[] = [];
   private analytics: AnalyticsData | null = null;
   private loading = false;
-  private activeTicket: SupportTicket | null = null;
 
   /* current admin identity (for the sidebar chip) */
   private role: string = 'admin';
@@ -78,6 +70,14 @@ export class AdminModule {
 
   /* companies-with-api list for subscriptions tab */
   private apiCompanies: AdminCompanyWithApi[] = [];
+
+  /* live support chat */
+  private liveChats: AdminSupportChat[] = [];
+  private activeLiveChat: AdminSupportChat | null = null;
+  private liveChatPollTimer: ReturnType<typeof setInterval> | null = null;
+  private liveChatLastMsgTime: string | null = null;
+  private liveAttachFiles: SupportAttachment[] = [];
+  private liveChatFilter: 'open' | 'all' = 'open';
   private apiSearch = '';
   private apiFilter: 'all' | 'active' | 'trial' | 'expired' = 'all';
   private inlineEdit: string | null = null; // company_id being edited inline
@@ -94,7 +94,7 @@ export class AdminModule {
   show(): void {
     this.el.style.display = 'flex';
     this.tab = 'overview';
-    this.activeTicket = null;
+    this.activeLiveChat = null;
     this.activePromo = null;
     this.render();
     // Load the admin's own role for the sidebar identity chip
@@ -102,11 +102,11 @@ export class AdminModule {
     this.loadTab();
   }
 
-  hide(): void { this.el.style.display = 'none'; }
+  hide(): void { this.el.style.display = 'none'; this.stopLiveChatPolling(); }
 
   private async loadTab(): Promise<void> {
     this.loading = true;
-    this.activeTicket = null;
+    this.activeLiveChat = null;
     this.activePromo = null;
     this.render();
     try {
@@ -115,7 +115,11 @@ export class AdminModule {
         case 'users': {   const r = await adminService.getUsers(this.userSearch); this.users = r.users; this.usersTotal = r.total; break; }
         case 'companies': { const r = await adminService.getCompanies(this.companySearch); this.companies = r.companies; this.companiesTotal = r.total; break; }
         case 'promos':    this.promos = await adminService.getPromos(); break;
-        case 'support': { const r = await adminService.getTickets(this.ticketFilter); this.tickets = r.tickets; this.ticketsTotal = r.total; break; }
+        case 'support': {
+          this.liveChats = await supportChatService.adminGetChats(this.liveChatFilter);
+          this.startLiveChatPolling();
+          break;
+        }
         case 'subscriptions': {
           const [plans, apiCos] = await Promise.all([
             adminService.getPlanConfigs(),
@@ -1024,111 +1028,324 @@ export class AdminModule {
       </div>`;
   }
 
-  // ── SUPPORT ───────────────────────────────────────────────────────────────────
+  // ── SUPPORT LIVE CHAT ────────────────────────────────────────────────────────
   private renderSupport(): string {
-    if (this.activeTicket) return this.renderTicketDetail(this.activeTicket);
-    const filters = [
-      { v: '',         l: 'Все' },
-      { v: 'open',     l: 'Открытые' },
-      { v: 'answered', l: 'Отвечено' },
-      { v: 'closed',   l: 'Закрытые' },
-    ];
-    return `
-      <div class="adm-toolbar">
-        <div class="adm-filter-pills">
-          ${filters.map(f => `<button class="adm-filter-pill ${this.ticketFilter === f.v ? 'active' : ''}" data-filter="${f.v}">${f.l}</button>`).join('')}
-        </div>
-        <div class="adm-toolbar-info">${this.ticketsTotal} обращений</div>
-      </div>
-      ${this.tickets.length === 0
-        ? `<div class="adm-empty" style="flex-direction:column;gap:8px">
-             <div style="opacity:.4">${this.ico('chat')}</div>
-             <div>${this.ticketFilter ? 'Нет обращений с этим статусом' : 'Обращений пока нет'}</div>
-           </div>`
-        : `<div class="adm-ticket-list">
-            ${this.tickets.map(t => {
-              const st = TICKET_STATUS[t.status] ?? TICKET_STATUS.open;
-              const av = t.photo_url
-                ? `<img src="${this.esc(t.photo_url)}" class="adm-avatar-img" alt="">`
-                : `<div class="adm-avatar-placeholder">${(t.first_name?.[0] ?? '?').toUpperCase()}</div>`;
-              return `
-                <div class="adm-ticket-item" data-action="open-ticket" data-ticket-id="${t.id}">
-                  <div class="adm-ticket-strip" style="background:${st.color}"></div>
-                  <div class="adm-avatar" style="width:38px;height:38px;flex-shrink:0">${av}</div>
-                  <div class="adm-ticket-item-body">
-                    <div class="adm-ticket-item-head">
-                      <span class="adm-ticket-item-name">${this.esc(t.first_name)} ${this.esc(t.last_name ?? '')}</span>
-                      ${t.telegram_username ? `<span class="adm-user-sub">@${this.esc(t.telegram_username)}</span>` : ''}
-                      ${t.company_name ? `<span class="adm-ticket-item-company">${this.esc(t.company_name)}</span>` : ''}
-                    </div>
-                    <div class="adm-ticket-item-subject">${this.esc(t.subject)}</div>
-                    <div class="adm-ticket-item-preview">${this.esc(t.message)}</div>
-                  </div>
-                  <div class="adm-ticket-item-meta">
-                    <span class="adm-badge" style="background:${st.color}22;color:${st.color}">${st.label}</span>
-                    <span class="adm-ticket-item-date">${adminService.fmtDate(t.created_at)}</span>
-                  </div>
-                </div>`;
-            }).join('')}
-           </div>`}`;
-  }
-
-  private renderTicketDetail(t: SupportTicket): string {
-    const st = TICKET_STATUS[t.status] ?? TICKET_STATUS.open;
-    const av = t.photo_url
-      ? `<img src="${this.esc(t.photo_url)}" class="adm-avatar-img" alt="">`
-      : `<div class="adm-avatar-placeholder">${(t.first_name?.[0] ?? '?').toUpperCase()}</div>`;
-    const adminU = authService.getUser();
-    const templates = [
-      'Здравствуйте! Спасибо за обращение — разбираемся с вашим вопросом.',
-      'Проблема решена. Пожалуйста, обновите страницу и проверьте.',
-      'Нужны уточнения: подскажите, пожалуйста, подробнее что происходит?',
-    ];
-    return `
-      <button class="adm-back-inline" id="ticket-back">${this.ico('arrow-left')} Назад к списку</button>
-
-      <div class="adm-ticket-detail">
-        <div class="adm-ticket-detail-head">
-          <div class="adm-avatar" style="width:44px;height:44px">${av}</div>
-          <div style="flex:1;min-width:0">
-            <div class="adm-ticket-detail-name">${this.esc(t.first_name)} ${this.esc(t.last_name ?? '')}</div>
-            <div class="adm-user-sub">${t.telegram_username ? '@' + this.esc(t.telegram_username) : ''}${t.company_name ? ' · ' + this.esc(t.company_name) : ''}</div>
+    const REASON_LABELS: Record<string, string> = {
+      question: '❓ Вопрос', problem: '🚨 Проблема', billing: '💳 Оплата / тариф',
+      recommendation: '💡 Предложение', feature: '🔧 Запрос функции', other: '💬 Другое',
+    };
+    const chatList = this.liveChats.map(c => {
+      const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Пользователь';
+      const isActive = this.activeLiveChat?.id === c.id;
+      const preview = c.last_message ? this.esc(c.last_message.slice(0, 60)) : '—';
+      const badge = c.unread_count > 0
+        ? `<span class="adm-live-badge">${c.unread_count}</span>` : '';
+      const time = c.last_message_at ? supportChatService.fmtTime(c.last_message_at) : '';
+      return `<div class="adm-live-chat-row${isActive ? ' active' : ''}" data-live-chat-id="${c.id}">
+        <div class="adm-avatar-placeholder" style="width:36px;height:36px;font-size:14px;flex-shrink:0">${name[0].toUpperCase()}</div>
+        <div class="adm-live-chat-row-body">
+          <div class="adm-live-chat-row-head">
+            <span class="adm-live-chat-name">${this.esc(name)}</span>
+            ${badge}
+            <span class="adm-live-chat-time">${time}</span>
           </div>
-          <span class="adm-badge" style="background:${st.color}22;color:${st.color}">${st.label}</span>
-        </div>
-
-        <div class="adm-ticket-subject-bar">
-          <span>${this.esc(t.subject)}</span>
-          <span class="adm-ticket-detail-date">${adminService.fmtDate(t.created_at)}</span>
-        </div>
-
-        <div class="adm-chat">
-          <div class="adm-chat-row user">
-            <div class="adm-avatar" style="width:30px;height:30px;flex-shrink:0">${av}</div>
-            <div class="adm-bubble user">${this.esc(t.message)}</div>
-          </div>
-          ${t.admin_reply ? `
-            <div class="adm-chat-row admin">
-              <div class="adm-bubble admin">
-                ${this.esc(t.admin_reply)}
-                <div class="adm-bubble-meta">Поддержка · ${adminService.fmtDate(t.replied_at)}</div>
-              </div>
-              <div class="adm-avatar-placeholder" style="width:30px;height:30px;font-size:12px;flex-shrink:0;background:#6366f122;color:#6366f1">${(adminU?.first_name?.[0] ?? 'S').toUpperCase()}</div>
-            </div>` : ''}
-        </div>
-      </div>
-
-      <div class="adm-ticket-reply-box">
-        <div class="adm-card-title">${t.admin_reply ? 'Обновить ответ' : 'Ответить пользователю'}</div>
-        <div class="adm-reply-templates">
-          ${templates.map(tpl => `<button class="adm-reply-tpl" data-tpl="${this.esc(tpl)}">${this.esc(tpl.length > 34 ? tpl.slice(0, 33) + '…' : tpl)}</button>`).join('')}
-        </div>
-        <textarea class="adm-input adm-textarea" id="ticket-reply" rows="4" placeholder="Введите ответ…">${this.esc(t.admin_reply ?? '')}</textarea>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-          <button class="adm-btn-primary" id="ticket-reply-send" data-tid="${t.id}">${this.ico('check')} Отправить ответ</button>
-          <button class="adm-btn-secondary" id="ticket-close" data-tid="${t.id}">Закрыть обращение</button>
+          <div class="adm-live-chat-reason">${REASON_LABELS[c.reason] ?? c.reason}</div>
+          <div class="adm-live-chat-preview">${preview}</div>
         </div>
       </div>`;
+    }).join('');
+
+    const noChats = this.liveChats.length === 0
+      ? `<div class="adm-live-empty">Нет активных чатов</div>` : '';
+
+    const detail = this.activeLiveChat
+      ? this.renderLiveChatDetail(this.activeLiveChat)
+      : `<div class="adm-live-empty" style="flex:1">Выберите чат слева</div>`;
+
+    return `<div class="adm-live-layout">
+      <div class="adm-live-sidebar">
+        <div class="adm-live-sidebar-head">
+          <span>Чаты</span>
+          <div style="display:flex;gap:4px">
+            <button class="adm-filter-pill${this.liveChatFilter === 'open' ? ' active' : ''}" data-live-filter="open">Активные</button>
+            <button class="adm-filter-pill${this.liveChatFilter === 'all' ? ' active' : ''}" data-live-filter="all">Все</button>
+          </div>
+        </div>
+        <div class="adm-live-chat-list">${chatList}${noChats}</div>
+      </div>
+      <div class="adm-live-detail" id="adm-live-detail">${detail}</div>
+    </div>`;
+  }
+
+  private renderLiveChatDetail(c: AdminSupportChat): string {
+    const REASON_LABELS: Record<string, string> = {
+      question: '❓ Вопрос', problem: '🚨 Проблема', billing: '💳 Оплата / тариф',
+      recommendation: '💡 Предложение', feature: '🔧 Запрос функции', other: '💬 Другое',
+    };
+    const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Пользователь';
+    const msgs = (c.messages ?? []).map(m => {
+      const isAdmin = m.sender_role === 'admin';
+      const time = supportChatService.fmtTime(m.created_at);
+      const attachHtml = (m.attachments ?? []).map(a =>
+        a.kind === 'image'
+          ? `<img src="${a.data}" alt="${a.name}" class="adm-live-msg-img">`
+          : `<div class="adm-live-msg-file">📎 ${a.name}</div>`
+      ).join('');
+      return `<div class="adm-live-msg ${isAdmin ? 'admin' : 'user'}">
+        <div class="adm-live-bubble">${m.content ? m.content.replace(/\n/g,'<br>') : ''}${attachHtml}</div>
+        <div class="adm-live-msg-time">${isAdmin ? 'Поддержка · ' : name + ' · '}${time}</div>
+      </div>`;
+    }).join('');
+
+    return `<div class="adm-live-detail-inner">
+      <div class="adm-live-detail-head">
+        <div class="adm-avatar-placeholder" style="width:38px;height:38px;font-size:15px;flex-shrink:0">${name[0].toUpperCase()}</div>
+        <div style="flex:1;min-width:0">
+          <div class="adm-live-detail-name">${this.esc(name)}</div>
+          <div class="adm-user-sub">${c.telegram_username ? '@' + this.esc(c.telegram_username) + ' · ' : ''}${c.company_name ? this.esc(c.company_name) + ' · ' : ''}${REASON_LABELS[c.reason] ?? c.reason}</div>
+        </div>
+        <button class="adm-btn-secondary" style="padding:5px 12px;font-size:12px;white-space:nowrap;color:#ef4444;border-color:#ef444455" id="adm-live-close-chat">Завершить диалог</button>
+      </div>
+      <div class="adm-live-messages" id="adm-live-messages">${msgs || '<div class="adm-live-empty" style="padding:30px">Сообщений пока нет</div>'}</div>
+      <div class="adm-live-attach-chips" id="adm-live-attach-chips"></div>
+      <div class="adm-live-input-area">
+        <button class="adm-live-attach-btn" id="adm-live-attach-btn" title="Прикрепить файл">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="16" height="16"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <input type="file" id="adm-live-file-input" accept=".xlsx,.xls,.docx,.doc,.pdf,.jpg,.jpeg,.png,.webp,.gif,.txt,.csv" multiple style="display:none">
+        <textarea class="adm-live-textarea" id="adm-live-textarea" placeholder="Напишите ответ…" rows="1"></textarea>
+        <button class="adm-live-send-btn" id="adm-live-send-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+        </button>
+      </div>
+    </div>`;
+  }
+
+  private bindLiveChatEvents(): void {
+    // Filter toggle
+    this.el.querySelectorAll<HTMLElement>('[data-live-filter]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.liveChatFilter = (btn.dataset.liveFilter as 'open' | 'all') ?? 'open';
+        this.activeLiveChat = null;
+        this.loadTab();
+      });
+    });
+
+    // Select chat
+    this.el.querySelectorAll<HTMLElement>('.adm-live-chat-row').forEach(row => {
+      row.addEventListener('click', async () => {
+        const id = row.dataset.liveChatId!;
+        const chat = await supportChatService.adminGetChat(id);
+        if (!chat) return;
+        this.activeLiveChat = chat;
+        this.liveChatLastMsgTime = chat.messages?.at(-1)?.created_at ?? null;
+        this.liveAttachFiles = [];
+        const detail = this.el.querySelector<HTMLElement>('#adm-live-detail');
+        if (detail) {
+          detail.innerHTML = this.renderLiveChatDetail(chat);
+          this.bindLiveChatDetailEvents(detail);
+          const msgs = detail.querySelector<HTMLElement>('#adm-live-messages');
+          if (msgs) msgs.scrollTop = msgs.scrollHeight;
+        }
+        // Update active state in list
+        this.el.querySelectorAll<HTMLElement>('.adm-live-chat-row').forEach(r =>
+          r.classList.toggle('active', r.dataset.liveChatId === id));
+        // Update unread count in sidebar
+        const updChats = [...this.liveChats];
+        const idx = updChats.findIndex(c => c.id === id);
+        if (idx >= 0) { updChats[idx] = { ...updChats[idx], unread_count: 0 }; this.liveChats = updChats; }
+      });
+    });
+
+    // Bind detail events if a chat is already active
+    const detail = this.el.querySelector<HTMLElement>('#adm-live-detail');
+    if (detail && this.activeLiveChat) this.bindLiveChatDetailEvents(detail);
+  }
+
+  private bindLiveChatDetailEvents(detail: HTMLElement): void {
+    const textarea = detail.querySelector<HTMLTextAreaElement>('#adm-live-textarea');
+    const sendBtn  = detail.querySelector('#adm-live-send-btn');
+    const closeBtn = detail.querySelector('#adm-live-close-chat');
+    const attachBtn = detail.querySelector('#adm-live-attach-btn');
+    const fileInput = detail.querySelector<HTMLInputElement>('#adm-live-file-input');
+
+    const doSend = async () => {
+      if (!this.activeLiveChat || !textarea) return;
+      const text = textarea.value.trim();
+      if (!text && this.liveAttachFiles.length === 0) return;
+      textarea.value = '';
+      textarea.style.height = '';
+      const snap = [...this.liveAttachFiles];
+      this.liveAttachFiles = [];
+      this.renderLiveAttachChips(detail);
+      try {
+        await supportChatService.adminSendMessage(this.activeLiveChat.id, text, snap);
+        const chat = await supportChatService.adminGetChat(this.activeLiveChat.id);
+        if (chat) {
+          this.activeLiveChat = chat;
+          this.liveChatLastMsgTime = chat.messages?.at(-1)?.created_at ?? null;
+          detail.innerHTML = this.renderLiveChatDetail(chat);
+          this.bindLiveChatDetailEvents(detail);
+          const msgs = detail.querySelector<HTMLElement>('#adm-live-messages');
+          if (msgs) msgs.scrollTop = msgs.scrollHeight;
+        }
+      } catch { showToast('Ошибка отправки', 'error'); }
+    };
+
+    textarea?.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+    });
+    textarea?.addEventListener('input', () => {
+      if (textarea) { textarea.style.height = 'auto'; textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px'; }
+    });
+    sendBtn?.addEventListener('click', doSend);
+
+    closeBtn?.addEventListener('click', async () => {
+      if (!this.activeLiveChat) return;
+      if (!confirm(`Завершить диалог с пользователем? История переписки будет удалена.`)) return;
+      try {
+        await supportChatService.adminCloseChat(this.activeLiveChat.id);
+        this.activeLiveChat = null;
+        this.liveChats = this.liveChats.filter(c => c.id !== (this.activeLiveChat as AdminSupportChat | null)?.id);
+        this.loadTab();
+        showToast('Диалог завершён', 'success');
+      } catch { showToast('Ошибка при закрытии', 'error'); }
+    });
+
+    attachBtn?.addEventListener('click', () => fileInput?.click());
+    fileInput?.addEventListener('change', () => {
+      const files = Array.from(fileInput?.files ?? []);
+      files.forEach(file => {
+        if (file.size > 5 * 1024 * 1024) { showToast('Файл слишком большой (макс 5 МБ)', 'error'); return; }
+        const reader = new FileReader();
+        if (file.type.startsWith('image/')) {
+          reader.onload = e => {
+            this.liveAttachFiles.push({ name: file.name, kind: 'image', data: e.target?.result as string, size: file.size });
+            this.renderLiveAttachChips(detail);
+          };
+          reader.readAsDataURL(file);
+        } else {
+          reader.onload = e => {
+            this.liveAttachFiles.push({ name: file.name, kind: 'text', data: e.target?.result as string, size: file.size });
+            this.renderLiveAttachChips(detail);
+          };
+          reader.readAsText(file);
+        }
+      });
+      if (fileInput) fileInput.value = '';
+    });
+  }
+
+  private renderLiveAttachChips(detail: HTMLElement): void {
+    const chips = detail.querySelector('#adm-live-attach-chips');
+    if (!chips) return;
+    chips.innerHTML = this.liveAttachFiles.map((f, i) =>
+      `<div class="adm-live-attach-chip">${f.kind === 'image' ? '🖼' : '📎'} ${f.name}
+        <button class="adm-live-chip-rm" data-idx="${i}">×</button>
+      </div>`
+    ).join('');
+    chips.querySelectorAll<HTMLElement>('.adm-live-chip-rm').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.liveAttachFiles.splice(+(btn.dataset.idx!), 1);
+        this.renderLiveAttachChips(detail);
+      });
+    });
+  }
+
+  private startLiveChatPolling(): void {
+    this.stopLiveChatPolling();
+    this.liveChatPollTimer = setInterval(async () => {
+      if (this.tab !== 'support') { this.stopLiveChatPolling(); return; }
+      try {
+        // Refresh chat list
+        const chats = await supportChatService.adminGetChats(this.liveChatFilter);
+        this.liveChats = chats;
+        // Update sidebar only (don't re-render whole tab — would lose detail view state)
+        const list = this.el.querySelector<HTMLElement>('.adm-live-chat-list');
+        if (list) {
+          const REASON_LABELS: Record<string, string> = {
+            question: '❓', problem: '🚨', billing: '💳', recommendation: '💡', feature: '🔧', other: '💬',
+          };
+          list.innerHTML = chats.length === 0
+            ? `<div class="adm-live-empty">Нет активных чатов</div>`
+            : chats.map(c => {
+                const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Пользователь';
+                const isActive = this.activeLiveChat?.id === c.id;
+                const badge = c.unread_count > 0 && !isActive
+                  ? `<span class="adm-live-badge">${c.unread_count}</span>` : '';
+                const time = c.last_message_at ? supportChatService.fmtTime(c.last_message_at) : '';
+                return `<div class="adm-live-chat-row${isActive ? ' active' : ''}" data-live-chat-id="${c.id}">
+                  <div class="adm-avatar-placeholder" style="width:36px;height:36px;font-size:14px;flex-shrink:0">${name[0].toUpperCase()}</div>
+                  <div class="adm-live-chat-row-body">
+                    <div class="adm-live-chat-row-head">
+                      <span class="adm-live-chat-name">${this.esc(name)}</span>${badge}
+                      <span class="adm-live-chat-time">${time}</span>
+                    </div>
+                    <div class="adm-live-chat-reason">${REASON_LABELS[c.reason] ?? c.reason}</div>
+                    <div class="adm-live-chat-preview">${c.last_message ? this.esc(c.last_message.slice(0, 60)) : '—'}</div>
+                  </div>
+                </div>`;
+              }).join('');
+          // Re-bind click events on list rows
+          list.querySelectorAll<HTMLElement>('.adm-live-chat-row').forEach(row => {
+            row.addEventListener('click', async () => {
+              const id = row.dataset.liveChatId!;
+              const chat = await supportChatService.adminGetChat(id);
+              if (!chat) return;
+              this.activeLiveChat = chat;
+              this.liveChatLastMsgTime = chat.messages?.at(-1)?.created_at ?? null;
+              this.liveAttachFiles = [];
+              const detail = this.el.querySelector<HTMLElement>('#adm-live-detail');
+              if (detail) {
+                detail.innerHTML = this.renderLiveChatDetail(chat);
+                this.bindLiveChatDetailEvents(detail);
+                const msgs = detail.querySelector<HTMLElement>('#adm-live-messages');
+                if (msgs) msgs.scrollTop = msgs.scrollHeight;
+              }
+              list.querySelectorAll<HTMLElement>('.adm-live-chat-row').forEach(r =>
+                r.classList.toggle('active', r.dataset.liveChatId === id));
+            });
+          });
+        }
+
+        // Poll new messages if a chat is open
+        if (this.activeLiveChat) {
+          const newMsgs = await supportChatService.getMessagesSince(this.activeLiveChat.id, this.liveChatLastMsgTime);
+          if (newMsgs.length > 0) {
+            this.liveChatLastMsgTime = newMsgs.at(-1)!.created_at;
+            if (!this.activeLiveChat.messages) this.activeLiveChat.messages = [];
+            this.activeLiveChat.messages = [...this.activeLiveChat.messages, ...newMsgs];
+            const msgsEl = this.el.querySelector<HTMLElement>('#adm-live-messages');
+            if (msgsEl) {
+              const REASON_LABELS: Record<string, string> = {
+                question: '❓', problem: '🚨', billing: '💳', recommendation: '💡', feature: '🔧', other: '💬',
+              };
+              const name = [this.activeLiveChat.first_name, this.activeLiveChat.last_name].filter(Boolean).join(' ') || 'Пользователь';
+              void REASON_LABELS;
+              const msgsHtml = this.activeLiveChat.messages.map(m => {
+                const isAdmin = m.sender_role === 'admin';
+                const time = supportChatService.fmtTime(m.created_at);
+                const attachHtml = (m.attachments ?? []).map(a =>
+                  a.kind === 'image'
+                    ? `<img src="${a.data}" alt="${a.name}" class="adm-live-msg-img">`
+                    : `<div class="adm-live-msg-file">📎 ${a.name}</div>`
+                ).join('');
+                return `<div class="adm-live-msg ${isAdmin ? 'admin' : 'user'}">
+                  <div class="adm-live-bubble">${m.content ? m.content.replace(/\n/g,'<br>') : ''}${attachHtml}</div>
+                  <div class="adm-live-msg-time">${isAdmin ? 'Поддержка · ' : name + ' · '}${time}</div>
+                </div>`;
+              }).join('');
+              msgsEl.innerHTML = msgsHtml;
+              msgsEl.scrollTop = msgsEl.scrollHeight;
+            }
+          }
+        }
+      } catch { /* silently ignore poll errors */ }
+    }, 3000);
+  }
+
+  private stopLiveChatPolling(): void {
+    if (this.liveChatPollTimer) { clearInterval(this.liveChatPollTimer); this.liveChatPollTimer = null; }
   }
 
   // ── SETTINGS ──────────────────────────────────────────────────────────────────
@@ -1321,32 +1538,8 @@ export class AdminModule {
       btn.addEventListener('click', (e) => { e.stopPropagation(); this.handleAction(btn); });
     });
 
-    // Ticket filter pills
-    this.el.querySelectorAll<HTMLElement>('[data-filter]').forEach(btn => {
-      btn.addEventListener('click', () => { this.ticketFilter = btn.dataset.filter ?? ''; this.loadTab(); });
-    });
-
-    // Ticket rows
-    this.el.querySelectorAll<HTMLElement>('.adm-tr-clickable').forEach(row => {
-      row.addEventListener('click', () => {
-        const id = row.dataset.ticketId;
-        const t = this.tickets.find(t => t.id === id);
-        if (t) { this.activeTicket = t; this.render(); this.bindEvents(); }
-      });
-    });
-
-    // Ticket detail
-    document.getElementById('ticket-back')?.addEventListener('click', () => { this.activeTicket = null; this.render(); this.bindEvents(); });
-    document.getElementById('ticket-reply-send')?.addEventListener('click', () => this.handleTicketReply('answered'));
-    document.getElementById('ticket-close')?.addEventListener('click', () => this.handleTicketReply('closed'));
-
-    // Reply templates
-    this.el.querySelectorAll<HTMLElement>('.adm-reply-tpl').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const ta = document.getElementById('ticket-reply') as HTMLTextAreaElement | null;
-        if (ta) { ta.value = btn.dataset.tpl ?? ''; ta.focus(); }
-      });
-    });
+    // Live support chat events
+    if (this.tab === 'support') this.bindLiveChatEvents();
 
     // Promo detail back
     document.getElementById('promo-back')?.addEventListener('click', () => { this.activePromo = null; this.render(); this.bindEvents(); });
@@ -1609,11 +1802,6 @@ export class AdminModule {
       return;
     }
 
-    if (action === 'open-ticket') {
-      const id = btn.closest<HTMLElement>('[data-ticket-id]')?.dataset.ticketId ?? btn.dataset.ticketId;
-      const t = this.tickets.find(t => t.id === id);
-      if (t) { this.activeTicket = t; this.render(); this.bindEvents(); }
-    }
     if (action === 'open-promo') {
       const id = btn.closest<HTMLElement>('[data-promo-id]')?.dataset.promoId ?? promoId;
       const p = this.promos.find(p => p.id === id);
@@ -1639,15 +1827,6 @@ export class AdminModule {
     if (this.activePromo?.id === p.id) this.render();
   }
 
-  private async handleTicketReply(newStatus: string): Promise<void> {
-    if (!this.activeTicket) return;
-    const reply = (document.getElementById('ticket-reply') as HTMLTextAreaElement)?.value?.trim();
-    if (!reply) { showToast('Введите текст ответа', 'error'); return; }
-    await adminService.replyTicket(this.activeTicket.id, reply, newStatus);
-    showToast(newStatus === 'closed' ? 'Обращение закрыто' : 'Ответ отправлен', 'success');
-    this.activeTicket = null;
-    this.loadTab();
-  }
 
   private async handleSetSubscription(): Promise<void> {
     const uid      = this.picker.userId;

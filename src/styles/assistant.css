@@ -1423,3 +1423,322 @@ html.light .sd-ap-unit-result { background: rgba(110, 60, 240, 0.04); color: #4a
 }
 html.light .sd-ap-chip { background: rgba(110,60,240,0.1); border-color: rgba(110,60,240,0.2); color: rgba(70,30,160,0.9); }
 html.light .sd-ap-msg-file { background: rgba(110,60,240,0.08); border-color: rgba(110,60,240,0.18); color: rgba(70,30,160,0.8); }
+
+/* ── Support chat mode tabs ──────────────────────────────────────────────────── */
+.sd-ap-mode-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px 8px;
+  border-bottom: 1px solid rgba(140,90,255,0.15);
+  margin-bottom: 8px;
+}
+.sd-ap-mode-tab {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid rgba(140,90,255,0.2);
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(200,170,255,0.6);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sd-ap-mode-tab:hover { background: rgba(140,90,255,0.1); color: rgba(220,190,255,0.85); }
+.sd-ap-mode-tab.active {
+  background: rgba(140,90,255,0.2);
+  border-color: rgba(140,90,255,0.5);
+  color: #d4b8ff;
+  font-weight: 600;
+}
+
+/* ── Support reason selection ─────────────────────────────────────────────────── */
+.sd-sup-reason-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 16px;
+  gap: 12px;
+  flex: 1;
+}
+.sd-sup-reason-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(220,190,255,0.95);
+  text-align: center;
+}
+.sd-sup-reason-sub {
+  font-size: 12px;
+  color: rgba(180,150,240,0.6);
+  text-align: center;
+  margin-top: -4px;
+}
+.sd-sup-reason-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+.sd-sup-reason-btn {
+  padding: 10px 8px;
+  border: 1px solid rgba(140,90,255,0.25);
+  border-radius: 8px;
+  background: rgba(100,60,200,0.1);
+  color: rgba(200,170,255,0.85);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+  line-height: 1.3;
+}
+.sd-sup-reason-btn:hover {
+  background: rgba(140,90,255,0.2);
+  border-color: rgba(140,90,255,0.5);
+  color: #d4b8ff;
+}
+.sd-sup-warn {
+  font-size: 11px;
+  color: rgba(255,190,80,0.6);
+  text-align: center;
+  margin-top: 8px;
+}
+
+/* ── Support chat view ────────────────────────────────────────────────────────── */
+.sd-sup-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(140,90,255,0.15);
+  flex-shrink: 0;
+}
+.sd-sup-chat-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(220,190,255,0.9);
+}
+.sd-sup-chat-reason {
+  font-size: 11px;
+  font-weight: 400;
+  color: rgba(180,150,240,0.6);
+}
+.sd-sup-close-btn {
+  padding: 4px 10px;
+  border: 1px solid rgba(255,100,100,0.3);
+  border-radius: 6px;
+  background: rgba(255,80,80,0.08);
+  color: rgba(255,140,140,0.8);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sd-sup-close-btn:hover {
+  background: rgba(255,80,80,0.15);
+  border-color: rgba(255,100,100,0.5);
+  color: #ff9898;
+}
+.sd-sup-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.sd-sup-empty {
+  text-align: center;
+  color: rgba(180,150,240,0.45);
+  font-size: 12px;
+  padding: 30px 10px;
+}
+.sd-sup-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 85%;
+}
+.sd-sup-msg.user { align-self: flex-end; align-items: flex-end; }
+.sd-sup-msg.admin { align-self: flex-start; align-items: flex-start; }
+.sd-sup-bubble {
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+.sd-sup-msg.user .sd-sup-bubble {
+  background: rgba(140,90,255,0.25);
+  border: 1px solid rgba(140,90,255,0.35);
+  color: rgba(230,210,255,0.95);
+  border-bottom-right-radius: 3px;
+}
+.sd-sup-msg.admin .sd-sup-bubble {
+  background: rgba(60,40,120,0.3);
+  border: 1px solid rgba(100,70,200,0.2);
+  color: rgba(210,190,255,0.9);
+  border-bottom-left-radius: 3px;
+}
+.sd-sup-msg-time {
+  font-size: 10px;
+  color: rgba(160,130,220,0.45);
+  margin-top: 3px;
+  padding: 0 2px;
+}
+.sd-sup-msg-img {
+  display: block;
+  max-width: 100%;
+  border-radius: 8px;
+  margin-bottom: 4px;
+  max-height: 180px;
+  object-fit: contain;
+}
+.sd-sup-msg-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: rgba(200,170,255,0.8);
+  margin-bottom: 4px;
+}
+.sd-sup-attach-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 10px 4px;
+  flex-shrink: 0;
+}
+.sd-sup-input-area {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid rgba(140,90,255,0.12);
+  flex-shrink: 0;
+}
+.sd-sup-textarea {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid rgba(140,90,255,0.25);
+  border-radius: 10px;
+  background: rgba(60,30,120,0.2);
+  color: rgba(230,210,255,0.9);
+  font-size: 13px;
+  resize: none;
+  outline: none;
+  min-height: 34px;
+  max-height: 100px;
+  font-family: inherit;
+  line-height: 1.4;
+}
+.sd-sup-textarea:focus { border-color: rgba(140,90,255,0.5); }
+.sd-sup-textarea::placeholder { color: rgba(160,130,220,0.4); }
+.sd-sup-send-btn, .sd-sup-attach-btn {
+  width: 34px; height: 34px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.sd-sup-send-btn {
+  background: rgba(140,90,255,0.3);
+  color: rgba(200,170,255,0.9);
+}
+.sd-sup-send-btn:hover { background: rgba(140,90,255,0.5); }
+.sd-sup-attach-btn {
+  background: rgba(80,50,160,0.15);
+  color: rgba(180,150,240,0.6);
+}
+.sd-sup-attach-btn:hover { background: rgba(80,50,160,0.3); color: rgba(200,170,255,0.85); }
+
+/* ── Support confirm close ────────────────────────────────────────────────────── */
+.sd-sup-confirm-close {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 20px;
+  gap: 12px;
+  flex: 1;
+  text-align: center;
+}
+.sd-sup-confirm-icon { font-size: 2.2rem; }
+.sd-sup-confirm-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(220,190,255,0.95);
+}
+.sd-sup-confirm-desc {
+  font-size: 12px;
+  color: rgba(180,150,240,0.6);
+  line-height: 1.5;
+}
+.sd-sup-confirm-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.sd-sup-confirm-yes {
+  padding: 8px 18px;
+  background: rgba(255,80,80,0.15);
+  border: 1px solid rgba(255,100,100,0.35);
+  border-radius: 8px;
+  color: rgba(255,140,140,0.9);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sd-sup-confirm-yes:hover { background: rgba(255,80,80,0.25); }
+.sd-sup-confirm-no {
+  padding: 8px 18px;
+  background: rgba(100,60,200,0.1);
+  border: 1px solid rgba(140,90,255,0.25);
+  border-radius: 8px;
+  color: rgba(200,170,255,0.8);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sd-sup-confirm-no:hover { background: rgba(140,90,255,0.2); }
+
+/* ── Support chat closed / error ──────────────────────────────────────────────── */
+.sd-sup-closed-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex: 1;
+  text-align: center;
+  padding: 30px 20px;
+  color: rgba(180,150,240,0.7);
+  font-size: 13px;
+}
+.sd-sup-error {
+  padding: 20px;
+  text-align: center;
+  color: rgba(255,140,140,0.7);
+  font-size: 12px;
+}
+
+/* ── Light theme overrides for support ────────────────────────────────────────── */
+html.light .sd-ap-mode-tab { color: rgba(80,40,180,0.55); border-color: rgba(110,60,240,0.2); }
+html.light .sd-ap-mode-tab.active { background: rgba(110,60,240,0.12); border-color: rgba(110,60,240,0.45); color: rgba(80,30,200,0.9); }
+html.light .sd-sup-reason-title { color: rgba(60,20,160,0.9); }
+html.light .sd-sup-reason-sub { color: rgba(80,50,180,0.5); }
+html.light .sd-sup-reason-btn { background: rgba(100,60,200,0.06); border-color: rgba(110,60,240,0.2); color: rgba(70,30,160,0.85); }
+html.light .sd-sup-reason-btn:hover { background: rgba(110,60,240,0.12); }
+html.light .sd-sup-chat-title { color: rgba(60,20,160,0.9); }
+html.light .sd-sup-chat-reason { color: rgba(80,50,180,0.55); }
+html.light .sd-sup-bubble { color: rgba(40,10,120,0.9); }
+html.light .sd-sup-msg.user .sd-sup-bubble { background: rgba(110,60,240,0.1); border-color: rgba(110,60,240,0.25); }
+html.light .sd-sup-msg.admin .sd-sup-bubble { background: rgba(240,235,255,0.8); border-color: rgba(110,60,240,0.15); }
+html.light .sd-sup-textarea { background: rgba(240,235,255,0.6); border-color: rgba(110,60,240,0.2); color: rgba(40,10,120,0.9); }
+html.light .sd-sup-textarea::placeholder { color: rgba(100,70,200,0.35); }
+html.light .sd-sup-confirm-title { color: rgba(40,10,120,0.9); }
+html.light .sd-sup-confirm-desc { color: rgba(80,50,180,0.6); }

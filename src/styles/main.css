@@ -4804,3 +4804,221 @@ select.adm-input { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .ai-activity-glow.on { animation: none; }
 }
+
+/* ── Admin live support chat ────────────────────────────────────────────────── */
+.adm-live-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.adm-live-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.adm-live-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  flex-shrink: 0;
+  gap: 6px;
+}
+.adm-live-chat-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.adm-live-chat-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.12s;
+}
+.adm-live-chat-row:hover { background: var(--hover-bg, rgba(99,102,241,0.06)); }
+.adm-live-chat-row.active { background: rgba(99,102,241,0.1); }
+.adm-live-chat-row-body { flex: 1; min-width: 0; }
+.adm-live-chat-row-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+.adm-live-chat-name { font-size: 12px; font-weight: 600; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adm-live-chat-time { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+.adm-live-chat-reason { font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
+.adm-live-chat-preview { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adm-live-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.adm-live-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.adm-live-detail {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+.adm-live-detail-inner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.adm-live-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.adm-live-detail-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.adm-live-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.adm-live-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 75%;
+}
+.adm-live-msg.user { align-self: flex-start; align-items: flex-start; }
+.adm-live-msg.admin { align-self: flex-end; align-items: flex-end; }
+.adm-live-bubble {
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+.adm-live-msg.user .adm-live-bubble {
+  background: var(--card-bg, rgba(99,102,241,0.08));
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-bottom-left-radius: 3px;
+}
+.adm-live-msg.admin .adm-live-bubble {
+  background: rgba(99,102,241,0.18);
+  border: 1px solid rgba(99,102,241,0.3);
+  color: var(--text);
+  border-bottom-right-radius: 3px;
+}
+.adm-live-msg-time {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  padding: 0 2px;
+}
+.adm-live-msg-img {
+  display: block;
+  max-width: 100%;
+  border-radius: 8px;
+  margin-bottom: 4px;
+  max-height: 200px;
+  object-fit: contain;
+}
+.adm-live-msg-file {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.adm-live-attach-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 12px 4px;
+  flex-shrink: 0;
+}
+.adm-live-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(99,102,241,0.1);
+  border: 1px solid rgba(99,102,241,0.2);
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.adm-live-chip-rm {
+  border: none; background: none; cursor: pointer; color: var(--text-muted); font-size: 13px; padding: 0 1px; line-height: 1;
+}
+.adm-live-chip-rm:hover { color: #ef4444; }
+.adm-live-input-area {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.adm-live-textarea {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg, var(--bg));
+  color: var(--text);
+  font-size: 13px;
+  resize: none;
+  outline: none;
+  min-height: 34px;
+  max-height: 120px;
+  font-family: inherit;
+  line-height: 1.4;
+  transition: border-color 0.15s;
+}
+.adm-live-textarea:focus { border-color: #6366f1; }
+.adm-live-send-btn, .adm-live-attach-btn {
+  width: 34px; height: 34px;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.adm-live-send-btn { background: #6366f1; color: #fff; }
+.adm-live-send-btn:hover { background: #4f46e5; }
+.adm-live-attach-btn { background: var(--card-bg, transparent); border: 1px solid var(--border); color: var(--text-muted); }
+.adm-live-attach-btn:hover { border-color: #6366f1; color: #6366f1; }
