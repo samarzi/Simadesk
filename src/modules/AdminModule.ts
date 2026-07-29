@@ -78,6 +78,7 @@ export class AdminModule {
   private liveChatLastMsgTime: string | null = null;
   private liveAttachFiles: SupportAttachment[] = [];
   private liveChatFilter: 'open' | 'all' = 'open';
+  private liveChatReasonFilter: string | null = null;
 
   /* support AI auto-reply */
   private supAiEnabled: boolean = localStorage.getItem('sd_sup_ai_enabled') === '1';
@@ -1041,7 +1042,11 @@ export class AdminModule {
       question: '❓ Вопрос', problem: '🚨 Проблема', billing: '💳 Оплата / тариф',
       recommendation: '💡 Предложение', feature: '🔧 Запрос функции', other: '💬 Другое',
     };
-    const chatList = this.liveChats.map(c => {
+    const visibleChats = this.liveChatReasonFilter
+      ? this.liveChats.filter(c => c.reason === this.liveChatReasonFilter)
+      : this.liveChats;
+
+    const chatList = visibleChats.map(c => {
       const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Пользователь';
       const isActive = this.activeLiveChat?.id === c.id;
       const preview = c.last_message ? this.esc(c.last_message.slice(0, 60)) : '—';
@@ -1066,8 +1071,16 @@ export class AdminModule {
       </div>`;
     }).join('');
 
-    const noChats = this.liveChats.length === 0
-      ? `<div class="adm-live-empty">Нет активных чатов</div>` : '';
+    const noChats = visibleChats.length === 0
+      ? `<div class="adm-live-empty">Нет чатов${this.liveChatReasonFilter ? ' по этой теме' : ''}</div>` : '';
+
+    // Reason filter pills — only show reasons that exist in current chats
+    const reasonsInUse = [...new Set(this.liveChats.map(c => c.reason))];
+    const reasonPills = reasonsInUse.map(r =>
+      `<button class="adm-filter-pill adm-reason-pill${this.liveChatReasonFilter === r ? ' active' : ''}" data-reason-filter="${r}" title="${REASON_LABELS[r] ?? r}">${REASON_LABELS[r]?.slice(0, 2) ?? r}</button>`
+    ).join('');
+    const clearPill = this.liveChatReasonFilter
+      ? `<button class="adm-filter-pill adm-reason-pill active" data-reason-filter="" style="color:#ef4444;border-color:#ef444440">✕</button>` : '';
 
     const detail = this.activeLiveChat
       ? this.renderLiveChatDetail(this.activeLiveChat)
@@ -1103,6 +1116,7 @@ export class AdminModule {
             <button class="adm-filter-pill${this.liveChatFilter === 'all' ? ' active' : ''}" data-live-filter="all">Все</button>
           </div>
         </div>
+        ${reasonPills || clearPill ? `<div class="adm-live-reason-pills">${reasonPills}${clearPill}</div>` : ''}
         <div class="adm-live-chat-list">${chatList}${noChats}</div>
       </div>
       <div class="adm-live-detail" id="adm-live-detail">${detail}</div>
@@ -1171,12 +1185,27 @@ export class AdminModule {
       localStorage.setItem('sd_sup_ai_model', this.supAiModel);
     });
 
-    // Filter toggle
+    // Status filter toggle
     this.el.querySelectorAll<HTMLElement>('[data-live-filter]').forEach(btn => {
       btn.addEventListener('click', () => {
         this.liveChatFilter = (btn.dataset.liveFilter as 'open' | 'all') ?? 'open';
         this.activeLiveChat = null;
         this.loadTab();
+      });
+    });
+
+    // Reason filter pills (no reload — just filter in memory)
+    this.el.querySelectorAll<HTMLElement>('[data-reason-filter]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.liveChatReasonFilter = btn.dataset.reasonFilter || null;
+        // Re-render just the sidebar without full reload
+        const detail = this.el.querySelector<HTMLElement>('#adm-live-detail');
+        if (detail) detail.innerHTML = this.activeLiveChat
+          ? this.renderLiveChatDetail(this.activeLiveChat)
+          : `<div class="adm-live-empty" style="flex:1">Выберите чат слева</div>`;
+        // Full re-render of support section to update pills
+        const host = this.el.querySelector<HTMLElement>('.adm-content-area');
+        if (host) { host.innerHTML = this.renderSupport(); this.bindLiveChatEvents(); }
       });
     });
 

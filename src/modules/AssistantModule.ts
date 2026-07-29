@@ -482,8 +482,8 @@ export class AssistantModule {
 
   // ── Support chat state ─────────────────────────────────────────────────────
   private supportMode: 'ai' | 'support' = 'ai';
-  private supportChatId: string | null = null;
-  private supportReason: string = '';
+  private supportChatId: string | null = localStorage.getItem('sd_sup_chat_id');
+  private supportReason: string = localStorage.getItem('sd_sup_reason') || '';
   private supportMessages: SupportMessage[] = [];
   private supportPollTimer: ReturnType<typeof setInterval> | null = null;
   private supportLastMsgTime: string | null = null;
@@ -1679,6 +1679,26 @@ export class AssistantModule {
   private renderSupportView(container: HTMLElement): void {
     if (this.supportChatId && !this.supportChatClosed) {
       this.renderSupportChat(container);
+      // Restore message history from server if not yet loaded
+      if (!this.supportMessages.length) {
+        supportChatService.getMyChat().then(chat => {
+          if (!chat || chat.id !== this.supportChatId) {
+            // Chat no longer active on server — clear stale localStorage
+            localStorage.removeItem('sd_sup_chat_id');
+            localStorage.removeItem('sd_sup_reason');
+            this.supportChatId = null;
+            this.supportChatClosed = false;
+            this.renderSupportReasonSelect(container);
+            return;
+          }
+          this.supportMessages = chat.messages ?? [];
+          this.supportLastMsgTime = this.supportMessages.at(-1)?.created_at ?? null;
+          this.renderSupportMessages();
+          this.startSupportPolling();
+        }).catch(() => {});
+      } else {
+        this.startSupportPolling();
+      }
     } else {
       this.renderSupportReasonSelect(container);
     }
@@ -1704,6 +1724,8 @@ export class AssistantModule {
         this.supportReason = reason;
         try {
           this.supportChatId = await supportChatService.createChat(reason);
+          localStorage.setItem('sd_sup_chat_id', this.supportChatId);
+          localStorage.setItem('sd_sup_reason', reason);
           this.supportMessages = [];
           this.supportLastMsgTime = null;
           this.supportChatClosed = false;
@@ -1768,9 +1790,10 @@ export class AssistantModule {
       const attachSnap = [...this.supAttachFiles];
       this.supAttachFiles = [];
       this.renderSupAttachChips(container);
+      const optId = `opt-${Date.now()}`;
       // Show message immediately without waiting for server
       this.supportMessages = [...this.supportMessages, {
-        id: `opt-${Date.now()}`,
+        id: optId,
         sender_role: 'user',
         content: text,
         attachments: attachSnap,
@@ -1779,13 +1802,22 @@ export class AssistantModule {
       this.renderSupportMessages();
       try {
         await supportChatService.sendMessage(this.supportChatId, text, attachSnap);
+        // Refresh from server to confirm message was stored
         const msgs = await supportChatService.getMessagesSince(this.supportChatId);
         if (msgs.length) {
           this.supportMessages = msgs;
           this.supportLastMsgTime = msgs[msgs.length - 1]?.created_at ?? null;
           this.renderSupportMessages();
         }
-      } catch { showToast('Ошибка отправки сообщения', 'error'); }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[Support] Ошибка отправки:', msg);
+        // Mark optimistic message as failed
+        this.supportMessages = this.supportMessages.map(m =>
+          m.id === optId ? { ...m, content: m.content + '\n\n⚠️ Не отправлено: ' + msg } : m
+        );
+        this.renderSupportMessages();
+      }
     };
 
     textarea?.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -1882,6 +1914,8 @@ export class AssistantModule {
       this.supportMessages = [];
       this.supportLastMsgTime = null;
       this.supportChatClosed = false;
+      localStorage.removeItem('sd_sup_chat_id');
+      localStorage.removeItem('sd_sup_reason');
       this.renderSupportReasonSelect(container);
     });
     container.querySelector('.sd-sup-confirm-no')?.addEventListener('click', () => {
