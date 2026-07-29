@@ -78,7 +78,7 @@ CREATE OR REPLACE FUNCTION get_support_messages_since(p_chat_id uuid, p_after ti
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM support_chats WHERE id = p_chat_id AND user_id = auth.uid())
-    AND NOT EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()) THEN
+    AND NOT EXISTS (SELECT 1 FROM platform_admins WHERE user_id = auth.uid()) THEN
     RAISE EXCEPTION 'Access denied';
   END IF;
   RETURN COALESCE((
@@ -105,7 +105,7 @@ $$;
 CREATE OR REPLACE FUNCTION admin_get_support_chats(p_status text DEFAULT 'open')
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()) THEN
+  IF NOT EXISTS (SELECT 1 FROM platform_admins WHERE user_id = auth.uid()) THEN
     RAISE EXCEPTION 'Access denied';
   END IF;
   RETURN COALESCE((
@@ -138,7 +138,7 @@ CREATE OR REPLACE FUNCTION admin_get_support_chat(p_chat_id uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE v_result jsonb;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()) THEN
+  IF NOT EXISTS (SELECT 1 FROM platform_admins WHERE user_id = auth.uid()) THEN
     RAISE EXCEPTION 'Access denied';
   END IF;
   SELECT jsonb_build_object(
@@ -163,7 +163,7 @@ $$;
 CREATE OR REPLACE FUNCTION admin_send_support_message(p_chat_id uuid, p_content text, p_attachments jsonb DEFAULT '[]')
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()) THEN
+  IF NOT EXISTS (SELECT 1 FROM platform_admins WHERE user_id = auth.uid()) THEN
     RAISE EXCEPTION 'Access denied';
   END IF;
   INSERT INTO support_chat_messages (chat_id, sender_role, content, attachments)
@@ -174,7 +174,7 @@ $$;
 CREATE OR REPLACE FUNCTION admin_close_support_chat(p_chat_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()) THEN
+  IF NOT EXISTS (SELECT 1 FROM platform_admins WHERE user_id = auth.uid()) THEN
     RAISE EXCEPTION 'Access denied';
   END IF;
   DELETE FROM support_chat_messages WHERE chat_id = p_chat_id;
