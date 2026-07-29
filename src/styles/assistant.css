@@ -1810,11 +1810,13 @@ body.sd-ai-cursor-mode #sd-assistant-panel * {
   cursor: auto !important;
 }
 
-/* ── Resize: disable expensive GPU effects during drag for smooth resize ─── */
+/* ── Resize: solid background so removing blur doesn't make panel transparent ── */
 .sd-assistant-panel.sd-ap-resizing {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  box-shadow: 0 2px 24px rgba(0,0,0,0.5) !important;
+  background: rgb(11, 9, 20) !important;
+  box-shadow: 0 4px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(140,90,255,0.25) !important;
   will-change: width, height;
   transition: none !important;
 }
+.sd-assistant-panel.sd-ap-resizing::after { display: none !important; }
