@@ -5,7 +5,7 @@
  */
 
 import * as XLSX from 'xlsx';
-import { type AiPageCapability, type AiActionResult } from '@/services/aiPageContext';
+import { aiPage, type AiPageCapability, type AiActionResult } from '@/services/aiPageContext';
 import { debug } from '@/utils/debug';
 import { selectionCtx } from '@/services/selectionContext';
 
@@ -1860,6 +1860,7 @@ export class DocsModule {
     this.root.querySelector('#docs-fs-btn')?.addEventListener('click',()=>{
       this.isFullscreen=!this.isFullscreen;
       this.root.querySelector('.docs-shell')?.classList.toggle('docs-fullscreen',this.isFullscreen);
+      aiPage.register(this.getAiCapability());
     });
     if(doc.type==='word') this.bindWord(doc);
     else this.bindExcel(doc);
@@ -1936,16 +1937,19 @@ export class DocsModule {
 
   /** describe() — текущее состояние открытого документа для модели. */
   private aiDescribe(): string {
+    const fsFocus = this.isFullscreen
+      ? '[РЕЖИМ: Полный экран редактора. Пользователь работает с документом. Фокусируйся только на нём — давай советы, подсказки и действия именно по этому файлу. Ты можешь отвечать на вопросы об API (остатки, заказы, аналитика WB/Ozon) если пользователь явно спросит, но сам не переключайся на другие разделы.]\n\n'
+      : '';
     const allDocsInfo = this.docs.length > 1
       ? `\n\n📂 Все открытые документы (${this.docs.length}):\n` +
         this.docs.map((d, i) => `  ${i+1}. id="${d.id}" «${d.title}» [${d.type}]`).join('\n') +
         '\n\nДля операций по нескольким документам используй действия multi_replace/multi_count с параметром docIds.'
       : '';
     const doc = this.aiDoc();
-    if (!doc) return 'Нет открытого документа. Пользователь может создать Word или Excel.' + allDocsInfo;
+    if (!doc) return fsFocus + 'Нет открытого документа. Пользователь может создать Word или Excel.' + allDocsInfo;
     if (doc.type === 'word') {
       const text = doc.content.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
-      return `Открыт Word-документ «${doc.title}». Текста ~${text.length} симв.\nНачало: "${text.slice(0, 400)}"`;
+      return fsFocus + `Открыт Word-документ «${doc.title}». Текста ~${text.length} симв.\nНачало: "${text.slice(0, 400)}"`;
     }
     const s = this.aiSheet();
     if (!s) return `Открыт документ «${doc.title}», но лист пуст.`;
@@ -1986,7 +1990,7 @@ export class DocsModule {
       : '';
 
     const styled = data.some(r => r.some(c => c.s));
-    return `Открыта таблица «${docRef.title}», лист «${sheet.name}» (всего листов: ${ec.sheets.length}).
+    return fsFocus + `Открыта таблица «${docRef.title}», лист «${sheet.name}» (всего листов: ${ec.sheets.length}).
 Заполненных строк данных: ${dataRows.length} (строки 2…${dataRows.length + 1}) × ${cols} колонок.
 Заголовки (строка 1): ${headers.join(', ')}
 Колонки-артикулы (по умолчанию НЕ трогать при заменах): ${artCols.length ? artCols.map(i => this.colLetter(i)).join(', ') : 'не обнаружены'}
@@ -1998,16 +2002,23 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
 
   /** Публичная точка: капабилити текущей страницы редактора для ассистента. */
   getAiCapability(): AiPageCapability {
+    const fsSuggestions = [
+      { label: '🔎 Что в документе?', prompt: 'Проанализируй открытый документ: что за данные, структура, ключевые значения' },
+      { label: '✨ Улучшить дизайн', prompt: 'Улучши оформление текущей таблицы' },
+      { label: '🔁 Замена текста', prompt: 'Помоги заменить текст в таблице' },
+      { label: '📊 Сводка по данным', prompt: 'Дай краткую сводку по данным в открытой таблице' },
+    ];
+    const normalSuggestions = [
+      { label: '➕ Новый Excel', prompt: 'Создай новый документ Excel' },
+      { label: '✨ Улучшить дизайн', prompt: 'Улучши дизайн текущей таблицы' },
+      { label: '🔎 Что в таблице?', prompt: 'Проанализируй открытую таблицу: что за данные, какие колонки' },
+      { label: '🔁 Замена', prompt: 'Помоги заменить текст в таблице' },
+    ];
     return {
       page: 'docs',
-      title: 'Редактор',
+      title: this.isFullscreen ? `Редактор (${this.aiDoc()?.title ?? 'документ'})` : 'Редактор',
       describe: () => this.aiDescribe(),
-      suggestions: [
-        { label: '➕ Новый Excel', prompt: 'Создай новый документ Excel' },
-        { label: '✨ Улучшить дизайн', prompt: 'Улучши дизайн текущей таблицы' },
-        { label: '🔎 Что в таблице?', prompt: 'Проанализируй открытую таблицу: что за данные, какие колонки' },
-        { label: '🔁 Замена', prompt: 'Помоги заменить текст в таблице' },
-      ],
+      suggestions: this.isFullscreen ? fsSuggestions : normalSuggestions,
       actions: [
         {
           name: 'excel_replace',

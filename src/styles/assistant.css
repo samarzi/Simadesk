@@ -1789,3 +1789,23 @@ html.light .sd-ap-ctx-chip {
   border-color: rgba(110, 60, 240, 0.25);
   color: rgba(80, 30, 200, 0.9);
 }
+
+/* ── AI Cursor button ────────────────────────────────────────────────────── */
+.sd-ap-cursor-btn { position: relative; }
+.sd-ap-cursor-btn.active {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+  border-radius: 6px;
+}
+.sd-ap-cursor-btn.active svg { stroke: #38bdf8; }
+
+/* ── AI Cursor mode: global cursor + overlay ─────────────────────────────── */
+body.sd-ai-cursor-mode,
+body.sd-ai-cursor-mode * {
+  cursor: crosshair !important;
+}
+/* Keep assistant panel interactive */
+body.sd-ai-cursor-mode #sd-assistant-panel,
+body.sd-ai-cursor-mode #sd-assistant-panel * {
+  cursor: auto !important;
+}

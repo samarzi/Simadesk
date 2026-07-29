@@ -475,6 +475,11 @@ export class AssistantModule {
   private voiceSendOnEnd = false;  // when true: auto-send after voice stops
   private voiceHotkeyHeld = false; // Alt+Space hotkey currently held
 
+  // ── AI Cursor ──────────────────────────────────────────────────────────────
+  private aiCursorActive = false;
+  private aiCursorOverlay: HTMLDivElement | null = null;
+  private aiCursorCleanup: (() => void) | null = null;
+
   // ── Support chat state ─────────────────────────────────────────────────────
   private supportMode: 'ai' | 'support' = 'ai';
   private supportChatId: string | null = null;
@@ -626,6 +631,7 @@ export class AssistantModule {
     this.setupFileAttach(panel);
     this.setupPositionTracking();
     this.setupSelectionCtx(panel);
+    this.setupAiCursor(panel);
     this.setupVoiceHotkey();
 
     // Listen for native text selection on any page
@@ -805,6 +811,12 @@ export class AssistantModule {
         <button class="sd-ap-btn sd-ap-attach-btn" title="Прикрепить файл (Excel, Word, PDF, фото)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </button>
+        <button class="sd-ap-btn sd-ap-cursor-btn" id="sd-ap-cursor-btn" title="AI-курсор: наведи на любой элемент и нажми — Сима увидит контекст">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
           </svg>
         </button>
         <input class="sd-ap-file-input" type="file" accept=".xlsx,.xls,.docx,.doc,.pdf,.jpg,.jpeg,.png,.webp,.gif,.txt,.csv" multiple style="display:none">
@@ -1009,6 +1021,119 @@ export class AssistantModule {
       dismissedLabel = selectionCtx.current.label;
       chip.style.display = 'none';
     });
+  }
+
+  // ── AI Cursor ────────────────────────────────────────────────────────────────
+
+  private setupAiCursor(panel: HTMLElement): void {
+    const btn = panel.querySelector<HTMLElement>('#sd-ap-cursor-btn');
+    if (!btn) return;
+
+    // Overlay — fixed div that follows the hovered element
+    const overlay = document.createElement('div');
+    overlay.id = 'sd-ai-cursor-overlay';
+    overlay.style.cssText = 'position:fixed;pointer-events:none;z-index:99998;border:2px solid #38bdf8;background:rgba(56,189,248,0.08);border-radius:3px;box-shadow:0 0 0 1px rgba(56,189,248,0.25),0 2px 12px rgba(56,189,248,0.15);display:none;transition:none';
+    document.body.appendChild(overlay);
+    this.aiCursorOverlay = overlay;
+
+    let hovered: HTMLElement | null = null;
+
+    const onOver = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t === overlay || t.id === 'sd-ai-cursor-overlay') return;
+      if (t.closest('#sd-assistant-panel')) return;
+      hovered = t;
+      const r = t.getBoundingClientRect();
+      overlay.style.display = 'block';
+      overlay.style.left = r.left + 'px';
+      overlay.style.top = r.top + 'px';
+      overlay.style.width = r.width + 'px';
+      overlay.style.height = r.height + 'px';
+    };
+
+    const onOut = (e: MouseEvent) => {
+      const to = e.relatedTarget as HTMLElement | null;
+      if (to && to !== overlay && !to.closest('#sd-assistant-panel')) return;
+      overlay.style.display = 'none';
+      hovered = null;
+    };
+
+    const onClick = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!hovered) return;
+      selectionCtx.set(this.extractAiCursorInfo(hovered));
+      this.deactivateAiCursor();
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') this.deactivateAiCursor();
+    };
+
+    btn.addEventListener('click', () => {
+      if (this.aiCursorActive) {
+        this.deactivateAiCursor();
+        return;
+      }
+      this.aiCursorActive = true;
+      btn.classList.add('active');
+      document.body.classList.add('sd-ai-cursor-mode');
+      document.addEventListener('mouseover', onOver, true);
+      document.addEventListener('mouseout', onOut, true);
+      document.addEventListener('click', onClick, true);
+      document.addEventListener('keydown', onKey, true);
+      this.aiCursorCleanup = () => {
+        document.removeEventListener('mouseover', onOver, true);
+        document.removeEventListener('mouseout', onOut, true);
+        document.removeEventListener('click', onClick, true);
+        document.removeEventListener('keydown', onKey, true);
+      };
+    });
+  }
+
+  private deactivateAiCursor(): void {
+    this.aiCursorActive = false;
+    document.body.classList.remove('sd-ai-cursor-mode');
+    if (this.aiCursorOverlay) this.aiCursorOverlay.style.display = 'none';
+    this.panel?.querySelector('#sd-ap-cursor-btn')?.classList.remove('active');
+    this.aiCursorCleanup?.();
+    this.aiCursorCleanup = null;
+  }
+
+  private extractAiCursorInfo(el: HTMLElement): import('@/services/selectionContext').SelCtx {
+    // Excel cell
+    const td = el.closest('td[data-r][data-c]') as HTMLElement | null;
+    if (td) {
+      const r = +(td.dataset.r ?? 0);
+      const c = +(td.dataset.c ?? 0);
+      const col = String.fromCharCode(65 + c);
+      const cellLabel = `${col}${r + 1}`;
+      const val = (td.textContent ?? '').trim();
+      return {
+        type: 'excel-cells',
+        label: `Ячейка ${cellLabel}${val ? ` · «${val.slice(0, 40)}»` : ''}`,
+        prompt: `[КОНТЕКСТ: ячейка Excel ${cellLabel}]\n${val || '(пусто)'}`,
+        data: { cell: cellLabel },
+      };
+    }
+
+    // Any element — collect meaningful text
+    const tag = el.tagName.toLowerCase();
+    const role = el.getAttribute('role') || '';
+    let text = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+    if (!text && el instanceof HTMLImageElement) text = el.alt || el.src.split('/').pop() || '';
+    if (!text && (el as HTMLInputElement).value) text = (el as HTMLInputElement).value;
+
+    const short = text.slice(0, 50);
+    const typeHint = role || (['button', 'a', 'input', 'select', 'img', 'h1', 'h2', 'h3', 'td', 'li'].includes(tag) ? tag : '');
+    const label = short ? `«${short}${text.length > 50 ? '…' : ''}»${typeHint ? ` (${typeHint})` : ''}` : `Элемент (${tag})`;
+
+    return {
+      type: 'text',
+      label,
+      prompt: `[КОНТЕКСТ: элемент страницы — ${typeHint || tag}]\n${text.slice(0, 600) || '(нет текста)'}`,
+      data: { tag, role },
+    };
   }
 
   // ── File Attachments ────────────────────────────────────────────────────────
