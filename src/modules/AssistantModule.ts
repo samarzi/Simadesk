@@ -900,80 +900,83 @@ export class AssistantModule {
     const handle = panel.querySelector<HTMLElement>('.sd-ap-resize-handle');
     if (!handle) return;
 
-    // Restore saved size (clamp to sane range to discard corrupted values)
-    const savedW = parseInt(localStorage.getItem('sd_ap_w') || '0', 10);
-    const savedH = parseInt(localStorage.getItem('sd_ap_h') || '0', 10);
-    if (savedW >= 340 && savedW <= 700) panel.style.width = savedW + 'px';
-    else localStorage.removeItem('sd_ap_w');
-    if (savedH >= 400 && savedH <= window.innerHeight - 80) { panel.style.maxHeight = savedH + 'px'; panel.style.height = savedH + 'px'; }
-    else localStorage.removeItem('sd_ap_h');
+    const applyStoredSize = () => {
+      const savedW = parseInt(localStorage.getItem('sd_ap_w') || '0', 10);
+      const savedH = parseInt(localStorage.getItem('sd_ap_h') || '0', 10);
+      if (savedW >= 340 && savedW <= 700) panel.style.width = savedW + 'px';
+      else localStorage.removeItem('sd_ap_w');
+      if (savedH >= 400 && savedH <= window.innerHeight - 80) {
+        panel.style.height = savedH + 'px';
+        panel.style.maxHeight = savedH + 'px';
+      } else localStorage.removeItem('sd_ap_h');
+    };
+    applyStoredSize();
 
     let startX = 0, startY = 0, startW = 0, startH = 0;
     let rafId: number | null = null;
     let pendingW = 0, pendingH = 0;
+    const isSidebar = () => panel.classList.contains('sidebar');
 
     const applySize = () => {
       rafId = null;
       panel.style.width = pendingW + 'px';
-      if (!panel.classList.contains('sidebar')) {
-        panel.style.height = pendingH + 'px';
-        panel.style.maxHeight = pendingH + 'px';
-      }
+      if (!isSidebar()) panel.style.height = pendingH + 'px';
     };
 
-    const onMove = (e: MouseEvent) => {
-      const sidebar = panel.classList.contains('sidebar');
-      pendingW = Math.max(340, Math.min(700, startW + (startX - e.clientX)));
-      if (!sidebar) pendingH = Math.max(400, Math.min(window.innerHeight - 80, startH + (startY - e.clientY)));
-      if (rafId === null) rafId = requestAnimationFrame(applySize);
+    const startResize = (clientX: number, clientY: number) => {
+      startX = clientX; startY = clientY;
+      startW = panel.offsetWidth; startH = panel.offsetHeight;
+      pendingW = startW; pendingH = startH;
+      // Unlock max-height so CSS constraint doesn't fight JS height
+      panel.style.maxHeight = 'none';
+      panel.classList.add('sd-ap-resizing');
+      document.body.style.userSelect = 'none';
     };
 
-    const onUp = () => {
+    const endResize = () => {
       if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; applySize(); }
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      document.body.style.userSelect = '';
       panel.classList.remove('sd-ap-resizing');
+      document.body.style.userSelect = '';
+      // Restore maxHeight to match actual height so overflow works
+      const h = panel.offsetHeight;
+      if (h >= 400) panel.style.maxHeight = h + 'px';
       const w = parseInt(panel.style.width, 10);
-      const h = parseInt(panel.style.height, 10);
       if (w >= 340 && w <= 700) localStorage.setItem('sd_ap_w', String(w));
       if (h >= 400 && h <= window.innerHeight - 80) localStorage.setItem('sd_ap_h', String(h));
     };
 
+    const onMove = (e: MouseEvent) => {
+      pendingW = Math.max(340, Math.min(700, startW + (startX - e.clientX)));
+      if (!isSidebar()) pendingH = Math.max(400, Math.min(window.innerHeight - 80, startH + (startY - e.clientY)));
+      if (rafId === null) rafId = requestAnimationFrame(applySize);
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      endResize();
+    };
+
     handle.addEventListener('mousedown', (e) => {
-      startX = e.clientX; startY = e.clientY;
-      startW = panel.offsetWidth; startH = panel.offsetHeight;
-      pendingW = startW; pendingH = startH;
-      document.body.style.userSelect = 'none';
-      panel.classList.add('sd-ap-resizing');
+      startResize(e.clientX, e.clientY);
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
       e.preventDefault();
     });
 
-    // Touch support
     handle.addEventListener('touchstart', (e) => {
       const t = e.touches[0];
-      startX = t.clientX; startY = t.clientY;
-      startW = panel.offsetWidth; startH = panel.offsetHeight;
-      pendingW = startW; pendingH = startH;
-      panel.classList.add('sd-ap-resizing');
+      startResize(t.clientX, t.clientY);
       const onTMove = (ev: TouchEvent) => {
-        const sidebar = panel.classList.contains('sidebar');
         const tt = ev.touches[0];
         pendingW = Math.max(340, Math.min(700, startW + (startX - tt.clientX)));
-        if (!sidebar) pendingH = Math.max(400, Math.min(window.innerHeight - 80, startH + (startY - tt.clientY)));
+        if (!isSidebar()) pendingH = Math.max(400, Math.min(window.innerHeight - 80, startH + (startY - tt.clientY)));
         if (rafId === null) rafId = requestAnimationFrame(applySize);
       };
       const onTEnd = () => {
-        if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; applySize(); }
-        panel.classList.remove('sd-ap-resizing');
         document.removeEventListener('touchmove', onTMove);
         document.removeEventListener('touchend', onTEnd);
-        const w = parseInt(panel.style.width, 10);
-        const h = parseInt(panel.style.height, 10);
-        if (w >= 340 && w <= 700) localStorage.setItem('sd_ap_w', String(w));
-        if (h >= 400 && h <= window.innerHeight - 80) localStorage.setItem('sd_ap_h', String(h));
+        endResize();
       };
       document.addEventListener('touchmove', onTMove, { passive: false });
       document.addEventListener('touchend', onTEnd);
