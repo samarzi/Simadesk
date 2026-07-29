@@ -1,5 +1,6 @@
 import { I } from '@/utils/icons';
 import { debug } from '@/utils/debug';
+import { swallow } from '@/utils/swallow';
 import { Product, AppPage } from './types';
 import { boxes, boxActions } from './stores/appStore';
 import { apiService } from './services/api';
@@ -16,6 +17,7 @@ import { BoxModalsModule } from './modules/BoxModalsModule';
 import { BoxMpLinkModule } from './modules/BoxMpLinkModule';
 import { TableInteractionsModule } from './modules/TableInteractionsModule';
 import { NavigationModule } from './modules/NavigationModule';
+import { ColumnPickerModule } from './modules/ColumnPickerModule';
 
 export class App {
   /** Главная страница — командный центр и виджеты (см. modules/HomeDashboardModule.ts). */
@@ -34,6 +36,8 @@ export class App {
   private tableInteractions = new TableInteractionsModule(this);
   /** Навигация по страницам и рендер главного дашборда (см. modules/NavigationModule.ts). */
   private navigation = new NavigationModule(this);
+  /** Управление видимостью и порядком столбцов (см. modules/ColumnPickerModule.ts). */
+  private columnPicker = new ColumnPickerModule(this);
 
   // ── UI state ──────────────────────────────────────────────────────────────
   allProducts: Product[] = [];
@@ -60,6 +64,10 @@ export class App {
 
   // ── MP presence: артикул (lowercase) → массив магазинов где найден товар
   mpPresence: Map<string, Array<{ mp: 'wb' | 'ozon' | 'yandex'; storeId: string; storeName: string; color: string }>> = new Map();
+  private _mpPresenceLoadedAt = 0;
+  private static readonly MP_PRESENCE_TTL_MS = 5 * 60 * 1000; // 5 минут
+  private _migratedBoxes = new Set<string>(); // box ids where photo migration already ran
+  private _warmCacheSigs: Array<{ cancelled: boolean }> = []; // active stream signals from warmCacheFromIdb
 
   // ── Drag-and-drop state ───────────────────────────────────────────────────
   dragFromIdx: number | null = null;
@@ -82,7 +90,7 @@ export class App {
   cache = new Map<string, Product[]>();
 
   // ── Virtual table ─────────────────────────────────────────────────────────
-  private vt: {
+  /** @internal used by ColumnPickerModule */ vt: {
     el: HTMLElement | null;
     colKey: string;
     cols: string[];
@@ -93,59 +101,81 @@ export class App {
   // ── Misc ──────────────────────────────────────────────────────────────────
   pendingDelete: { boxId?: string; col?: string; prodId?: string; art?: string } | null = null;
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private _colOrderDebounce: ReturnType<typeof setTimeout> | null = null;
+  private _subs: Array<() => void> = [];
 
   // ─────────────────────────────────────────────────────────────────────────
   // INIT
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ── localStorage key versions — bump when schema changes ─────────────────
+  private static readonly LS_HIDDEN_ROWS   = 'app_hidden_rows_v2';
+  /** @internal used by ColumnPickerModule */ static readonly LS_VISIBLE_COLS  = 'app_visible_cols_v2';
+  private static readonly LS_COLUMN_ORDER  = 'app_column_order_v2';
+
   async init() {
     // Restore hidden rows from localStorage
     try {
-      const hr = JSON.parse(localStorage.getItem('app_hidden_rows') || '{}');
-      for (const [bid, ids] of Object.entries(hr)) {
-        this.hiddenRows.set(bid, new Set(ids as string[]));
+      const raw = localStorage.getItem(App.LS_HIDDEN_ROWS) || '{}';
+      const hr = JSON.parse(raw);
+      if (hr && typeof hr === 'object' && !Array.isArray(hr)) {
+        for (const [bid, ids] of Object.entries(hr)) {
+          if (Array.isArray(ids)) this.hiddenRows.set(bid, new Set(ids as string[]));
+        }
       }
-    } catch (e) { debug.warn('[App] swallowed error', e); }
+    } catch (e) { debug.warn('[App] restore hidden rows error', e); }
     // Restore visible cols from localStorage
     try {
-      const vc = JSON.parse(localStorage.getItem('app_visible_cols') || 'null');
+      const vc = JSON.parse(localStorage.getItem(App.LS_VISIBLE_COLS) || 'null');
       if (Array.isArray(vc)) this.visibleCols = new Set(vc);
-    } catch (e) { debug.warn('[App] swallowed error', e); }
+    } catch (e) { debug.warn('[App] restore visible cols error', e); }
     // Restore column order from localStorage
     try {
-      const co = JSON.parse(localStorage.getItem('app_column_order') || '{}');
-      for (const [bid, cols] of Object.entries(co)) {
-        this.columnOrder.set(bid, cols as string[]);
+      const raw = localStorage.getItem(App.LS_COLUMN_ORDER) || '{}';
+      const co = JSON.parse(raw);
+      if (co && typeof co === 'object' && !Array.isArray(co)) {
+        for (const [bid, cols] of Object.entries(co)) {
+          if (Array.isArray(cols)) this.columnOrder.set(bid, cols as string[]);
+        }
       }
-    } catch (e) { debug.warn('[App] swallowed error', e); }
+    } catch (e) { debug.warn('[App] restore column order error', e); }
 
+    // Determine destination FIRST — URL hash takes priority over localStorage
+    const hashPage = location.hash.startsWith('#/')
+      ? (location.hash.slice(2).split('?')[0] as AppPage)
+      : null;
+    const rawStored = (localStorage.getItem('last_page') as AppPage | null) ?? 'home';
+    const rawPage = hashPage ?? rawStored;
+    const lastPage: AppPage = (rawPage as string) === 'products' ? 'home' : rawPage;
+
+    // Navigate immediately if not going home — prevents home flash on reload
+    if (lastPage !== 'home') {
+      await this.navigateTo(lastPage);
+    }
+
+    // Load boxes in background (needed for sidebar counters + home dashboard)
     const list = document.getElementById('boxes-list');
-    if (list) list.innerHTML = this.skeletonBoxes(4);
+    if (lastPage === 'home' && list) list.innerHTML = this.skeletonBoxes(4);
     // Open IDB (non-blocking, failures are ignored)
-    idbCache.open().catch((e) => debug.warn('[App] swallowed error', e));
+    swallow(idbCache.open(), 'idbCache.open');
     // Pre-fill repricer rules cache so product cards show correct rule status
-    repricerRulesDb.refresh().catch((e) => debug.warn('[App] swallowed error', e));
+    swallow(repricerRulesDb.refresh(), 'repricerRulesDb.refresh');
 
     try {
       await boxActions.loadBoxes();
       this.renderBoxes();
       // Restore all boxes from IDB into memory cache, then refresh from network
       this.warmCacheFromIdb();
-    } catch (e: any) {
-      if (list) list.innerHTML = '<div style="padding:12px;font-size:11px;color:var(--red)">Ошибка подключения к БД.</div>';
-      this.toast('Ошибка БД: ' + e.message, 'error', 6000);
+    } catch (e: unknown) {
+      if (list && lastPage === 'home') list.innerHTML = '<div style="padding:12px;font-size:11px;color:var(--red)">Ошибка подключения к БД.</div>';
+      this.toast('Ошибка БД: ' + (e instanceof Error ? e.message : String(e)), 'error', 6000);
     }
 
     // ── Reactive store: auto re-render on future box changes ────────────────
-    // Placed AFTER loadBoxes to avoid replacing skeleton UI during initial load.
-    // subscribe() fires listener immediately, so first render is handled above.
-    boxes.subscribe(() => {
+    this._subs.push(boxes.subscribe(() => {
       this.renderBoxes();
       if (this.currentPage === 'home') this.renderDashboard();
-    });
-
-    const searchInp = document.getElementById('search-inp') as HTMLInputElement;
-    if (searchInp) searchInp.addEventListener('input', e => this.onSearch((e.target as HTMLInputElement).value));
+    }));
 
     document.getElementById('overlay')?.addEventListener('click', e => {
       if (e.target === document.getElementById('overlay')) this.closeModal();
@@ -154,14 +184,9 @@ export class App {
     const backdrop = document.getElementById('ms-backdrop');
     if (backdrop) backdrop.addEventListener('click', () => this.closeMobileSheets());
 
-    const lastPage = (localStorage.getItem('last_page') as AppPage | null) ?? 'home';
-    await this.navigateTo(lastPage, { loadAll: lastPage === 'products' });
-    // Восстанавливаем выбранную группу товаров после обновления страницы
-    if (lastPage === 'products') {
-      const lastBoxId = localStorage.getItem('last_box_id');
-      if (lastBoxId && boxes.get().some(b => b.id === lastBoxId)) {
-        await this.selectBox(lastBoxId);
-      }
+    // If going home, navigate to set up home view (boxes already loaded above)
+    if (lastPage === 'home') {
+      await this.navigateTo('home');
     }
   }
 
@@ -219,12 +244,14 @@ export class App {
   }
 
   private skeletonBoxes(count = 4): string {
+    const widths = [75, 65, 85, 70, 80, 60, 90, 68];
     let s = '';
     for (let i = 0; i < count; i++) {
+      const w = widths[i % widths.length];
       s += `<div class="box-item" style="cursor:default;pointer-events:none">
         <div class="sk" style="width:20px;height:20px;border-radius:5px"></div>
         <div class="box-meta" style="display:flex;flex-direction:column;gap:5px">
-          <div class="sk" style="height:11px;width:${60 + Math.random() * 30}%"></div>
+          <div class="sk" style="height:11px;width:${w}%"></div>
           <div class="sk" style="height:9px;width:40%"></div>
         </div>
       </div>`;
@@ -258,6 +285,13 @@ export class App {
 
   closeModal() {
     document.getElementById('overlay')?.classList.remove('on');
+  }
+
+  destroy() {
+    for (const unsub of this._subs) unsub();
+    this._subs = [];
+    if (this._colOrderDebounce) clearTimeout(this._colOrderDebounce);
+    if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -366,9 +400,7 @@ export class App {
     boxList.forEach(b => this.loadBoxCount(b.id));
     const navAll = document.getElementById('nav-all');
     if (navAll) navAll.classList.toggle('active', !this.activeBoxId);
-    this.updateSettingsButtonVisibility();
     this.renderMobileBoxes();
-    this.renderGroupsBar();
   }
 
   /** Быстрое обновление API-группы без открытия диалога */
@@ -408,18 +440,11 @@ export class App {
         await this.selectBox(boxId);
       }
       this.toast(`${I.checkCircle('', 16)} Обновлено`, 'success', 3000);
-    } catch (e: any) {
-      this.toast('Ошибка обновления: ' + e.message, 'error');
+    } catch (e: unknown) {
+      this.toast('Ошибка обновления: ' + (e instanceof Error ? e.message : String(e)), 'error');
     } finally {
       if (btn) { btn.style.animation = ''; btn.disabled = false; }
     }
-  }
-
-  /** Показ/скрытие кнопки Настройки в зависимости от активной группы. */
-  private updateSettingsButtonVisibility(): void {
-    const btn = document.querySelector<HTMLElement>('.settings-btn');
-    if (!btn) return;
-    btn.style.display = this.activeBoxId ? '' : 'none';
   }
 
   async loadBoxCount(boxId: string) {
@@ -427,7 +452,7 @@ export class App {
       const count = await apiService.getBoxCount(boxId);
       const el = document.getElementById(`bc-${boxId}`);
       if (el) el.textContent = `${count} товар${this.suf(count)}`;
-    } catch (e) { debug.warn('[App] swallowed error', e); }
+    } catch (e) { debug.warn('[App] loadBoxCount error', e); }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -435,8 +460,8 @@ export class App {
   // ─────────────────────────────────────────────────────────────────────────
 
   async setView(_view: 'all') {
-    if (this.currentPage !== 'products') {
-      this.navigateTo('products');
+    if (this.currentPage !== 'home') {
+      this.navigateTo('home');
     }
     this.activeBoxId = null;
     localStorage.removeItem('last_box_id');
@@ -484,15 +509,14 @@ export class App {
       this.buildColumns();
       this.applyFilters();
       this.updateResultStat();
-      this.renderGroupsBar();
-    } catch (e: any) {
-      if (content) content.innerHTML = `<div class="empty"><div class="empty-title">Ошибка загрузки</div><div class="empty-sub">${this.esc(e.message)}</div></div>`;
+    } catch (e: unknown) {
+      if (content) content.innerHTML = `<div class="empty"><div class="empty-title">Ошибка загрузки</div><div class="empty-sub">${this.esc((e instanceof Error ? e.message : String(e)))}</div></div>`;
     }
   }
 
   async selectBox(id: string) {
-    if (this.currentPage !== 'products') {
-      this.navigateTo('products');
+    if (this.currentPage !== 'home') {
+      this.navigateTo('home');
     }
     this.activeBoxId = id;
     localStorage.setItem('last_box_id', id);
@@ -505,7 +529,8 @@ export class App {
     this.renderBoxes();
     this.closeMobileSheets();
     await this.loadBoxProducts();
-    this.refreshMpPresence().catch((e) => debug.warn('[App] swallowed error', e));
+    const mpPresenceStale = Date.now() - this._mpPresenceLoadedAt > App.MP_PRESENCE_TTL_MS;
+    if (mpPresenceStale) swallow(this.refreshMpPresence(), 'refreshMpPresence');
 
     // Авто-обновление API-групп если прошло >30 минут с последней синхронизации
     const box = boxes.get().find(b => b.id === id);
@@ -514,7 +539,7 @@ export class App {
       const thirtyMin = 30 * 60 * 1000;
       if (Date.now() - lastSync > thirtyMin) {
         // Фоновое обновление без блокировки UI
-        setTimeout(() => this.refreshMpBox(id).catch((e) => debug.warn('[App] swallowed error', e)), 800);
+        setTimeout(() => swallow(this.refreshMpBox(id), 'auto-refreshMpBox'), 800);
       }
     }
   }
@@ -550,11 +575,17 @@ export class App {
       for (const p of ymProds) add(p.offer_id || p.vendor_code || '', 'yandex', p.store_id, ymStoreMap.get(p.store_id) ?? 'ЯМ', '#fc3f1d');
       for (const p of wbProds) add(p.vendor_code, 'wb', p.store_id, wbStoreMap.get(p.store_id) ?? 'WB', '#cb11ab');
       this.mpPresence = map;
+      this._mpPresenceLoadedAt = Date.now();
       // Триггерим перерисовку таблицы если она открыта
-      if (this.currentPage === 'products' || this.currentPage === 'home') this.applyFilters();
+      if (this.currentPage === 'home') this.applyFilters();
     } catch (e) {
-      console.warn('[refreshMpPresence]', e);
+      debug.warn('[App] refreshMpPresence error', e);
     }
+  }
+
+  /** Инвалидировать кэш mpPresence — вызывается после синхронизации магазинов. */
+  invalidateMpPresence(): void {
+    this._mpPresenceLoadedAt = 0;
   }
 
   /** Возвращает массив магазинов где найден товар по его артикулу. */
@@ -600,11 +631,17 @@ export class App {
       await apiService.streamProducts(id, handleBatch, sig);
       if (token !== this.loadToken) return;
       this.cache.set(id, accumulated);
-      idbCache.set(id, accumulated).catch((e) => debug.warn('[App] swallowed error', e));
-      this.renderGroupsBar();
-    } catch (e: any) {
+      swallow(idbCache.set(id, accumulated), 'idbCache.set box');
+      // Run photo column migration once per box (never in hot buildColumns path)
+      if (!this._migratedBoxes.has(id)) {
+        this._migratedBoxes.add(id);
+        this.migratePhotoColumns();
+        this.buildColumns();
+        this.applyFilters();
+      }
+    } catch (e: unknown) {
       if (token !== this.loadToken) return;
-      if (content) content.innerHTML = `<div class="empty"><div class="empty-title">Ошибка загрузки</div><div class="empty-sub">${this.esc(e.message)}</div></div>`;
+      if (content) content.innerHTML = `<div class="empty"><div class="empty-title">Ошибка загрузки</div><div class="empty-sub">${this.esc((e instanceof Error ? e.message : String(e)))}</div></div>`;
     }
   }
 
@@ -620,11 +657,15 @@ export class App {
         const el = document.getElementById(`bc-${id}`);
         if (el) el.textContent = `${acc.length} товар${this.suf(acc.length)}`;
       }
-    }, sig).catch((e) => debug.warn('[App] swallowed error', e));
+    }, sig).catch((e) => debug.warn('[App] preloadBox stream error', e));
   }
 
   // Load IDB cache into memory, then silently refresh all boxes from network
   private async warmCacheFromIdb() {
+    // Cancel any previously running background streams before starting new ones
+    for (const s of this._warmCacheSigs) s.cancelled = true;
+    this._warmCacheSigs = [];
+
     const allBoxes = boxes.get();
 
     // Phase 1: populate memory cache from IDB (instant disk read)
@@ -645,20 +686,21 @@ export class App {
     // Phase 2: refresh from network in background (stale-while-revalidate)
     allBoxes.forEach(b => {
       const sig = { cancelled: false };
+      this._warmCacheSigs.push(sig);
       let acc: Product[] = [];
       apiService.streamProducts(b.id, batch => {
         acc = acc.concat(batch);
       }, sig).then(() => {
         if (acc.length === 0) return;
         this.cache.set(b.id, acc);
-        idbCache.set(b.id, acc).catch((e) => debug.warn('[App] swallowed error', e));
+        swallow(idbCache.set(b.id, acc), 'warmCache idbCache.set');
         const el = document.getElementById(`bc-${b.id}`);
         if (el) el.textContent = `${acc.length} товар${this.suf(acc.length)}`;
         // Refresh dashboard again after network data arrives
         if (this.currentPage === 'home') {
           this.renderDashboard();
         }
-      }).catch((e) => debug.warn('[App] swallowed error', e));
+      }).catch((e) => debug.warn('[App] warmCache stream error', e));
     });
   }
 
@@ -696,12 +738,11 @@ export class App {
     }
     // Сохраняем в БД в фоне
     if (toSave.length) {
-      Promise.all(toSave.map(p => apiService.updateProduct(p.id, { data: p.data }))).catch((e) => debug.warn('[App] swallowed error', e));
+      swallow(Promise.all(toSave.map(p => apiService.updateProduct(p.id, { data: p.data }))), 'migratePhotoColumns DB update');
     }
   }
 
   buildColumns() {
-    this.migratePhotoColumns();
     const cols = new Set<string>();
     this.allProducts.forEach(p => {
       Object.keys(p.data || {}).forEach(k => {
@@ -753,11 +794,14 @@ export class App {
         if (newCustom.length > 0) {
           const updatedOrder = [...newCustom, ...ordered, ...rest];
           this.columnOrder.set(this.activeBoxId, updatedOrder);
-          try {
-            const co: Record<string, string[]> = {};
-            for (const [bid, cls] of this.columnOrder) co[bid] = cls;
-            localStorage.setItem('app_column_order', JSON.stringify(co));
-          } catch (e) { debug.warn('[App] swallowed error', e); }
+          if (this._colOrderDebounce) clearTimeout(this._colOrderDebounce);
+          this._colOrderDebounce = setTimeout(() => {
+            try {
+              const co: Record<string, string[]> = {};
+              for (const [bid, cls] of this.columnOrder) co[bid] = cls;
+              localStorage.setItem(App.LS_COLUMN_ORDER, JSON.stringify(co));
+            } catch (e) { debug.warn('[App] save column order error', e); }
+          }, 400);
         }
       }
     }
@@ -767,7 +811,7 @@ export class App {
   }
 
   /** Состояние видимости блока кастомных колонок (как фильтры — сворачивается). */
-  private showCustomCols = true;
+  /** @internal used by ColumnPickerModule */ showCustomCols = true;
 
   /** Вызывается из SettingsHub после добавления/удаления колонки — обновляет таблицу. */
   buildColumnsAndRefresh(): void {
@@ -792,14 +836,10 @@ export class App {
       this.renderBoxes();
       this.toast('Название сохранено ✓', 'success');
       window.settingsHub?.init?.();
-    } catch (e: any) { this.toast('Ошибка: ' + e.message, 'error'); }
+    } catch (e: unknown) { this.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error'); }
   }
 
-  toggleCustomCols(): void {
-    this.showCustomCols = !this.showCustomCols;
-    this.buildColumns();
-    this.applyFilters();
-  }
+  toggleCustomCols(): void { this.columnPicker.toggleCustomCols(); }
 
   /** Получить артикул товара из любого из возможных полей (Артикул*, Артикул, Артикул продавца, Ваш SKU *). */
   private getProductArt(p: Product): string {
@@ -997,18 +1037,6 @@ export class App {
     this.applyFilters();
   }
 
-  toggleCostSort(dir: 'asc' | 'desc') {
-    if (this.sortCol === '★ Себестоимость' && this.sortDir === dir) {
-      this.sortCol = null; this.sortDir = 'asc';
-    } else {
-      this.sortCol = '★ Себестоимость';
-      this.sortDir = dir;
-    }
-    document.getElementById('cost-sort-asc')?.classList.toggle('on', this.sortCol === '★ Себестоимость' && this.sortDir === 'asc');
-    document.getElementById('cost-sort-desc')?.classList.toggle('on', this.sortCol === '★ Себестоимость' && this.sortDir === 'desc');
-    this.applyFilters();
-  }
-
   sortByCol(col: string) {
     if (this.sortCol === col) {
       this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
@@ -1017,13 +1045,6 @@ export class App {
       this.sortDir = 'asc';
     }
     this.applyFilters();
-  }
-
-  toggleFilterPanel() {
-    const panel = document.getElementById('filter-panel');
-    const btn = document.getElementById('filter-toggle-btn');
-    panel?.classList.toggle('collapsed');
-    btn?.classList.toggle('collapsed');
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1050,193 +1071,27 @@ export class App {
   private saveHiddenRows() {
     const obj: Record<string, string[]> = {};
     for (const [bid, set] of this.hiddenRows) obj[bid] = [...set];
-    localStorage.setItem('app_hidden_rows', JSON.stringify(obj));
+    localStorage.setItem(App.LS_HIDDEN_ROWS, JSON.stringify(obj));
   }
 
   // ─────────────────────────────────────────────────────────────────────────
   // COLUMN VISIBILITY
   // ─────────────────────────────────────────────────────────────────────────
 
-  /** Открыть модальное окно настройки видимых столбцов */
-  /** Единый менеджер колонок — кастомные поля + видимость столбцов из данных */
-  openColPickerModal() {
-    const customCols = customColumnsDb.getColumns(this.activeBoxId);
-    const dataCols   = this.columns.filter(c => !App.SKIP_COLS.has(c));
-
-    // ── Секция 1: Кастомные поля ────────────────────────────────────────────
-    const customRows = customCols.map(c => {
-      const isSystem = c.system;
-      const typeLabel = c.data_type === 'number' ? I.hash('', 12) : I.type('', 12);
-      return `
-        <div class="sh-col-row" style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)"
-          draggable="${!isSystem}"
-          data-col-id="${this.esc(c.id)}"
-          ondragstart="window.app.onColDragStart(event,${customCols.indexOf(c)})"
-          ondragover="event.preventDefault();this.classList.add('drag-over')"
-          ondragleave="this.classList.remove('drag-over')"
-          ondrop="event.preventDefault();this.classList.remove('drag-over');window.app.onColDrop(event,${customCols.indexOf(c)})">
-          <div style="cursor:${isSystem ? 'default' : 'grab'};font-size:14px;flex-shrink:0;color:var(--muted)" title="${isSystem ? 'Системная колонка' : 'Перетащить для изменения порядка'}">
-            ${isSystem ? I.lock('', 14) : '⠿'}
-          </div>
-          <div style="flex:1;min-width:0">
-            <div style="font-weight:600;font-size:13px">${this.esc(c.label)}</div>
-            <div style="font-size:10px;color:var(--muted)">${typeLabel} ${c.data_type === 'number' ? 'Число' : 'Текст'}${isSystem ? ' · Системная' : ' · Пользовательская'}</div>
-          </div>
-          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);cursor:pointer;flex-shrink:0">
-            <input type="checkbox" ${c.show_in_table ? 'checked' : ''} style="accent-color:#005bff"
-              onchange="window.app.toggleCustomColumnVisibility('${this.esc(c.id)}',this.checked)">
-            В таблице
-          </label>
-          ${!isSystem ? `
-            <button onclick="window.app.deleteCustomColumn('${this.esc(c.id)}','${this.esc(c.label).replace(/'/g, '&#39;')}')"
-              style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;flex-shrink:0;padding:0 2px" title="Удалить">✕</button>
-          ` : '<div style="width:20px"></div>'}
-        </div>`;
-    }).join('');
-
-    const addColForm = `
-      <div style="padding:12px;background:var(--bg2);border-top:1px solid var(--border)">
-        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Добавить кастомный ряд</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-          <input id="cm-label" class="form-input" placeholder="Название поля" style="flex:1;min-width:140px">
-          <select id="cm-type" class="form-select" style="width:100px">
-            <option value="text">Текст</option>
-            <option value="number">Число</option>
-          </select>
-          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;white-space:nowrap">
-            <input type="checkbox" id="cm-show" checked style="accent-color:#005bff"> В таблице
-          </label>
-          <button class="btn btn-primary" style="font-size:12px;padding:5px 12px"
-            onclick="window.app.addCustomColumnFromModal()">+ Создать</button>
-        </div>
-      </div>`;
-
-    // ── Секция 2: Данные из МП/xlsx ─────────────────────────────────────────
-    const dataRows = dataCols.map((c, idx) => {
-      const vis = this.visibleCols === null || this.visibleCols.has(c);
-      return `
-        <div class="col-pick-row" style="display:flex;align-items:center;gap:10px;padding:6px 12px;border-bottom:1px solid var(--border)"
-          draggable="true"
-          ondragstart="window.app.onColDragStart(event,${idx})"
-          ondragover="event.preventDefault();this.classList.add('drag-over')"
-          ondragleave="this.classList.remove('drag-over')"
-          ondrop="event.preventDefault();this.classList.remove('drag-over');window.app.onColDrop(event,${idx})">
-          <div style="cursor:grab;font-size:12px;color:var(--muted);flex-shrink:0">⠿</div>
-          <label style="flex:1;display:flex;align-items:center;gap:8px;cursor:pointer;min-width:0">
-            <input type="checkbox" class="col-pick-chk" data-col="${this.esc(c)}" ${vis ? 'checked' : ''} style="accent-color:#005bff;flex-shrink:0">
-            <span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.esc(c.replace('*', ''))}</span>
-          </label>
-        </div>`;
-    }).join('');
-
-    const body = `
-      <div style="display:flex;flex-direction:column;gap:0">
-
-        <!-- Кастомные поля -->
-        <div style="margin-bottom:16px">
-          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;padding:10px 12px 6px;background:var(--bg2);border-bottom:1px solid var(--border)">
-            Кастомные поля (Себестоимость + пользовательские)
-          </div>
-          <div id="custom-cols-list">
-            ${customRows || '<div style="padding:12px;font-size:12px;color:var(--muted)">Нет кастомных полей</div>'}
-          </div>
-          ${addColForm}
-        </div>
-
-        <!-- Столбцы из данных МП/xlsx -->
-        <div>
-          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;padding:10px 12px 6px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-            <span>Столбцы из данных товаров (МП / xlsx)</span>
-            <div style="display:flex;gap:6px">
-              <button class="btn" style="font-size:10px;padding:2px 8px" onclick="window.app.colPickAll(true)">Все</button>
-              <button class="btn" style="font-size:10px;padding:2px 8px" onclick="window.app.colPickAll(false)">Снять</button>
-            </div>
-          </div>
-          <div id="data-cols-list" style="max-height:280px;overflow-y:auto">
-            ${dataRows || '<div style="padding:12px;font-size:12px;color:var(--muted)">Нет данных — сначала синхронизируйте товары</div>'}
-          </div>
-        </div>
-
-      </div>`;
-
-    this.openModalLg('Управление столбцами', '', body,
-      `<button class="btn" onclick="window.app.closeModal()">Закрыть</button>
-       <button class="btn btn-primary" onclick="window.app.applyColPicker()">Применить</button>`
-    );
-  }
-
-  addCustomColumnFromModal() {
-    const labelEl  = document.getElementById('cm-label')  as HTMLInputElement;
-    const typeEl   = document.getElementById('cm-type')   as HTMLSelectElement;
-    const showEl   = document.getElementById('cm-show')   as HTMLInputElement;
-    const label    = labelEl?.value?.trim();
-    if (!label) { labelEl?.focus(); this.toast('Введите название', 'error'); return; }
-    customColumnsDb.addColumn({
-      label,
-      data_type: (typeEl?.value || 'text') as 'text' | 'number',
-      show_in_table: showEl?.checked ?? true,
-      box_id: this.activeBoxId || null,
-    });
-    this.buildColumnsAndRefresh();
-    // Перерендерим модал с новой колонкой
-    this.openColPickerModal();
-    this.toast(`Поле «${label}» создано`, 'success', 2000);
-  }
-
-  /** Удалить кастомную колонку (роутится через app, т.к. customColumnsDb не в window) */
-  deleteCustomColumn(id: string, label: string) {
-    if (!confirm(`Удалить колонку «${label}»?`)) return;
-    customColumnsDb.deleteColumn(id);
-    this.buildColumnsAndRefresh();
-    this.openColPickerModal();
-  }
-
-  /** Переключить видимость кастомной колонки в таблице */
-  toggleCustomColumnVisibility(id: string, show: boolean) {
-    customColumnsDb.updateColumn(id, { show_in_table: show });
-    this.buildColumnsAndRefresh();
-  }
-
-  colPickAll(checked: boolean) {
-    document.querySelectorAll<HTMLInputElement>('.col-pick-chk').forEach(chk => { chk.checked = checked; });
-  }
-
-  applyColPicker() {
-    const selected: string[] = [];
-    document.querySelectorAll<HTMLInputElement>('.col-pick-chk:checked').forEach(chk => {
-      const col = chk.dataset.col;
-      if (col) selected.push(col);
-    });
-    // null = все видны (если выбраны все); иначе — Set
-    const allCols = this.columns.filter(c => !App.SKIP_COLS.has(c));
-    if (selected.length === allCols.length) {
-      this.visibleCols = null;
-    } else {
-      this.visibleCols = new Set(selected);
-    }
-    localStorage.setItem('app_visible_cols', JSON.stringify(selected.length === allCols.length ? null : selected));
-    this.closeModal();
-    // Force rebuild table (columns changed)
-    this.vt.colKey = '';
-    this.renderProducts();
-  }
+  // ── Column picker — delegated to ColumnPickerModule ─────────────────────
+  openColPickerModal()                           { this.columnPicker.openColPickerModal(); }
+  addCustomColumnFromModal()                     { this.columnPicker.addCustomColumnFromModal(); }
+  deleteCustomColumn(id: string, label: string) { this.columnPicker.deleteCustomColumn(id, label); }
+  _confirmDeleteCustomColumn(id: string)         { this.columnPicker.confirmDeleteCustomColumn(id); }
+  toggleCustomColumnVisibility(id: string, show: boolean) { this.columnPicker.toggleCustomColumnVisibility(id, show); }
+  colPickAll(checked: boolean)                   { this.columnPicker.colPickAll(checked); }
+  applyColPicker()                               { this.columnPicker.applyColPicker(); }
 
   syncMobileFilters(key: string, val: string) {
     const desktopId = key === 'price-from' ? 'f-price-from' : 'f-price-to';
     const inp = document.getElementById(desktopId) as HTMLInputElement;
     if (inp) inp.value = val;
     this.applyFilters();
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // VIEW MODE
-  // ─────────────────────────────────────────────────────────────────────────
-
-  setViewMode(mode: 'table' | 'cards') {
-    this.viewMode = mode;
-    document.getElementById('tab-table')?.classList.toggle('on', mode === 'table');
-    document.getElementById('tab-cards')?.classList.toggle('on', mode === 'cards');
-    this.renderProducts();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1275,10 +1130,8 @@ export class App {
     const exportBtn = document.getElementById('export-btn');
     const exportAllBtn = document.getElementById('export-all-btn');
     if (exportBtn && exportAllBtn) {
-      const hasData = this.allProducts.length > 0;
-      const isProdPage = this.currentPage === 'products';
-      exportBtn.style.display = (hasData && this.activeBoxId && isProdPage) ? 'flex' : 'none';
-      exportAllBtn.style.display = (hasData && !this.activeBoxId && isProdPage) ? 'flex' : 'none';
+      exportBtn.style.display = 'none';
+      exportAllBtn.style.display = 'none';
     }
   }
 
@@ -1500,7 +1353,7 @@ export class App {
       if (isSynced) {
         const mappedStr = d['_ozon_mapped_cols'] as string | undefined;
         if (mappedStr) {
-          try { ozonMappedCols = new Set(JSON.parse(mappedStr)); } catch (e) { debug.warn('[App] swallowed error', e); }
+          try { ozonMappedCols = new Set(JSON.parse(mappedStr)); } catch (e) { debug.warn('[App] parse ozonMappedCols error', e); }
         } else {
           // Fallback для товаров синхронизированных до этого обновления
           ozonMappedCols = new Set(['Цена, руб.*', 'Цена до скидки, руб.', 'Мин. цена, руб.', 'Название товара', 'Штрихкод', 'Бренд*', 'Ширина упаковки, мм*', 'Высота упаковки, мм*', 'Длина упаковки, мм*', 'Вес в упаковке, г*']);
@@ -1833,7 +1686,7 @@ export class App {
       this.applyFilters();
       const metaEl = document.getElementById('result-meta');
       if (metaEl) metaEl.textContent = 'по всем группам';
-    } catch (e: any) { this.toast(e.message, 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)), 'error'); }
   }
 
   // ── PRODUCT MODAL (delegates -> modules/ProductModalModule.ts) ───────────
@@ -1944,44 +1797,6 @@ export class App {
     `).join('');
   }
 
-  private renderGroupsBar() {
-    const bar = document.getElementById('groups-bar');
-    const list = document.getElementById('groups-bar-list');
-    if (!bar || !list) return;
-
-    const boxList = boxes.get();
-    const mpColor: Record<string, string> = {
-      ozon: '#005bff', ym: '#f4a000', wb: '#cb11ab',
-    };
-
-    const allChip = `<div class="group-chip ${!this.activeBoxId ? 'active' : ''}" onclick="window.app.setView('all')">
-      Все товары
-    </div>`;
-
-    const chips = boxList.map(b => {
-      const isActive = b.id === this.activeBoxId;
-      const color = b.mp_source ? (mpColor[b.mp_source] || 'var(--muted)') : 'var(--muted)';
-      const displayName = b.name
-        .replace(/^🟠\s*(Ozon:|Озон:)\s*/i, '')
-        .replace(/^🟡\s*(ЯМ:|Яндекс Маркет:)\s*/i, '')
-        .replace(/^🟣\s*(WB:|Wildberries:)\s*/i, '')
-        .trim();
-      const count = this.cache.has(b.id) ? this.cache.get(b.id)!.length : null;
-      const countHtml = count !== null ? `<span class="gc-count">${count}</span>` : '';
-      return `<div class="group-chip ${isActive ? 'active' : ''}" onclick="window.app.selectBox('${b.id}')">
-        <span class="gc-dot" style="background:${color}"></span>
-        ${this.esc(displayName)}
-        ${countHtml}
-      </div>`;
-    }).join('');
-
-    list.innerHTML = allChip + chips;
-
-    // Show/hide inline add-product button
-    const addInlineBtn = document.getElementById('add-product-inline-btn');
-    if (addInlineBtn) addInlineBtn.style.display = this.activeBoxId ? 'flex' : 'none';
-  }
-
   // ── TABLE INTERACTIONS: drag-drop, column reorder, manual add (delegates -> modules/TableInteractionsModule.ts) ──
 
   onRowDragStart(idx: number) { return this.tableInteractions.onRowDragStart(idx); }
@@ -1999,16 +1814,12 @@ export class App {
 
   // ── EXPORT ALL (delegates -> modules/ExportImportModule.ts) ──────────────
 
-  exportAllToExcel() { return this.exportImport.exportAllToExcel(); }
-  openExportModalAll() { return this.exportImport.openExportModalAll(); }
   doExportAll() { return this.exportImport.doExportAll(); }
 
   // ── NAVIGATION & DASHBOARD (delegates -> modules/NavigationModule.ts) ────
 
   getActiveGroupOffers(): Array<{ offer_id: string; name: string; box_name: string }> { return this.navigation.getActiveGroupOffers(); }
   getActiveGroupName(): string | null { return this.navigation.getActiveGroupName(); }
-  toggleMarketplaces() { return this.navigation.toggleMarketplaces(); }
-  toggleOrders() { return this.navigation.toggleOrders(); }
   async navigateTo(page: AppPage, opts: { loadAll?: boolean } = {}) { return this.navigation.navigateTo(page, opts); }
 
 

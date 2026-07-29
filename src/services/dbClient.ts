@@ -8,14 +8,27 @@
 import { debug } from '@/utils/debug';
 
 
-const API_URL = import.meta.env.VITE_API_URL as string;
-const API_KEY = import.meta.env.VITE_API_KEY as string;
+const API_URL = (import.meta.env.VITE_API_URL as string) || '';
+const API_KEY = (import.meta.env.VITE_API_KEY as string) || '';
 
 if (!API_URL || !API_KEY) {
-  throw new Error('[dbClient] VITE_API_URL and VITE_API_KEY must be set in .env');
+  console.warn('[dbClient] VITE_API_URL and VITE_API_KEY not set in .env — API calls will fail');
 }
 
 export const REST_URL = `${API_URL}/rest/v1`;
+
+// Single shared promise for concurrent 401 → refresh scenarios.
+// Without this, N parallel requests all failing with 401 each call refreshToken()
+// independently — the second call invalidates the token from the first, logging the user out.
+let _refreshPromise: Promise<boolean> | null = null;
+function sharedRefresh(): Promise<boolean> {
+  if (!_refreshPromise) {
+    _refreshPromise = import('./authService')
+      .then(({ authService }) => authService.refreshToken())
+      .finally(() => { _refreshPromise = null; });
+  }
+  return _refreshPromise;
+}
 
 /**
  * Returns auth headers for every API REST request.
@@ -62,11 +75,10 @@ export async function dbFetch<T>(
       ...(options.headers as Record<string, string>),
     },
   });
-  // Auto-refresh JWT on 401
+  // Auto-refresh JWT on 401 — all concurrent failures share one refresh promise
   if (res.status === 401) {
     try {
-      const { authService } = await import('./authService');
-      const refreshed = await authService.refreshToken();
+      const refreshed = await sharedRefresh();
       if (refreshed) {
         res = await fetch(`${REST_URL}/${endpoint}`, {
           ...options,
@@ -99,9 +111,10 @@ export async function dbFetchAll<T>(
   const countResp = await fetch(`${REST_URL}/${endpoint}${sep}limit=0`, {
     headers: { ...getAuthHeaders(), 'Prefer': 'count=exact' },
   });
+  if (!countResp.ok) throw new Error(`dbFetchAll: ${countResp.status}`);
   const countStr = countResp.headers.get('content-range')?.split('/')[1];
-  const total = parseInt(countStr || '0');
-  if (!total) return [];
+  const total = parseInt(countStr ?? '0', 10);
+  if (!total || isNaN(total)) return [];
 
   const pageCount = Math.ceil(total / pageSize);
   const pages = Array.from({ length: pageCount }, (_, i) =>

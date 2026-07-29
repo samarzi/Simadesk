@@ -123,13 +123,14 @@ function priorityDot(p: Priority, size = 8): string {
 }
 
 function classifyEisenhower(t: Task): EQKey {
+  // Priority color directly maps to quadrant; due_date is secondary for uncolored tasks
+  if (t.priority === 'red')    return 'ui'; // Срочно и Важно
+  if (t.priority === 'yellow') return 'un'; // Срочно, но Не важно
+  if (t.priority === 'blue')   return 'ni'; // Не срочно, но Важно
+  // For uncolored tasks fall back to due_date proximity
   const soon = new Date(); soon.setDate(soon.getDate() + 3);
   const isUrgent = t.due_date != null && t.due_date <= toISO(soon);
-  const isImportant = t.priority === 'red' || t.priority === 'blue';
-  if (isUrgent && isImportant) return 'ui';
-  if (!isUrgent && isImportant) return 'ni';
-  if (isUrgent && !isImportant) return 'un';
-  return 'nn';
+  return isUrgent ? 'un' : 'nn';
 }
 
 function getArticle(p: Product): string {
@@ -1977,7 +1978,7 @@ export class TaskManagerModule {
     if (!app) return;
     // navigateTo is the correct method name in App.ts
     if (typeof app.navigateTo === 'function') {
-      await app.navigateTo('products');
+      await app.navigateTo('home');
     }
     // Set search directly via onSearch (updates searchQ + applyFilters)
     if (typeof app.onSearch === 'function') {

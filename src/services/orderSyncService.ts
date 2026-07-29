@@ -125,13 +125,13 @@ class OrderSyncService {
       await Promise.all([
         ...ozStores.map(async store => {
           await this._syncOzonStore(store, now, needsIncremental).catch(e =>
-            console.warn(`[OrderSync] Ozon ${store.name}:`, e?.message),
+            console.warn(`[OrderSync] Ozon ${store.name}:`, (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e))),
           );
           tick(store.name);
         }),
         ...ymStores.map(async store => {
           await this._syncYandexStore(store, now, needsIncremental).catch(e =>
-            console.warn(`[OrderSync] YM ${store.name}:`, e?.message),
+            console.warn(`[OrderSync] YM ${store.name}:`, (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e))),
           );
           tick(store.name);
         }),
@@ -146,7 +146,7 @@ class OrderSyncService {
       await Promise.all(
         wbStores.map(async store => {
           await this._syncWbStore(store, now, needsIncremental).catch(e =>
-            console.warn(`[OrderSync] WB ${store.name}:`, e?.message),
+            console.warn(`[OrderSync] WB ${store.name}:`, (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e))),
           );
           tick(store.name);
         }),
@@ -198,19 +198,19 @@ class OrderSyncService {
       await Promise.all([
         ...ozStores.map(async store => {
           await this._syncOzonStore(store, now, true).catch(e =>
-            console.warn(`[OrderSync] Ozon ${store.name}:`, e?.message),
+            console.warn(`[OrderSync] Ozon ${store.name}:`, (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e))),
           );
           tick(store.name);
         }),
         ...ymStores.map(async store => {
           await this._syncYandexStore(store, now, true).catch(e =>
-            console.warn(`[OrderSync] YM ${store.name}:`, e?.message),
+            console.warn(`[OrderSync] YM ${store.name}:`, (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e))),
           );
           tick(store.name);
         }),
         ...wbStores.map(async store => {
           await this._syncWbStore(store, now, true).catch(e =>
-            console.warn(`[OrderSync] WB ${store.name}:`, e?.message),
+            console.warn(`[OrderSync] WB ${store.name}:`, (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e))),
           );
           tick(store.name);
         }),
@@ -353,8 +353,8 @@ class OrderSyncService {
               if (added === 0) break;
               off += 50;
             }
-          } catch (err: any) {
-            if (err?.name !== 'AbortError') { console.warn('[OrderSync] Ozon query:', err?.message); hadError = true; }
+          } catch (err: unknown) {
+            if (!(err instanceof DOMException && err.name === 'AbortError')) { console.warn('[OrderSync] Ozon query:', (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err))); hadError = true; }
           }
 
           // Не кэшируем частично догруженный месяц — иначе недокачанные из-за
@@ -404,8 +404,8 @@ class OrderSyncService {
             const fetched = await fetchAllYandexOrders(store, ymDateStr(s), ymDateStr(e), signal);
             yandexOrders.push(...fetched);
             monthOrders.push(...fetched);
-          } catch (err: any) {
-            if (err?.name !== 'AbortError') { console.warn('[OrderSync] YM query:', err?.message); hadError = true; }
+          } catch (err: unknown) {
+            if (!(err instanceof DOMException && err.name === 'AbortError')) { console.warn('[OrderSync] YM query:', (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err))); hadError = true; }
           }
 
           // См. комментарий в Ozon-ветке выше — не кэшируем частичный результат.
@@ -488,8 +488,8 @@ class OrderSyncService {
             if (cache.has(key)) continue;
             analyticsOrderCache.saveMonth(store.id, 'wb', monthDate, byMonth.get(key) ?? []);
           }
-        } catch (err: any) {
-          if (err?.name !== 'AbortError') { console.warn('[OrderSync] WB query:', err?.message); hadError = true; }
+        } catch (err: unknown) {
+          if (!(err instanceof DOMException && err.name === 'AbortError')) { console.warn('[OrderSync] WB query:', (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err))); hadError = true; }
         }
 
         // Тикаем все незакэшированные WB-месяцы одним разом после ответа API
@@ -553,8 +553,8 @@ class OrderSyncService {
             off += 50;
           }
           await analyticsOrderCache.saveMonth(store.id, 'ozon', monthDate, monthPostings);
-        } catch (e: any) {
-          console.warn(`[OrderSync] Ozon sync ${store.name} ${toStr(mStart)}:`, e?.message);
+        } catch (e: unknown) {
+          console.warn(`[OrderSync] Ozon sync ${store.name} ${toStr(mStart)}:`, (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)));
           throw e;
         }
       })();
@@ -591,8 +591,8 @@ class OrderSyncService {
         try {
           const orders = await fetchAllYandexOrders(store, ymDateStr(mStart), ymDateStr(mEnd));
           await analyticsOrderCache.saveMonth(store.id, 'yandex', monthDate, orders);
-        } catch (e: any) {
-          console.warn(`[OrderSync] YM sync ${store.name} ${toStr(mStart)}:`, e?.message);
+        } catch (e: unknown) {
+          console.warn(`[OrderSync] YM sync ${store.name} ${toStr(mStart)}:`, (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)));
           throw e;
         }
       })();
@@ -651,8 +651,8 @@ class OrderSyncService {
           if (cachedKeys.has(key)) continue;
           await analyticsOrderCache.saveMonth(store.id, 'wb', monthDate, byMonth.get(key) ?? []);
         }
-      } catch (e: any) {
-        console.warn(`[OrderSync] WB sync ${store.name}:`, e?.message);
+      } catch (e: unknown) {
+        console.warn(`[OrderSync] WB sync ${store.name}:`, (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)));
         throw e;
       }
     })();

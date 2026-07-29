@@ -4,16 +4,42 @@
  */
 import { debug } from '@/utils/debug';
 import { I } from '@/utils/icons';
+import { showToast } from '@/utils/toast';
 
+
+export interface UndoSpec {
+  kind: string;            // подсистема, умеющая откатывать (напр. 'docs')
+  payload: any;            // снимок состояния «до» для восстановления
+  label?: string;          // человеческое описание того, что откатится
+}
 
 export interface ChangeLogEntry {
   id: string;
   ts: string;              // ISO timestamp
-  category: string;        // 'product' | 'price' | 'group' | 'import' | 'rule' | 'settings' | 'sync'
+  category: string;        // 'product' | 'price' | 'group' | 'import' | 'rule' | 'settings' | 'sync' | 'ai'
   action: string;          // короткое действие, напр. "Изменена цена"
   details: string;         // подробности
   user?: string;
   meta?: Record<string, any>;
+  // ── AI-действия / дерево запросов / откат ──
+  requestText?: string;    // исходный запрос пользователя (1 запрос = 1 действие)
+  groupKey?: string;       // одинаковые запросы копятся в одно дерево
+  undo?: UndoSpec;         // если задано — действие можно откатить
+  undone?: boolean;        // уже откачено
+}
+
+// ── Реестр обработчиков отката ──────────────────────────────────────────────────
+// Подсистемы (редактор и т.п.) регистрируют, как откатывать свои действия.
+type UndoHandler = (payload: any) => void | Promise<void>;
+const undoHandlers: Record<string, UndoHandler> = {};
+export function registerUndoHandler(kind: string, fn: UndoHandler): void {
+  undoHandlers[kind] = fn;
+}
+
+/** Нормализация текста запроса → ключ дерева (одинаковые запросы группируются). */
+function makeGroupKey(requestText: string | undefined, action: string): string {
+  const base = (requestText ?? action ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return base || action || 'other';
 }
 
 const KEY = 'change_log_v1';
@@ -35,12 +61,76 @@ function save(entries: ChangeLogEntry[]): void {
 }
 
 export const changeLog = {
-  add(entry: Omit<ChangeLogEntry, 'id' | 'ts'>): void {
+  add(entry: Omit<ChangeLogEntry, 'id' | 'ts'>): string {
     const entries = load();
-    entries.unshift({ ...entry, id: crypto.randomUUID(), ts: new Date().toISOString() });
+    const id = crypto.randomUUID();
+    entries.unshift({ ...entry, id, ts: new Date().toISOString() });
     save(entries);
+    return id;
   },
+
+  /** Записать действие (напр. от ассистента) с группировкой и возможностью отката. */
+  logAction(a: {
+    category?: string;
+    action: string;
+    details: string;
+    requestText?: string;
+    undo?: UndoSpec;
+  }): string {
+    return this.add({
+      category: a.category ?? 'ai',
+      action: a.action,
+      details: a.details,
+      requestText: a.requestText,
+      groupKey: makeGroupKey(a.requestText, a.action),
+      undo: a.undo,
+      undone: false,
+    });
+  },
+
   get(limit = 500): ChangeLogEntry[] { return load().slice(0, limit); },
+  getById(id: string): ChangeLogEntry | undefined { return load().find(e => e.id === id); },
+
+  /** Пометить запись как откаченную. */
+  markUndone(id: string): void {
+    const entries = load();
+    const e = entries.find(x => x.id === id);
+    if (e) { e.undone = true; save(entries); }
+  },
+
+  /** Откатить одно действие. Возвращает текст результата. */
+  async undo(id: string): Promise<string> {
+    const e = this.getById(id);
+    if (!e) return 'Запись не найдена';
+    if (!e.undo) return 'Это действие нельзя отменить';
+    if (e.undone) return 'Уже отменено';
+    const handler = undoHandlers[e.undo.kind];
+    if (!handler) return `Нет обработчика отката «${e.undo.kind}»`;
+    await handler(e.undo.payload);
+    this.markUndone(id);
+    return `Отменено: ${e.action}`;
+  },
+
+  /** Откатить всё дерево (все откатываемые действия группы), новейшие → старейшие. */
+  async undoGroup(groupKey: string): Promise<string> {
+    const entries = load()
+      .filter(e => e.groupKey === groupKey && e.undo && !e.undone)
+      .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()); // новые первыми
+    let n = 0;
+    for (const e of entries) {
+      const handler = undoHandlers[e.undo!.kind];
+      if (handler) { await handler(e.undo!.payload); this.markUndone(e.id); n++; }
+    }
+    return n ? `Отменено действий в дереве: ${n}` : 'Нечего отменять';
+  },
+
+  /** Откатить самое последнее откатываемое действие. */
+  async undoLast(): Promise<string> {
+    const entries = load().filter(e => e.undo && !e.undone);
+    if (!entries.length) return 'Нет действий для отмены';
+    return this.undo(entries[0].id);
+  },
+
   clear(): void { localStorage.removeItem(KEY); },
   exportCsv(): void {
     const entries = load();
@@ -94,6 +184,7 @@ export class LogsModule {
   private filterCategory = '';
   private page = 0;
   private readonly PAGE_SIZE = 50;
+  private expanded = new Set<string>();  // раскрытые деревья (groupKey)
 
   constructor(container: HTMLElement) { this.container = container; }
 
@@ -123,9 +214,24 @@ export class LogsModule {
       return true;
     });
 
-    const totalPages = Math.max(1, Math.ceil(filtered.length / this.PAGE_SIZE));
+    // ── Группировка в деревья по groupKey (одинаковые запросы — одно дерево) ──
+    const groupMap = new Map<string, ChangeLogEntry[]>();
+    for (const e of filtered) {
+      const key = e.groupKey || e.id; // без groupKey — своё «дерево» из одной записи
+      const arr = groupMap.get(key) ?? [];
+      arr.push(e);
+      groupMap.set(key, arr);
+    }
+    // Дерево: { key, entries (новые→старые), latestTs }
+    const groups = [...groupMap.entries()].map(([key, entries]) => ({
+      key,
+      entries: entries.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()),
+      latestTs: Math.max(...entries.map(e => new Date(e.ts).getTime())),
+    })).sort((a, b) => b.latestTs - a.latestTs);
+
+    const totalPages = Math.max(1, Math.ceil(groups.length / this.PAGE_SIZE));
     const page = Math.min(this.page, totalPages - 1);
-    const pageEntries = filtered.slice(page * this.PAGE_SIZE, (page + 1) * this.PAGE_SIZE);
+    const pageGroups = groups.slice(page * this.PAGE_SIZE, (page + 1) * this.PAGE_SIZE);
 
     const categories = [...new Set(all.map(e => e.category))];
 
@@ -183,50 +289,19 @@ export class LogsModule {
           <span style="margin-left:auto;font-size:11px;color:var(--text-2)">${filtered.length} записей</span>
         </div>
 
-        <!-- ТАБЛИЦА -->
-        <div style="flex:1;overflow:auto;padding-bottom:90px">
-          ${pageEntries.length === 0 ? `
+        <!-- ДЕРЕВЬЯ ДЕЙСТВИЙ -->
+        <div style="flex:1;overflow:auto;padding:8px 16px 90px">
+          ${pageGroups.length === 0 ? `
             <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;color:var(--text-2);padding:40px">
               <div style="font-size:40px">${I.clipboard('',40)}</div>
               <div style="font-size:16px;font-weight:600;color:var(--text)">${all.length === 0 ? 'Журнал пуст' : 'Ничего не найдено'}</div>
-              <div style="font-size:13px;opacity:.65;text-align:center;max-width:320px">
+              <div style="font-size:13px;opacity:.65;text-align:center;max-width:360px">
                 ${all.length === 0
-                  ? 'Все изменения в системе (товары, цены, правила, импорт) будут фиксироваться здесь автоматически'
+                  ? 'Здесь появятся действия ассистента и изменения в системе. Одинаковые запросы собираются в одно дерево, любое действие можно отменить.'
                   : 'Попробуйте изменить фильтры или поисковый запрос'}
               </div>
             </div>
-          ` : `
-            <table style="width:100%;border-collapse:collapse;font-size:12px">
-              <thead>
-                <tr style="background:var(--bg);position:sticky;top:0;z-index:1;border-bottom:2px solid var(--border)">
-                  <th style="padding:9px 24px;text-align:left;font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;width:140px">Дата / Время</th>
-                  <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;width:120px">Категория</th>
-                  <th style="padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px">Действие</th>
-                  <th style="padding:9px 24px;text-align:left;font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px">Подробности</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${pageEntries.map(e => {
-                  const d = new Date(e.ts);
-                  const col = CATEGORY_COLORS[e.category] ?? '#64748b';
-                  const catLabel = CATEGORY_LABELS[e.category] ?? e.category;
-                  return `
-                    <tr style="border-bottom:1px solid var(--border);background:var(--bg)" onmouseover="this.style.background='var(--bg-2)'" onmouseout="this.style.background='var(--bg)'">
-                      <td style="padding:10px 24px;white-space:nowrap">
-                        <div style="font-size:12px;font-weight:600;color:var(--text)">${d.toLocaleDateString('ru',{day:'2-digit',month:'short',year:'numeric'})}</div>
-                        <div style="font-size:10px;color:var(--text-2)">${d.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>
-                      </td>
-                      <td style="padding:10px 12px">
-                        <span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;
-                          background:${col}18;color:${col}">${catLabel}</span>
-                      </td>
-                      <td style="padding:10px 12px;font-weight:600;color:var(--text)">${this.esc(e.action)}</td>
-                      <td style="padding:10px 24px;color:var(--text-2);max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${this.esc(e.details)}">${this.esc(e.details)}</td>
-                    </tr>`;
-                }).join('')}
-              </tbody>
-            </table>
-          `}
+          ` : pageGroups.map(g => this.groupHtml(g.key, g.entries)).join('')}
         </div>
 
         <!-- ПАГИНАЦИЯ -->
@@ -246,6 +321,88 @@ export class LogsModule {
 
       </div>
     `;
+  }
+
+  // ── Рендер одного действия (строки) ────────────────────────────────────────
+  private entryRowHtml(e: ChangeLogEntry, isChild: boolean): string {
+    const d = new Date(e.ts);
+    const col = CATEGORY_COLORS[e.category] ?? '#64748b';
+    const catLabel = CATEGORY_LABELS[e.category] ?? e.category;
+    const time = d.toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const undoBtn = e.undo && !e.undone
+      ? `<button onclick="window.logsModule.undoEntry('${e.id}')"
+           style="padding:4px 10px;border-radius:7px;border:1px solid #16a34a55;background:#16a34a14;color:#16a34a;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap">
+           ↩ Отменить</button>`
+      : e.undone
+        ? `<span style="padding:3px 9px;border-radius:7px;background:#94a3b820;color:#94a3b8;font-size:10px;font-weight:600;white-space:nowrap">✓ откачено</span>`
+        : '';
+    return `
+      <div style="display:flex;align-items:center;gap:12px;padding:9px 12px;${isChild ? 'padding-left:34px;' : ''}
+        border-bottom:1px solid var(--border);${e.undone ? 'opacity:.55;' : ''}">
+        <span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${col}18;color:${col};white-space:nowrap">${catLabel}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:var(--text);${e.undone ? 'text-decoration:line-through;' : ''}">${this.esc(e.action)}</div>
+          <div style="font-size:11px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${this.esc(e.details)}">${this.esc(e.details)}</div>
+        </div>
+        <div style="font-size:10px;color:var(--text-2);white-space:nowrap">${time}</div>
+        ${undoBtn}
+      </div>`;
+  }
+
+  // ── Рендер дерева (группы одинаковых запросов) ──────────────────────────────
+  private groupHtml(key: string, entries: ChangeLogEntry[]): string {
+    // Одиночное действие — просто карточка-строка.
+    if (entries.length === 1) {
+      return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--bg);margin-bottom:8px;overflow:hidden">
+        ${this.entryRowHtml(entries[0], false)}
+      </div>`;
+    }
+
+    const head = entries[0];
+    const title = head.requestText || head.action;
+    const undoableLeft = entries.filter(e => e.undo && !e.undone).length;
+    const isOpen = this.expanded.has(key);
+    const encKey = encodeURIComponent(key);
+
+    const treeUndo = undoableLeft > 0
+      ? `<button onclick="event.stopPropagation();window.logsModule.undoTree('${encKey}')"
+           style="padding:5px 11px;border-radius:7px;border:1px solid #dc262655;background:#dc262614;color:#dc2626;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap">
+           ↩ Отменить дерево (${undoableLeft})</button>`
+      : `<span style="padding:3px 9px;border-radius:7px;background:#94a3b820;color:#94a3b8;font-size:10px;font-weight:600">всё откачено</span>`;
+
+    return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--bg);margin-bottom:8px;overflow:hidden">
+      <div onclick="window.logsModule.toggleGroup('${encKey}')"
+        style="display:flex;align-items:center;gap:10px;padding:11px 12px;cursor:pointer;background:var(--bg-2)">
+        <span style="font-size:12px;color:var(--text-2);transition:transform .15s;transform:rotate(${isOpen ? 90 : 0}deg)">▶</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.esc(title)}</div>
+          <div style="font-size:11px;color:var(--text-2)">Дерево из ${entries.length} одинаковых запросов</div>
+        </div>
+        <span style="padding:2px 9px;border-radius:12px;background:#6366f120;color:#6366f1;font-size:11px;font-weight:700">${entries.length}</span>
+        ${treeUndo}
+      </div>
+      ${isOpen ? `<div>${entries.map(e => this.entryRowHtml(e, true)).join('')}</div>` : ''}
+    </div>`;
+  }
+
+  toggleGroup(encKey: string): void {
+    const key = decodeURIComponent(encKey);
+    if (this.expanded.has(key)) this.expanded.delete(key);
+    else this.expanded.add(key);
+    this.render();
+  }
+
+  async undoEntry(id: string): Promise<void> {
+    const msg = await changeLog.undo(id);
+    this.render();
+    showToast(msg, 'success');
+  }
+
+  async undoTree(encKey: string): Promise<void> {
+    const key = decodeURIComponent(encKey);
+    const msg = await changeLog.undoGroup(key);
+    this.render();
+    showToast(msg, 'success');
   }
 
   clearAll(): void { changeLog.clear(); this.render(); }

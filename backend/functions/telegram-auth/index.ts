@@ -396,15 +396,389 @@ async function handleYandexAuth(req: Request): Promise<Response> {
   }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }
 
+// ── Telegram Bot: helpers ──────────────────────────────────────────────────────
+
+const TG_API = 'https://api.telegram.org';
+
+async function tgSend(token: string, chatId: number, text: string, extra?: Record<string, unknown>): Promise<void> {
+  await fetch(`${TG_API}/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', ...extra }),
+  });
+}
+
+async function tgAnswerCb(token: string, cbId: string, text?: string): Promise<void> {
+  await fetch(`${TG_API}/bot${token}/answerCallbackQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ callback_query_id: cbId, text: text ?? '' }),
+  });
+}
+
+// ── Telegram Bot: command handlers ────────────────────────────────────────────
+
+async function handleBotStart(db: any, chatId: number, userId: number, firstName: string): Promise<string> {
+  // Find user by telegram_id
+  const { data: user } = await db.from('users').select('id').eq('telegram_id', userId).maybeSingle();
+  if (!user) return `Привет, ${firstName}! 👋\n\nСначала войдите в SimaDesk через Telegram на сайте, затем повторите /start.`;
+
+  // Find or create tg_chat
+  const { data: existing } = await db.from('tg_chats')
+    .select('id').eq('user_id', user.id).maybeSingle();
+
+  if (!existing) {
+    // Get first company
+    const { data: member } = await db.from('company_members')
+      .select('company_id').eq('user_id', user.id).limit(1).maybeSingle();
+
+    await db.from('tg_chats').insert({
+      user_id: user.id, chat_id: chatId,
+      company_id: member?.company_id ?? null,
+    });
+
+    // Create default notification settings
+    if (member?.company_id) {
+      await db.from('tg_notification_settings').insert({
+        user_id: user.id, company_id: member.company_id,
+      }).select().maybeSingle();
+    }
+  } else {
+    await db.from('tg_chats').update({ chat_id: chatId }).eq('id', existing.id);
+  }
+
+  return `✅ Чат привязан!\n\nДоступные команды:\n/today — сводка за сегодня\n/orders — заказы в сборке\n/stock — низкие остатки\n/revenue — выручка за 7 дней\n/settings — настройки уведомлений`;
+}
+
+async function handleBotToday(db: any, chatId: number, userId: number): Promise<void> {
+  const { data: user } = await db.from('users').select('id').eq('telegram_id', userId).maybeSingle();
+  if (!user) { await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, 'Войдите в SimaDesk через Telegram на сайте.'); return; }
+
+  const { data: chat } = await db.from('tg_chats').select('company_id').eq('user_id', user.id).maybeSingle();
+  const companyId = chat?.company_id;
+  if (!companyId) { await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, 'Нет привязанной компании.'); return; }
+
+  // Get today's orders from mp_transactions
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: txs } = await db.from('mp_transactions')
+    .select('kind, amount, marketplace')
+    .eq('company_id', companyId)
+    .gte('created_at', today)
+    .lte('created_at', today + 'T23:59:59');
+
+  const orders = txs?.filter((t: any) => t.kind === 'order') ?? [];
+  const revenue = txs?.reduce((sum: number, t: any) => sum + (Number(t.amount) || 0), 0) ?? 0;
+  const byMp: Record<string, number> = {};
+  for (const o of orders) byMp[o.marketplace ?? '?'] = (byMp[o.marketplace ?? '?'] ?? 0) + 1;
+
+  const mpLines = Object.entries(byMp).map(([mp, cnt]) => `  ${mp.toUpperCase()}: ${cnt}`).join('\n');
+  const text = `📊 <b>Сводка за сегодня</b> (${today})\n\n📦 Заказов: <b>${orders.length}</b>\n${mpLines ? mpLines + '\n' : ''}💰 Выручка: <b>${revenue.toLocaleString('ru')} ₽</b>`;
+
+  await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, text);
+}
+
+async function handleBotOrders(db: any, chatId: number, userId: number): Promise<void> {
+  const { data: user } = await db.from('users').select('id').eq('telegram_id', userId).maybeSingle();
+  if (!user) { await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, 'Войдите в SimaDesk.'); return; }
+
+  const { data: chat } = await db.from('tg_chats').select('company_id').eq('user_id', user.id).maybeSingle();
+  const companyId = chat?.company_id;
+  if (!companyId) { await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, 'Нет привязанной компании.'); return; }
+
+  const { data: txs } = await db.from('mp_transactions')
+    .select('external_id, product_name, marketplace, amount, created_at')
+    .eq('company_id', companyId)
+    .eq('kind', 'order')
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  if (!txs?.length) {
+    await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, '📋 Нет последних заказов.');
+    return;
+  }
+
+  const lines = txs.map((t: any, i: number) =>
+    `${i + 1}. ${t.product_name ?? '—'} (${t.marketplace?.toUpperCase() ?? '?'}) — ${Number(t.amount ?? 0).toLocaleString('ru')} ₽`
+  ).join('\n');
+  await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, `📋 <b>Последние заказы:</b>\n\n${lines}`);
+}
+
+async function handleBotStock(db: any, chatId: number, userId: number): Promise<void> {
+  const { data: user } = await db.from('users').select('id').eq('telegram_id', userId).maybeSingle();
+  if (!user) { await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, 'Войдите в SimaDesk.'); return; }
+
+  const { data: settings } = await db.from('tg_notification_settings')
+    .select('low_stock_threshold').eq('user_id', user.id).maybeSingle();
+  const threshold = settings?.low_stock_threshold ?? 5;
+
+  // Get WB/Ozon/Yandex products with low stock
+  const lowStock: Array<{ name: string; stock: number; mp: string }> = [];
+
+  const { data: wbProds } = await db.from('wb_products')
+    .select('title, stock_total').lte('stock_total', threshold).gt('stock_total', 0);
+  for (const p of wbProds ?? []) lowStock.push({ name: p.title ?? '—', stock: p.stock_total ?? 0, mp: 'WB' });
+
+  const { data: ozProds } = await db.from('ozon_products')
+    .select('name, stock_fbs, stock_fbo').or(`stock_fbs.lte.${threshold},stock_fbo.lte.${threshold}`);
+  for (const p of ozProds ?? []) {
+    const total = (p.stock_fbs ?? 0) + (p.stock_fbo ?? 0);
+    if (total > 0 && total <= threshold) lowStock.push({ name: p.name ?? '—', stock: total, mp: 'Ozon' });
+  }
+
+  if (lowStock.length === 0) {
+    await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, `✅ Все товары в наличии (порог: ${threshold} шт.)`);
+    return;
+  }
+
+  const lines = lowStock.slice(0, 15).map((p, i) =>
+    `${i + 1}. ${p.name.slice(0, 40)} — <b>${p.stock} шт.</b> (${p.mp})`
+  ).join('\n');
+  const more = lowStock.length > 15 ? `\n… и ещё ${lowStock.length - 15}` : '';
+  await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, `⚠️ <b>Низкие остатки</b> (< ${threshold} шт.):\n\n${lines}${more}`);
+}
+
+async function handleBotRevenue(db: any, chatId: number, userId: number): Promise<void> {
+  const { data: user } = await db.from('users').select('id').eq('telegram_id', userId).maybeSingle();
+  if (!user) { await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, 'Войдите в SimaDesk.'); return; }
+
+  const { data: chat } = await db.from('tg_chats').select('company_id').eq('user_id', user.id).maybeSingle();
+  const companyId = chat?.company_id;
+  if (!companyId) { await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, 'Нет привязанной компании.'); return; }
+
+  const weekAgo = new Date(Date.now() - 7 * 86400_000).toISOString();
+  const { data: txs } = await db.from('mp_transactions')
+    .select('kind, amount, marketplace, created_at')
+    .eq('company_id', companyId)
+    .gte('created_at', weekAgo);
+
+  const byDay: Record<string, number> = {};
+  const byMp: Record<string, number> = {};
+  for (const t of txs ?? []) {
+    const day = t.created_at?.slice(0, 10) ?? '?';
+    byDay[day] = (byDay[day] ?? 0) + (Number(t.amount) || 0);
+    byMp[t.marketplace ?? '?'] = (byMp[t.marketplace ?? '?'] ?? 0) + (Number(t.amount) || 0);
+  }
+
+  const total = Object.values(byDay).reduce((s, v) => s + v, 0);
+  const days = Object.entries(byDay).sort().map(([d, v]) => `  ${d}: ${v.toLocaleString('ru')} ₽`).join('\n');
+  const mpLines = Object.entries(byMp).map(([mp, v]) => `  ${mp.toUpperCase()}: ${v.toLocaleString('ru')} ₽`).join('\n');
+
+  await tgSend(Deno.env.get('BOT_TOKEN')!, chatId,
+    `💰 <b>Выручка за 7 дней</b>\n\nИтого: <b>${total.toLocaleString('ru')} ₽</b>\n\nПо дням:\n${days || '  Нет данных'}\n\nПо МП:\n${mpLines || '  Нет данных'}`);
+}
+
+async function handleBotSettings(db: any, chatId: number, userId: number): Promise<void> {
+  const { data: user } = await db.from('users').select('id').eq('telegram_id', userId).maybeSingle();
+  if (!user) { await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, 'Войдите в SimaDesk.'); return; }
+
+  const { data: s } = await db.from('tg_notification_settings')
+    .select('*').eq('user_id', user.id).maybeSingle();
+
+  const on = (v: boolean | null) => v ? '✅' : '❌';
+  const text = `⚙️ <b>Настройки уведомлений</b>\n\n` +
+    `${on(s?.notify_new_order)} Новые заказы\n` +
+    `${on(s?.notify_low_stock)} Низкие остатки (порог: ${s?.low_stock_threshold ?? 5} шт.)\n` +
+    `${on(s?.notify_bad_review)} Плохие отзывы (1-2★)\n` +
+    `${on(s?.notify_daily_summary)} Ежедневная сводка\n\n` +
+    `Настройте в приложении: Настройки → Уведомления`;
+
+  await tgSend(Deno.env.get('BOT_TOKEN')!, chatId, text);
+}
+
+// ── Telegram Bot: webhook handler ─────────────────────────────────────────────
+
+async function handleBotWebhook(update: Record<string, unknown>): Promise<Response> {
+  const botToken = Deno.env.get('BOT_TOKEN');
+  if (!botToken) return new Response('BOT_TOKEN not configured', { status: 500 });
+
+  const msg = update.message as Record<string, unknown> | undefined;
+  const cb = update.callback_query as Record<string, unknown> | undefined;
+
+  const apiUrl = Deno.env.get('SUPABASE_URL')!;
+  const db = createClient(apiUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  // Handle callback queries
+  if (cb) {
+    await tgAnswerCb(botToken, String(cb.id ?? ''));
+    return new Response('ok');
+  }
+
+  // Handle messages
+  if (msg?.text) {
+    const chat = msg.chat as Record<string, unknown> | undefined;
+    const from = msg.from as Record<string, unknown> | undefined;
+    const chatId = Number(chat?.id ?? 0);
+    const userId = Number(from?.id ?? 0);
+    const firstName = String(from?.first_name ?? '');
+    const text = String(msg.text).trim();
+
+    if (!userId) return new Response('ok');
+
+    let reply: string | null = null;
+
+    if (text === '/start' || text === '/start@simadesk_bot') {
+      reply = await handleBotStart(db, chatId, userId, firstName);
+    } else if (text === '/today' || text === '/today@simadesk_bot') {
+      await handleBotToday(db, chatId, userId);
+    } else if (text === '/orders' || text === '/orders@simadesk_bot') {
+      await handleBotOrders(db, chatId, userId);
+    } else if (text === '/stock' || text === '/stock@simadesk_bot') {
+      await handleBotStock(db, chatId, userId);
+    } else if (text === '/revenue' || text === '/revenue@simadesk_bot') {
+      await handleBotRevenue(db, chatId, userId);
+    } else if (text === '/settings' || text === '/settings@simadesk_bot') {
+      await handleBotSettings(db, chatId, userId);
+    } else if (text === '/help') {
+      reply = 'Команды:\n/start — привязать чат\n/today — сводка\n/orders — заказы\n/stock — остатки\n/revenue — выручка\n/settings — настройки';
+    }
+
+    if (reply) await tgSend(botToken, chatId, reply);
+  }
+
+  return new Response('ok');
+}
+
+// ── TTS Edge proxy (delegates to tts-server Python container) ─────────────────
+
+const TTS_SERVER = 'http://tts-server:8765/synthesize';
+
+async function handleTtsEdge(req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405, headers: corsHeaders });
+
+  let body: string;
+  try { body = await req.text(); } catch {
+    return new Response(JSON.stringify({ error: 'bad_request' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  try {
+    const upstream = await fetch(TTS_SERVER, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    const audio = await upstream.arrayBuffer();
+    if (!upstream.ok || audio.byteLength === 0) {
+      return new Response(JSON.stringify({ error: 'tts_error' }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    return new Response(audio, {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'audio/mpeg', 'Content-Length': String(audio.byteLength), 'Cache-Control': 'no-store' },
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'error';
+    return new Response(JSON.stringify({ error: msg }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+}
+
+// ── ЮKassa payment handler ────────────────────────────────────────────────────
+async function handleYookassaPay(req: Request, url: URL): Promise<Response> {
+  const shopId  = Deno.env.get('YOOKASSA_SHOP_ID');
+  const secret  = Deno.env.get('YOOKASSA_SECRET_KEY');
+  const jsonRes = (d: unknown, s = 200) =>
+    new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+  if (!shopId || !secret) return jsonRes({ error: 'ЮKassa не настроена на сервере' }, 503);
+
+  const subPath = url.pathname.replace(/^.*yookassa-pay/, '').replace(/^\/+/, '');
+
+  // GET /yookassa-pay/status?payment_id=XX — check payment status
+  if (req.method === 'GET' && subPath === 'status') {
+    const paymentId = url.searchParams.get('payment_id');
+    if (!paymentId) return jsonRes({ error: 'no payment_id' }, 400);
+    const r = await fetch(`https://api.yookassa.ru/v3/payments/${paymentId}`, {
+      headers: { Authorization: 'Basic ' + btoa(`${shopId}:${secret}`) },
+    });
+    if (!r.ok) return jsonRes({ error: 'ЮKassa error' }, 502);
+    const p = await r.json();
+    return jsonRes({ status: p.status, paid: p.paid });
+  }
+
+  // POST /yookassa-pay/webhook — ЮKassa notification
+  if (req.method === 'POST' && subPath === 'webhook') {
+    let event: any;
+    try { event = await req.json(); } catch { return jsonRes({ error: 'bad json' }, 400); }
+    if (event?.type === 'notification' && event.object?.status === 'succeeded') {
+      const obj = event.object;
+      const { company_id, plan_key, price_rub } = obj.metadata ?? {};
+      if (company_id && plan_key) {
+        const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+        const now = new Date();
+        const end = new Date(now); end.setMonth(end.getMonth() + 1);
+        await db.from('user_subscriptions').upsert({
+          company_id, plan_key, status: 'active',
+          price_rub: Number(price_rub) || 0, monthly_revenue: 0,
+          current_period_start: now.toISOString(),
+          current_period_end: end.toISOString(),
+          yookassa_payment_id: obj.id,
+        }, { onConflict: 'company_id' });
+      }
+    }
+    return jsonRes({ ok: true });
+  }
+
+  // POST /yookassa-pay — create payment
+  if (req.method !== 'POST') return jsonRes({ error: 'Method Not Allowed' }, 405);
+  const authHeader = req.headers.get('authorization') ?? '';
+  const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+  const { data: { user }, error: authErr } = await db.auth.getUser(authHeader.replace('Bearer ', ''));
+  if (authErr || !user) return jsonRes({ error: 'Не авторизован' }, 401);
+
+  let body: any;
+  try { body = await req.json(); } catch { return jsonRes({ error: 'bad json' }, 400); }
+  const { company_id, plan_key, price_rub, return_url } = body;
+  if (!company_id || !plan_key || !price_rub || !return_url) return jsonRes({ error: 'Не переданы параметры' }, 400);
+
+  const ykRes = await fetch('https://api.yookassa.ru/v3/payments', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Basic ' + btoa(`${shopId}:${secret}`),
+      'Idempotence-Key': crypto.randomUUID(),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      amount: { value: Number(price_rub).toFixed(2), currency: 'RUB' },
+      capture: true,
+      confirmation: { type: 'redirect', return_url },
+      description: `SimaDesk — тариф ${plan_key} · ${Number(price_rub).toLocaleString('ru')} ₽/мес`,
+      metadata: { company_id, plan_key, user_id: user.id, price_rub },
+    }),
+  });
+  if (!ykRes.ok) { console.error('YK error:', await ykRes.text()); return jsonRes({ error: 'Ошибка создания платежа' }, 502); }
+  const payment = await ykRes.json();
+  return jsonRes({ payment_id: payment.id, confirmation_url: payment.confirmation?.confirmation_url });
+}
+
 // ── Main handler (router) ─────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/+/, '');
+  const sub = path.replace(/^telegram-auth\//, '');
+
+  // Route to tts-edge handler
+  if (sub === 'tts-edge' || path === 'tts-edge') {
+    try { return await handleTtsEdge(req); }
+    catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'error';
+      return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+  }
+
+  // Route to yookassa-pay handler
+  if (path.includes('yookassa-pay') || sub.includes('yookassa-pay')) {
+    try { return await handleYookassaPay(req, url); }
+    catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'error';
+      return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+  }
 
   // Route to yandex-auth handler
-  if (path === 'yandex-auth') {
+  if (sub === 'yandex-auth' || path === 'yandex-auth') {
     try {
       return await handleYandexAuth(req);
     } catch (err: unknown) {
@@ -416,7 +790,8 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // Default: telegram-auth
+  // Default: telegram-auth OR telegram-bot webhook
+  // Edge runtime only routes to the main service — we differentiate by body content.
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -430,6 +805,17 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ error: 'BOT_TOKEN not configured' }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // ── Telegram Bot webhook (has "message" or "callback_query") ────────────
+    if (body.message || body.callback_query) {
+      try {
+        return await handleBotWebhook(body);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        console.error('[telegram-bot] Error:', message);
+        return new Response('ok'); // Always return 200 to Telegram to prevent retries
+      }
     }
 
     // ── Mini App path ─────────────────────────────────────────────────────────

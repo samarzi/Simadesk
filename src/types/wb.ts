@@ -29,11 +29,16 @@ export interface WbProduct {
   pictures: string[];
   price?: number | null;
   discount?: number | null;
+  buyer_price?: number | null;  // реальная цена покупателя с СПП (из публичного WB API)
   stock_total?: number;
   weight_kg?: number | null;
   length_cm?: number | null;
   width_cm?: number | null;
   height_cm?: number | null;
+  // Дополнительные поля (заполняются при синхронизации)
+  description?: string;
+  characteristics?: Array<{ name: string; value: string }>;
+  barcode?: string;
   created_at?: string;
   updated_at?: string;
   synced_at?: string;

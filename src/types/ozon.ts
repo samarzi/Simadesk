@@ -20,6 +20,7 @@ export interface OzonProduct {
   price: number;
   old_price: number;
   min_price: number;
+  marketing_price?: number | null;  // цена на витрине Ozon с учётом акций самого Ozon
   stock_fbs: number;
   stock_fbo: number;
   category: string;
@@ -29,6 +30,9 @@ export interface OzonProduct {
   synced_at: string;
   type_id?: number;
   description_category_id?: number;
+  // Дополнительные поля (заполняются при синхронизации)
+  vat?: string;
+  description?: string;
   // Габариты (заполняются при синхронизации через getProductInfo)
   weight_kg?: number | null;
   length_cm?: number | null;

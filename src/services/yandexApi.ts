@@ -6,6 +6,12 @@
 
 import { YandexOrder, YandexOrderItem, YandexStore, YandexProduct } from '@/types/yandex';
 import { fromYm } from './dimensionsUnit';
+import { debug } from '@/utils/debug';
+
+/** Extract a human-readable message from an unknown catch value. */
+function errMsg(e: unknown): string {
+  return e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e);
+}
 
 export interface YandexFeedback {
   id: string;
@@ -70,8 +76,8 @@ async function yandexFetch<T>(
         body: body ? JSON.stringify(body) : undefined,
         signal,
       });
-    } catch (err: any) {
-      if (err?.name === 'AbortError') throw err;
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
       lastErr = err instanceof Error ? err : new Error(String(err));
       continue;
     }
@@ -419,9 +425,9 @@ export const yandexApi = {
     // Вызываем оба метода — у разных типов кампаний работает разный
     await Promise.all([
       yandexFetch(`/v2/businesses/${businessId}/offer-mappings/update`, 'POST', apiKey, mappingsBody, signal)
-        .catch(e => console.warn('[YM] offer-mappings/update failed:', e?.message)),
+        .catch(e => console.warn('[YM] offer-mappings/update failed:', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)))),
       yandexFetch(`/v2/businesses/${businessId}/offer-prices/updates`, 'POST', apiKey, pricesBody, signal)
-        .catch(e => console.warn('[YM] offer-prices/updates failed:', e?.message)),
+        .catch(e => console.warn('[YM] offer-prices/updates failed:', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)))),
     ]);
   },
 
@@ -457,13 +463,13 @@ export const yandexApi = {
             apiKey,
             { promoId, deleteAllOffers: false, offerIds },
           );
-        } catch (e: any) {
+        } catch (e: unknown) {
           // Некоторые промо могут не поддерживать ручное удаление — игнорируем
-          console.warn(`[YM] removeOffersFromAllPromos: promo ${promoId} skip:`, e?.message);
+          console.warn(`[YM] removeOffersFromAllPromos: promo ${promoId} skip:`, errMsg(e));
         }
       }));
-    } catch (e: any) {
-      console.warn('[YM] removeOffersFromAllPromos failed:', e?.message);
+    } catch (e: unknown) {
+      console.warn('[YM] removeOffersFromAllPromos failed:', errMsg(e));
     }
   },
 
@@ -543,8 +549,8 @@ export const yandexApi = {
           feedbacks,
           nextPageToken: resp.result?.paging?.nextPageToken ?? resp.paging?.nextPageToken ?? '',
         };
-      } catch (err: any) {
-        const msg = String(err?.message ?? '');
+      } catch (err: unknown) {
+        const msg = errMsg(err);
         if (msg.includes('403') || msg.includes('401')) {
           throw new Error('Нет доступа к отзывам Яндекс Маркет. Проверьте API-ключ и настройки магазина.');
         }
@@ -578,8 +584,8 @@ export const yandexApi = {
         feedbacks,
         nextPageToken: resp.result?.paging?.nextPageToken ?? resp.paging?.nextPageToken ?? '',
       };
-    } catch (err: any) {
-      const msg = String(err?.message ?? '');
+    } catch (err: unknown) {
+      const msg = errMsg(err);
       if (msg.includes('404')) return { feedbacks: [], nextPageToken: '' };
       if (msg.includes('403') || msg.includes('401') || msg.includes('PermissionDenied')) {
         throw new Error('Нет доступа к отзывам Яндекс Маркет. Проверьте API-ключ и campaign_id в настройках магазина.');
@@ -607,7 +613,7 @@ export const yandexApi = {
     if (!feedbackId || feedbackId === '0') {
       throw new Error(`Некорректный feedbackId: "${feedbackId}"`);
     }
-    console.log(`[YM replyFeedback] → businessId=${businessId} feedbackId=${feedbackId} mp=${campaignId ? 'campaign:'+campaignId : 'unknown'}`);
+    debug.log(`[YM replyFeedback] → businessId=${businessId} feedbackId=${feedbackId} mp=${campaignId ? 'campaign:'+campaignId : 'unknown'}`);
     if (businessId) {
       let firstErr: any = null;
       try {
@@ -617,11 +623,11 @@ export const yandexApi = {
           { text },
           signal,
         );
-        console.log(`[YM replyFeedback] ✓ success via new endpoint`);
+        debug.log(`[YM replyFeedback] ✓ success via new endpoint`);
         return;
       } catch (e) {
         firstErr = e;
-        console.warn('[YM replyFeedback] new endpoint failed:', (e as any)?.message);
+        debug.warn('[YM replyFeedback] new endpoint failed:', (e as any)?.message);
         const msg = String((e as any)?.message ?? '');
         if (msg.includes('403') || msg.includes('Forbidden') || msg.includes('Permission')) {
           throw e;
@@ -632,7 +638,7 @@ export const yandexApi = {
           `/v2/campaigns/${campaignId}/feedback/updates/${feedbackId}/respond`,
           'POST', apiKey, { text }, signal,
         );
-        console.log(`[YM replyFeedback] ✓ success via old endpoint`);
+        debug.log(`[YM replyFeedback] ✓ success via old endpoint`);
       } catch (e2: any) {
         console.error(`[YM replyFeedback] ✗ both endpoints failed`, firstErr?.message, e2?.message);
         throw firstErr ?? e2;
@@ -840,7 +846,7 @@ export async function fetchAllYandexProducts(
 
   // 3) Маппинг в YandexProduct
   const now = new Date().toISOString();
-  return all.map((raw: any): YandexProduct => {
+  const products: YandexProduct[] = all.map((raw: any): YandexProduct => {
     const offer = raw.offer ?? raw;
     const offerId = offer.offerId ?? raw.offerId ?? '';
     const stocks = stocksMap.get(offerId);
@@ -863,12 +869,28 @@ export async function fetchAllYandexProducts(
       stock_total: stocks?.total ?? 0,
       stock_available: stocks?.available ?? 0,
       synced_at: now,
+      description: offer.description ?? '',
+      vat: offer.tax?.vatType ?? offer.vatType ?? '',
+      barcode: Array.isArray(offer.barcodes) ? (offer.barcodes[0] ?? '') : '',
       weight_kg: dims.weight_g  != null ? +(dims.weight_g  / 1000).toFixed(3) : null,
       length_cm: dims.length_mm != null ? +(dims.length_mm / 10).toFixed(1)   : null,
       width_cm:  dims.width_mm  != null ? +(dims.width_mm  / 10).toFixed(1)   : null,
       height_cm: dims.height_mm != null ? +(dims.height_mm / 10).toFixed(1)   : null,
     };
   });
+
+  // 4) Витринные цены (/offer-prices) — цена покупателя, которую показывает Яндекс.Маркет
+  if (store.campaign_id) {
+    try {
+      const offerPriceMap = await yandexApi.getOfferPrices(store.api_key, String(store.campaign_id));
+      for (const p of products) {
+        const entry = offerPriceMap.get(p.offer_id);
+        if (entry && entry.price > 0) p.offer_price = entry.price;
+      }
+    } catch { /* опционально */ }
+  }
+
+  return products;
 }
 
 /** Получить склады кампании Яндекс.Маркет (FBS). */

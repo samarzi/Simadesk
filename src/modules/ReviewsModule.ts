@@ -19,40 +19,42 @@ import { OzonStore } from '@/types/ozon';
 import { YandexStore } from '@/types/yandex';
 
 type Mp = 'wb' | 'ozon' | 'yandex';
-type FilterMode = 'all' | 'unanswered' | 'answered';
+type FilterMode = 'unanswered' | 'answered';
 type StarFilter = 0 | 1 | 2 | 3 | 4 | 5;
+type AnsweredBy = 'auto' | 'manual';
 
 const MP_COLOR: Record<Mp, string>  = { wb: '#cb11ab', ozon: '#005bff', yandex: '#fc3f1d' };
 const MP_BG:    Record<Mp, string>  = { wb: '#fdf0fb', ozon: '#eef4ff', yandex: '#fff5f3' };
 const MP_LABEL: Record<Mp, string>  = { wb: 'WB', ozon: 'Ozon', yandex: 'ЯМ' };
 
 /**
- * Локальный кеш ID отзывов, на которые уже отправлен авто-ответ.
- * Яндекс API может не сразу отразить ответ в shopFeedback.text — без кеша
- * отзывы "появляются снова" при перезагрузке.
- * Запись хранится 7 дней, потом API точно подхватит ответ.
+ * Локальный кеш ID отзывов, на которые уже отправлен ответ.
+ * Хранит: текст ответа, время, способ (auto/manual).
+ * Записи старше 7 дней автоматически удаляются — такие отзывы
+ * считаются "архивированными" и скрываются из списка.
  */
 const REPLIED_CACHE_KEY = 'reviews_replied_ids';
-const REPLIED_TTL_MS = 30 * 24 * 3600_000; // 30 дней
+const REPLIED_TTL_MS = 7 * 24 * 3600_000; // 7 дней
 
-function getRepliedCache(): Map<string, { text: string; ts: number }> {
+interface RepliedCacheEntry { text: string; ts: number; answeredBy: AnsweredBy }
+
+function getRepliedCache(): Map<string, RepliedCacheEntry> {
   try {
     const raw = localStorage.getItem(REPLIED_CACHE_KEY);
     if (!raw) return new Map();
-    const arr: [string, { text: string; ts: number }][] = JSON.parse(raw);
+    const arr: [string, RepliedCacheEntry][] = JSON.parse(raw);
     const now = Date.now();
-    // Чистим устаревшие
     return new Map(arr.filter(([, v]) => now - v.ts < REPLIED_TTL_MS));
   } catch { return new Map(); }
 }
-function addRepliedCache(reviewId: string, text: string): void {
+function addRepliedCache(reviewId: string, text: string, answeredBy: AnsweredBy): void {
   const cache = getRepliedCache();
-  cache.set(reviewId, { text, ts: Date.now() });
+  cache.set(reviewId, { text, ts: Date.now(), answeredBy });
   try {
     localStorage.setItem(REPLIED_CACHE_KEY, JSON.stringify([...cache.entries()]));
   } catch (e) { debug.warn('[ReviewsModule] swallowed error', e); }
 }
-function isRepliedCached(reviewId: string): { text: string } | null {
+function isRepliedCached(reviewId: string): RepliedCacheEntry | null {
   const cache = getRepliedCache();
   return cache.get(reviewId) ?? null;
 }
@@ -78,6 +80,7 @@ interface UnifiedReview {
   productSku?: string;       // артикул товара
   answered: boolean;
   answerText: string | null;
+  answeredBy: AnsweredBy | null;  // 'auto' | 'manual' | null
   ymNoReply?: boolean;   // Yandex review API replied — used to mark unsupported reply
 }
 
@@ -99,13 +102,14 @@ export class ReviewsModule {
   private entries: StoreEntry[] = [];
   private activeMp: Mp = 'wb';
   private activeStoreId: string | null = null;
-  private filterMode: FilterMode = 'all';
+  private filterMode: FilterMode = 'unanswered';
   private starFilter: StarFilter = 0;
   private search = '';
   private replyingId: string | null = null;
   private replyText = '';
   private replying = false;
   private replyError = '';
+  private autoReplyRunning = new Set<string>(); // защита от параллельных авто-ответов
 
   constructor(container: HTMLElement) { this.container = container; }
 
@@ -210,12 +214,13 @@ export class ReviewsModule {
           reviewVideo: f.video?.uri ?? '',
           orderId: f.orderId ?? f.order_id ?? '',
           answered: !!f.answer, answerText: f.answer?.text ?? null,
+          answeredBy: null,
         }));
         // Применяем локальный кеш — WB API может не сразу отразить ответ
         for (const r of e.reviews) {
           if (!r.answered) {
             const cached = isRepliedCached(r.id);
-            if (cached) { r.answered = true; r.answerText = cached.text; }
+            if (cached) { r.answered = true; r.answerText = cached.text; r.answeredBy = cached.answeredBy; }
           }
         }
         e.countUnanswered = e.reviews.filter(r => !r.answered).length;
@@ -240,12 +245,13 @@ export class ReviewsModule {
           // Ozon: отзыв считаем отвеченным если есть текст ответа ИЛИ статус PROCESSED
           answered: !!r.answer_text || r.status === 'PROCESSED',
           answerText: r.answer_text,
+          answeredBy: null,
         }));
         // Применяем локальный кеш — Ozon API может не сразу отразить ответ
         for (const r of e.reviews) {
           if (!r.answered) {
             const cached = isRepliedCached(r.id);
-            if (cached) { r.answered = true; r.answerText = cached.text; }
+            if (cached) { r.answered = true; r.answerText = cached.text; r.answeredBy = cached.answeredBy; }
           }
         }
         e.countUnanswered = e.reviews.filter(r => !r.answered).length;
@@ -274,19 +280,20 @@ export class ReviewsModule {
           reviewPhotos: f.reviewPhotos ?? [],
           reviewVideo: f.reviewVideo ?? '',
           answered: !!f.answerText, answerText: f.answerText,
+          answeredBy: null,
         }));
         // Применяем локальный кеш отвеченных — API может не сразу отразить ответ
         for (const r of e.reviews) {
           if (!r.answered) {
             const cached = isRepliedCached(r.id);
-            if (cached) { r.answered = true; r.answerText = cached.text; }
+            if (cached) { r.answered = true; r.answerText = cached.text; r.answeredBy = cached.answeredBy; }
           }
         }
         e.countUnanswered = e.reviews.filter(r => !r.answered).length;
       }
       e.loaded = true;
-    } catch (err: any) {
-      e.error = err?.message ?? 'Ошибка загрузки отзывов';
+    } catch (err: unknown) {
+      e.error = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? 'Ошибка загрузки отзывов';
     }
     e.loading = false;
     this.render();
@@ -296,6 +303,10 @@ export class ReviewsModule {
 
   /** Применяет авто-ответы к неотвеченным отзывам, используя случайный шаблон. */
   private async runAutoReply(e: StoreEntry): Promise<void> {
+    const key = `${e.mp}:${e.storeId}`;
+    if (this.autoReplyRunning.has(key)) return; // уже идёт авто-ответ для этого магазина
+    this.autoReplyRunning.add(key);
+    try {
     const settings = autoReplyDb.getSettings();
     if (!settings.enabled) return;
 
@@ -306,7 +317,7 @@ export class ReviewsModule {
     if (e.mp === 'wb') {
       const { isWbCoolingDown } = await import('@/services/wbApi');
       if (isWbCoolingDown()) {
-        console.warn('[autoReply] WB в cooldown — пропускаем авто-ответы');
+        debug.warn('[autoReply] WB в cooldown — пропускаем авто-ответы');
         return;
       }
     }
@@ -321,15 +332,16 @@ export class ReviewsModule {
         await this.sendAutoReply(r, tpl.text);
         r.answered = true;
         r.answerText = tpl.text;
-        addRepliedCache(r.id, tpl.text);  // кеш чтобы при reload не "появлялись снова"
+        r.answeredBy = 'auto';
+        addRepliedCache(r.id, tpl.text, 'auto');  // кеш чтобы при reload не "появлялись снова"
         count++;
         // WB чаще блокирует — увеличиваем задержку
         const delay = r.mp === 'wb' ? 3000 : 1500;
         await new Promise(res => setTimeout(res, delay));
-      } catch (err: any) {
+      } catch (err: unknown) {
         errors++;
-        lastError = err?.message ?? String(err);
-        console.warn('[autoReply]', lastError);
+        lastError = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? String(err);
+        debug.warn('[autoReply]', lastError);
         if (String(lastError ?? '').includes('429') || String(lastError ?? '').includes('кулдауне') || String(lastError ?? '').includes('лимит')) {
           break;
         }
@@ -349,13 +361,16 @@ export class ReviewsModule {
       e.error = `Авто-ответ не удался для ${errors} отзыв(ов):\n${shortMsg}`;
       this.render();
     }
+    } finally {
+      this.autoReplyRunning.delete(key);
+    }
   }
 
   private async sendAutoReply(r: UnifiedReview, text: string): Promise<void> {
     // Ищем магазин сначала в this.entries (уже загружены при show()) — надёжнее чем повторный запрос к БД
     const entry = this.entries.find(e => e.mp === r.mp && e.storeId === r.storeId);
     if (!entry) {
-      console.error('[sendAutoReply] entry не найден:', r.mp, r.storeId, 'entries:', this.entries.map(e => `${e.mp}:${e.storeId}`));
+      debug.warn(`[sendAutoReply] entry не найден: ${r.mp} ${r.storeId} entries: ${this.entries.map(e => `${e.mp}:${e.storeId}`).join(', ')}`);
       throw new Error(`Магазин ${MP_LABEL[r.mp]} не найден в entries`);
     }
 
@@ -376,13 +391,11 @@ export class ReviewsModule {
       // Если по id не нашли — ищем по campaign_id (на случай несовпадения UUID)
       if (!ys && entry.campaignId) {
         ys = ymStores.find(s => s.campaign_id === entry.campaignId);
-        if (ys) console.warn('[sendAutoReply] ЯМ: найден по campaign_id, id не совпал:', r.storeId, '→', ys.id);
+        if (ys) debug.warn(`[sendAutoReply] ЯМ: найден по campaign_id, id не совпал: ${r.storeId} → ${ys.id}`);
       }
       // Если БД пуста (companyId не активен?) — пробуем напрямую из review данных
       if (!ys) {
-        console.error('[sendAutoReply] ЯМ магазин не найден. storeId:', r.storeId,
-          'campaignId:', entry.campaignId, 'businessId:', entry.businessId,
-          'ymStores:', ymStores.map(s => `${s.id}:camp=${s.campaign_id}`));
+        debug.warn(`[sendAutoReply] ЯМ магазин не найден. storeId: ${r.storeId} campaignId: ${entry.campaignId} businessId: ${entry.businessId} ymStores: ${ymStores.map(s => `${s.id}:camp=${s.campaign_id}`).join(', ')}`);
         throw new Error('ЯМ магазин не найден в БД — проверьте компанию');
       }
       const campaignId = ys.campaign_id ?? entry.campaignId;
@@ -455,14 +468,11 @@ export class ReviewsModule {
   }
 
   /** Открыть менеджер шаблонов сразу с фильтром по рейтингу */
-  openTemplatesQuick(rating: number): void {
-    // Сохраняем рейтинг для подсветки и открываем модал шаблонов
+  openTemplatesQuick(_rating: number): void {
     this.openAutoReplySettings();
-    // Скроллим к секции шаблонов
     setTimeout(() => {
       const list = document.getElementById('ar-templates-list');
       list?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      void rating;
     }, 100);
   }
 
@@ -501,14 +511,14 @@ export class ReviewsModule {
       const e = this.entries.find(e => e.mp === mp && e.storeId === storeId);
       if (e) {
         const rev = e.reviews.find(r => r.id === reviewId);
-        if (rev) { rev.answered = true; rev.answerText = this.replyText.trim(); e.countUnanswered = Math.max(0, e.countUnanswered - 1); addRepliedCache(reviewId, this.replyText.trim()); }
+        if (rev) { rev.answered = true; rev.answerText = this.replyText.trim(); rev.answeredBy = 'manual'; e.countUnanswered = Math.max(0, e.countUnanswered - 1); addRepliedCache(reviewId, this.replyText.trim(), 'manual'); }
         // Перезагружаем данные через 2 секунды чтобы получить актуальный статус
         const _mp = this.activeMp; const _sid = this.activeStoreId;
         if (_sid) setTimeout(() => { this.loadReviews(_mp, _sid).catch((e) => debug.warn('[ReviewsModule] swallowed error', e)); }, 2000);
       }
       this.replyingId = null; this.replyText = '';
-    } catch (err: any) {
-      this.replyError = err?.message ?? 'Ошибка отправки ответа';
+    } catch (err: unknown) {
+      this.replyError = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? 'Ошибка отправки ответа';
     }
     this.replying = false;
     this.render();
@@ -521,6 +531,14 @@ export class ReviewsModule {
   private get filtered(): UnifiedReview[] {
     const e = this.activeEntry;
     if (!e) return [];
+    const now = Date.now();
+    const SEVEN_DAYS = 7 * 24 * 3600_000;
+    // Удаляем отвеченные отзывы старше 7 дней из списка
+    e.reviews = e.reviews.filter(r => {
+      if (r.answered && (now - new Date(r.createdAt).getTime()) > SEVEN_DAYS) return false;
+      return true;
+    });
+    e.countUnanswered = e.reviews.filter(r => !r.answered).length;
     let list = [...e.reviews];
     if (this.filterMode === 'unanswered') list = list.filter(r => !r.answered);
     else if (this.filterMode === 'answered')  list = list.filter(r => r.answered);
@@ -728,13 +746,13 @@ export class ReviewsModule {
           <div style="display:flex;align-items:center;gap:8px;padding:10px 24px;
             background:var(--bg);border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0">
             <div style="display:flex;gap:4px;background:var(--bg2);border-radius:8px;padding:3px">
-              ${(['all','unanswered','answered'] as FilterMode[]).map(m => `
+              ${(['unanswered','answered'] as FilterMode[]).map(m => `
                 <button onclick="window.reviewsModule.setFilter('${m}')"
                   style="padding:5px 12px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:600;
                     background:${this.filterMode === m ? 'var(--bg)' : 'transparent'};
                     color:${this.filterMode === m ? 'var(--text)' : 'var(--text2)'};
                     box-shadow:${this.filterMode === m ? '0 1px 3px rgba(0,0,0,.08)' : 'none'};transition:all .15s">
-                  ${m === 'all' ? 'Все' : m === 'unanswered' ? `Без ответа${unanswered > 0 ? ` <b style="color:#dc2626">${unanswered}</b>` : ''}` : 'С ответом'}
+                  ${m === 'unanswered' ? `Без ответа${unanswered > 0 ? ` <b style="color:#dc2626">${unanswered}</b>` : ''}` : 'С ответом'}
                 </button>
               `).join('')}
             </div>
@@ -905,6 +923,17 @@ export class ReviewsModule {
             <div style="font-size:11px;font-weight:700;color:#16a34a;margin-bottom:4px;display:flex;align-items:center;gap:5px">
               <span style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;background:#16a34a;color:#fff;font-size:9px">✓</span>
               Ваш ответ
+              ${r.answeredBy === 'auto' ? `
+                <span style="display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;
+                  background:#8b5cf618;color:#8b5cf6;padding:1px 6px;border-radius:5px;letter-spacing:.3px">
+                  ${I.bot('', 9)} АВТО
+                </span>
+              ` : r.answeredBy === 'manual' ? `
+                <span style="display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;
+                  background:#3b82f618;color:#3b82f6;padding:1px 6px;border-radius:5px;letter-spacing:.3px">
+                  ✎ РУЧНОЙ
+                </span>
+              ` : ''}
             </div>
             <div style="font-size:13px;color:var(--text);line-height:1.5">${this.esc(r.answerText)}</div>
           </div>
@@ -1012,6 +1041,10 @@ export class ReviewsModule {
 
   // ── AUTO-REPLY SETTINGS UI ────────────────────────────────────────────────
   openAutoReplySettings(): void {
+    // Убираем старый модал если есть —防止 дублей
+    document.getElementById('autoreply-modal')?.remove();
+    document.getElementById('tpl-editor-modal')?.remove();
+
     const settings = autoReplyDb.getSettings();
     const templates = autoReplyDb.getTemplates();
 
@@ -1116,7 +1149,7 @@ export class ReviewsModule {
                   return `
                     <label style="flex:1;cursor:pointer;text-align:center">
                       <input type="checkbox" data-rating="${r}" ${on ? 'checked' : ''}
-                        style="display:none"
+                        style="opacity:0;position:absolute;width:0;height:0"
                         onchange="
                           const on=this.checked;
                           const c='${c}';
@@ -1146,7 +1179,7 @@ export class ReviewsModule {
                       padding:7px 10px;border:1.5px solid ${on ? MP_COLOR[mp] : 'var(--border)'};
                       border-radius:9px;background:${on ? MP_BG[mp] : 'var(--bg)'};transition:.15s">
                       <input type="checkbox" data-mp="${mp}" ${on ? 'checked' : ''}
-                        style="display:none"
+                        style="opacity:0;position:absolute;width:0;height:0"
                         onchange="
                           const on=this.checked;
                           const c='${MP_COLOR[mp]}';const bg='${MP_BG[mp]}';
@@ -1333,7 +1366,7 @@ export class ReviewsModule {
             ${[1,2,3,4,5].map(r => `
               <label style="flex:1;cursor:pointer">
                 <input type="checkbox" data-rating="${r}" ${currentRatings.has(r) ? 'checked' : ''}
-                  style="display:none" class="tpl-rating-chk"
+                  style="opacity:0;position:absolute;width:0;height:0" class="tpl-rating-chk"
                   onchange="this.parentElement.querySelector('div').style.background = this.checked ? '#f59e0b' : 'var(--bg2)';
                            this.parentElement.querySelector('div').style.color = this.checked ? '#fff' : 'var(--text2)';
                            this.parentElement.querySelector('div').style.borderColor = this.checked ? '#f59e0b' : 'var(--border)'">

@@ -7,12 +7,13 @@
   position: fixed;
   inset: 0;
   z-index: 9000;
-  background: var(--bg);
+  background: #06060a;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
   animation: auth-fade-in 0.3s ease;
+  overflow: hidden;
 }
 
 .auth-gate.hidden {
@@ -24,19 +25,92 @@
   to   { opacity: 1; transform: scale(1); }
 }
 
+/* ── Animated background ─────────────────────────────────────────────────────── */
+.auth-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+/* Dot grid */
+.auth-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(255,255,255,.06) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 100%);
+}
+
+.auth-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(72px);
+  will-change: transform;
+}
+
+.auth-orb-1 {
+  width: 55vmin;
+  height: 55vmin;
+  top: -15%;
+  left: -10%;
+  background: radial-gradient(circle at 40% 40%, rgba(99,102,241,.55), rgba(139,92,246,.25) 55%, transparent 80%);
+  animation: orb-drift-1 14s ease-in-out infinite alternate;
+}
+
+.auth-orb-2 {
+  width: 45vmin;
+  height: 45vmin;
+  bottom: -15%;
+  right: -8%;
+  background: radial-gradient(circle at 60% 60%, rgba(168,85,247,.5), rgba(99,102,241,.2) 55%, transparent 80%);
+  animation: orb-drift-2 17s ease-in-out infinite alternate;
+}
+
+.auth-orb-3 {
+  width: 30vmin;
+  height: 30vmin;
+  top: 35%;
+  right: 15%;
+  background: radial-gradient(circle at 50% 50%, rgba(212,240,0,.18), rgba(99,102,241,.12) 60%, transparent 85%);
+  animation: orb-drift-3 11s ease-in-out infinite alternate;
+}
+
+@keyframes orb-drift-1 {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(12%, 18%) scale(1.18); }
+}
+
+@keyframes orb-drift-2 {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(-14%, -12%) scale(1.12); }
+}
+
+@keyframes orb-drift-3 {
+  from { transform: translate(0, 0) scale(1) rotate(0deg); }
+  to   { transform: translate(-18%, 10%) scale(0.85) rotate(15deg); }
+}
+
 /* ── Login card ───────────────────────────────────────────────────────────────  */
 .auth-card {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 420px;
-  background: var(--bg2);
-  border: 1px solid var(--border2);
+  background: rgba(17,17,20,.82);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,.08);
   border-radius: 20px;
   padding: 40px 36px 36px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0;
-  box-shadow: 0 32px 80px rgba(0,0,0,.7);
+  box-shadow: 0 32px 80px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.06);
 }
 
 .auth-logo {
@@ -240,12 +314,13 @@
   position: fixed;
   inset: 0;
   z-index: 8000;
-  background: var(--bg);
+  background: #06060a;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
   animation: auth-fade-in 0.3s ease;
+  overflow: hidden;
 }
 
 .company-gate.hidden {
@@ -254,13 +329,17 @@
 
 /* Company picker (when user has multiple companies) */
 .company-picker-card {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 480px;
-  background: var(--bg2);
-  border: 1px solid var(--border2);
+  background: rgba(17,17,20,.82);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,.08);
   border-radius: 20px;
   padding: 32px;
-  box-shadow: 0 32px 80px rgba(0,0,0,.7);
+  box-shadow: 0 32px 80px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.06);
 }
 
 .cp-head {
@@ -367,14 +446,18 @@
 
 /* ── Company creation form ───────────────────────────────────────────────────── */
 .company-create-card {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 540px;
   max-height: 90vh;
-  background: var(--bg2);
-  border: 1px solid var(--border2);
+  background: rgba(17,17,20,.82);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,.08);
   border-radius: 20px;
   overflow: hidden;
-  box-shadow: 0 32px 80px rgba(0,0,0,.7);
+  box-shadow: 0 32px 80px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.06);
   display: flex;
   flex-direction: column;
 }

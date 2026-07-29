@@ -218,7 +218,8 @@ export class HomeDashboardModule {
         this.dashboardRefreshTimer = null;
         return;
       }
-      this._rawTime = 0; // форсируем свежую загрузку по таймеру
+      // Не форсируем сеть: populate() сам решит по CACHE_TTL, нужна ли свежая загрузка.
+      // Иначе тик каждые 30с бьёт по WB stats (лимит ~1 запрос/мин) → 429.
       this.populate().catch(e => debug.warn('[Home] tick', e));
     }, 30_000);
   }
@@ -694,7 +695,7 @@ export class HomeDashboardModule {
               storeName: store.name, storeColor: color,
             });
           }
-        } catch (e: any) { debug.warn('[Home] Ozon', e?.message ?? e); }
+        } catch (e: unknown) { debug.warn('[Home] Ozon', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e); }
         finally { clear(); }
       })());
     });
@@ -717,7 +718,7 @@ export class HomeDashboardModule {
               storeName: store.name, storeColor: color,
             });
           }
-        } catch (e: any) { debug.warn('[Home] YM', e?.message ?? e); }
+        } catch (e: unknown) { debug.warn('[Home] YM', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e); }
         finally { clear(); }
       })());
     });
@@ -741,7 +742,7 @@ export class HomeDashboardModule {
               storeName: store.name, storeColor: color,
             });
           }
-        } catch (e: any) { debug.warn('[Home] WB', e?.message ?? e); }
+        } catch (e: unknown) { debug.warn('[Home] WB', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e); }
         finally { clear(); }
       })());
     });
@@ -1198,7 +1199,7 @@ export class HomeDashboardModule {
   }
 
   async viewProductFromDash(productId: string, boxId: string) {
-    this.app.navigateTo('products');
+    this.app.navigateTo('home');
     this.app.activeBoxId = boxId;
     const addBtn = document.getElementById('add-product-btn');
     if (addBtn) addBtn.style.display = 'flex';

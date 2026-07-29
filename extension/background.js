@@ -40,7 +40,23 @@ function logPriceScanFailure(marketplace, info) {
 // ── Supabase: сбор реальных цен покупателя на Yandex Market ───────────────
 
 const API_URL = 'https://simadesk.ru';
-const API_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvY2FsaG9zdCIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzgzNTI5MTk2LCJleHAiOjIwOTkxMDUxOTZ9.FDfekEEhWPD0Zp3UpfEiuFGUME3fLNtyaJ8cH6aBJcY';
+// API_ANON_KEY загружается из chrome.storage (установка при первом запуске через SimaDesk website)
+// или из fallback-константы. Supabase anon key по дизайну публичный — безопасность через RLS.
+const DEFAULT_API_ANON_KEY = '';
+let API_ANON_KEY = DEFAULT_API_ANON_KEY;
+
+// Загрузка ключа из chrome.storage при старте service worker
+chrome.storage.local.get(['api_anon_key'], (result) => {
+  if (result.api_anon_key) API_ANON_KEY = result.api_anon_key;
+});
+
+// Обновление ключа при получении от SimaDesk website
+function handleExternalConfig(message) {
+  if (message?.type === 'config' && message?.api_anon_key) {
+    API_ANON_KEY = message.api_anon_key;
+    chrome.storage.local.set({ api_anon_key: message.api_anon_key });
+  }
+}
 const YANDEX_PRICE_BRIDGE = `${API_URL}/functions/v1/yandex-price-bridge`;
 const yandexPriceTabs = new Map(); // tabId → { marketSku, offerId, timeoutId }
 
@@ -306,6 +322,11 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'ping') {
     sendResponse({ type: 'pong', version: '1.0.0' });
+    return true;
+  }
+  if (msg.type === 'config') {
+    handleExternalConfig(msg);
+    sendResponse({ ok: true });
     return true;
   }
   if (msg.type === 'scan-ozon') {

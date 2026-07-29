@@ -9,8 +9,8 @@ import type { UnifiedProduct, RuleProduct, MrcItem } from '@/modules/repricer/ty
 
 describe('computeNewSellerPrice()', () => {
   it('scales seller price proportionally to how far the showcase is from target', () => {
-    // showcase 1100, target 1000 -> ratio 0.909..., seller 1000 -> ~910
-    expect(computeNewSellerPrice(1000, 1000, 1100)).toBe(910);
+    // showcase 1100, target 1000 -> ratio 0.909..., seller 1000 -> Math.round(909.09) = 909
+    expect(computeNewSellerPrice(1000, 1000, 1100)).toBe(909);
   });
 
   it('clamps the change to ±20% per cycle', () => {

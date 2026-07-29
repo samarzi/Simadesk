@@ -63,7 +63,7 @@ async function refreshFromServer(): Promise<void> {
       if (rows.length === 0) {
         const legacy = loadLegacy();
         if (legacy.length > 0) {
-          console.info(`[repricerRulesDb] Миграция: допушиваем ${legacy.length} правил из localStorage на сервер`);
+          debug.log(`[repricerRulesDb] Миграция: допушиваем ${legacy.length} правил из localStorage на сервер`);
           const toUpload: Array<{ id: string; company_id: string; data: any; updated_at: string }> = [];
           for (const rule of legacy) {
             cache[rule.id] = rule;
@@ -74,7 +74,7 @@ async function refreshFromServer(): Promise<void> {
               method: 'POST',
               headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
               body: JSON.stringify(toUpload.slice(i, i + 50)),
-            }).catch(e => console.warn('[repricerRulesDb] re-push batch:', e));
+            }).catch(e => debug.warn('[repricerRulesDb] re-push batch:', e));
           }
         }
       }
@@ -86,11 +86,11 @@ async function refreshFromServer(): Promise<void> {
     cacheCompanyId = cid;
     saveCache();
     dbAvailable = true;
-  } catch (e: any) {
-    const msg = String(e?.message ?? '');
+  } catch (e: unknown) {
+    const msg = String((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? '');
     if (msg.includes('42P01') || (msg.includes('repricer_rules') && msg.includes('not found'))) {
       dbAvailable = false;
-      console.warn('[repricerRulesDb] Supabase table repricer_rules не найдена. Используется localStorage.');
+      debug.warn('[repricerRulesDb] Supabase table repricer_rules не найдена. Используется localStorage.');
       // Load from company-scoped cache; if empty, do one-time migration from legacy key
       cache = loadCache();
       if (Object.keys(cache).length === 0) {
@@ -100,7 +100,7 @@ async function refreshFromServer(): Promise<void> {
       }
       cacheCompanyId = cid;
     } else {
-      console.warn('[repricerRulesDb] load failed (используется локальный кеш):', msg);
+      debug.warn('[repricerRulesDb] load failed (используется локальный кеш):', msg);
       if (Object.keys(cache).length === 0) {
         cache = loadCache();
         if (Object.keys(cache).length === 0) {
@@ -124,10 +124,10 @@ async function pushToServer(rule: any, retries = 2): Promise<void> {
         body: JSON.stringify({ id: rule.id, company_id: cid, data: rule, updated_at: new Date().toISOString() }),
       });
       return;
-    } catch (e: any) {
-      const msg = String(e?.message ?? '');
+    } catch (e: unknown) {
+      const msg = String((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? '');
       if (msg.includes('repricer_rules') && msg.includes('42P01')) { dbAvailable = false; return; }
-      console.warn(`[repricerRulesDb] push "${rule.id}" attempt ${attempt + 1}/${retries + 1}:`, msg);
+      debug.warn(`[repricerRulesDb] push "${rule.id}" attempt ${attempt + 1}/${retries + 1}:`, msg);
       if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
     }
   }
@@ -138,7 +138,7 @@ async function removeFromServer(id: string): Promise<void> {
   if (!cid || !dbAvailable) return;
   try {
     await dbFetch(`repricer_rules?company_id=eq.${cid}&id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' });
-  } catch (e) { console.warn('[repricerRulesDb] remove:', e); }
+  } catch (e) { debug.warn('[repricerRulesDb] remove:', e); }
 }
 
 export const repricerRulesDb = {

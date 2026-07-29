@@ -127,8 +127,8 @@ export async function pushToOzon(
         min_price: minPriceNew || undefined,
       }]);
       result.priceOk = true;
-    } catch (e: any) {
-      result.errors.push(`Цена: ${e.message?.slice(0, 80)}`);
+    } catch (e: unknown) {
+      result.errors.push(`Цена: ${(e instanceof Error ? e.message : String(e))?.slice(0, 80)}`);
     }
   } else {
     result.priceOk = true; // не изменилась — ОК
@@ -217,8 +217,8 @@ export async function pushToOzon(
         }]);
       }
       result.attrsOk = true;
-    } catch (e: any) {
-      result.errors.push(`Атрибуты: ${e.message?.slice(0, 100)}`);
+    } catch (e: unknown) {
+      result.errors.push(`Атрибуты: ${(e instanceof Error ? e.message : String(e))?.slice(0, 100)}`);
     }
   } else {
     result.attrsOk = true;
@@ -334,16 +334,16 @@ export async function pushToYandex(
           offerId,
           price: priceNew,
         }]);
-      } catch (e: any) {
-        result.errors.push(`Цена ЯМ: ${e.message?.slice(0, 80)}`);
+      } catch (e: unknown) {
+        result.errors.push(`Цена ЯМ: ${(e instanceof Error ? e.message : String(e))?.slice(0, 80)}`);
       }
     }
 
     // Основные поля оффера
     await (yandexApi as any).updateOffer(apiKey, businessId, offer);
     result.ok = true;
-  } catch (e: any) {
-    result.errors.push(e.message?.slice(0, 120));
+  } catch (e: unknown) {
+    result.errors.push((e instanceof Error ? e.message : String(e))?.slice(0, 120));
   }
 
   return result;

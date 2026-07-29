@@ -21,14 +21,15 @@ import { ozonOrdersApi, fetchAllPagesByCursor, fetchAllPages } from '@/services/
 import { yandexDb } from '@/services/yandexDb';
 import { yandexApi, fetchAllYandexOrders } from '@/services/yandexApi';
 import { wbDb } from '@/services/wbDb';
-import { wbApi, fetchAllWbOrders, isWbCoolingDown } from '@/services/wbApi';
+import { wbApi, fetchAllWbOrders, isWbCoolingDown, wbCooldownRemaining } from '@/services/wbApi';
 import { orderSyncService } from '@/services/orderSyncService';
 import { helpBtn } from '@/services/helpModal';
 import { I } from '@/utils/icons';
 import { copyButton } from '@/utils/copyButton';
 
 type Marketplace = 'ozon' | 'yandex' | 'wb';
-type Scheme = 'FBO' | 'FBS' | 'DBS' | 'FBY' | 'WB' | '';
+type Scheme = 'FBO' | 'FBS' | 'DBS' | 'FBY' | 'FBW' | 'WB' | '';
+type StatusCategory = '' | 'new' | 'delivering' | 'delivered' | 'cancelled' | 'returned';
 
 interface UnifiedOrder {
   marketplace: Marketplace;
@@ -54,25 +55,35 @@ interface UnifiedOrder {
 // ── Status labels & CSS ────────────────────────────────────────────────────
 
 const OZON_STATUS_LABELS: Record<string, string> = {
-  awaiting_packaging: 'Ожидает сборки',
-  awaiting_deliver:   'Готов к отгрузке',
-  delivering:         'Доставляется',
-  delivered:          'Доставлен',
-  cancelled:          'Отменён',
-  arbitration:        'Арбитраж',
-  sent_by_seller:     'У перевозчика',
-  not_accepted:       'Не принят',
+  awaiting_packaging:           'Ожидает сборки',
+  awaiting_deliver:             'Готов к отгрузке',
+  delivering:                   'Доставляется',
+  delivered:                    'Доставлен',
+  cancelled:                    'Отменён',
+  cancelled_from_split_pending: 'Отменён (разделение)',
+  arbitration:                  'Арбитраж',
+  sent_by_seller:               'У перевозчика',
+  driver_pickup:                'У водителя',
+  not_accepted:                 'Не принят',
+  awaiting_registration:        'Ожидает регистрации',
+  acceptance_in_progress:       'Приёмка',
+  returned:                     'Возврат',
 };
 
 const OZON_STATUS_CSS: Record<string, string> = {
-  awaiting_packaging: 'ord-s-new',
-  awaiting_deliver:   'ord-s-ready',
-  delivering:         'ord-s-delivering',
-  sent_by_seller:     'ord-s-delivering',
-  delivered:          'ord-s-delivered',
-  cancelled:          'ord-s-cancelled',
-  not_accepted:       'ord-s-cancelled',
-  arbitration:        'ord-s-arbitration',
+  awaiting_packaging:           'ord-s-new',
+  awaiting_deliver:             'ord-s-ready',
+  delivering:                   'ord-s-delivering',
+  sent_by_seller:               'ord-s-delivering',
+  driver_pickup:                'ord-s-delivering',
+  delivered:                    'ord-s-delivered',
+  cancelled:                    'ord-s-cancelled',
+  cancelled_from_split_pending: 'ord-s-cancelled',
+  not_accepted:                 'ord-s-cancelled',
+  awaiting_registration:        'ord-s-new',
+  acceptance_in_progress:       'ord-s-ready',
+  arbitration:                  'ord-s-arbitration',
+  returned:                     'ord-s-returned',
 };
 
 const YM_STATUS_LABELS: Record<string, string> = {
@@ -95,9 +106,9 @@ const YM_STATUS_CSS: Record<string, string> = {
   DELIVERED:            'ord-s-delivered',
   CANCELLED:            'ord-s-cancelled',
   RESERVED:             'ord-s-new',
-  RETURNED:             'ord-s-cancelled',
+  RETURNED:             'ord-s-returned',
   PARTIALLY_DELIVERED:  'ord-s-delivered',
-  PARTIALLY_RETURNED:   'ord-s-cancelled',
+  PARTIALLY_RETURNED:   'ord-s-returned',
   UNPAID:               'ord-s-cancelled',
 };
 
@@ -124,21 +135,67 @@ const SCHEME_CSS: Record<Scheme, string> = {
   FBS: 'background:rgba(74,222,128,0.15);color:#4ade80',
   DBS: 'background:rgba(251,146,60,0.15);color:#fb923c',
   FBY: 'background:rgba(96,165,250,0.15);color:#60a5fa',
+  FBW: 'background:rgba(203,17,171,0.15);color:#cb11ab',
   WB:  'background:rgba(203,17,171,0.15);color:#cb11ab',
   '':  '',
+};
+
+// Status category mapping: raw status → category
+function statusCategory(mp: Marketplace, status: string): StatusCategory {
+  if (mp === 'ozon') {
+    if (['awaiting_packaging', 'awaiting_deliver', 'arbitration', 'awaiting_registration', 'acceptance_in_progress'].includes(status)) return 'new';
+    if (['delivering', 'sent_by_seller', 'driver_pickup'].includes(status)) return 'delivering';
+    if (status === 'delivered') return 'delivered';
+    if (['cancelled', 'not_accepted', 'cancelled_from_split_pending'].includes(status)) return 'cancelled';
+    if (status === 'returned') return 'returned';
+    return '';
+  }
+  if (mp === 'yandex') {
+    if (['PROCESSING', 'RESERVED', 'UNPAID'].includes(status)) return 'new';
+    if (['DELIVERY', 'PICKUP'].includes(status)) return 'delivering';
+    if (['DELIVERED', 'PARTIALLY_DELIVERED'].includes(status)) return 'delivered';
+    if (status === 'CANCELLED') return 'cancelled';
+    if (['RETURNED', 'PARTIALLY_RETURNED'].includes(status)) return 'returned';
+    return '';
+  }
+  // wb
+  if (['new', 'confirm', 'arbitration'].includes(status)) return 'new';
+  if (status === 'complete') return 'delivering';
+  if (status === 'cancel') return 'cancelled';
+  return '';
+}
+
+const STATUS_CAT_LABELS: Record<StatusCategory, string> = {
+  '':          'Все статусы',
+  'new':       'Новые',
+  'delivering':'В доставке',
+  'delivered': 'Доставлено',
+  'cancelled': 'Отменено',
+  'returned':  'Возврат',
+};
+const STATUS_CAT_COLORS: Record<StatusCategory, string> = {
+  '':          '',
+  'new':       '#fbbf24',
+  'delivering':'#60a5fa',
+  'delivered': '#22c55e',
+  'cancelled': '#94a3b8',
+  'returned':  '#f87171',
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function parseDateTs(d: string | null | undefined): number {
   if (!d) return 0;
+  // DD-MM-YYYY или DD.MM.YYYY — Яндекс возвращает московское время без timezone.
+  // Используем локальный конструктор Date (не Date.UTC), иначе +3ч смещение.
+  const ddmm = d.match(/^(\d{2})[.\-](\d{2})[.\-](\d{4})(?:[\sT](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (ddmm) {
+    const [, dd, mm, yyyy, h='0', mi='0', s='0'] = ddmm;
+    return new Date(+yyyy, +mm - 1, +dd, +h, +mi, +s).getTime();
+  }
+  // ISO 8601 и прочие форматы (WB, Ozon — с таймзоной, парсятся корректно)
   const iso = Date.parse(d);
   if (!isNaN(iso)) return iso;
-  const m = d.match(/^(\d{2})-(\d{2})-(\d{4})(?:[\sT](\d{2}):(\d{2})(?::(\d{2}))?)?/);
-  if (m) {
-    const [, dd, mm, yyyy, h='0', mi='0', s='0'] = m;
-    return Date.UTC(+yyyy, +mm - 1, +dd, +h, +mi, +s);
-  }
   return 0;
 }
 
@@ -146,7 +203,7 @@ function fmtDateTime(d: string | null | undefined): string {
   if (!d) return '—';
   const ts = parseDateTs(d);
   if (!ts) return String(d);
-  return new Date(ts).toLocaleString('ru', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return new Date(ts).toLocaleString('ru', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 function calcOzonTotal(p: OzonPosting): number {
@@ -199,10 +256,13 @@ export class AllOrdersModule {
   private period = '7';
   private filterMps: Set<Marketplace> = new Set();
   private filterScheme: Scheme | '' = '';
-  private filterStatus = '';
+  private filterStatus: StatusCategory = '';
   private search = '';
+  private dateFrom: string | null = null;
+  private dateTo: string | null = null;
   private abortController: AbortController | null = null;
   private actionLoading = false; // prevent double-clicks on action buttons
+  private wbWarning = ''; // WB rate-limit / error message
 
   private ozonColors = ['#4ade80', '#60a5fa', '#f472b6', '#fb923c', '#a78bfa', '#34d399', '#fbbf24', '#f87171'];
   private ymColors   = ['#fc3f1d', '#fb923c', '#ef4444', '#dc2626'];
@@ -232,7 +292,7 @@ export class AllOrdersModule {
       ]);
       this._ensureProductCache().catch((e) => debug.warn('[AllOrdersModule] swallowed error', e));
     } catch (err) {
-      console.error('[AllOrders] init err:', err);
+      debug.warn('[AllOrders] init err:', err);
     }
     if (!this.ozonStores.length && !this.yandexStores.length && !this.wbStores.length) {
       this.renderEmpty();
@@ -321,8 +381,8 @@ export class AllOrdersModule {
           const canAct = scheme !== 'FBO' && ['awaiting_packaging', 'awaiting_deliver'].includes(p.status);
           batch.push(this.toUnified(p, 'ozon', store.name, store.id, color, scheme, canAct));
         }
-      } catch (err: any) {
-        if (err?.name !== 'AbortError') console.error(`[AllOrders] Ozon FBS ${store.name}:`, err.message);
+      } catch (err: unknown) {
+        if (!(err instanceof DOMException && err.name === 'AbortError')) debug.warn(`[AllOrders] Ozon FBS ${store.name}:`, (err instanceof Error ? err.message : String(err)));
       }
 
       try {
@@ -336,8 +396,8 @@ export class AllOrdersModule {
           p.store_id = store.id;
           batch.push(this.toUnified(p, 'ozon', store.name, store.id, color, 'FBO', false));
         }
-      } catch (err: any) {
-        if (err?.name !== 'AbortError') console.error(`[AllOrders] Ozon FBO ${store.name}:`, err.message);
+      } catch (err: unknown) {
+        if (!(err instanceof DOMException && err.name === 'AbortError')) debug.warn(`[AllOrders] Ozon FBO ${store.name}:`, (err instanceof Error ? err.message : String(err)));
       }
 
       addBatch(batch);
@@ -374,8 +434,8 @@ export class AllOrdersModule {
             raw: o,
           });
         }
-      } catch (err: any) {
-        if (err?.name !== 'AbortError') console.error(`[AllOrders] Yandex ${store.name}:`, err.message);
+      } catch (err: unknown) {
+        if (!(err instanceof DOMException && err.name === 'AbortError')) debug.warn(`[AllOrders] Yandex ${store.name}:`, (err instanceof Error ? err.message : String(err)));
       }
       addBatch(batch);
       storeComplete();
@@ -384,10 +444,15 @@ export class AllOrdersModule {
     // ── WB ──────────────────────────────────────────────────────
     const wbPromises = this.wbStores.map(async (store, idx) => {
       const color = this.wbColors[idx % this.wbColors.length];
-      if (isWbCoolingDown()) { storeComplete(); return; }
+      if (isWbCoolingDown()) {
+        const sec = wbCooldownRemaining();
+        this.wbWarning = `WB rate-limit — подождите ещё ${sec} сек`;
+        storeComplete(); return;
+      }
       const batch: UnifiedOrder[] = [];
       try {
         const orders = await fetchAllWbOrders(store, wbFrom, signal);
+        this.wbWarning = '';
         for (const o of orders) {
           const first = o.items[0];
           const canAct = ['new', 'confirm'].includes(o.status);
@@ -397,7 +462,7 @@ export class AllOrdersModule {
             status: o.status,
             statusLabel: WB_STATUS_LABELS[o.status] ?? o.status,
             statusCss: WB_STATUS_CSS[o.status] ?? 'ord-s-cancelled',
-            scheme: 'FBS',
+            scheme: 'FBW',
             created_at: o.created_at,
             storeName: store.name,
             storeId: store.id,
@@ -411,8 +476,11 @@ export class AllOrdersModule {
             raw: o,
           });
         }
-      } catch (err: any) {
-        if (err?.name !== 'AbortError') console.error(`[AllOrders] WB ${store.name}:`, err.message);
+      } catch (err: unknown) {
+        if (!(err instanceof DOMException && err.name === 'AbortError')) {
+          this.wbWarning = `WB: ${(err instanceof Error ? err.message : String(err)) ?? 'ошибка загрузки'}`;
+          debug.warn(`[AllOrders] WB ${store.name}:`, (err instanceof Error ? err.message : String(err)));
+        }
       }
       addBatch(batch);
       storeComplete();
@@ -506,7 +574,7 @@ export class AllOrdersModule {
             status: o.status,
             statusLabel: WB_STATUS_LABELS[o.status] ?? o.status,
             statusCss: WB_STATUS_CSS[o.status] ?? 'ord-s-cancelled',
-            scheme: 'FBS',
+            scheme: 'FBW',
             created_at: o.created_at,
             storeName: store.name,
             storeId: store.id,
@@ -523,8 +591,19 @@ export class AllOrdersModule {
       }
 
       this.orders = batch.sort((a, b) => parseDateTs(b.created_at) - parseDateTs(a.created_at));
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') console.error('[AllOrders] cache load:', err.message);
+
+      // Show WB warning if WB stores exist but no WB orders loaded (cooldown or error)
+      if (this.wbStores.length > 0 && !batch.some(o => o.marketplace === 'wb')) {
+        if (isWbCoolingDown()) {
+          this.wbWarning = `WB rate-limit — подождите ещё ${wbCooldownRemaining()} сек`;
+        } else if (!this.wbWarning) {
+          this.wbWarning = 'WB: заказы не загружены';
+        }
+      } else if (batch.some(o => o.marketplace === 'wb')) {
+        this.wbWarning = '';
+      }
+    } catch (err: unknown) {
+      if (!(err instanceof DOMException && err.name === 'AbortError')) debug.warn('[AllOrders] cache load:', (err instanceof Error ? err.message : String(err)));
     } finally {
       if (this.abortController === ac) {
         this.loading = false;
@@ -582,8 +661,8 @@ export class AllOrdersModule {
     this.render();
   }
 
-  setStatusFilter(s: string): void {
-    this.filterStatus = s;
+  setStatusFilter(s: StatusCategory): void {
+    this.filterStatus = this.filterStatus === s ? '' : s;
     this.render();
   }
 
@@ -603,6 +682,15 @@ export class AllOrdersModule {
     }
   }
 
+  setDateFrom(v: string): void { this.dateFrom = v || null; this.render(); }
+  setDateTo(v: string): void   { this.dateTo   = v || null; this.render(); }
+  setToday(): void {
+    const t = new Date();
+    const d = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+    this.dateFrom = d; this.dateTo = d; this.render();
+  }
+  clearDateFilter(): void { this.dateFrom = null; this.dateTo = null; this.render(); }
+
   refresh(): void {
     this.orders = [];
     this.loadAll();
@@ -620,7 +708,12 @@ export class AllOrdersModule {
     let list = this.orders;
     if (this.filterMps.size > 0) list = list.filter(o => this.filterMps.has(o.marketplace));
     if (this.filterScheme) list = list.filter(o => o.scheme === this.filterScheme);
-    if (this.filterStatus)      list = list.filter(o => o.status === this.filterStatus);
+    if (this.filterStatus) list = list.filter(o => statusCategory(o.marketplace, o.status) === this.filterStatus);
+    if (this.dateFrom || this.dateTo) {
+      const fromTs = this.dateFrom ? new Date(this.dateFrom + 'T00:00:00').getTime() : 0;
+      const toTs   = this.dateTo   ? new Date(this.dateTo   + 'T23:59:59').getTime() : Infinity;
+      list = list.filter(o => { const t = parseDateTs(o.created_at); return t >= fromTs && t <= toTs; });
+    }
     if (this.search) {
       const q = this.search.toLowerCase();
       list = list.filter(o =>
@@ -652,8 +745,8 @@ export class AllOrdersModule {
       await ozonOrdersApi.shipFbsPosting(creds, postingNumber, [{ products }]);
       alert('Заказ отгружен!');
       this.refresh();
-    } catch (e: any) {
-      alert('Ошибка отгрузки: ' + (e.message || e));
+    } catch (e: unknown) {
+      alert('Ошибка отгрузки: ' + ((e instanceof Error ? e.message : String(e)) || e));
     }
     this.actionLoading = false;
   }
@@ -669,8 +762,8 @@ export class AllOrdersModule {
     try {
       const blob = await ozonOrdersApi.getFbsPackageLabelPdf(creds, [postingNumber]);
       downloadBlob(blob, `ozon-label-${postingNumber}.pdf`);
-    } catch (e: any) {
-      alert('Ошибка загрузки этикетки: ' + (e.message || e));
+    } catch (e: unknown) {
+      alert('Ошибка загрузки этикетки: ' + ((e instanceof Error ? e.message : String(e)) || e));
     }
     this.actionLoading = false;
     this.updateActionBar('');
@@ -690,8 +783,8 @@ export class AllOrdersModule {
       await ozonOrdersApi.cancelFbsPosting(creds, postingNumber, 352, 'Отменено через SimaDesk');
       alert('Заказ отменён');
       this.refresh();
-    } catch (e: any) {
-      alert('Ошибка отмены: ' + (e.message || e));
+    } catch (e: unknown) {
+      alert('Ошибка отмены: ' + ((e instanceof Error ? e.message : String(e)) || e));
     }
     this.actionLoading = false;
   }
@@ -707,8 +800,8 @@ export class AllOrdersModule {
       await yandexApi.setOrderStatus(store, orderId, 'PROCESSING', 'READY_TO_SHIP');
       alert('Заказ готов к отгрузке!');
       this.refresh();
-    } catch (e: any) {
-      alert('Ошибка: ' + (e.message || e));
+    } catch (e: unknown) {
+      alert('Ошибка: ' + ((e instanceof Error ? e.message : String(e)) || e));
     }
     this.actionLoading = false;
   }
@@ -723,8 +816,8 @@ export class AllOrdersModule {
     try {
       const blob = await yandexApi.getOrderLabelPdf(store, orderId);
       downloadBlob(blob, `ym-label-${orderId}.pdf`);
-    } catch (e: any) {
-      alert('Ошибка загрузки этикетки: ' + (e.message || e));
+    } catch (e: unknown) {
+      alert('Ошибка загрузки этикетки: ' + ((e instanceof Error ? e.message : String(e)) || e));
     }
     this.actionLoading = false;
     this.updateActionBar('');
@@ -742,8 +835,8 @@ export class AllOrdersModule {
       await yandexApi.setOrderStatus(store, orderId, 'CANCELLED', 'SHOP_FAILED');
       alert('Заказ отменён');
       this.refresh();
-    } catch (e: any) {
-      alert('Ошибка отмены: ' + (e.message || e));
+    } catch (e: unknown) {
+      alert('Ошибка отмены: ' + ((e instanceof Error ? e.message : String(e)) || e));
     }
     this.actionLoading = false;
   }
@@ -759,8 +852,8 @@ export class AllOrdersModule {
       await wbApi.confirmOrder(store.api_key, parseInt(orderId));
       alert('Заказ подтверждён!');
       this.refresh();
-    } catch (e: any) {
-      alert('Ошибка: ' + (e.message || e));
+    } catch (e: unknown) {
+      alert('Ошибка: ' + ((e instanceof Error ? e.message : String(e)) || e));
     }
     this.actionLoading = false;
   }
@@ -775,8 +868,8 @@ export class AllOrdersModule {
     try {
       const blob = await wbApi.getOrderStickers(store.api_key, [parseInt(orderId)], 'pdf');
       downloadBlob(blob, `wb-sticker-${orderId}.pdf`);
-    } catch (e: any) {
-      alert('Ошибка загрузки стикера: ' + (e.message || e));
+    } catch (e: unknown) {
+      alert('Ошибка загрузки стикера: ' + ((e instanceof Error ? e.message : String(e)) || e));
     }
     this.actionLoading = false;
     this.updateActionBar('');
@@ -794,8 +887,8 @@ export class AllOrdersModule {
       await wbApi.cancelOrder(store.api_key, parseInt(orderId));
       alert('Заказ отменён');
       this.refresh();
-    } catch (e: any) {
-      alert('Ошибка отмены: ' + (e.message || e));
+    } catch (e: unknown) {
+      alert('Ошибка отмены: ' + ((e instanceof Error ? e.message : String(e)) || e));
     }
     this.actionLoading = false;
   }
@@ -806,6 +899,44 @@ export class AllOrdersModule {
   }
 
   // ── Modal ────────────────────────────────────────────────────────────────
+
+  openLightbox(images: string[], startIndex: number): void {
+    let idx = startIndex;
+    const show = () => {
+      const lb = document.getElementById('aoo-lightbox')!;
+      lb.querySelector<HTMLImageElement>('.aoo-lb-img')!.src = images[idx];
+      lb.querySelector('.aoo-lb-counter')!.textContent = `${idx + 1} / ${images.length}`;
+      lb.querySelector<HTMLButtonElement>('.aoo-lb-prev')!.style.display = images.length > 1 ? '' : 'none';
+      lb.querySelector<HTMLButtonElement>('.aoo-lb-next')!.style.display = images.length > 1 ? '' : 'none';
+    };
+    let lb = document.getElementById('aoo-lightbox');
+    if (!lb) {
+      lb = document.createElement('div');
+      lb.id = 'aoo-lightbox';
+      lb.style.cssText = 'position:fixed;inset:0;z-index:3000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.85);backdrop-filter:blur(8px)';
+      lb.innerHTML = `
+        <button class="aoo-lb-prev" style="position:absolute;left:20px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.12);border:none;color:#fff;font-size:28px;width:48px;height:48px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center">‹</button>
+        <button class="aoo-lb-next" style="position:absolute;right:20px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.12);border:none;color:#fff;font-size:28px;width:48px;height:48px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center">›</button>
+        <button class="aoo-lb-close" style="position:absolute;top:16px;right:20px;background:rgba(255,255,255,.12);border:none;color:#fff;font-size:20px;width:36px;height:36px;border-radius:50%;cursor:pointer">×</button>
+        <span class="aoo-lb-counter" style="position:absolute;bottom:20px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,.7);font-size:13px;font-weight:600"></span>
+        <img class="aoo-lb-img" style="max-width:min(90vw,600px);max-height:80vh;object-fit:contain;border-radius:12px;box-shadow:0 24px 80px rgba(0,0,0,.6)">`;
+      document.body.appendChild(lb);
+      const hideLb = () => { lb!.style.display = 'none'; };
+      const lbKeydown = (e: KeyboardEvent) => {
+        if (lb!.style.display === 'none') return;
+        if (e.key === 'Escape') hideLb();
+        if (e.key === 'ArrowLeft') { idx = (idx - 1 + images.length) % images.length; show(); }
+        if (e.key === 'ArrowRight') { idx = (idx + 1) % images.length; show(); }
+      };
+      lb.querySelector('.aoo-lb-close')!.addEventListener('click', hideLb);
+      lb.querySelector('.aoo-lb-prev')!.addEventListener('click', (e) => { e.stopPropagation(); idx = (idx - 1 + images.length) % images.length; show(); });
+      lb.querySelector('.aoo-lb-next')!.addEventListener('click', (e) => { e.stopPropagation(); idx = (idx + 1) % images.length; show(); });
+      lb.addEventListener('click', (e) => { if (e.target === lb) hideLb(); });
+      document.addEventListener('keydown', lbKeydown);
+      (lb as any)._lbKeydown = lbKeydown;
+    } else { lb.style.display = 'flex'; }
+    show();
+  }
 
   openDetail(marketplace: string, id: string): void {
     const o = this.orders.find(x => x.marketplace === marketplace && x.id === id);
@@ -930,18 +1061,21 @@ export class AllOrdersModule {
     </div>`;
 
     // ── Products ──
+    const allImages = products.map(p => this.getProductImageFor(o.marketplace, p.offer_id)).filter(Boolean) as string[];
     const productsBlock = `
       <div class="ozo-section-head">
         <div class="ozo-section-title">Состав заказа</div>
         <div class="ozo-section-meta">${products.length} поз. · ${totalItems} шт.</div>
       </div>
       <div class="ozo-products-list">
-        ${products.map(p => {
+        ${products.map((p) => {
           const lineTotal = p.price * p.quantity;
           const imgUrl = this.getProductImageFor(o.marketplace, p.offer_id);
           const name = p.name || this.getProductNameFor(o.marketplace, p.offer_id) || 'Без названия';
+          const imgIdx = allImages.indexOf(imgUrl ?? '');
+          const allImagesJson = JSON.stringify(allImages).replace(/"/g, '&quot;');
           const thumb = imgUrl
-            ? `<a href="${this.esc(imgUrl)}" target="_blank" rel="noopener" class="ozo-prod-thumb"><img src="${this.esc(imgUrl)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='${I.package('',14)}'"></a>`
+            ? `<div class="ozo-prod-thumb" style="cursor:zoom-in" onclick="event.stopPropagation();window.allOrdersModule.openLightbox(JSON.parse(this.dataset.imgs),${Math.max(0,imgIdx)})" data-imgs="${allImagesJson}"><img src="${this.esc(imgUrl)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='${I.package('',14)}'"></div>`
             : `<div class="ozo-prod-thumb ozo-prod-thumb-empty">${I.package('',14)}</div>`;
           return `<div class="ozo-prod-card">
             ${thumb}
@@ -1126,14 +1260,45 @@ export class AllOrdersModule {
     const totalSum = filtered.reduce((s, o) => s + o.total, 0);
 
     const cntByMp = (mp: Marketplace) => this.orders.filter(o => o.marketplace === mp).length;
-    const cntByScheme = (s: Scheme) => this.orders.filter(o => o.scheme === s).length;
     const ozonCount = cntByMp('ozon');
     const ymCount = cntByMp('yandex');
     const wbCount = cntByMp('wb');
 
-    // Scheme counts
-    const schemes: Scheme[] = ['FBO', 'FBS', 'DBS', 'FBY'];
-    const schemeCounts = schemes.map(s => ({ scheme: s, count: cntByScheme(s) })).filter(s => s.count > 0);
+    // Список с учётом МП/схемы/поиска, но БЕЗ фильтра статуса — для корректных счётчиков на вкладках статусов
+    const ordersForStatusCounts = (() => {
+      let list = this.orders;
+      if (this.filterMps.size > 0) list = list.filter(o => this.filterMps.has(o.marketplace));
+      if (this.filterScheme) list = list.filter(o => o.scheme === this.filterScheme);
+      if (this.search) {
+        const q = this.search.toLowerCase();
+        list = list.filter(o =>
+          o.id.toLowerCase().includes(q) ||
+          o.firstOfferId.toLowerCase().includes(q) ||
+          o.firstName.toLowerCase().includes(q),
+        );
+      }
+      return list;
+    })();
+
+    // Scheme counts — БЕЗ схема-фильтра, чтобы кнопка сброса оставалась видна
+    const ordersForSchemeCounts = (() => {
+      let list = this.orders;
+      if (this.filterMps.size > 0) list = list.filter(o => this.filterMps.has(o.marketplace));
+      if (this.search) {
+        const q2 = this.search.toLowerCase();
+        list = list.filter(o => o.id.toLowerCase().includes(q2) || o.firstOfferId.toLowerCase().includes(q2) || o.firstName.toLowerCase().includes(q2));
+      }
+      return list;
+    })();
+    const schemes: Scheme[] = ['FBO', 'FBS', 'FBW', 'DBS', 'FBY'];
+    const schemeCounts = schemes.map(s => ({ scheme: s, count: ordersForSchemeCounts.filter(o => o.scheme === s).length })).filter(s => s.count > 0);
+
+    // Status category counts — только по текущему МП/схеме/поиску
+    const statusCats: StatusCategory[] = ['new', 'delivering', 'delivered', 'cancelled', 'returned'];
+    const statusCounts = statusCats.map(c => ({
+      cat: c,
+      count: ordersForStatusCounts.filter(o => statusCategory(o.marketplace, o.status) === c).length,
+    })).filter(s => s.count > 0);
 
     this.container.innerHTML = `
       <div class="oz-wrap">
@@ -1145,6 +1310,7 @@ export class AllOrdersModule {
             </div>
           </div>
           <div class="oz-topbar-right">
+            ${this.wbWarning ? `<span style="font-size:11px;padding:4px 10px;border-radius:8px;background:rgba(251,191,36,.12);color:#fbbf24;font-weight:600;margin-right:8px">${this.esc(this.wbWarning)}</span>` : ''}
             ${helpBtn('orders')}
             <button class="btn btn-primary" onclick="window.allOrdersModule.refresh()" ${this.loading ? 'disabled' : ''}>
               ${this.loading ? 'Загрузка…' : 'Обновить'}
@@ -1172,10 +1338,52 @@ export class AllOrdersModule {
           </button>
         </div>
 
+        <!-- Статус-фильтры -->
+        ${statusCounts.length > 0 || this.filterStatus ? `
+        <div class="ord-scheme-bar" style="margin-top:2px">
+          <button class="oz-tab ${this.filterStatus === '' ? 'active' : ''}"
+            onclick="window.allOrdersModule.setStatusFilter('')">
+            Все статусы<span class="oz-tab-cnt">${this.orders.length}</span>
+          </button>
+          ${statusCounts.map(s => `
+            <button class="oz-tab ${this.filterStatus === s.cat ? 'active' : ''}"
+              onclick="window.allOrdersModule.setStatusFilter('${s.cat}')">
+              <span class="oz-dot" style="background:${STATUS_CAT_COLORS[s.cat]}"></span>${STATUS_CAT_LABELS[s.cat]}<span class="oz-tab-cnt">${s.count}</span>
+            </button>
+          `).join('')}
+        </div>` : ''}
+
         <!-- Фильтры -->
-        <div class="oz-filter-bar">
+        <div class="oz-filter-bar" style="flex-wrap:wrap;gap:6px 12px">
+          <!-- Дата: быстрые кнопки -->
           <div class="oz-filter-group">
-            <span class="oz-filter-label">Период</span>
+            <span class="oz-filter-label">Дата</span>
+            <div class="oz-filter-pills" style="gap:4px">
+              <button class="oz-fpill ${!this.dateFrom && !this.dateTo ? 'active' : ''}"
+                onclick="window.allOrdersModule.clearDateFilter()">Все</button>
+              <button class="oz-fpill ${this.dateFrom === this.dateTo && this.dateFrom === new Date().toISOString().slice(0,10) ? 'active' : ''}"
+                onclick="window.allOrdersModule.setToday()">Сегодня</button>
+            </div>
+          </div>
+          <!-- Дата: произвольный диапазон -->
+          <div class="oz-filter-group">
+            <span class="oz-filter-label">С</span>
+            <input type="date" value="${this.dateFrom ?? ''}" max="${new Date().toISOString().slice(0,10)}"
+              oninput="window.allOrdersModule.setDateFrom(this.value)"
+              style="padding:4px 8px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:7px;font-size:12px;height:28px">
+          </div>
+          <div class="oz-filter-group">
+            <span class="oz-filter-label">По</span>
+            <input type="date" value="${this.dateTo ?? ''}" max="${new Date().toISOString().slice(0,10)}"
+              oninput="window.allOrdersModule.setDateTo(this.value)"
+              style="padding:4px 8px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:7px;font-size:12px;height:28px">
+          </div>
+
+          <div class="oz-filter-sep"></div>
+
+          <!-- Загрузка: период -->
+          <div class="oz-filter-group">
+            <span class="oz-filter-label">Загрузить</span>
             <div class="oz-filter-pills">
               ${['7','30','90'].map(p => `
                 <button class="oz-fpill ${this.period === p ? 'active' : ''}"
@@ -1184,11 +1392,13 @@ export class AllOrdersModule {
             </div>
           </div>
 
-          ${schemeCounts.length > 1 ? `
+          ${schemeCounts.length > 1 || this.filterScheme ? `
           <div class="oz-filter-sep"></div>
           <div class="oz-filter-group">
             <span class="oz-filter-label">Схема</span>
             <div class="oz-filter-pills">
+              <button class="oz-fpill ${this.filterScheme === '' ? 'active' : ''}"
+                onclick="window.allOrdersModule.setSchemeFilter('')">Все</button>
               ${schemeCounts.map(s => `
                 <button class="oz-fpill ${this.filterScheme === s.scheme ? 'active' : ''}"
                   style="${this.filterScheme === s.scheme ? SCHEME_CSS[s.scheme] : ''}"
@@ -1198,7 +1408,7 @@ export class AllOrdersModule {
           </div>` : ''}
 
           <div class="oz-filter-sep"></div>
-          <div class="search-wrap" style="width:220px">
+          <div class="search-wrap" style="width:200px">
             <span class="search-ic"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10 10l3 3" stroke-linecap="round"/></svg></span>
             <input class="search-input" placeholder="Номер, артикул…" value="${this.esc(this.search)}"
               oninput="window.allOrdersModule.setSearch(this.value)">
@@ -1222,6 +1432,20 @@ export class AllOrdersModule {
     }
   }
 
+  private _dateGroupLabel(ts: number): string {
+    const d = new Date(ts);
+    const today = new Date();
+    const yesterday = new Date(today.getTime() - 86_400_000);
+    const sameDay = (a: Date, b: Date) => a.getDate() === b.getDate() && a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
+    if (sameDay(d, today)) return 'Сегодня';
+    if (sameDay(d, yesterday)) return 'Вчера';
+    return d.toLocaleDateString('ru', { day: 'numeric', month: 'long', year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
+  }
+  private _dateGroupKey(ts: number): string {
+    const d = new Date(ts);
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  }
+
   private renderContent(rows: UnifiedOrder[]): string {
     if (this.loading && !this.orders.length) {
       return `
@@ -1232,14 +1456,18 @@ export class AllOrdersModule {
             </svg>
           </div>
           <div class="ord-loader-title">Загружаем заказы со всех маркетплейсов</div>
-          <div class="ord-loader-sub">FBO + FBS + DBS · ${this.period} дней</div>
+          <div class="ord-loader-sub">FBO + FBS + FBW · ${this.period} дней</div>
           <div class="ord-loader-bar"><div class="ord-loader-bar-fill"></div></div>
         </div>`;
     }
     if (!rows.length) {
+      if (this.wbWarning && this.filterMps.size === 0) {
+        return `<div class="oz-empty"><div class="oz-empty-title">Заказов нет</div><div class="oz-empty-sub">${this.esc(this.wbWarning)}</div></div>`;
+      }
       return `<div class="oz-empty"><div class="oz-empty-title">Заказов нет</div></div>`;
     }
 
+    let lastGroup = '';
     const tbody = rows.map(o => {
       const mpBadge = o.marketplace === 'ozon'
         ? `<span class="mp-badge mp-badge-ozon">Ozon</span>`
@@ -1253,7 +1481,15 @@ export class AllOrdersModule {
       const needsAction = o.canAct && (o.status === 'awaiting_packaging' || o.status === 'PROCESSING' || o.status === 'new');
       const actionDot = needsAction ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#4ade80;margin-left:4px" title="Требуется действие"></span>' : '';
 
-      return `
+      const ts = parseDateTs(o.created_at);
+      const grpKey = this._dateGroupKey(ts);
+      let grpRow = '';
+      if (grpKey !== lastGroup) {
+        lastGroup = grpKey;
+        const grpLabel = this._dateGroupLabel(ts);
+        grpRow = `<tr class="ord-date-group-row"><td colspan="7"><span class="ord-date-group-label">${grpLabel}</span></td></tr>`;
+      }
+      return grpRow + `
         <tr class="oz-row" style="cursor:pointer" onclick="window.allOrdersModule.openDetail('${o.marketplace}','${this.esc(o.id)}')">
           <td>
             <div style="display:flex;flex-direction:column;align-items:center;gap:3px">

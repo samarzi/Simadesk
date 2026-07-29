@@ -7,6 +7,10 @@
   <title>SimaDesk — Marketplace Desk</title>
   <meta name="description" content="Система управления товарными базами под Ozon-шаблоны">
 
+  <link rel="icon" type="image/png" sizes="512x512" href="/favicon.png">
+  <link rel="shortcut icon" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/favicon.png">
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
@@ -17,8 +21,89 @@
   <link rel="stylesheet" href="/src/styles/main.css">
   <link rel="stylesheet" href="/src/styles/ozon.css">
   <link rel="stylesheet" href="/src/styles/auth.css">
+
+  <style>
+    #mobile-stub { display: none }
+    @media (max-width: 900px) {
+      #mobile-stub {
+        display: flex;
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        background: #080809;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        padding: 32px;
+        text-align: center;
+      }
+      #mobile-stub img { width: 72px; height: 72px; opacity: .9; }
+      #mobile-stub h2 { color: #fff; font-size: 20px; font-weight: 700; margin: 0; font-family: 'DM Sans', sans-serif; }
+      #mobile-stub p  { color: rgba(255,255,255,.45); font-size: 14px; margin: 0; line-height: 1.6; font-family: 'DM Sans', sans-serif; }
+      #mobile-stub .ms-badge {
+        margin-top: 8px;
+        padding: 8px 18px;
+        border-radius: 20px;
+        background: rgba(255,255,255,.07);
+        color: rgba(255,255,255,.4);
+        font-size: 12px;
+        font-family: 'DM Sans', sans-serif;
+      }
+    }
+  </style>
+  <!-- Block browser credential autofill across all dynamically-rendered inputs -->
+  <script>
+    (function() {
+      function patchInput(el) {
+        if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') return;
+        if (el.dataset.afPatched) return;
+        el.dataset.afPatched = '1';
+        el.setAttribute('autocomplete', 'off');
+        el.setAttribute('data-lpignore', 'true');
+        el.setAttribute('data-form-type', 'other');
+        if (el.tagName === 'INPUT' && el.getAttribute('autocomplete') !== 'new-password') {
+          el.setAttribute('readonly', '');
+          function unlock() {
+            el.removeAttribute('readonly');
+            el.removeEventListener('focus', unlock);
+            el.removeEventListener('click', unlock);
+          }
+          el.addEventListener('focus', unlock);
+          el.addEventListener('click', unlock);
+        }
+      }
+      function patchInputs(root) {
+        if (!root) return;
+        if (root.tagName === 'INPUT' || root.tagName === 'TEXTAREA') { patchInput(root); return; }
+        if (!root.querySelectorAll) return;
+        root.querySelectorAll('input, textarea').forEach(patchInput);
+      }
+      document.addEventListener('DOMContentLoaded', function() {
+        patchInputs(document.body);
+        setTimeout(function() {
+          document.querySelectorAll('input[data-af-patched]').forEach(function(el) {
+            if (!el.matches(':focus') && !el.dataset.afUserSet) el.value = '';
+          });
+        }, 400);
+        var obs = new MutationObserver(function(muts) {
+          muts.forEach(function(m) {
+            m.addedNodes.forEach(function(n) { patchInputs(n); });
+          });
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+      });
+    })();
+  </script>
 </head>
 <body>
+
+<div id="mobile-stub">
+  <img src="/favicon.png" alt="SimaDesk">
+  <h2>Доступно только на ПК</h2>
+  <p>Мобильная версия SimaDesk<br>находится в разработке.</p>
+  <div class="ms-badge">Скоро будет доступна</div>
+</div>
 
 <!-- AUTH GATE — shown when user is not logged in (z-index: 9000) -->
 <div class="auth-gate hidden" id="auth-gate"></div>
@@ -116,8 +201,15 @@
 
 <!-- APP -->
 <div class="app">
+<!-- WATERMARK (inside app so it stays within stacking context) -->
+<div class="app-watermark" aria-hidden="true"></div>
   <!-- DOCK (macOS-style bottom bar) -->
   <nav class="dock" id="app-dock">
+    <!-- Логотип -->
+    <div class="dock-logo" title="О SimaDesk" onclick="window.open('https://simadesk.ru/info','_blank')" style="cursor:pointer">
+      <img src="/logo.png" alt="SimaDesk">
+    </div>
+    <div class="dock-divider"></div>
     <!-- Фиксированная верхняя зона (нельзя редактировать) -->
     <div class="dock-item dock-fixed active" id="nav-home" onclick="window.app.navigateTo('home')">
       <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg></div>
@@ -133,10 +225,6 @@
     </div>
     <div class="dock-divider"></div>
     <!-- Редактируемые пункты -->
-    <div class="dock-item" id="nav-catalog" onclick="window.app.navigateTo('catalog')">
-      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
-      <span class="dock-label">Каталог</span>
-    </div>
     <div class="dock-item" id="nav-orders" onclick="window.app.navigateTo('orders')">
       <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><path d="M3 6h18M16 10a4 4 0 01-8 0"/></svg></div>
       <span class="dock-label">Заказы</span>
@@ -149,9 +237,13 @@
       <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20V8l5 3V8l5 3V8l5 3V4h3v16"/><path d="M2 20h20"/><path d="M6 16h2M11 16h2M16 16h2"/></svg></div>
       <span class="dock-label">Производители</span>
     </div>
-    <div class="dock-item" id="nav-analytics" onclick="window.app.navigateTo('analytics')">
-      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg></div>
+    <div class="dock-item" id="nav-finance" onclick="window.app.navigateTo('analytics')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><polyline points="22 20 2 20"/></svg></div>
       <span class="dock-label">Аналитика</span>
+    </div>
+    <div class="dock-item" id="nav-analytics" onclick="window.app.navigateTo('sku-audit')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div>
+      <span class="dock-label">Анализ</span>
     </div>
     <div class="dock-item" id="nav-repricer" onclick="window.app.navigateTo('repricer')">
       <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
@@ -167,7 +259,11 @@
     </div>
     <div class="dock-item" id="nav-products" onclick="window.app.navigateTo('products-hub')">
       <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></div>
-      <span class="dock-label">Обзор</span>
+      <span class="dock-label">Товары</span>
+    </div>
+    <div class="dock-item" id="nav-docs" onclick="window.app.navigateTo('docs')">
+      <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></div>
+      <span class="dock-label">Редактор</span>
     </div>
 
     <!-- Кнопка «Ещё» — разворачивает дополнительные пункты -->
@@ -178,7 +274,7 @@
 
     <!-- Дополнительные пункты — анимированный враппер, раскрывается кнопкой «Ещё» -->
     <div class="dock-extras-wrapper" id="dock-extras-wrapper">
-      <div class="dock-item" id="nav-sku-audit" onclick="window.app.navigateTo('sku-audit')">
+      <div class="dock-item" id="nav-sku-audit" onclick="window.app.navigateTo('sku-audit')" style="display:none">
         <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div>
         <span class="dock-label">Анализ</span>
       </div>
@@ -206,130 +302,27 @@
       <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></div>
       <span class="dock-label">Настройки</span>
     </div>
+    <div class="dock-divider"></div>
+    <!-- AI Ассистент Сима -->
+    <div class="dock-assistant-btn idle" id="nav-assistant" title="Сима — AI-менеджер">
+      <div class="dock-assistant-icon">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none">
+          <rect class="ai-wave-bar" x="3"  y="10" width="2.5" height="4" rx="1.2" fill="rgba(200,160,255,0.9)"/>
+          <rect class="ai-wave-bar" x="7"  y="7"  width="2.5" height="10" rx="1.2" fill="rgba(200,160,255,0.9)"/>
+          <rect class="ai-wave-bar" x="11" y="4"  width="2.5" height="16" rx="1.2" fill="rgba(200,160,255,0.9)"/>
+          <rect class="ai-wave-bar" x="15" y="7"  width="2.5" height="10" rx="1.2" fill="rgba(200,160,255,0.9)"/>
+          <rect class="ai-wave-bar" x="19" y="10" width="2.5" height="4" rx="1.2" fill="rgba(200,160,255,0.9)"/>
+        </svg>
+      </div>
+    </div>
   </nav>
-  <!-- Hidden elements for compatibility -->
   <div class="company-switcher" id="company-switcher" style="display:none"></div>
-  <div id="nav-group-orders" style="display:none"></div>
-  <div id="nav-group-marketplaces" style="display:none"></div>
-  <div id="nav-ozon" style="display:none"></div>
-  <div id="nav-yandex" style="display:none"></div>
-  <div id="nav-wb" style="display:none"></div>
-  <div id="nav-orders-ozon" style="display:none"></div>
-  <div id="nav-orders-yandex" style="display:none"></div>
-  <div id="nav-orders-wb" style="display:none"></div>
-
-  <div id="sidebar-boxes-section" style="display:none">
-    <div id="boxes-list"></div>
-    <div id="nav-all" onclick="window.app.setView('all')" style="display:none"></div>
-    <button id="add-product-btn" style="display:none" onclick="window.app.addProduct()"></button>
-  </div>
-
   <!-- MAIN -->
   <div class="main">
-    <!-- TOPBAR -->
-    <div class="topbar">
-      <div class="search-wrap">
-        <span class="search-ic">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10 10l3 3" stroke-linecap="round"/></svg>
-        </span>
-        <input class="search-input" id="search-inp" placeholder="Поиск по артикулу, названию, любому параметру..."
-          aria-label="Поиск товаров" autocomplete="off" spellcheck="false">
-      </div>
-      <div class="topbar-right">
-        <button class="btn" id="mass-fill-btn" onclick="window.app.openMassFillModal()" style="display:none" title="Заполнить одно поле одинаковым значением для всех товаров">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="3" width="12" height="2" rx="1"/><rect x="2" y="7" width="12" height="2" rx="1"/><rect x="2" y="11" width="8" height="2" rx="1"/></svg>
-          Заполнить колонку
-        </button>
-        <button class="btn" id="xlsx-import-btn" onclick="window.app.openImportModal()" title="xlsx-добавка: дополнить существующие товары данными из файла" style="display:none">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 2v8M4 6l4 4 4-4M2 12v2h12v-2"/></svg>
-          xlsx-добавка
-        </button>
-        <button class="btn" id="export-btn" onclick="window.app.openExportModal()" style="display:none">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 10V2M4 6l4-4 4 4M2 12v2h12v-2"/></svg>
-          Экспорт
-        </button>
-        <button class="btn" id="export-all-btn" onclick="window.app.openExportModalAll()" style="display:none">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2M4 6l4-4 4 4M2 12v2h12v-2"/><path d="M2 9v5h12V9" stroke-dasharray="2 2"/></svg>
-          Экспорт
-        </button>
-      </div>
-    </div>
-
-    <!-- GROUPS BAR (products page) -->
-    <div class="groups-bar" id="groups-bar" style="display:none">
-      <div class="groups-bar-scroll" id="groups-bar-list">
-        <!-- filled dynamically -->
-      </div>
-      <div class="groups-bar-actions">
-        <button class="btn btn-sm" id="mp-sync-btn" onclick="window.app.openMpSyncModal()" title="Синхронизировать с маркетплейсом">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="14" height="14"><path d="M14 8A6 6 0 1 1 8 2"/><polyline points="14 2 14 6 10 6"/></svg>
-          Синхр. с МП
-        </button>
-        <button class="btn btn-sm" id="add-product-inline-btn" onclick="window.app.addProduct()" style="display:none" title="Добавить товар">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="14" height="14"><path d="M8 2v12M2 8h12"/></svg>
-        </button>
-      </div>
-    </div>
-
     <!-- CONTENT -->
     <div class="content">
-      <!-- FILTERS -->
-      <div class="filter-panel collapsed" id="filter-panel">
-        <div class="filter-section">
-          <div class="filter-title">Цена, ₽</div>
-          <div class="range-row">
-            <input class="range-inp" id="f-price-from" type="number" placeholder="от" oninput="window.app.applyFilters()">
-            <span class="range-sep">—</span>
-            <input class="range-inp" id="f-price-to" type="number" placeholder="до" oninput="window.app.applyFilters()">
-          </div>
-          <div class="sort-row">
-            <button class="sort-btn" id="sort-asc" onclick="window.app.toggleSort('asc')">↑ Мин</button>
-            <button class="sort-btn" id="sort-desc" onclick="window.app.toggleSort('desc')">↓ Макс</button>
-          </div>
-        </div>
-        <div class="filter-section">
-          <div class="filter-title" style="color:#4ade80">
-            <span style="display:inline-flex;align-items:center;gap:5px">
-              <span style="width:6px;height:6px;border-radius:50%;background:#4ade80"></span>
-              Себестоимость, ₽
-            </span>
-          </div>
-          <div class="range-row">
-            <input class="range-inp" id="f-cost-from" type="number" placeholder="от" oninput="window.app.applyFilters()">
-            <span class="range-sep">—</span>
-            <input class="range-inp" id="f-cost-to" type="number" placeholder="до" oninput="window.app.applyFilters()">
-          </div>
-          <div class="sort-row">
-            <button class="sort-btn" onclick="window.app.toggleCostSort('asc')" id="cost-sort-asc">↑ Мин</button>
-            <button class="sort-btn" onclick="window.app.toggleCostSort('desc')" id="cost-sort-desc">↓ Макс</button>
-          </div>
-        </div>
-        <div id="dynamic-filters"></div>
-      </div>
-
       <!-- TABLE AREA -->
       <div class="table-area">
-        <div class="table-header">
-          <button class="filter-toggle collapsed" id="filter-toggle-btn" title="Скрыть/показать фильтры" onclick="window.app.toggleFilterPanel()">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 3h12M3 7h8M5 11h4"/></svg>
-          </button>
-          <div>
-            <div class="result-stat" id="result-stat">— товаров</div>
-            <div class="result-meta" id="result-meta">выберите группу</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px">
-            <button class="btn" id="col-picker-btn" onclick="window.app.openColPickerModal()" style="display:none;font-size:11px;padding:4px 10px;gap:4px" title="Настроить видимость и порядок столбцов">
-              <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" style="width:12px;height:12px"><path d="M1 3h12M1 7h8M1 11h5"/></svg>
-              Столбцы
-            </button>
-
-            <div class="view-tabs">
-              <button class="view-tab on" id="tab-table" onclick="window.app.setViewMode('table')">Таблица</button>
-              <button class="view-tab" id="tab-cards" onclick="window.app.setViewMode('cards')">Карточки</button>
-            </div>
-          </div>
-        </div>
-
         <div id="main-content" style="flex:1;overflow:hidden;display:flex;flex-direction:column"></div>
       </div>
     </div>
@@ -378,6 +371,9 @@
     <!-- REVIEWS (WB + Ozon) -->
     <div id="reviews-section" style="display:none;flex:1;overflow:auto"></div>
 
+    <!-- TELEGRAM NOTIFICATIONS -->
+    <div id="notifications-section" style="display:none;flex:1;overflow:auto"></div>
+
     <!-- CHATS (WB + Ozon) -->
     <div id="chats-section" style="display:none;flex:1;overflow:auto"></div>
 
@@ -385,17 +381,21 @@
     <div id="automation-section" style="display:none;flex:1;overflow:auto"></div>
     <div id="tasks-section" style="display:none;flex:1;overflow:auto"></div>
     <div id="stock-section" style="display:none;flex:1;overflow:auto"></div>
-    <div id="catalog-section" style="display:none;flex:1;overflow:hidden"></div>
-    <div id="producers-section" style="display:none;flex:1;overflow:hidden"></div>
+<div id="producers-section" style="display:none;flex:1;overflow:hidden"></div>
     <div id="products-hub-section" style="display:none;flex:1;overflow:hidden"></div>
 
     <!-- SIMA STORE admin -->
     <div id="simastore-section" style="display:none;flex:1;overflow:auto"></div>
+    <div id="docs-section" style="display:none;position:absolute;inset:0;overflow:hidden"></div>
+    <div id="billing-section" style="display:none;position:fixed;inset:0;z-index:8500;background:var(--bg);overflow:auto"></div>
 
     <!-- LOGS -->
     <div id="logs-section" style="display:none;flex:1;flex-direction:column;overflow:hidden"></div>
   </div>
 </div>
+
+<!-- Admin Panel - outside main container for full screen -->
+<div id="admin-section" style="display:none;position:fixed;inset:0;z-index:9000;overflow:hidden"></div>
 
 <!-- SIMASTORE PUBLIC PAGE — shown for /s/:slug routes, no auth required -->
 <div id="simastore-public" style="display:none"></div>
@@ -408,22 +408,23 @@
   // ── Nav item metadata ──────────────────────────────────────────────────────
   // Только редактируемые пункты (fixed-top и fixed-bottom не включены)
   var DOCK_META = {
-    'nav-catalog':      { label: 'Каталог',       page: 'catalog' },
     'nav-orders':       { label: 'Заказы',         page: 'orders' },
     'nav-stock':        { label: 'Остатки',         page: 'stock' },
     'nav-producers':    { label: 'Производители',   page: 'producers' },
-    'nav-analytics':    { label: 'Аналитика',       page: 'analytics' },
+    'nav-finance':      { label: 'Аналитика',       page: 'analytics' },
+    'nav-analytics':    { label: 'Анализ',          page: 'sku-audit' },
     'nav-repricer':     { label: 'Репрайсер',       page: 'repricer' },
     'nav-reviews':      { label: 'Отзывы',          page: 'reviews' },
     'nav-chats':        { label: 'Чаты',            page: 'chats' },
     'nav-sku-audit':    { label: 'Анализ',          page: 'sku-audit' },
     'nav-automation':   { label: 'Скрипты',         page: 'automation' },
     'nav-logs':         { label: 'Логи',            page: 'logs' },
-    'nav-products':     { label: 'Обзор',            page: 'products-hub' },
+    'nav-products':     { label: 'Товары',           page: 'products-hub' },
+    'nav-docs':         { label: 'Редактор',        page: 'docs' },
   };
   var DEFAULT_CFG = {
-    main:  ['nav-catalog','nav-orders','nav-stock','nav-producers','nav-analytics','nav-repricer','nav-reviews','nav-chats'],
-    extra: ['nav-sku-audit','nav-automation','nav-logs','nav-products'],
+    main:  ['nav-orders','nav-stock','nav-producers','nav-finance','nav-analytics','nav-repricer','nav-reviews','nav-chats','nav-products','nav-docs'],
+    extra: ['nav-automation','nav-logs'],
   };
 
   // Ключ хранилища — per-company (используется window.getDockStorageKey из main.ts)
@@ -435,6 +436,11 @@
     try {
       var saved = JSON.parse(localStorage.getItem(getStorageKey()) || 'null');
       if (!saved) return DEFAULT_CFG;
+      // Перенос старого пункта «Анализ» на основную иконку, которая раньше вела в аналитику.
+      saved.main  = saved.main.map(function(id) { return id === 'nav-sku-audit' ? 'nav-analytics' : id; });
+      saved.extra = saved.extra.map(function(id) { return id === 'nav-sku-audit' ? 'nav-analytics' : id; });
+      saved.main  = saved.main.filter(function(id, idx, arr) { return id !== 'nav-sku-audit' && arr.indexOf(id) === idx; });
+      saved.extra = saved.extra.filter(function(id, idx, arr) { return id !== 'nav-sku-audit' && saved.main.indexOf(id) === -1 && arr.indexOf(id) === idx; });
       // Добавляем новые пункты которых нет в сохранённом конфиге
       var allSaved = saved.main.concat(saved.extra);
       // Убираем устаревшие fixed-элементы из сохранённого конфига

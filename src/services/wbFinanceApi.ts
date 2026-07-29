@@ -114,4 +114,44 @@ export const wbFinanceApi = {
 
     return all;
   },
+
+  /**
+   * Получить суммарные начисления за текущую отчётную неделю WB.
+   * WB платит еженедельно по четвергам; берём отчёт с прошлого понедельника.
+   * Возвращает сумму ppvz_for_pay — «к выплате продавцу».
+   * Это не живой баланс кошелька, а начисления за текущий период.
+   */
+  async fetchWeeklyAccruals(apiKey: string, signal?: AbortSignal): Promise<{ forPay: number; dateFrom: string; dateTo: string }> {
+    const now = new Date();
+    // Начало текущей отчётной недели WB (понедельник)
+    const day = now.getDay(); // 0=вс, 1=пн...
+    const diffToMon = day === 0 ? -6 : 1 - day;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diffToMon);
+    monday.setHours(0, 0, 0, 0);
+
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    const dateFrom = fmt(monday);
+    const dateTo   = fmt(now);
+
+    const url = `${WB_PROXY}/wb-stats/api/v5/supplier/reportDetailByPeriod?dateFrom=${dateFrom}&dateTo=${dateTo}&limit=100000&rrdid=0`;
+    const res = await fetch(url, {
+      headers: { 'Authorization': apiKey, 'Accept': 'application/json', 'apikey': API_KEY },
+      signal,
+    });
+
+    if (res.status === 429) throw new Error('WB rate-limit (429)');
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`WB Finance ${res.status}: ${text.slice(0, 200)}`);
+    }
+
+    const text = await res.text();
+    const rows: WbFinanceRow[] = text ? JSON.parse(text) : [];
+    const forPay = Array.isArray(rows)
+      ? rows.reduce((s, r) => s + (Number(r.ppvz_for_pay) || 0), 0)
+      : 0;
+
+    return { forPay, dateFrom, dateTo };
+  },
 };

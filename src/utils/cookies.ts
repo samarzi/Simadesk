@@ -14,7 +14,8 @@ const DEFAULT_MAX_AGE = 90 * 24 * 60 * 60; // 90 дней в секундах
 
 export const cookies = {
   set(name: string, value: string, maxAgeSec = DEFAULT_MAX_AGE): void {
-    document.cookie = `${name}=${encodeURIComponent(value)};max-age=${maxAgeSec};path=/;SameSite=Lax`;
+    const secure = location.protocol === 'https:' ? ';Secure' : '';
+    document.cookie = `${name}=${encodeURIComponent(value)};max-age=${maxAgeSec};path=/;SameSite=Lax${secure}`;
   },
 
   get(name: string): string | null {

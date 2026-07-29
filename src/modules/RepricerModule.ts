@@ -26,6 +26,8 @@ import { costPriceDb } from '@/services/costPriceDb';
 import { costProducerLinks } from '@/services/costProducerLinks';
 import { producerMappingDb, producerProductDb, producerFieldDb } from '@/services/producerDb';
 import { repricerRulesDb } from '@/services/repricerRulesDb';
+import { dbFetch } from '@/services/dbClient';
+import { companyService } from '@/services/companyService';
 import { WbProduct, WbStore } from '@/types/wb';
 import { OzonProduct, OzonStore } from '@/types/ozon';
 import { YandexProduct, YandexStore } from '@/types/yandex';
@@ -56,7 +58,31 @@ export type { RepricerRule };
 const RULE_TYPES = Object.keys(RULE_LABELS) as RuleType[];
 
 function loadLog(): PriceLog[] { try { return JSON.parse(localStorage.getItem(LOG_KEY) ?? '[]'); } catch { return []; } }
-function saveLog(l: PriceLog[]): void { localStorage.setItem(LOG_KEY, JSON.stringify(l.slice(0, 500))); }
+function saveLog(l: PriceLog[]): void { localStorage.setItem(LOG_KEY, JSON.stringify(l.slice(0, 200))); }
+
+function pushLogEntryToDb(entry: PriceLog): void {
+  const companyId = companyService.getActiveId();
+  if (!companyId) return;
+  dbFetch<unknown>('repricer_price_log', {
+    method: 'POST',
+    body: JSON.stringify({
+      id: entry.id,
+      company_id: companyId,
+      rule_id: entry.ruleId,
+      marketplace: entry.marketplace,
+      store_id: entry.storeId,
+      store_name: entry.storeName ?? null,
+      product_id: entry.productId,
+      product_title: entry.productTitle ?? null,
+      old_price: entry.oldPrice ?? null,
+      new_price: entry.newPrice,
+      reason: entry.reason ?? null,
+      applied_at: entry.appliedAt,
+    }),
+  }, { 'Prefer': 'resolution=ignore-duplicates,return=minimal' }).catch(e => {
+    debug.warn('[repricer] pushLogEntry failed:', e);
+  });
+}
 
 export class RepricerModule {
   private container: HTMLElement;
@@ -103,6 +129,7 @@ export class RepricerModule {
   private applying = new Set<string>();
   private applyingAll = false;
   private applyErrors = new Map<string, string>(); // ruleId → error message
+  private applyControllers = new Map<string, AbortController>(); // ruleId → controller
   private reverting = new Set<string>(); // logId → откат в процессе
   private revertErrors = new Map<string, string>(); // logId → error message
 
@@ -809,15 +836,24 @@ export class RepricerModule {
   //  ПРИМЕНЕНИЕ ПРАВИЛ
   // ════════════════════════════════════════════════════════════════════════
 
-  async applyRule(id: string): Promise<void> {
+  cancelApplyRule(id: string): void {
+    this.applyControllers.get(id)?.abort();
+  }
+
+  async applyRule(id: string, signal?: AbortSignal): Promise<void> {
     const rule = this.rules.find(r => r.id === id);
     if (!rule || this.applying.has(id)) return;
     this.applying.add(id); this.render();
+
+    const ac = new AbortController();
+    this.applyControllers.set(id, ac);
+    const aborted = () => ac.signal.aborted || signal?.aborted;
 
     const products = ruleProducts(rule);
 
     try {
       for (const prod of products) {
+        if (aborted()) break;
         // Вычисляем цену для каждого товара (себестоимость может отличаться)
         const newPrice = this.computePriceForProduct(rule, prod);
         // newPrice может быть отрицательным (например, из формулы с вычитанием) —
@@ -904,11 +940,12 @@ export class RepricerModule {
           oldPrice, newPrice, appliedAt: new Date().toISOString(), reason: rule.type,
         };
         this.log.unshift(entry); saveLog(this.log);
+        pushLogEntryToDb(entry);
       }
       rule.lastAppliedAt = new Date().toISOString();
       repricerRulesDb.save(rule);
-    } catch (e: any) {
-      const msg: string = e?.message ?? String(e);
+    } catch (e: unknown) {
+      const msg: string = e instanceof Error ? e.message : String(e);
       console.error('[Repricer] applyRule:', msg);
       this.applyErrors.set(id,
         msg.includes('429') ? 'WB: слишком много запросов — подождите несколько минут и повторите' :
@@ -917,6 +954,7 @@ export class RepricerModule {
       );
       setTimeout(() => { this.applyErrors.delete(id); this.render(); }, 8000);
     }
+    this.applyControllers.delete(id);
     this.applying.delete(id); this.render();
   }
 
@@ -925,7 +963,18 @@ export class RepricerModule {
     this.applyingAll = true;
     try {
       const active = this.rules.filter(r => r.status === 'active' && !this.applying.has(r.id));
-      for (const r of active) await this.applyRule(r.id);
+      // Group by marketplace — run each MP sequentially (rate-limit safe), MPs in parallel
+      const byMp = new Map<string, RepricerRule[]>();
+      for (const r of active) {
+        const bucket = byMp.get(r.marketplace) ?? [];
+        bucket.push(r);
+        byMp.set(r.marketplace, bucket);
+      }
+      await Promise.allSettled(
+        [...byMp.values()].map(async (rules) => {
+          for (const r of rules) await this.applyRule(r.id);
+        }),
+      );
     } finally {
       this.applyingAll = false;
     }
@@ -980,8 +1029,8 @@ export class RepricerModule {
         appliedAt: new Date().toISOString(), reason: 'Откат', isRevert: true,
       };
       this.log.unshift(revertEntry); saveLog(this.log);
-    } catch (e: any) {
-      const msg: string = e?.message ?? String(e);
+    } catch (e: unknown) {
+      const msg: string = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e);
       console.error('[Repricer] revertLog:', msg);
       this.revertErrors.set(logId, msg);
       setTimeout(() => { this.revertErrors.delete(logId); this.render(); }, 8000);
@@ -1366,8 +1415,8 @@ export class RepricerModule {
       }
       this.soldVendorCodes = seen;
       console.info(`[Repricer] sold vendor_codes loaded: ${seen.size} unique`);
-    } catch (e: any) {
-      console.warn('[Repricer] loadSoldVendorCodes failed:', e?.message ?? e);
+    } catch (e: unknown) {
+      console.warn('[Repricer] loadSoldVendorCodes failed:', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e);
       this.soldVendorCodes = new Set(); // не показываем ошибку — fallback на "архив"
     }
     this.soldVendorCodesLoading = false;
@@ -1420,8 +1469,8 @@ export class RepricerModule {
       }
 
       if (this.tab === 'costs') this.render();
-    } catch (e: any) {
-      console.warn('[Repricer] loadProducerCostMap failed:', e?.message ?? e);
+    } catch (e: unknown) {
+      console.warn('[Repricer] loadProducerCostMap failed:', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e);
     }
   }
 
@@ -1575,8 +1624,8 @@ export class RepricerModule {
         const { saved, skipped } = costPriceDb.bulkSet(items);
         try { window.app?.toast?.(`✓ Импортировано: ${saved}. Пропущено: ${skipped}.`, 'success', 4000); } catch (e) { debug.warn('[RepricerModule] swallowed error', e); }
         this.render();
-      } catch (err: any) {
-        alert('Ошибка чтения файла: ' + (err?.message ?? err));
+      } catch (err: unknown) {
+        alert('Ошибка чтения файла: ' + ((err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err));
       }
       input.value = '';
     };

@@ -95,8 +95,11 @@ jspm_packages/
 tmp/
 temp/
 
-# Local Netlify folder
+# Local Netlify folder (legacy)
 .netlify
+
+# Supabase cloud CLI (migrations now in backend/migrations/)
+supabase/
 
 # SSL certificates (on VPS, symlinked from /etc/letsencrypt)
 ssl/

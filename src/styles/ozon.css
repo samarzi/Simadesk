@@ -274,6 +274,40 @@
   width: 240px;
 }
 
+.search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.search-ic {
+  position: absolute;
+  left: 9px;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+  color: var(--muted);
+}
+.search-ic svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.search-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px 0 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color .15s;
+}
+.search-input:focus { border-color: var(--accent); }
+.search-input::placeholder { color: var(--muted); }
+
 /* ── Табы магазинов ──────────────────────────────────────────── */
 
 .oz-tab {
@@ -616,6 +650,23 @@
 
 .oz-row:hover { background: var(--hover); }
 .oz-row:last-child td { border-bottom: none; }
+
+.ord-date-group-row td {
+  padding: 10px 16px 4px;
+  border-bottom: none;
+  background: transparent;
+  pointer-events: none;
+}
+.ord-date-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--bg2);
+}
 
 /* ── Ячейки ──────────────────────────────────────────────────── */
 
@@ -1532,6 +1583,7 @@
 .ord-s-delivered  { background: color-mix(in srgb,#4ade80 16%,transparent); color:#16a34a; }
 .ord-s-cancelled  { background: color-mix(in srgb,#94a3b8 12%,transparent); color:#64748b; }
 .ord-s-arbitration{ background: color-mix(in srgb,#f472b6 16%,transparent); color:#db2777; }
+.ord-s-returned   { background: color-mix(in srgb,#f87171 16%,transparent); color:#dc2626; }
 
 /* ── Схема-бейдж (DBS) ──────────────────────────────────────── */
 
@@ -1976,23 +2028,37 @@
   align-items: center;
   justify-content: center;
   padding: 80px 24px;
-  gap: 12px;
-  animation: oz-fade-in .2s ease;
+  gap: 10px;
+  animation: ord-loader-fade .2s ease;
+  position: relative;
+  flex: 1;
+  width: 100%;
 }
 
-.ord-loader-spinner {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  background: color-mix(in srgb, #005bff 8%, transparent);
-  margin-bottom: 4px;
+/* Только opacity — transform ломает position:fixed у ::before/::after */
+@keyframes ord-loader-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
+
+/* Top bar fixed at very top of page */
+.ord-loader::before,
+.ord-loader::after {
+  content: '';
+  position: fixed;
+  top: 0; left: 0;
+  width: 20%; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent) 50%, transparent);
+  box-shadow: 0 0 10px 2px var(--accent);
+  animation: sd-bar-run 1.6s linear infinite;
+  z-index: 9998;
+}
+.ord-loader::after { animation-delay: -0.8s; }
+
+.ord-loader-spinner { display: none; }
 
 .ord-loader-title {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text);
   letter-spacing: -.2px;
@@ -2003,27 +2069,8 @@
   color: var(--muted);
 }
 
-.ord-loader-bar {
-  width: 240px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--bg2);
-  overflow: hidden;
-  margin-top: 12px;
-}
-
-.ord-loader-bar-fill {
-  height: 100%;
-  width: 40%;
-  background: linear-gradient(90deg, transparent, #005bff, transparent);
-  border-radius: 2px;
-  animation: ord-bar-slide 1.4s infinite ease-in-out;
-}
-
-@keyframes ord-bar-slide {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(350%); }
-}
+.ord-loader-bar { display: none; }
+.ord-loader-bar-fill { display: none; }
 
 /* ── Заголовок модалки — расширенный ────────────────────────── */
 
@@ -4105,12 +4152,27 @@
   color: var(--muted);
 }
 .cmd-spinner {
-  width: 13px; height: 13px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: oz-spin .8s linear infinite;
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: transparent;
+  overflow: hidden;
+  z-index: 9998;
+  pointer-events: none;
+  display: block;
+  flex-shrink: 0;
 }
+.cmd-spinner::before,
+.cmd-spinner::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 20%; height: 100%;
+  background: linear-gradient(90deg, transparent, var(--accent) 50%, transparent);
+  box-shadow: 0 0 10px 2px var(--accent);
+  animation: sd-bar-run 1.6s linear infinite;
+}
+.cmd-spinner::after { animation-delay: -0.8s; }
 .cmd-scroll {
   flex: 1;
   min-height: 0;
@@ -4911,3 +4973,26 @@
 }
 .sh-member-row:last-child { border-bottom: none; }
 .sh-member-avatar { flex-shrink: 0; }
+
+/* ── MP pending store selection ─────────────────────────────── */
+.mp-pending-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1.5px solid var(--border);
+  background: var(--bg2);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.mp-pending-row:hover:not(.mp-pending-row--disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg2));
+}
+.mp-pending-row--disabled { opacity: 0.55; cursor: default; }
+.mp-pending-row input[type="checkbox"] { width: 16px; height: 16px; flex-shrink: 0; accent-color: var(--accent); cursor: pointer; }
+.mp-pending-row--disabled input[type="checkbox"] { cursor: default; }
+.mp-pending-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mp-pending-name { font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-pending-meta { font-size: 11px; color: var(--text-2); }

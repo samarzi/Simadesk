@@ -85,7 +85,7 @@ export const taskDb = {
     const id = companyService.getActiveId();
     if (!id) return [];
     return dbFetch<Task[]>(
-      `tasks?company_id=eq.${id}&select=*&order=sort_order.asc,created_at.desc`,
+      `tasks?company_id=eq.${id}&select=*&order=sort_order.asc,created_at.desc&limit=500`,
     );
   },
 
@@ -117,7 +117,7 @@ export const reminderDb = {
     const id = companyService.getActiveId();
     if (!id) return [];
     return dbFetch<Reminder[]>(
-      `reminders?company_id=eq.${id}&select=*&order=remind_at.asc`,
+      `reminders?company_id=eq.${id}&select=*&order=remind_at.asc&limit=500`,
     );
   },
 

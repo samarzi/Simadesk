@@ -39,13 +39,19 @@ const STATUS_CSS: Record<string, string> = {
 function fmtDateTime(d: string | null | undefined): string {
   if (!d) return '—';
   try {
+    // Яндекс отдаёт "DD-MM-YYYY HH:MM:SS" в московском времени без timezone.
+    // new Date() не парсит этот формат корректно → разбираем вручную как локальное время.
+    const m = d.match(/^(\d{2})[.\-](\d{2})[.\-](\d{4})(?:[\sT](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (m) {
+      const [, dd, mm, yyyy, h = '0', mi = '0'] = m;
+      return new Date(+yyyy, +mm - 1, +dd, +h, +mi).toLocaleString('ru', {
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+      });
+    }
     return new Date(d).toLocaleString('ru', {
-      day: '2-digit', month: '2-digit', year: '2-digit',
-      hour: '2-digit', minute: '2-digit',
+      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
     });
-  } catch {
-    return d;
-  }
+  } catch { return d; }
 }
 
 function ymDateOnly(d: Date): string {
@@ -133,17 +139,17 @@ export class YandexOrdersModule {
           const orders = await fetchAllYandexOrders(store, from, to, signal);
           all.push(...orders);
           debug.log(`[Yandex Orders] ${store.name}: ${orders.length} заказов`);
-        } catch (err: any) {
-          if (err?.name !== 'AbortError') {
-            console.error(`[Yandex Orders] ${store.name}:`, err.message);
+        } catch (err: unknown) {
+          if (!(err instanceof DOMException && err.name === 'AbortError')) {
+            debug.warn(`[Yandex Orders] ${store.name}:`, (err instanceof Error ? err.message : String(err)));
           }
         }
       }));
       if (this.abortController !== ac) return;
       this.orders = all.sort((a, b) => (b.creation_date ?? '').localeCompare(a.creation_date ?? ''));
-    } catch (err: any) {
-      if (err?.name === 'AbortError') return;
-      this.lastError = err.message ?? String(err);
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      this.lastError = (err instanceof Error ? err.message : String(err)) ?? String(err);
     }
 
     if (this.abortController !== ac) return;
@@ -262,7 +268,7 @@ export class YandexOrdersModule {
           </div>
           <div class="ord-loader-title">Загружаем заказы Я.Маркета</div>
           <div class="ord-loader-sub">Период: ${this.period} дней</div>
-          <div class="ord-loader-bar"><div class="ord-loader-bar-fill" style="background:linear-gradient(90deg,transparent,#fc3f1d,transparent)"></div></div>
+          <div class="ord-loader-bar"><div class="ord-loader-bar-fill"></div></div>
         </div>`;
     }
     if (this.lastError) {
@@ -353,20 +359,18 @@ export class YandexOrdersModule {
       const detail = await yandexApi.getOrderDetail(store, orderId);
       this.detailsCache.set(cacheKey, detail);
       if (modal.style.display !== 'none') this.fillModal(modal, localOrder ?? null, detail);
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Если детали не получили — оставляем то, что было
-      if (!localOrder) this.fillModalError(modal, err?.message ?? String(err));
-      console.warn('[YM] order detail failed:', err);
+      if (!localOrder) this.fillModalError(modal, (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? String(err));
+      debug.warn('[YM] order detail failed:', err);
     }
   }
 
   private renderModalLoader(): string {
     return `
       <div class="ord-loader">
-        <div class="ord-loader-spinner">
-          <svg class="oz-spin" viewBox="0 0 40 40" fill="none" stroke="#fc3f1d" stroke-width="3" stroke-linecap="round" style="width:48px;height:48px"><path d="M36 20A16 16 0 1 1 20 4" stroke-dasharray="60 30"/></svg>
-        </div>
         <div class="ord-loader-title">Загружаем детали заказа</div>
+        <div class="ord-loader-bar"><div class="ord-loader-bar-fill"></div></div>
       </div>`;
   }
 
@@ -587,8 +591,8 @@ export class YandexOrdersModule {
       await yandexApi.setOrderStatus(store, orderId, 'PROCESSING', 'READY_TO_SHIP');
       alert('✓ Заказ помечен готовым к отгрузке');
       this.refresh();
-    } catch (err: any) {
-      alert(`Ошибка: ${err?.message ?? err}`);
+    } catch (err: unknown) {
+      alert(`Ошибка: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
     }
   }
 
@@ -602,8 +606,8 @@ export class YandexOrdersModule {
       a.href = url; a.download = `ym-label-${orderId}.pdf`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 100);
-    } catch (err: any) {
-      alert(`Не удалось получить этикетку: ${err?.message ?? err}`);
+    } catch (err: unknown) {
+      alert(`Не удалось получить этикетку: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
     }
   }
 
@@ -615,8 +619,8 @@ export class YandexOrdersModule {
       await yandexApi.setOrderStatus(store, orderId, 'CANCELLED', 'SHOP_FAILED');
       alert('✓ Заказ отменён');
       this.refresh();
-    } catch (err: any) {
-      alert(`Ошибка отмены: ${err?.message ?? err}`);
+    } catch (err: unknown) {
+      alert(`Ошибка отмены: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
     }
   }
 

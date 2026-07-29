@@ -35,7 +35,7 @@ export class MassActionsModule {
       this.app.renderActionBar();
       this.app.closeModal();
       this.app.toast(`Удалено товаров: ${ids.length}`, 'success');
-    } catch (e: any) { this.app.toast('Ошибка удаления: ' + e.message, 'error'); }
+    } catch (e: unknown) { this.app.toast('Ошибка удаления: ' + (e instanceof Error ? e.message : String(e)), 'error'); }
   }
 
   massHideProducts(hide: boolean) {
@@ -98,7 +98,7 @@ export class MassActionsModule {
       this.app.renderActionBar();
       this.app.closeModal();
       this.app.toast(`Перемещено товаров: ${ids.length}`, 'success');
-    } catch (e: any) { this.app.toast('Ошибка перемещения: ' + e.message, 'error'); }
+    } catch (e: unknown) { this.app.toast('Ошибка перемещения: ' + (e instanceof Error ? e.message : String(e)), 'error'); }
   }
 
   openMassEditModal() {
@@ -197,8 +197,8 @@ export class MassActionsModule {
         this.app.toast('Нет изменений', 'info');
       }
       this.app.closeModal();
-    } catch (e: any) {
-      this.app.toast('Ошибка сохранения: ' + e.message, 'error');
+    } catch (e: unknown) {
+      this.app.toast('Ошибка сохранения: ' + (e instanceof Error ? e.message : String(e)), 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Сохранить изменения'; }
     }
   }
@@ -364,8 +364,8 @@ export class MassActionsModule {
           await this.app.selectBox(result.boxId);
         }, 1500);
       }
-    } catch (e: any) {
-      const isRateLimit = /429|rate.?limit|rate-limited/i.test(e.message ?? '');
+    } catch (e: unknown) {
+      const isRateLimit = /429|rate.?limit|rate-limited/i.test((e instanceof Error ? e.message : String(e)) ?? '');
       if (stageEl) {
         if (isRateLimit && source === 'wb') {
           stageEl.innerHTML = `${I.xCircle('', 16)} WB заблокировал запросы (лимит 429). Подождите пару минут или сбросьте блокировку.<br>
@@ -376,11 +376,11 @@ export class MassActionsModule {
             this.clearWbCooldownAndSync(source, storeId, btn);
           });
         } else {
-          stageEl.innerHTML = `${I.xCircle('', 16)} Ошибка: ${e.message}`;
+          stageEl.innerHTML = `${I.xCircle('', 16)} Ошибка: ${(e instanceof Error ? e.message : String(e))}`;
         }
       }
       if (barEl) barEl.style.color = 'var(--red)';
-      this.app.toast('Ошибка синхронизации: ' + e.message, 'error', 6000);
+      this.app.toast('Ошибка синхронизации: ' + (e instanceof Error ? e.message : String(e)), 'error', 6000);
       document.querySelectorAll<HTMLButtonElement>('.mp-sync-row button').forEach(b => { b.disabled = false; });
       btn.textContent = '↻ Повторить';
     }

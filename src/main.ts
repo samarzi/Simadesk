@@ -4,6 +4,7 @@ import './styles/auth.css';
 import './styles/catalog-mp.css';
 import './styles/products-hub.css';
 import './styles/storefront.css';
+import './styles/assistant.css';
 
 // Apply saved theme immediately (before DOMContentLoaded to avoid flash)
 if (localStorage.getItem('simadesk_theme') === 'light') {
@@ -26,7 +27,7 @@ import { AllOrdersModule } from './modules/AllOrdersModule';
 import { MarketplacesDashboard } from './modules/MarketplacesDashboard';
 import { AnalyticsModule } from './modules/analytics/AnalyticsModule';
 import { SettingsHubModule } from './modules/SettingsHubModule';
-import { SkuAuditModule } from './modules/SkuAuditModule';
+import { MyAnalysisModule } from './modules/MyAnalysisModule';
 import { ReviewsModule } from './modules/ReviewsModule';
 import { ChatsModule } from './modules/ChatsModule';
 import { SeoModule } from './modules/SeoModule';
@@ -37,13 +38,60 @@ import { TaskManagerModule } from './modules/TaskManagerModule';
 import { ProfileModule } from './modules/ProfileModule';
 import { SettingsModule } from './modules/SettingsModule';
 import { StockModule } from './modules/StockModule';
-import { CatalogMpModule } from './modules/CatalogMpModule';
 import { ProducersModule } from './modules/ProducersModule';
 import { ProductsHubModule } from './modules/ProductsHubModule';
 import { SimaStoreModule } from './modules/SimaStoreModule';
+import { DocsModule } from './modules/DocsModule';
+import { NotificationsModule } from './modules/NotificationsModule';
+import { AdminModule } from './modules/AdminModule';
+import { BillingModule } from './modules/BillingModule';
+import { assistantModule } from './modules/AssistantModule';
 import { orderSyncService } from './services/orderSyncService';
 import { companyService } from './services/companyService';
 import { renderPublicStorefront } from './pages/storefrontPage';
+import { debug } from '@/utils/debug';
+
+// ── Global error reporting ────────────────────────────────────────────────────
+// Catches unhandled JS errors and promise rejections; writes them to error_log.
+// Fire-and-forget — never throws, never blocks UI.
+function reportError(message: string, source?: string, stack?: string): void {
+  // Skip cross-origin noise and extension errors
+  if (!message || message === 'Script error.' || source?.includes('chrome-extension')) return;
+  try {
+    const token = localStorage.getItem('access_token');
+    if (!token) return;
+    const companyId = companyService.getActiveId();
+    fetch('/rest/v1/error_log', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY ?? '',
+        'Authorization': `Bearer ${token}`,
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify({
+        company_id: companyId ?? null,
+        message: String(message).slice(0, 500),
+        source: source?.slice(0, 200),
+        stack: stack?.slice(0, 2000),
+        url: window.location.pathname,
+      }),
+    }).catch(() => {/* ignore */});
+  } catch { /* ignore */ }
+}
+
+// One-time migration: remove AI key from localStorage (moved to sessionStorage)
+try { localStorage.removeItem('sd_ai_key'); } catch { /* ignore */ }
+
+window.onerror = (msg, source, _line, _col, error) => {
+  reportError(String(msg), source, error?.stack);
+};
+
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = e.reason instanceof Error ? e.reason.message : String(e.reason ?? 'unhandledrejection');
+  const stack = e.reason instanceof Error ? e.reason.stack : undefined;
+  reportError(msg, undefined, stack);
+});
 
 // Экспортируем функцию получения per-company ключа dock-конфига (используется в inline-скрипте)
 (window as any).getDockStorageKey = () => {
@@ -79,7 +127,7 @@ function bootApp(): void {
   init('marketplaces-dashboard', (el) => new MarketplacesDashboard(el), 'marketplacesDashboard');
   init('analytics-section',      (el) => new AnalyticsModule(el),       'analyticsModule');
   init('settings-hub-section',   (el) => new SettingsHubModule(el),     'settingsHub');
-  init('sku-audit-section',      (el) => new SkuAuditModule(el),        'skuAuditModule');
+  init('sku-audit-section',      (el) => new MyAnalysisModule(el),      'myAnalysisModule');
   init('reviews-section',         (el) => new ReviewsModule(el),          'reviewsModule');
   init('chats-section',          (el) => new ChatsModule(el),           'chatsModule');
   init('seo-section',            (el) => new SeoModule(el),             'seoModule');
@@ -90,9 +138,12 @@ function bootApp(): void {
   init('profile-section',        (el) => new ProfileModule(el),         'profileModule');
   init('settings-section',       (el) => new SettingsModule(el),        'settingsModule');
   init('stock-section',          (el) => new StockModule(el),           'stockModule');
-  init('catalog-section',        (el) => new CatalogMpModule(el),       'catalogMpModule');
-  init('producers-section',      (el) => new ProducersModule(el),       'producersModule');
+init('producers-section',      (el) => new ProducersModule(el),       'producersModule');
   init('products-hub-section',   (el) => new ProductsHubModule(el),     'productsHubModule');
+  init('docs-section',           (el) => new DocsModule(el),            'docsModule');
+  init('notifications-section',  (el) => new NotificationsModule(el),   'notificationsModule');
+  init('admin-section',          (el) => new AdminModule(el),           'adminModule');
+  init('billing-section',        (el) => new BillingModule(el),         'billingModule');
   // SimaStore — передаём companyId при инициализации
   const _simaStoreEl = document.getElementById('simastore-section');
   if (_simaStoreEl) {
@@ -101,16 +152,49 @@ function bootApp(): void {
     (window as any).simaStoreModule = _sm;
   }
 
+  // Кросс-страничные действия ассистента (напр. «создай Excel» из любого раздела)
+  import('./services/aiPageCapabilities').then(m => m.installGlobalAiActions()).catch(() => {/* ignore */});
+
+  // Reload AI config after auth (key from Supabase site_content)
+  assistantModule.init().catch(() => {/* ignore */});
+
   // Apply dock autohide setting on boot
   if (localStorage.getItem('settings_dock_autohide') === 'on') {
     document.getElementById('app-dock')?.classList.add('dock-autohide');
   }
 
   // Запускаем фоновую синхронизацию заказов (не блокирует UI)
-  orderSyncService.init().catch(e => console.warn('[boot] orderSyncService:', e));
+  orderSyncService.init().catch(e => debug.warn('[boot] orderSyncService:', e));
 
   // Применяем per-company конфиг dock после того как company стала известна
   (window as any).applyDockNavConfig?.();
+
+  // Stamp the initial history entry with SPA state so Back/Forward always have a page
+  if (!history.state?.sdPage && window.app) {
+    const curPage = window.app.currentPage || 'home';
+    const hashPath = curPage === 'home' ? '/' : `/#/${curPage}`;
+    history.replaceState({ sdPage: curPage }, '', hashPath);
+  }
+
+  // Handle browser Back/Forward within the SPA — prevents going back to /slug
+  window.addEventListener('popstate', (e) => {
+    const page = e.state?.sdPage
+      ?? (location.hash.startsWith('#/') ? location.hash.slice(2).split('?')[0] : undefined);
+    if (page && window.app) {
+      window.app.navigateTo(page);
+    } else if (window.app) {
+      const curPage = window.app.currentPage || 'home';
+      history.replaceState({ sdPage: curPage }, '', curPage === 'home' ? '/' : `/#/${curPage}`);
+    }
+  });
+}
+
+// ── Early assistant init (pre-auth, so button works before login) ──────────────
+// Check readyState to handle both fresh load and HMR hot update cases
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => assistantModule.init());
+} else {
+  assistantModule.init();
 }
 
 // ── Auth gate ──────────────────────────────────────────────────────────────────
@@ -159,7 +243,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.app?.toast?.(msgs[result.error] ?? 'Не удалось применить ссылку-приглашение', 'error');
       }
     } catch (e) {
-      console.warn('[invite] claim failed', e);
+      debug.warn('[invite] claim failed', e);
     }
   }
 
@@ -249,7 +333,7 @@ declare global {
     marketplacesDashboard: import('./modules/MarketplacesDashboard').MarketplacesDashboard;
     analyticsModule: import('./modules/analytics/AnalyticsModule').AnalyticsModule;
     settingsHub: import('./modules/SettingsHubModule').SettingsHubModule;
-    skuAuditModule: import('./modules/SkuAuditModule').SkuAuditModule;
+    myAnalysisModule: import('./modules/MyAnalysisModule').MyAnalysisModule;
     reviewsModule: import('./modules/ReviewsModule').ReviewsModule;
     chatsModule: import('./modules/ChatsModule').ChatsModule;
     seoModule: import('./modules/SeoModule').SeoModule;
@@ -259,11 +343,14 @@ declare global {
     profileModule: import('./modules/ProfileModule').ProfileModule;
     settingsModule: import('./modules/SettingsModule').SettingsModule;
     stockModule: import('./modules/StockModule').StockModule;
-    catalogMpModule: import('./modules/CatalogMpModule').CatalogMpModule;
-    producersModule: import('./modules/ProducersModule').ProducersModule;
+producersModule: import('./modules/ProducersModule').ProducersModule;
     productsHubModule: import('./modules/ProductsHubModule').ProductsHubModule;
     simaStoreModule: SimaStoreModule;
+    docsModule: import('./modules/DocsModule').DocsModule;
+    notificationsModule: import('./modules/NotificationsModule').NotificationsModule;
     taskManagerModule: import('./modules/TaskManagerModule').TaskManagerModule;
+    adminModule: import('./modules/AdminModule').AdminModule;
+    billingModule: import('./modules/BillingModule').BillingModule;
     ensureDockExpandedForPage?: (page: string) => void;
     __showMetricTip?: (id: string) => void;
     __SIMADESK_EXTENSION_ID?: string;

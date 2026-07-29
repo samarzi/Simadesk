@@ -5,6 +5,105 @@ import { fromOzon } from './dimensionsUnit';
 const PROXY = '/ozon-api';
 type Creds = Pick<OzonStore, 'client_id' | 'api_key'>;
 
+// ── Ozon API response shape interfaces ──────────────────────────────────────
+// These describe only the fields we actually read; additional fields are ignored.
+
+interface OzonProductListItem {
+  product_id: number;
+  offer_id: string;
+}
+interface OzonProductListResp {
+  result?: { items?: OzonProductListItem[]; last_id?: string };
+}
+
+interface OzonPriceItem {
+  offer_id: string;
+  price?: { price?: string; old_price?: string; min_price?: string; marketing_price?: string };
+  selling_price?: string;
+  visibility?: string;
+}
+interface OzonPriceListResp {
+  result?: { items?: OzonPriceItem[]; last_id?: string };
+  items?: OzonPriceItem[];
+  last_id?: string;
+}
+
+interface OzonStockEntry { type: string; present: number }
+interface OzonStockItem {
+  offer_id: string;
+  sku?: number;
+  fbo_sku?: number;
+  fbs_sku?: number;
+  product_id?: number;
+  stocks?: OzonStockEntry[];
+}
+interface OzonStocksResp {
+  items?: OzonStockItem[];
+  result?: { items?: OzonStockItem[] };
+  cursor?: string;
+}
+
+interface OzonInfoRawItem {
+  id?: number;
+  offer_id?: string;
+  name?: string;
+  images?: unknown[];
+  barcodes?: string[];
+  barcode?: string;
+  status?: string | Record<string, string | undefined>;
+  state?: string;
+  is_archived?: boolean;
+  is_autoarchived?: boolean;
+  is_fbo_visible?: boolean;
+  is_fbs_visible?: boolean;
+  sku?: number;
+  fbo_sku?: number;
+  fbs_sku?: number;
+  sources?: unknown[];
+  price?: string;
+  old_price?: string;
+  min_price?: string;
+  type_id?: number;
+  description_category_id?: number;
+  weight?: number;
+  package_weight?: number;
+  weight_unit?: string;
+  depth?: number;
+  package_depth?: number;
+  width?: number;
+  package_width?: number;
+  height?: number;
+  package_height?: number;
+  dimension_unit?: string;
+  dimensions?: { depth?: number; width?: number; height?: number; dimension_unit?: string };
+  vat?: string | number;
+  attributes?: unknown[];
+  [key: string]: unknown;
+}
+interface OzonInfoListResp {
+  items?: OzonInfoRawItem[];
+  result?: { items?: OzonInfoRawItem[] };
+}
+
+interface OzonImportPriceResult {
+  offer_id?: string;
+  updated?: boolean;
+  errors?: Array<{ code?: string; message?: string }>;
+}
+interface OzonImportPricesResp {
+  result?: OzonImportPriceResult[];
+}
+
+interface OzonCategoryAttrItem { id: number; name: string }
+interface OzonCategoryAttrResp { result?: OzonCategoryAttrItem[] }
+
+interface OzonWarehouseResp { result?: OzonWarehouse[] }
+
+/** Extract a human-readable message from an unknown catch value. */
+function errMsg(e: unknown): string {
+  return e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e);
+}
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 // Statuses worth retrying (rate-limit, server overload)
@@ -86,10 +185,12 @@ export interface OzonProductInfo {
   price: number;
   old_price: number;
   min_price: number;
+  marketing_price: number;
   fbs: number;
   fbo: number;
   type_id: number;
   description_category_id: number;
+  vat?: string;
   weight?: number | null;
   weight_unit?: string;
   depth?: number | null;
@@ -123,7 +224,7 @@ export interface OzonChatMessage {
 const MD_IMAGE_RE = /^!\[([^\]]*)\]\((\S+)\)$/;
 const IMAGE_URL_RE = /\.(jpe?g|png|gif|webp|bmp)(\?|$)/i;
 
-function parseOzonMessageData(data: any[]): { text: string; attachments: { name: string; url: string }[] } {
+function parseOzonMessageData(data: unknown[]): { text: string; attachments: { name: string; url: string }[] } {
   const textLines: string[] = [];
   const attachments: { name: string; url: string }[] = [];
   for (const item of data) {
@@ -182,8 +283,8 @@ export async function ozonDiagnose(creds: Creds): Promise<OzonDiagResult[]> {
     });
     const b1 = await r1.text();
     results.push({ endpoint: '/v3/product/list', status: r1.status, ok: r1.ok, body: b1.slice(0, 300) });
-  } catch (e: any) {
-    results.push({ endpoint: '/v3/product/list', status: null, ok: false, body: '', error: e.message });
+  } catch (e: unknown) {
+    results.push({ endpoint: '/v3/product/list', status: null, ok: false, body: '', error: errMsg(e) });
   }
 
   // Test 2: product info list v3
@@ -195,8 +296,8 @@ export async function ozonDiagnose(creds: Creds): Promise<OzonDiagResult[]> {
     });
     const b2 = await r2.text();
     results.push({ endpoint: '/v3/product/info/list', status: r2.status, ok: r2.ok, body: b2.slice(0, 300) });
-  } catch (e: any) {
-    results.push({ endpoint: '/v3/product/info/list', status: null, ok: false, body: '', error: e.message });
+  } catch (e: unknown) {
+    results.push({ endpoint: '/v3/product/info/list', status: null, ok: false, body: '', error: errMsg(e) });
   }
 
   // Test 3: prices v5
@@ -208,8 +309,8 @@ export async function ozonDiagnose(creds: Creds): Promise<OzonDiagResult[]> {
     });
     const b3 = await r3.text();
     results.push({ endpoint: '/v5/product/info/prices', status: r3.status, ok: r3.ok, body: b3.slice(0, 300) });
-  } catch (e: any) {
-    results.push({ endpoint: '/v5/product/info/prices', status: null, ok: false, body: '', error: e.message });
+  } catch (e: unknown) {
+    results.push({ endpoint: '/v5/product/info/prices', status: null, ok: false, body: '', error: errMsg(e) });
   }
 
   // Test 4: stocks v4
@@ -221,8 +322,8 @@ export async function ozonDiagnose(creds: Creds): Promise<OzonDiagResult[]> {
     });
     const b4 = await r4.text();
     results.push({ endpoint: '/v4/product/info/stocks', status: r4.status, ok: r4.ok, body: b4.slice(0, 300) });
-  } catch (e: any) {
-    results.push({ endpoint: '/v4/product/info/stocks', status: null, ok: false, body: '', error: e.message });
+  } catch (e: unknown) {
+    results.push({ endpoint: '/v4/product/info/stocks', status: null, ok: false, body: '', error: errMsg(e) });
   }
 
   return results;
@@ -239,10 +340,10 @@ export const ozonApi = {
       if (page > 0) await sleep(300);
       const body: Record<string, unknown> = { filter: { visibility: 'ALL' }, limit: 1000 };
       if (lastId) body.last_id = lastId;
-      const resp = await ozonPost<any>('/v3/product/list', body, creds);
-      const batch: any[] = resp.result?.items || [];
+      const resp = await ozonPost<OzonProductListResp>('/v3/product/list', body, creds);
+      const batch: OzonProductListItem[] = resp.result?.items ?? [];
       items.push(...batch);
-      lastId = batch.length === 1000 ? (resp.result?.last_id || '') : '';
+      lastId = batch.length === 1000 ? (resp.result?.last_id ?? '') : '';
       page++;
     } while (lastId);
     return items;
@@ -320,16 +421,17 @@ export const ozonApi = {
           } catch (e) { debug.warn('[ozonApi] swallowed error', e); }
         }
         // v3 returns items at top level: { items: [...] }  (no "result" wrapper)
-        const items: any[] = resp.items || resp.result?.items || [];
+        const resp2 = resp as OzonInfoListResp;
+        const items: OzonInfoRawItem[] = resp2.items ?? resp2.result?.items ?? [];
         debug.log(`[Ozon] info/list chunk ${i}: ${items.length} items из ${chunk.length}`);
         for (const item of items) {
           // offer_id is in the item; fallback to pidToOfferId map
-          const offerId: string = item.offer_id || pidToOfferId.get(item.id) || '';
+          const offerId: string = item.offer_id || (item.id ? pidToOfferId.get(item.id) : undefined) || '';
           if (!offerId) continue;
 
           // v3: images are direct URL strings
-          const imgRaw: any[] = item.images || [];
-          const images = imgRaw.filter((img: any) => typeof img === 'string' && img).slice(0, 5);
+          const imgRaw: unknown[] = item.images ?? [];
+          const images = imgRaw.filter((img): img is string => typeof img === 'string' && !!img).slice(0, 5);
 
           // v3: barcodes is an array
           const barcode = Array.isArray(item.barcodes) ? (item.barcodes[0] || '') : (item.barcode || '');
@@ -342,7 +444,7 @@ export const ozonApi = {
             // Try to get moderation/state status
             let rawStatus = '';
             if (typeof item.status === 'string' && item.status) rawStatus = item.status.toLowerCase();
-            else if (item.status?.state)  rawStatus = String(item.status.state).toLowerCase();
+            else if (item.status && typeof item.status === 'object') rawStatus = String(item.status['state'] ?? '').toLowerCase();
             else if (typeof item.state === 'string' && item.state) rawStatus = item.state.toLowerCase();
 
             if (rawStatus === 'failed_moderation' || rawStatus === 'moderating' ||
@@ -384,10 +486,12 @@ export const ozonApi = {
             price: parseFloat(item.price || '0') || 0,
             old_price: parseFloat(item.old_price || '0') || 0,
             min_price: parseFloat(item.min_price || '0') || 0,
+            marketing_price: 0,
             fbs,
             fbo,
             type_id: item.type_id || 0,
             description_category_id: item.description_category_id || 0,
+            vat: item.vat != null ? String(item.vat) : undefined,
             weight: item.weight ?? item.package_weight ?? null,
             weight_unit: item.weight_unit || 'g',
             depth: item.depth ?? item.package_depth ?? item.dimensions?.depth ?? null,
@@ -432,18 +536,20 @@ export const ozonApi = {
       if (lastId) body.last_id = lastId;
       let resp: any;
       try {
-        resp = await ozonPost<any>('/v5/product/info/prices', body, creds);
-      } catch (e: any) {
-        console.error('[Ozon] overlayPrices /v5/product/info/prices error:', e?.message ?? e);
+        resp = await ozonPost<OzonPriceListResp>('/v5/product/info/prices', body, creds);
+      } catch (e: unknown) {
+        console.error('[Ozon] overlayPrices /v5/product/info/prices error:', errMsg(e));
         break;
       }
-      const items: any[] = resp.result?.items || [];
+      const items: OzonPriceItem[] = resp.result?.items ?? [];
       for (const item of items) {
         const entry = map.get(item.offer_id);
         if (entry) {
           entry.price = parseFloat(item.price?.price || item.selling_price || '0') || entry.price;
           entry.old_price = parseFloat(item.price?.old_price || '0') || entry.old_price;
           entry.min_price = parseFloat(item.price?.min_price || '0') || entry.min_price;
+          const mp = parseFloat(item.price?.marketing_price || '0');
+          if (mp > 0) entry.marketing_price = mp;
 
           // /v5 also returns visibility — use it to refine status
           // Only override if status is already "processed" or "disabled" (not archived/moderation)
@@ -475,19 +581,19 @@ export const ozonApi = {
       if (cursor) body.cursor = cursor;
       let resp: any;
       try {
-        resp = await ozonPost<any>('/v4/product/info/stocks', body, creds);
-      } catch (e: any) {
-        console.error('[Ozon] overlayStocks /v4/product/info/stocks error:', e?.message ?? e);
+        resp = await ozonPost<OzonStocksResp>('/v4/product/info/stocks', body, creds);
+      } catch (e: unknown) {
+        console.error('[Ozon] overlayStocks /v4/product/info/stocks error:', errMsg(e));
         break;
       }
       // API v4 returns {items, total, cursor} at top level
-      const items: any[] = resp.items ?? resp.result?.items ?? [];
+      const items: OzonStockItem[] = resp.items ?? resp.result?.items ?? [];
       for (const item of items) {
         const entry = map.get(item.offer_id);
         if (entry) {
-          const stocks: any[] = item.stocks || [];
-          const fbs = stocks.find((s: any) => s.type === 'fbs')?.present ?? entry.fbs;
-          const fbo = stocks.find((s: any) => s.type === 'fbo')?.present ?? entry.fbo;
+          const stocks: OzonStockEntry[] = item.stocks ?? [];
+          const fbs = stocks.find(s => s.type === 'fbs')?.present ?? entry.fbs;
+          const fbo = stocks.find(s => s.type === 'fbo')?.present ?? entry.fbo;
           entry.fbs = fbs;
           entry.fbo = fbo;
           const itemSku = item.sku || item.fbo_sku || item.fbs_sku || 0;
@@ -534,8 +640,8 @@ export const ozonApi = {
       const chunk = skus.slice(i, i + CHUNK);
       try {
         // v3/product/info/list принимает product_id, sku, или offer_id
-        const resp = await ozonPost<any>('/v3/product/info/list', { sku: chunk }, creds);
-        const items: any[] = resp?.items || resp?.result?.items || [];
+        const resp = await ozonPost<OzonInfoListResp>('/v3/product/info/list', { sku: chunk }, creds);
+        const items: OzonInfoRawItem[] = resp?.items ?? resp?.result?.items ?? [];
         for (const item of items) {
           const offerId: string = item.offer_id || '';
           if (!offerId) continue;
@@ -546,7 +652,7 @@ export const ozonApi = {
         }
         debug.log(`[Ozon] resolveSkus chunk ${i}: ${items.length} items resolved from ${chunk.length} SKUs`);
       } catch (e) {
-        console.warn(`[Ozon] resolveSkus chunk ${i}:`, (e as Error)?.message?.slice(0, 150));
+        console.warn(`[Ozon] resolveSkus chunk ${i}:`, errMsg(e).slice(0, 150));
       }
       if (i + CHUNK < skus.length) await sleep(1000);
     }
@@ -576,10 +682,10 @@ export const ozonApi = {
       let lastId = '';
       let page = 0;
       do {
-        const body: any = { filter: { offer_id: chunk, visibility: 'ALL' }, limit: Math.min(chunk.length, 1000) };
+        const body: Record<string, unknown> = { filter: { offer_id: chunk, visibility: 'ALL' }, limit: Math.min(chunk.length, 1000) };
         if (lastId) body.last_id = lastId;
-        const resp = await ozonPost<any>('/v5/product/info/prices', body, creds);
-        const items: any[] = resp.items || resp.result?.items || [];
+        const resp = await ozonPost<OzonPriceListResp>('/v5/product/info/prices', body, creds);
+        const items: OzonPriceItem[] = resp.items ?? resp.result?.items ?? [];
         for (const item of items) {
           const sellerPrice = parseFloat(item.price?.price || '0') || 0;
           // old_price — перечёркнутая цена на странице Ozon (база для визуальной скидки).
@@ -605,7 +711,7 @@ export const ozonApi = {
 
   // ── Check credentials ────────────────────────────────────────────────────
   checkToken: async (creds: Creds): Promise<void> => {
-    await ozonPost<any>('/v3/product/list', { filter: {}, limit: 1 }, creds);
+    await ozonPost<OzonProductListResp>('/v3/product/list', { filter: {}, limit: 1 }, creds);
   },
 
   // ── Update prices ─────────────────────────────────────────────────────────
@@ -617,13 +723,13 @@ export const ozonApi = {
     auto_action_enabled?: 'ENABLED' | 'DISABLED';
   }>): Promise<void> {
     for (let i = 0; i < prices.length; i += 100) {
-      const resp = await ozonPost<any>('/v1/product/import/prices', { prices: prices.slice(i, i + 100) }, creds);
-      const items: any[] = resp?.result ?? [];
-      const failed = items.filter((r: any) => r.updated === false && r.errors?.length);
+      const resp = await ozonPost<OzonImportPricesResp>('/v1/product/import/prices', { prices: prices.slice(i, i + 100) }, creds);
+      const items: OzonImportPriceResult[] = resp?.result ?? [];
+      const failed = items.filter(r => r.updated === false && r.errors?.length);
       if (failed.length) {
-        const details = failed.map((r: any) => {
-          const errs = (r.errors as any[]).map(e =>
-            e?.code ? `${e.code}${e.message ? ': ' + e.message : ''}` : JSON.stringify(e)
+        const details = failed.map(r => {
+          const errs = (r.errors ?? []).map(e =>
+            e?.code ? `${e.code}${(e instanceof Error ? e.message : String(e)) ? ': ' + (e instanceof Error ? e.message : String(e)) : ''}` : JSON.stringify(e)
           ).join(', ');
           return `${r.offer_id}: ${errs}`;
         }).join('; ');
@@ -635,8 +741,8 @@ export const ozonApi = {
 
   // ── Warehouses ────────────────────────────────────────────────────────────
   async getWarehouses(creds: Creds): Promise<OzonWarehouse[]> {
-    const resp = await ozonPost<any>('/v2/warehouse/list', {}, creds);
-    return resp.result || [];
+    const resp = await ozonPost<OzonWarehouseResp>('/v2/warehouse/list', {}, creds);
+    return resp.result ?? [];
   },
 
   // ── Archive / Unarchive ───────────────────────────────────────────────────
@@ -686,8 +792,8 @@ export const ozonApi = {
         attribute_type: 'ALL',
       };
       if (typeId && typeId > 0) body.type_id = typeId;
-      const resp = await ozonPost<any>('/v1/description-category/attribute', body, creds);
-      const items: any[] = resp.result || [];
+      const resp = await ozonPost<OzonCategoryAttrResp>('/v1/description-category/attribute', body, creds);
+      const items: OzonCategoryAttrItem[] = resp.result ?? [];
       for (const item of items) {
         if (item.id && item.name) map.set(item.id, item.name);
       }
@@ -725,10 +831,10 @@ export const ozonApi = {
     offerId: string,
     productId: number | null,
     creds: Creds,
-  ): Promise<any | null> {
+  ): Promise<OzonInfoRawItem | null> {
     const body = productId ? { product_id: [productId] } : { offer_id: [offerId] };
-    const resp = await ozonPost<any>('/v3/product/info/list', body, creds);
-    const items: any[] = resp.items || resp.result?.items || [];
+    const resp = await ozonPost<OzonInfoListResp>('/v3/product/info/list', body, creds);
+    const items: OzonInfoRawItem[] = resp.items ?? resp.result?.items ?? [];
     return items[0] ?? null;
   },
 
@@ -756,14 +862,13 @@ export const ozonApi = {
     item: Record<string, unknown>,
   ): Promise<void> {
     const payload = { ...item };
-    if (!Array.isArray(payload.attributes)) {
-      payload.attributes = [];
-    }
+    // Do NOT force attributes:[] — sending an empty array wipes all product attributes on Ozon.
+    // Attributes are only sent when explicitly provided (e.g. during full product creation).
     const resp = await ozonPost<any>('/v3/product/import', { items: [payload] }, creds);
     // import возвращает { result: { task_id } } — задача принята, ошибок нет
     const taskErrors: any[] = resp?.result?.errors ?? resp?.errors ?? [];
     if (taskErrors.length) {
-      throw new Error(taskErrors.map((e: any) => e.message ?? e.error ?? String(e)).join('; '));
+      throw new Error(taskErrors.map((e: any) => (e instanceof Error ? e.message : String(e)) ?? e.error ?? String(e)).join('; '));
     }
   },
 
@@ -773,7 +878,7 @@ export const ozonApi = {
       barcodes: [{ sku, barcode }],
     }, creds);
     const errors: any[] = resp?.errors ?? [];
-    if (errors.length) throw new Error(errors.map((e: any) => e.error ?? e.message ?? String(e)).join('; '));
+    if (errors.length) throw new Error(errors.map((e: any) => e.error ?? (e instanceof Error ? e.message : String(e)) ?? String(e)).join('; '));
   },
 
   // ── Reviews ──────────────────────────────────────────────────────────────
@@ -807,7 +912,7 @@ export const ozonApi = {
       if (lastId) body.last_id = lastId;
 
       const resp = await ozonPost<any>('/v1/review/list', body, creds).catch((err: any) => {
-        const msg = String(err?.message ?? '');
+        const msg = String((err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? '');
         if (msg.includes('subscription') || msg.includes('PermissionDenied') || msg.includes('403') || msg.includes('Forbidden') || msg.includes('not available')) {
           throw new Error('Ozon Review API: доступ запрещён сервером Ozon.\n\nПричины: 1) ваш тариф не включает API отзывов (нужен Premium Pro); 2) API-ключ создан ДО подключения тарифа — пересоздайте его в seller.ozon.ru → Настройки → API-ключи; 3) Premium ещё не активирован полностью (обычно до 24ч).\n\nТочный ответ Ozon: "not available with existing subscription".');
         }
@@ -983,8 +1088,8 @@ export const ozonApi = {
     try {
       const resp = await ozonGet<any>('/v1/actions', creds);
       actions = resp.result ?? resp.actions ?? [];
-    } catch (e: any) {
-      console.warn('[Ozon MRC] /v1/actions error:', e?.message);
+    } catch (e: unknown) {
+      console.warn('[Ozon MRC] /v1/actions error:', errMsg(e));
       return;
     }
     // Ozon отдаёт все акции; убираем товар из каждой (ошибки игнорируем — товар может не участвовать)
@@ -1013,13 +1118,13 @@ export async function fetchOzonStocks(
     if (cursor) body.cursor = cursor;
     let resp: any;
     try {
-      resp = await ozonPost<any>('/v4/product/info/stocks', body, creds);
+      resp = await ozonPost<OzonStocksResp>('/v4/product/info/stocks', body, creds);
     } catch (e) {
       console.error('[Ozon] fetchOzonStocks API error:', e);
       break;
     }
     // API v4 returns {items, total, cursor} at top level (not nested under result)
-    const items: any[] = resp.items ?? resp.result?.items ?? [];
+    const items: OzonStockItem[] = resp.items ?? resp.result?.items ?? [];
     for (const item of items) {
       const stocks: any[] = item.stocks || [];
       result.push({
@@ -1078,6 +1183,7 @@ export async function fetchAllOzonProducts(
       price: info.price,
       old_price: info.old_price,
       min_price: info.min_price,
+      marketing_price: info.marketing_price > 0 ? info.marketing_price : null,
       stock_fbs: info.fbs,
       stock_fbo: info.fbo,
       category: '',
@@ -1087,6 +1193,7 @@ export async function fetchAllOzonProducts(
       synced_at: now,
       type_id: info.type_id || 0,
       description_category_id: info.description_category_id || 0,
+      vat: info.vat ?? '',
       weight_kg: dims.weight_g != null ? +(dims.weight_g / 1000).toFixed(3) : null,
       length_cm: dims.length_mm != null ? +(dims.length_mm / 10).toFixed(1) : null,
       width_cm:  dims.width_mm  != null ? +(dims.width_mm  / 10).toFixed(1) : null,

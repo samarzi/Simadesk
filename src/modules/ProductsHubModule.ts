@@ -1,5 +1,7 @@
 import { esc } from '@/utils/format';
 import { I } from '@/utils/icons';
+import { showToast } from '@/utils/toast';
+import * as XLSX from 'xlsx';
 import { copyButton } from '@/utils/copyButton';
 import { ozonDb } from '@/services/ozonDb';
 import { wbDb } from '@/services/wbDb';
@@ -19,6 +21,7 @@ import type { Dimensions } from '@/services/dimensionsUnit';
 import { boxes } from '@/stores/appStore';
 import { RULE_LABELS } from '@/modules/repricer/types';
 import type { RepricerRule } from '@/modules/repricer/types';
+import { debug } from '@/utils/debug';
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -47,6 +50,11 @@ interface MpStoreEntry {
   delivery: number;          // negative
   services: number;          // negative or positive
   net_profit: number;
+  // Extra product fields (from DB, populated at load)
+  description: string;
+  vat: string;
+  barcode: string;
+  characteristics: Array<{ name: string; value: string }>;
 }
 
 interface BoxLink {
@@ -108,7 +116,7 @@ interface EditState {
   weight_kg: string; length_cm: string; width_cm: string; height_cm: string;
   photos: string[];
   priceLocked: boolean;
-  saving: boolean; saveError: string;
+  saving: boolean; saveError: string; saveOk: boolean;
   extraLoaded: boolean; extraLoading: boolean;
 }
 type PeriodDays = 7 | 30 | 90 | 180;
@@ -212,6 +220,11 @@ export class ProductsHubModule {
   private listEl: HTMLElement | null = null;
   private cardEl: HTMLElement | null = null;
   private period: PeriodDays = DEFAULT_PERIOD;
+  // ── Multi-select & hidden
+  private selectedArticles = new Set<string>();
+  private hiddenArticles: Set<string> = new Set();
+  private showHidden = false;
+  private showOnlySelected = false;
   // Сырые транзакции для возможности пересчёта без обращения к серверу при смене периода
   private rawTransactions: MpTransaction[] = [];
   private storeIdToMp: Map<string, Mp> = new Map();
@@ -243,6 +256,7 @@ export class ProductsHubModule {
   private dragSrcStoreId: string | null = null;
   // lockedByMp: article (lowercase) → Set of MPs where repricer is active
   private lockedByMp = new Map<string, Set<Mp>>();
+  private storeSyncedAt = new Map<string, string>(); // storeId → synced_at from Supabase
   // field def UUID → human-readable name
   private fieldDefNames = new Map<string, string>();
 
@@ -264,10 +278,16 @@ export class ProductsHubModule {
   constructor(private el: HTMLElement) {
     const saved = +(localStorage.getItem(PERIOD_KEY) ?? '0') as PeriodDays;
     if (PERIOD_OPTIONS.some(o => o.value === saved)) this.period = saved;
+    try {
+      const h = localStorage.getItem('ph_hidden_articles');
+      if (h) this.hiddenArticles = new Set(JSON.parse(h) as string[]);
+    } catch { /* ignore */ }
   }
 
   show(): void {
     this.el.style.display = 'flex';
+    // Restore selection bar if items are selected
+    this.updateSelectionBar();
     if (!this.listEl) {
       this.renderShell();
       this.load();
@@ -278,7 +298,12 @@ export class ProductsHubModule {
     }
   }
 
-  hide(): void { this.el.style.display = 'none'; }
+  hide(): void {
+    this.el.style.display = 'none';
+    // Hide the fixed selection bar when navigating away
+    const bar = this.el.querySelector<HTMLElement>('#ph-selection-bar');
+    if (bar) bar.style.display = 'none';
+  }
 
   // ─── Shell ──────────────────────────────────────────────────────
 
@@ -302,6 +327,9 @@ export class ProductsHubModule {
         </select>
 
         <span id="ph-count" class="ph-count"></span>
+        <button id="ph-import-btn" class="ph-hidden-tab-btn" title="Импортировать Excel-шаблон">${I.upload('', 14)} <span>Импорт</span></button>
+        <input  id="ph-import-input" type="file" accept=".xlsx" style="display:none">
+        <button id="ph-hidden-tab" class="ph-hidden-tab-btn" title="Скрытые товары">${I.eyeOff('', 14)} <span id="ph-hidden-tab-label">Скрытые</span></button>
         <button id="ph-help-btn" class="ph-iconbtn" title="Как пользоваться">${I.help('', 15)}</button>
         <button id="ph-reload"   class="ph-iconbtn" title="Обновить">${I.refresh('', 15)}</button>
       </div>
@@ -316,6 +344,20 @@ export class ProductsHubModule {
           </div>
         </div>
         <div id="ph-card" class="ph-card"></div>
+      </div>
+
+      <div id="ph-selection-bar" class="ph-selection-bar" style="display:none">
+        <span id="ph-sel-count" class="ph-sel-count">0 выбрано</span>
+        <div class="ph-sel-actions">
+          <button id="ph-sel-only"   class="ph-sel-btn"        title="Показать только выбранные">Только выбранные</button>
+          <button id="ph-sel-all"    class="ph-sel-btn"        title="Отметить все в списке">${I.check('', 14)} Отметить все</button>
+          <div class="ph-sel-divider"></div>
+          <button id="ph-sel-export" class="ph-sel-btn accent" title="Экспорт выбранных в Excel">${I.download('', 14)} Экспорт</button>
+          <button id="ph-sel-edit"   class="ph-sel-btn"        title="Редактировать выбранные">${I.edit('', 14)} Редактировать</button>
+          <div class="ph-sel-divider"></div>
+          <button id="ph-sel-hide"   class="ph-sel-btn warn"   title="Скрыть выбранные">${I.eyeOff('', 14)} Скрыть</button>
+          <button id="ph-sel-clear"  class="ph-sel-btn muted"  title="Снять выбор">✕</button>
+        </div>
       </div>
 
       <div id="ph-help" class="ph-help-bg" style="display:none">
@@ -396,7 +438,7 @@ export class ProductsHubModule {
       const t = e.target as HTMLInputElement;
       if (t.matches('[data-ph-field]')) {
         const st = this.editState.get(t.getAttribute('data-store-id')!);
-        if (st) (st as any)[t.getAttribute('data-ph-field')!] = t.value;
+        if (st) (st as unknown as Record<string, unknown>)[t.getAttribute('data-ph-field')!] = t.value;
       } else if (t.id === 'ph-photo-url-input') {
         this.photoAddUrlValue = t.value;
       }
@@ -413,8 +455,8 @@ export class ProductsHubModule {
         try {
           const url = await uploadPhoto(f, this.selectedArticle);
           st.photos.push(url);
-        } catch (err: any) {
-          st.saveError = err?.message ?? 'Ошибка загрузки фото';
+        } catch (err: unknown) {
+          st.saveError = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? 'Ошибка загрузки фото';
         }
       }
       t.value = '';
@@ -527,6 +569,35 @@ export class ProductsHubModule {
       }
       this.dragSrcIdx = null; this.dragSrcStoreId = null;
     });
+
+    // ── Selection bar
+    get('ph-sel-export').addEventListener('click', () => this.exportSelected());
+    get('ph-sel-edit').addEventListener('click', () => this.showBulkEditModal());
+    get('ph-sel-hide').addEventListener('click', () => this.hideSelected());
+    get('ph-sel-all').addEventListener('click', () => this.selectAll());
+    get('ph-sel-only').addEventListener('click', () => this.toggleShowOnlySelected());
+    get('ph-sel-clear').addEventListener('click', () => this.clearSelection());
+    get('ph-import-input').addEventListener('change', (e) => {
+      const f = (e.target as HTMLInputElement).files;
+      if (f?.length) this.importFromExcel(f);
+      (e.target as HTMLInputElement).value = '';
+    });
+    // ── Topbar import button
+    get('ph-import-btn').addEventListener('click', () => get('ph-import-input').click());
+
+    // ── Hidden tab toggle
+    get('ph-hidden-tab').addEventListener('click', () => {
+      this.showHidden = !this.showHidden;
+      const btn = get('ph-hidden-tab');
+      btn.classList.toggle('active', this.showHidden);
+      const label = get('ph-hidden-tab-label');
+      label.textContent = this.showHidden
+        ? `← Все товары`
+        : `Скрытые${this.hiddenArticles.size > 0 ? ` (${this.hiddenArticles.size})` : ''}`;
+      this.selectedArticles.clear();
+      this.applyFilters();
+      this.renderList(true);
+    });
   }
 
   // ─── Data loading ───────────────────────────────────────────────
@@ -614,6 +685,7 @@ export class ProductsHubModule {
         status: null, images: [], url: null,
         sales_qty: 0, sales_revenue: 0, returns_qty: 0,
         commission: 0, delivery: 0, services: 0, net_profit: 0,
+        description: '', vat: '', barcode: '', characteristics: [],
       });
 
       const ensure = (raw: string, name?: string, img?: string | null): HubProduct => {
@@ -660,6 +732,9 @@ export class ProductsHubModule {
         e.status = OZON_STATUS[op.status] ?? op.status ?? null;
         e.images = op.images ?? [];
         e.url = op.sku ? `https://www.ozon.ru/product/${op.sku}/` : null;
+        e.vat = op.vat ?? '';
+        e.description = op.description ?? '';
+        e.barcode = op.barcode ?? '';
         p.mp_entries.push(e);
         if (op.sku) ozSkuToArticle.set(String(op.sku), art);
 
@@ -692,6 +767,9 @@ export class ProductsHubModule {
         e.status = (wp.stock_total ?? 0) > 0 ? 'В продаже' : 'Нет в наличии';
         e.images = wp.pictures ?? [];
         e.url = wp.nm_id ? `https://www.wildberries.ru/catalog/${wp.nm_id}/detail.aspx` : null;
+        e.description = wp.description ?? '';
+        e.barcode = wp.barcode ?? '';
+        e.characteristics = wp.characteristics ?? [];
         p.mp_entries.push(e);
         if (wp.nm_id) wbNmToArticle.set(String(wp.nm_id), art);
 
@@ -718,6 +796,9 @@ export class ProductsHubModule {
         e.url = yp.market_model_id && yp.market_sku
           ? `https://market.yandex.ru/product/${yp.market_model_id}?sku=${yp.market_sku}`
           : (yp.market_sku ? `https://market.yandex.ru/search?text=${yp.market_sku}` : null);
+        e.description = yp.description ?? '';
+        e.vat = yp.vat ?? '';
+        e.barcode = yp.barcode ?? '';
         p.mp_entries.push(e);
         if (yp.market_sku) ymSkuToArticle.set(String(yp.market_sku), art);
         ymOfferIdToArticle.set(art.toLowerCase(), art);
@@ -792,9 +873,10 @@ export class ProductsHubModule {
       this.rawTransactions = transactions as MpTransaction[];
       this.hadTransactions = (transactions as MpTransaction[]).length > 0;
       this.storeIdToMp.clear();
-      for (const s of ozStores as any[]) this.storeIdToMp.set(s.id, 'ozon');
-      for (const s of wbStores as any[]) this.storeIdToMp.set(s.id, 'wb');
-      for (const s of ymStores as any[]) this.storeIdToMp.set(s.id, 'yandex');
+      this.storeSyncedAt.clear();
+      for (const s of ozStores as any[]) { this.storeIdToMp.set(s.id, 'ozon');   if (s.synced_at) this.storeSyncedAt.set(s.id, s.synced_at); }
+      for (const s of wbStores as any[]) { this.storeIdToMp.set(s.id, 'wb');     if (s.synced_at) this.storeSyncedAt.set(s.id, s.synced_at); }
+      for (const s of ymStores as any[]) { this.storeIdToMp.set(s.id, 'yandex'); if (s.synced_at) this.storeSyncedAt.set(s.id, s.synced_at); }
       this.skuMaps.ozon    = ozSkuToArticle;
       this.skuMaps.wb      = wbNmToArticle;
       this.skuMaps.ymSku   = ymSkuToArticle;
@@ -815,7 +897,7 @@ export class ProductsHubModule {
       if (!this.selectedArticle) this.setCardHint();
       else this.selectProduct(this.selectedArticle);
     } catch (e) {
-      console.warn('[ProductsHub] load failed', e);
+      debug.warn('[ProductsHub] load failed', e);
       if (items) items.innerHTML = `<div class="ph-list-empty">Ошибка загрузки</div>`;
     } finally {
       this.loading = false;
@@ -940,6 +1022,11 @@ export class ProductsHubModule {
   private applyFilters(): void {
     const { q, mp, no_cost, no_mp, no_repricer, status, stock, price_min, price_max } = this.filters;
     this.filtered = this.items.filter(p => {
+      // Hidden filter
+      if (!this.showHidden && this.hiddenArticles.has(p.article)) return false;
+      if (this.showHidden && !this.hiddenArticles.has(p.article)) return false;
+      // Show-only-selected filter
+      if (this.showOnlySelected && !this.selectedArticles.has(p.article)) return false;
       if (q && !p.article.toLowerCase().includes(q) && !p.name.toLowerCase().includes(q)) return false;
       if (mp && !p.mp_entries.some(e => e.mp === mp)) return false;
       if (no_cost     && p.has_cost)     return false;
@@ -953,13 +1040,14 @@ export class ProductsHubModule {
           : entries.some(e => e.status === status);
         if (!match) return false;
       }
-      // Stock filter
-      const totalStock = p.mp_entries.reduce((s, e) => s + (e.stock_total || 0), 0);
+      // Stock filter — respect active MP filter
+      const stockEntries = mp ? p.mp_entries.filter(e => e.mp === mp) : p.mp_entries;
+      const totalStock = stockEntries.reduce((s, e) => s + (e.stock_total || 0), 0);
       if (stock === 'zero' && totalStock > 0) return false;
       if (stock === 'pos'  && totalStock === 0) return false;
-      // Price filter: use min price across stores
+      // Price filter: use min price across stores (respect MP filter)
       if (price_min != null || price_max != null) {
-        const priced = p.mp_entries.filter(e => e.price != null);
+        const priced = (mp ? p.mp_entries.filter(e => e.mp === mp) : p.mp_entries).filter(e => e.price != null);
         if (!priced.length) return price_min == null; // no price → exclude if min set
         const minP = Math.min(...priced.map(e => e.price!));
         const maxP = Math.max(...priced.map(e => e.price!));
@@ -1022,10 +1110,13 @@ export class ProductsHubModule {
     const end   = Math.min(this.filtered.length, Math.ceil((this.listScrollTop + this.listContainerH) / ROW_H) + OVERSCAN);
     items.style.top = `${start * ROW_H}px`;
     items.innerHTML = this.filtered.slice(start, end).map(p => this.tplListItem(p)).join('');
+    this.updateSelectionBar();
   }
 
   private tplListItem(p: HubProduct): string {
-    const active = p.article === this.selectedArticle;
+    const active  = p.article === this.selectedArticle;
+    const checked = this.selectedArticles.has(p.article);
+    const safeArt = esc(p.article).replace(/'/g, '&#39;');
     const thumb = p.image_url
       ? `<img class="ph-row-thumb" src="${esc(p.image_url)}" loading="lazy" onerror="this.style.display='none'">`
       : `<div class="ph-row-thumb placeholder">${I.image('', 16)}</div>`;
@@ -1039,8 +1130,11 @@ export class ProductsHubModule {
     if (!p.has_mp)       dots.push('<span class="ph-warn-dot mp"       title="Нет на маркетплейсах"></span>');
     if (!p.has_repricer) dots.push('<span class="ph-warn-dot repricer" title="Нет правил репрайсера"></span>');
     return `
-      <div class="ph-row${active ? ' active' : ''}" style="height:${ROW_H}px"
-        onclick="window.productsHubModule?.selectProduct('${esc(p.article).replace(/'/g, '&#39;')}')">
+      <div class="ph-row${active ? ' active' : ''}${checked ? ' checked' : ''}" style="height:${ROW_H}px"
+        onclick="window.productsHubModule?.selectProduct('${safeArt}')">
+        <div class="ph-checkbox-wrap" onclick="event.stopPropagation();window.productsHubModule?.toggleCheck('${safeArt}')">
+          <div class="ph-checkbox${checked ? ' on' : ''}"></div>
+        </div>
         ${thumb}
         <div class="ph-row-main">
           <div class="ph-row-line">
@@ -1322,11 +1416,28 @@ export class ProductsHubModule {
         ).join('')}</div>`
       : '';
 
+    // Extra product info per store (description, barcode, vat, commission)
+    const extraRows = p.mp_entries.map(e => {
+      const items: string[] = [];
+      if (e.description) items.push(`<span class="ph-extra-key">Описание:</span> <span class="ph-extra-val">${esc(e.description.slice(0, 120))}${e.description.length > 120 ? '…' : ''}</span>`);
+      if (e.barcode)     items.push(`<span class="ph-extra-key">Штрихкод:</span> <span class="ph-extra-val">${esc(e.barcode)}</span>`);
+      if (e.vat)         items.push(`<span class="ph-extra-key">НДС:</span> <span class="ph-extra-val">${esc(e.vat === '0' || e.vat === 'NO_VAT' ? 'Без НДС' : e.vat === '0.1' || e.vat === 'VAT_10' ? '10%' : e.vat === '0.2' || e.vat === 'VAT_20' ? '20%' : e.vat)}</span>`);
+      const commPct = e.sales_revenue > 0 ? Math.abs(e.commission) / e.sales_revenue * 100 : null;
+      if (commPct != null) items.push(`<span class="ph-extra-key">Комиссия МП:</span> <span class="ph-extra-val">${commPct.toFixed(1)}%</span>`);
+      if (!items.length) return '';
+      const mpLabel = e.mp === 'ozon' ? 'OZ' : e.mp === 'wb' ? 'WB' : 'ЯМ';
+      return `<div class="ph-extra-row"><span class="cmp-mp-badge cmp-mp-badge--${e.mp}" style="font-size:10px;padding:1px 5px">${mpLabel}</span><span class="ph-extra-store">${esc(e.store_name)}</span><div class="ph-extra-items">${items.join('')}</div></div>`;
+    }).filter(Boolean);
+
     return `
       <div class="ph-section">
         <div class="ph-section-head">${I.store('', 12)} Магазины и цены</div>
         ${stores}
       </div>
+      ${extraRows.length ? `<div class="ph-section">
+        <div class="ph-section-head">${I.info('', 12)} Данные товара по магазинам</div>
+        <div class="ph-extra-list">${extraRows.join('')}</div>
+      </div>` : ''}
       <div class="ph-section">
         <div class="ph-section-head">${I.scale('', 12)} Габариты</div>
         ${dimsHtml}
@@ -1528,10 +1639,12 @@ export class ProductsHubModule {
         const store = this.ozStores.find((s: any) => s.id === entry.store_id);
         const prod  = this.ozProds.find((x: any) => x.store_id === entry.store_id && String(x.offer_id ?? '').trim().toLowerCase() === art);
         if (!store || !prod) continue;
-        const cached = this.extraDataCache.get(`${entry.store_id}:${p.article}`);
+        // vat pre-loaded from DB; description still needs API call (not synced to DB)
         this.editState.set(entry.store_id, {
           mp: 'ozon',
-          name: prod.name ?? '', brand: '', barcode: prod.barcode ?? '', description: '', vat: cached?.vat ?? '0',
+          name: prod.name ?? '', brand: '', barcode: prod.barcode ?? '',
+          description: entry.description,
+          vat: entry.vat || prod.vat || '0',
           price: prod.price != null ? String(prod.price) : '',
           old_price: prod.old_price ? String(prod.old_price) : '',
           min_price: prod.min_price ? String(prod.min_price) : '',
@@ -1541,37 +1654,43 @@ export class ProductsHubModule {
           width_cm:  prod.width_cm  ? String(prod.width_cm)  : (p.width_cm  ? String(p.width_cm)  : ''),
           height_cm: prod.height_cm ? String(prod.height_cm) : (p.height_cm ? String(p.height_cm) : ''),
           photos: [...(prod.images ?? [])],
-          priceLocked: locked, saving: false, saveError: '',
-          extraLoaded: !!cached, extraLoading: false,
+          priceLocked: locked, saving: false, saveError: '', saveOk: false,
+          extraLoaded: false, extraLoading: false, // description still fetched on-demand
         });
       } else if (entry.mp === 'wb') {
         const store = this.wbStores.find((s: any) => s.id === entry.store_id);
         const prod  = this.wbProds.find((x: any) => x.store_id === entry.store_id &&
           String(x.vendor_code ?? x.nm_id ?? '').trim().toLowerCase() === art);
         if (!store || !prod) continue;
-        const cached = this.extraDataCache.get(`${entry.store_id}:${p.article}`);
+        // description, barcode pre-loaded from DB
         this.editState.set(entry.store_id, {
           mp: 'wb',
-          name: prod.title ?? '', brand: prod.brand ?? '', barcode: '', description: cached?.description ?? '', vat: '',
-          price: prod.price != null ? String(prod.price) : '',  // базовая цена до скидки (WB API ждёт именно её)
+          name: prod.title ?? '', brand: prod.brand ?? '',
+          barcode: entry.barcode || prod.barcode || '',
+          description: entry.description || prod.description || '',
+          vat: '',
+          price: prod.price != null ? String(prod.price) : '',
           old_price: '', min_price: '',
           discount: prod.discount != null ? String(prod.discount) : '',
           weight_kg: prod.weight_kg ? String(prod.weight_kg) : (p.weight_kg ? String(p.weight_kg) : ''),
           length_cm: prod.length_cm ? String(prod.length_cm) : '', width_cm: prod.width_cm ? String(prod.width_cm) : '',
           height_cm: prod.height_cm ? String(prod.height_cm) : '',
           photos: [...(prod.pictures ?? [])],
-          priceLocked: locked, saving: false, saveError: '',
-          extraLoaded: !!cached, extraLoading: false,
+          priceLocked: locked, saving: false, saveError: '', saveOk: false,
+          extraLoaded: true, extraLoading: false, // description from DB — no API call needed
         });
       } else if (entry.mp === 'yandex') {
         const store = this.ymStores.find((s: any) => s.id === entry.store_id);
         const prod  = this.ymProds.find((x: any) => x.store_id === entry.store_id &&
           String(x.offer_id ?? x.vendor_code ?? '').trim().toLowerCase() === art);
         if (!store || !prod) continue;
-        const cached = this.extraDataCache.get(`${entry.store_id}:${p.article}`);
+        // description, vat, barcode pre-loaded from DB
         this.editState.set(entry.store_id, {
           mp: 'yandex',
-          name: prod.name ?? '', brand: prod.vendor ?? '', barcode: '', description: cached?.description ?? '', vat: '',
+          name: prod.name ?? '', brand: prod.vendor ?? '',
+          barcode: entry.barcode || prod.barcode || '',
+          description: entry.description || prod.description || '',
+          vat: entry.vat || prod.vat || '',
           price: prod.basic_price != null ? String(prod.basic_price) : '',
           old_price: '', min_price: '',
           discount: '',
@@ -1579,8 +1698,8 @@ export class ProductsHubModule {
           length_cm: prod.length_cm ? String(prod.length_cm) : '', width_cm: prod.width_cm ? String(prod.width_cm) : '',
           height_cm: prod.height_cm ? String(prod.height_cm) : '',
           photos: [...(prod.pictures ?? [])],
-          priceLocked: locked, saving: false, saveError: '',
-          extraLoaded: !!cached, extraLoading: false,
+          priceLocked: locked, saving: false, saveError: '', saveOk: false,
+          extraLoaded: true, extraLoading: false, // all extra data from DB
         });
       }
     }
@@ -1591,10 +1710,9 @@ export class ProductsHubModule {
     if (!st) return `<div class="cmp-edit-section"><div class="ph-empty">Магазин не найден — сначала синхронизируйте данные</div></div>`;
     const mp = entry.mp;
     const mpLabel = mp === 'ozon' ? 'OZ' : mp === 'wb' ? 'WB' : 'ЯМ';
-    const showBrand = mp === 'wb' || mp === 'yandex';
-    const showBarcode = mp === 'ozon';
-    const showVat = mp === 'ozon';
-    const showDescription = mp === 'wb' || mp === 'yandex';
+    const roIcon = `<span class="cmp-field-ro" title="Нельзя редактировать через API">${I.alertTriangle('', 12)}</span>`;
+    const vatOzonOpts = [['0','Без НДС'],['0.1','10%'],['0.2','20%']];
+    const vatYmOpts   = [['NO_VAT','Без НДС'],['VAT_10','10%'],['VAT_20','20%']];
     return `
     <div class="cmp-edit-section">
       <div class="cmp-edit-head">
@@ -1604,16 +1722,26 @@ export class ProductsHubModule {
       <div class="cmp-edit-grid">
         <label class="cmp-edit-field cmp-edit-field--wide"><span class="cmp-edit-label">Название</span>
           <input type="text" class="cmp-edit-input" data-ph-field="name" data-store-id="${entry.store_id}" value="${esc(st.name)}" placeholder="—"></label>
-        ${showBrand ? `<label class="cmp-edit-field"><span class="cmp-edit-label">Бренд</span>
+
+        ${mp === 'wb' || mp === 'yandex' ? `<label class="cmp-edit-field"><span class="cmp-edit-label">Бренд</span>
           <input type="text" class="cmp-edit-input" data-ph-field="brand" data-store-id="${entry.store_id}" value="${esc(st.brand)}" placeholder="—"></label>` : ''}
-        ${showBarcode ? `<label class="cmp-edit-field"><span class="cmp-edit-label">Штрихкод</span>
+        ${mp === 'ozon' ? `<div class="cmp-edit-field"><span class="cmp-edit-label">Бренд ${roIcon}</span>
+          <div class="cmp-edit-ro">${esc(st.brand) || '—'}</div></div>` : ''}
+
+        ${mp === 'ozon' || mp === 'yandex' ? `<label class="cmp-edit-field"><span class="cmp-edit-label">Штрихкод</span>
           <input type="text" class="cmp-edit-input" data-ph-field="barcode" data-store-id="${entry.store_id}" value="${esc(st.barcode)}" placeholder="—"></label>` : ''}
-        ${showVat ? `<label class="cmp-edit-field"><span class="cmp-edit-label">НДС</span>
-          <select class="cmp-edit-input" data-ph-field="vat" data-store-id="${entry.store_id}" ${st.extraLoading ? 'disabled' : ''}>
-            <option value="0" ${st.vat === '0' ? 'selected' : ''}>Без НДС</option>
-            <option value="0.1" ${st.vat === '0.1' ? 'selected' : ''}>10%</option>
-            <option value="0.2" ${st.vat === '0.2' ? 'selected' : ''}>20%</option>
+        ${mp === 'wb' ? `<div class="cmp-edit-field"><span class="cmp-edit-label">Штрихкод ${roIcon}</span>
+          <div class="cmp-edit-ro">${esc(st.barcode) || '—'}</div></div>` : ''}
+
+        ${mp === 'ozon' ? `<label class="cmp-edit-field"><span class="cmp-edit-label">НДС</span>
+          <select class="cmp-edit-input" data-ph-field="vat" data-store-id="${entry.store_id}">
+            ${vatOzonOpts.map(([v,l]) => `<option value="${v}" ${st.vat === v ? 'selected' : ''}>${l}</option>`).join('')}
           </select></label>` : ''}
+        ${mp === 'yandex' ? `<label class="cmp-edit-field"><span class="cmp-edit-label">НДС</span>
+          <select class="cmp-edit-input" data-ph-field="vat" data-store-id="${entry.store_id}">
+            ${vatYmOpts.map(([v,l]) => `<option value="${v}" ${st.vat === v ? 'selected' : ''}>${l}</option>`).join('')}
+          </select></label>` : ''}
+
         <label class="cmp-edit-field"><span class="cmp-edit-label">Цена (₽)${st.priceLocked ? ` <span class="cmp-lock-tag" title="Репрайсер">${I.lock('', 12)}</span>` : ''}${mp === 'yandex' ? ` <span class="cmp-field-note" title="Устанавливается на уровне бизнеса — одинакова для всех кампаний">бизнес-уровень</span>` : ''}</span>
           <input type="number" class="cmp-edit-input${st.priceLocked ? ' cmp-edit-input--locked' : ''}"
             data-ph-field="price" data-store-id="${entry.store_id}"
@@ -1625,6 +1753,7 @@ export class ProductsHubModule {
           <input type="number" class="cmp-edit-input" data-ph-field="min_price" data-store-id="${entry.store_id}" value="${esc(st.min_price)}" placeholder="—"></label>` : ''}
         ${mp === 'wb' ? `<label class="cmp-edit-field"><span class="cmp-edit-label">Скидка (%)</span>
           <input type="number" min="0" max="99" class="cmp-edit-input" data-ph-field="discount" data-store-id="${entry.store_id}" value="${esc(st.discount)}" placeholder="0"></label>` : ''}
+
         <label class="cmp-edit-field"><span class="cmp-edit-label">Вес (кг)</span>
           <input type="number" step="0.001" class="cmp-edit-input" data-ph-field="weight_kg" data-store-id="${entry.store_id}" value="${esc(st.weight_kg)}" placeholder="0.000"></label>
         <label class="cmp-edit-field"><span class="cmp-edit-label">Длина (см)</span>
@@ -1633,10 +1762,16 @@ export class ProductsHubModule {
           <input type="number" step="0.1" class="cmp-edit-input" data-ph-field="width_cm" data-store-id="${entry.store_id}" value="${esc(st.width_cm)}" placeholder="0.0"></label>
         <label class="cmp-edit-field"><span class="cmp-edit-label">Высота (см)</span>
           <input type="number" step="0.1" class="cmp-edit-input" data-ph-field="height_cm" data-store-id="${entry.store_id}" value="${esc(st.height_cm)}" placeholder="0.0"></label>
-        ${showDescription ? `<label class="cmp-edit-field cmp-edit-field--wide"><span class="cmp-edit-label">Описание${st.extraLoading ? ' <span class="cmp-spinner-sm"></span>' : ''}</span>
-          <textarea class="cmp-edit-input cmp-edit-textarea" data-ph-field="description" data-store-id="${entry.store_id}" rows="4" ${st.extraLoading ? 'disabled' : ''} placeholder="—">${esc(st.description)}</textarea></label>` : ''}
+
+        <label class="cmp-edit-field cmp-edit-field--wide"><span class="cmp-edit-label">Описание${st.extraLoading ? ' <span class="cmp-spinner-sm"></span>' : ''}</span>
+          <textarea class="cmp-edit-input cmp-edit-textarea" data-ph-field="description" data-store-id="${entry.store_id}" rows="4" ${st.extraLoading ? 'disabled' : ''} placeholder="—">${esc(st.description)}</textarea></label>
+
+        ${mp === 'wb' && entry.characteristics?.length ? `<div class="cmp-edit-field cmp-edit-field--wide">
+          <span class="cmp-edit-label">Характеристики ${roIcon}</span>
+          <div class="cmp-edit-chars">${entry.characteristics.map(ch => `<span class="cmp-char-item"><b>${esc(ch.name)}:</b> ${esc(ch.value)}</span>`).join('')}</div>
+        </div>` : ''}
       </div>
-      ${st.saveError ? `<div class="cmp-edit-error">${esc(st.saveError)}</div>` : ''}
+      ${st.saveOk ? `<div class="cmp-edit-ok">✓ Сохранено</div>` : st.saveError ? `<div class="cmp-edit-error${st.saveError.startsWith('✓') ? ' cmp-edit-pending' : ''}">${esc(st.saveError)}</div>` : ''}
       <div class="cmp-edit-foot">
         <button class="cmp-btn cmp-btn-primary${st.saving ? ' loading' : ''}"
           data-ph-action="save-card" data-store-id="${entry.store_id}" data-mp="${mp}" ${st.saving ? 'disabled' : ''}>
@@ -2024,8 +2159,8 @@ export class ProductsHubModule {
         if (s) await syncYmStore(s);
       }
       await this.load();
-    } catch (e: any) {
-      this.syncErr.set(storeId, e?.message?.slice(0, 60) ?? 'Ошибка');
+    } catch (e: unknown) {
+      this.syncErr.set(storeId, (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e))?.slice(0, 60) ?? 'Ошибка');
     } finally {
       this.syncing.set(storeId, false);
       this.updateSyncBarInCard();
@@ -2044,9 +2179,8 @@ export class ProductsHubModule {
   private async doSaveCard(article: string, storeId: string, mp: 'ozon' | 'wb' | 'yandex'): Promise<void> {
     const st = this.editState.get(storeId);
     if (!st) return;
-    st.saving = true; st.saveError = '';
+    st.saving = true; st.saveError = ''; st.saveOk = false;
     this.refreshEditTab();
-
     try {
       // Use null for empty fields — 0 would overwrite real marketplace data with zero.
       const dims: Dimensions = {
@@ -2081,7 +2215,8 @@ export class ProductsHubModule {
         if (typeId > 0) item.type_id = typeId;
         if (catId  > 0) item.description_category_id = catId;
         if (st.name) item.name = st.name;
-        if (st.extraLoaded && st.vat) item.vat = st.vat;
+        if (st.vat) item.vat = st.vat;
+        if (st.extraLoaded && st.description) item.description = st.description;
         await ozonApi.updateProduct(creds, item);
         if (st.barcode && st.barcode !== (prod.barcode ?? '') && prod.sku) {
           await ozonApi.updateBarcode(creds, prod.sku, st.barcode);
@@ -2115,7 +2250,7 @@ export class ProductsHubModule {
         const wbCardUpdate: Parameters<typeof wbApi.updateCard>[2] = {
           title: st.name || undefined,
           brand: st.brand || undefined,
-          description: st.extraLoaded ? st.description : undefined,
+          description: st.description || undefined,
         };
         if (wb.length != null || wb.width != null || wb.height != null) {
           wbCardUpdate.dimensions = {
@@ -2169,7 +2304,9 @@ export class ProductsHubModule {
         }
         if (st.name) offer.name = st.name;
         if (st.brand) offer.vendor = st.brand;
-        if (st.extraLoaded) offer.description = st.description;
+        if (st.description) offer.description = st.description;
+        if (st.barcode) offer.barcodes = [st.barcode];
+        if (st.vat) offer.tax = { vatType: st.vat };
         await yandexApi.updateOffer(store.api_key, store.business_id!, offer);
         // YM price is set at business level — all campaigns in the business share it.
         if (!st.priceLocked && st.price && store.business_id) {
@@ -2204,8 +2341,14 @@ export class ProductsHubModule {
         const extra = mp === 'ozon' ? { vat: st.vat } : { description: st.description };
         this.extraDataCache.set(ck, { ...this.extraDataCache.get(ck), ...extra });
       }
-    } catch (e: any) {
-      st.saveError = e?.message ?? 'Ошибка сохранения';
+      st.saveOk = true;
+      // Ozon processes imports asynchronously — changes appear on the marketplace in a few minutes.
+      if (mp === 'ozon') {
+        st.saveError = '✓ Принято — изменения появятся на Ozon через несколько минут';
+        st.saveOk = false;
+      }
+    } catch (e: unknown) {
+      st.saveError = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка сохранения';
     } finally {
       st.saving = false;
       this.refreshEditTab();
@@ -2270,8 +2413,8 @@ export class ProductsHubModule {
       if (pendingLocal.length > 0) {
         st.saveError = `${pendingLocal.length} фото не удалось загрузить — попробуйте ещё раз`;
       }
-    } catch (e: any) {
-      st.saveError = e?.message ?? 'Ошибка сохранения фото';
+    } catch (e: unknown) {
+      st.saveError = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка сохранения фото';
     } finally {
       st.saving = false;
       this.refreshPhotosTab2();
@@ -2289,47 +2432,20 @@ export class ProductsHubModule {
       if (!st || st.extraLoaded || st.extraLoading) continue;
 
       if (entry.mp === 'ozon') {
+        // vat already from DB; only description requires API call
         const store = this.ozStores.find((s: any) => s.id === entry.store_id);
         const prod  = this.ozProds.find((x: any) => x.store_id === entry.store_id && String(x.offer_id ?? '').trim().toLowerCase() === art.toLowerCase());
         if (!store || !prod) continue;
         st.extraLoading = true;
         const creds = { client_id: store.client_id, api_key: store.api_key };
-        const ck = `${entry.store_id}:${art}`;
         pending.push((async () => {
           try {
-            const info = await ozonApi.getFullProductInfo(art, prod.product_id ?? null, creds);
-            st.vat = info?.vat ?? '0';
-            this.extraDataCache.set(ck, { ...this.extraDataCache.get(ck), vat: st.vat });
+            const desc = await ozonApi.getProductDescription(art, prod.product_id ?? null, creds);
+            st.description = desc ?? '';
           } catch { /* leave default */ }
           finally { st.extraLoaded = true; st.extraLoading = false; }
         })());
-      } else if (entry.mp === 'wb') {
-        const store = this.wbStores.find((s: any) => s.id === entry.store_id);
-        const prod  = this.wbProds.find((x: any) => x.store_id === entry.store_id && String(x.vendor_code ?? x.nm_id ?? '').trim().toLowerCase() === art.toLowerCase());
-        if (!store || !prod?.nm_id) continue;
-        st.extraLoading = true;
-        const ck = `${entry.store_id}:${art}`;
-        pending.push((async () => {
-          try {
-            const details = await wbApi.getCardDetails(store.api_key, prod.nm_id!);
-            st.description = details?.description ?? '';
-            this.extraDataCache.set(ck, { ...this.extraDataCache.get(ck), description: st.description });
-          } catch { /* leave default */ }
-          finally { st.extraLoaded = true; st.extraLoading = false; }
-        })());
-      } else if (entry.mp === 'yandex') {
-        const store = this.ymStores.find((s: any) => s.id === entry.store_id);
-        if (!store?.business_id) continue;
-        st.extraLoading = true;
-        const ck = `${entry.store_id}:${art}`;
-        pending.push((async () => {
-          try {
-            const offer = await yandexApi.getOfferMapping(store.api_key, store.business_id!, art);
-            st.description = offer?.description ?? '';
-            this.extraDataCache.set(ck, { ...this.extraDataCache.get(ck), description: st.description });
-          } catch { /* leave default */ }
-          finally { st.extraLoaded = true; st.extraLoading = false; }
-        })());
+        // WB and Yandex: extraLoaded=true set in initEditState; guard above skips them
       }
     }
 
@@ -2348,5 +2464,592 @@ export class ProductsHubModule {
   private hideHelp(): void {
     const h = this.el.querySelector<HTMLElement>('#ph-help');
     if (h) h.style.display = 'none';
+  }
+
+  // ─── Multi-select ───────────────────────────────────────────────
+
+  toggleCheck(article: string): void {
+    if (this.selectedArticles.has(article)) {
+      this.selectedArticles.delete(article);
+    } else {
+      this.selectedArticles.add(article);
+    }
+    this.renderListItems();
+  }
+
+  selectAll(): void {
+    for (const p of this.filtered) this.selectedArticles.add(p.article);
+    this.renderListItems();
+  }
+
+  clearSelection(): void {
+    this.selectedArticles.clear();
+    this.showOnlySelected = false;
+    this.applyFilters();
+    this.renderListItems();
+  }
+
+  private updateSelectionBar(): void {
+    const bar = this.el.querySelector<HTMLElement>('#ph-selection-bar');
+    const cnt = this.el.querySelector<HTMLElement>('#ph-sel-count');
+    if (!bar) return;
+    const n = this.selectedArticles.size;
+    bar.style.display = n > 0 ? 'flex' : 'none';
+    if (cnt) cnt.textContent = `${n} выбрано`;
+    const hideBtn = this.el.querySelector<HTMLElement>('#ph-sel-hide');
+    if (hideBtn) {
+      hideBtn.innerHTML = this.showHidden
+        ? `${I.eye('', 14)} Вернуть`
+        : `${I.eyeOff('', 14)} Скрыть`;
+    }
+    const onlyBtn = this.el.querySelector<HTMLElement>('#ph-sel-only');
+    if (onlyBtn) {
+      onlyBtn.classList.toggle('active', this.showOnlySelected);
+      onlyBtn.title = this.showOnlySelected ? 'Показать все товары' : 'Показать только выбранные';
+    }
+  }
+
+  private toggleShowOnlySelected(): void {
+    this.showOnlySelected = !this.showOnlySelected;
+    this.applyFilters();
+    this.renderList();
+    this.updateSelectionBar();
+  }
+
+  // ─── Hide / unhide ──────────────────────────────────────────────
+
+  private saveHiddenToStorage(): void {
+    try { localStorage.setItem('ph_hidden_articles', JSON.stringify([...this.hiddenArticles])); } catch {}
+  }
+
+  private hideSelected(): void {
+    if (this.showHidden) {
+      // Restore
+      for (const a of this.selectedArticles) this.hiddenArticles.delete(a);
+      showToast(`Возвращено: ${this.selectedArticles.size}`, 'success');
+    } else {
+      for (const a of this.selectedArticles) this.hiddenArticles.add(a);
+      showToast(`Скрыто: ${this.selectedArticles.size}`, 'success');
+    }
+    this.saveHiddenToStorage();
+    this.selectedArticles.clear();
+    this.updateHiddenTabLabel();
+    this.applyFilters();
+    this.renderList(true);
+  }
+
+  private updateHiddenTabLabel(): void {
+    const label = this.el.querySelector<HTMLElement>('#ph-hidden-tab-label');
+    if (!label) return;
+    label.textContent = this.showHidden
+      ? `← Все товары`
+      : `Скрытые${this.hiddenArticles.size > 0 ? ` (${this.hiddenArticles.size})` : ''}`;
+  }
+
+  // ─── Export to Excel ────────────────────────────────────────────
+
+  // helpers for raw-product lookup by article
+  private rawOzProd(article: string): any { return this.ozProds.find((p: any) => String(p.offer_id ?? '').trim() === article); }
+  private rawWbProd(article: string): any { return this.wbProds.find((p: any) => String(p.vendor_code ?? '').trim() === article); }
+  private rawYmProd(article: string): any { return this.ymProds.find((p: any) => String(p.offer_id ?? p.vendor_code ?? '').trim() === article); }
+
+  private exportSelected(): void {
+    const products = this.selectedArticles.size > 0
+      ? this.items.filter(p => this.selectedArticles.has(p.article))
+      : this.filtered;
+    if (!products.length) { showToast('Нет товаров для экспорта', 'error'); return; }
+
+    try {
+      const cfLabelSet = new Map<string, string>();
+      for (const p of products) for (const cf of p.custom_fields) cfLabelSet.set(cf.id, cf.label);
+      const cfIds = [...cfLabelSet.keys()];
+
+      const header = [
+        'Артикул', 'Название', 'Бренд', 'Категория', 'Штрихкод',
+        'Себестоимость',
+        'Вес кг', 'Длина см', 'Ширина см', 'Высота см',
+        'Цена ВБ', 'Ст.цена ВБ', 'Остаток ВБ', 'Статус ВБ',
+        'Описание ВБ', 'Фото ВБ',
+        'Цена Озон', 'Ст.цена Озон', 'Остаток Озон', 'Статус Озон',
+        'Описание Озон', 'Фото Озон',
+        'Цена Яндекс', 'Ст.цена Яндекс', 'Остаток Яндекс', 'Статус Яндекс',
+        'Описание Яндекс', 'Фото Яндекс',
+        'Поставщик', 'Артикул поставщика',
+        ...cfIds.map(id => cfLabelSet.get(id)!),
+      ];
+
+      const mpCols = (mp: Mp, raw: any) => {
+        const entries = products[0].mp_entries; // placeholder — per-product below
+        void entries;
+        return (p: HubProduct) => {
+          const ents = p.mp_entries.filter(e => e.mp === mp);
+          const price  = ents[0]?.price ?? '';
+          const old    = ents[0]?.old_price ?? '';
+          const stock  = ents.reduce((s, e) => s + e.stock_total, 0);
+          const status = ents[0]?.status ?? '';
+          const r = mp === 'ozon'   ? this.rawOzProd(p.article)
+                  : mp === 'wb'     ? this.rawWbProd(p.article)
+                  :                   this.rawYmProd(p.article);
+          void raw;
+          const desc   = r?.description ?? '';
+          const photos = ((r?.images ?? r?.pictures ?? []) as string[]).join(', ');
+          return [price, old, stock || '', status, desc, photos];
+        };
+      };
+      const wbCols  = mpCols('wb',     null);
+      const ozCols  = mpCols('ozon',   null);
+      const ymCols  = mpCols('yandex', null);
+
+      const rows = products.map(p => {
+        const cfVals = cfIds.map(id => p.custom_fields.find(c => c.id === id)?.value ?? '');
+        return [
+          p.article, p.name, p.brand ?? '', p.category ?? '', p.barcode ?? '',
+          p.cost_price ?? '',
+          p.weight_kg ?? '', p.length_cm ?? '', p.width_cm ?? '', p.height_cm ?? '',
+          ...wbCols(p),
+          ...ozCols(p),
+          ...ymCols(p),
+          p.supplier?.producer?.name ?? '',
+          p.supplier?.product?.articles?.[0] ?? '',
+          ...cfVals,
+        ];
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+      ws['!cols'] = header.map((h, i) => ({
+        wch: Math.min(60, Math.max(h.length, ...rows.map(r => String(r[i] ?? '').length)) + 2),
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Товары');
+      XLSX.writeFile(wb, `товары_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      showToast(`Экспортировано: ${products.length} товаров`, 'success');
+    } catch (e: unknown) {
+      showToast(`Ошибка экспорта: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e}`, 'error');
+    }
+  }
+
+  // ─── Import from Excel ──────────────────────────────────────────
+
+  /** Известные имена колонки «Артикул» — ищем любое из них. */
+  private static readonly ARTICLE_ALIASES = [
+    'Артикул', 'артикул', 'Article', 'article', 'SKU', 'sku',
+    'Vendor Code', 'VendorCode', 'vendor_code', 'offer_id', 'OfferId',
+  ];
+
+  private async importFromExcel(files: FileList): Promise<void> {
+    try {
+      const buf = await files[0].arrayBuffer();
+      const wb  = XLSX.read(buf, { type: 'array' });
+      const ws  = wb.Sheets[wb.SheetNames[0]];
+
+      // Читаем как массив строк чтобы найти заголовки
+      const raw = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' }) as any[][];
+      if (raw.length < 2) { showToast('Файл пустой или не содержит данных', 'error'); return; }
+
+      // Определяем строку с заголовками (первая непустая строка)
+      const headerRow = raw[0].map((v: any) => String(v ?? '').trim());
+
+      // Ищем колонку «Артикул» (по любому из псевдонимов)
+      const articleColIdx = headerRow.findIndex(h =>
+        ProductsHubModule.ARTICLE_ALIASES.some(a => a.toLowerCase() === h.toLowerCase())
+      );
+      if (articleColIdx < 0) {
+        showToast(
+          `Не найдена колонка «Артикул» в файле. Обнаруженные колонки: ${headerRow.slice(0,8).join(', ')}`,
+          'error',
+        );
+        return;
+      }
+
+      // Проверка на соответствие шаблону SimaDesk
+      const knownCols = [
+        'Артикул', 'Название', 'Бренд', 'Категория', 'Штрихкод', 'Себестоимость',
+        'Вес кг', 'Цена ВБ', 'Цена Озон', 'Цена Яндекс',
+      ];
+      const matchedKnown = knownCols.filter(k => headerRow.some(h => h === k));
+      if (matchedKnown.length < 2) {
+        showToast(
+          `Файл не соответствует шаблону SimaDesk. Найдены колонки: ${headerRow.slice(0,6).join(', ')}. Используй экспорт из раздела «Товары».`,
+          'error',
+        );
+        return;
+      }
+
+      // Строим индекс col name → index
+      const colIdx = new Map<string, number>();
+      headerRow.forEach((h, i) => colIdx.set(h, i));
+
+      const col  = (row: any[], key: string) => String(row[colIdx.get(key) ?? -1] ?? '').trim();
+      const numC = (row: any[], key: string) => { const v = parseFloat(col(row, key).replace(',','.')); return isNaN(v) ? null : v; };
+      const strC = (row: any[], key: string) => { const v = col(row, key); return v || null; };
+
+      const dataRows = raw.slice(1).filter(r => r.some((c: any) => c !== '' && c != null));
+      if (!dataRows.length) { showToast('В файле нет строк с данными', 'error'); return; }
+
+      let updated = 0;
+      let skipped = 0;
+      const notFound: string[] = [];
+      const syncTasks: Array<() => Promise<void>> = [];
+
+      for (const row of dataRows) {
+        const article = String(row[articleColIdx] ?? '').trim();
+        if (!article) { skipped++; continue; }
+
+        const p = this.items.find(x => x.article === article);
+        if (!p) { notFound.push(article); continue; }
+
+        // Себестоимость
+        const cost = numC(row, 'Себестоимость');
+        if (cost !== null && cost !== p.cost_price) {
+          try { costPriceDb.set(article, cost); } catch {}
+          p.cost_price = cost; p.has_cost = true;
+        }
+
+        // Общие поля
+        const newName   = strC(row, 'Название');
+        const newBrand  = strC(row, 'Бренд');
+        const newBarcode = strC(row, 'Штрихкод');
+        if (newName)    p.name    = newName;
+        if (newBrand)   p.brand   = newBrand;
+        if (newBarcode) p.barcode = newBarcode;
+
+        // Габариты
+        const wkg = numC(row, 'Вес кг');
+        const lcm = numC(row, 'Длина см');
+        const wcm = numC(row, 'Ширина см');
+        const hcm = numC(row, 'Высота см');
+        if (wkg !== null) p.weight_kg = wkg;
+        if (lcm !== null) p.length_cm = lcm;
+        if (wcm !== null) p.width_cm  = wcm;
+        if (hcm !== null) p.height_cm = hcm;
+
+        // Цены + описания → синхронизируем с МП
+        const patchMp = (mp: Mp, priceKey: string, descKey: string) => {
+          const entry = p.mp_entries.find(e => e.mp === mp);
+          if (!entry) return;
+          const stores: any[] = mp === 'ozon' ? this.ozStores : mp === 'wb' ? this.wbStores : this.ymStores;
+          const store = stores.find((s: any) => s.name === entry.store_name);
+          if (!store) return;
+          const storeId: string = store.id;
+          const st = this.editState.get(storeId);
+          if (!st) return;
+          let dirty = false;
+          const np = numC(row, priceKey);
+          if (np !== null && String(np) !== st.price) { st.price = String(np); entry.price = np; dirty = true; }
+          const nd = strC(row, descKey);
+          if (nd && nd !== st.description) { st.description = nd; dirty = true; }
+          if (newName   && newName   !== st.name)  { st.name  = newName;   dirty = true; }
+          if (newBrand  && newBrand  !== st.brand) { st.brand = newBrand;  dirty = true; }
+          if (wkg !== null) { st.weight_kg = String(wkg); dirty = true; }
+          if (lcm !== null) { st.length_cm = String(lcm); dirty = true; }
+          if (wcm !== null) { st.width_cm  = String(wcm); dirty = true; }
+          if (hcm !== null) { st.height_cm = String(hcm); dirty = true; }
+          if (dirty) {
+            this.editState.set(storeId, st);
+            syncTasks.push(() => this.doSaveCard(article, storeId, mp).catch(() => {}));
+          }
+        };
+        patchMp('wb',     'Цена ВБ',     'Описание ВБ');
+        patchMp('ozon',   'Цена Озон',   'Описание Озон');
+        patchMp('yandex', 'Цена Яндекс', 'Описание Яндекс');
+
+        // Кастомные поля
+        for (const cf of p.custom_fields) {
+          const val = strC(row, cf.label);
+          if (val !== null && val !== String(cf.value ?? '')) {
+            try { customColumnsDb.setValue(article, cf.id, val); } catch {}
+            cf.value = val;
+          }
+        }
+        updated++;
+      }
+
+      this.applyFilters();
+      this.renderList();
+      if (this.selectedArticle) {
+        const pp = this.items.find(x => x.article === this.selectedArticle);
+        if (pp) this.renderCard(pp);
+      }
+
+      const parts = [`Обновлено: ${updated}`];
+      if (notFound.length) parts.push(`не найдено: ${notFound.slice(0, 3).join(', ')}${notFound.length > 3 ? ` +${notFound.length-3}` : ''}`);
+      if (skipped)         parts.push(`пропущено пустых: ${skipped}`);
+      showToast(parts.join(' · '), 'success');
+
+      if (syncTasks.length) {
+        showToast(`Синхронизируем с маркетплейсами (${syncTasks.length} запросов)…`, 'info');
+        for (const t of syncTasks) await t();
+        showToast('Синхронизация завершена', 'success');
+      }
+    } catch (e: unknown) {
+      showToast(`Ошибка импорта: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e}`, 'error');
+    }
+  }
+
+  // ─── Bulk edit modal ────────────────────────────────────────────
+
+  private showBulkEditModal(): void {
+    const products = this.selectedArticles.size > 0
+      ? this.items.filter(p => this.selectedArticles.has(p.article))
+      : [];
+    if (!products.length) { showToast('Выбери хотя бы один товар', 'info'); return; }
+
+    const existing = this.el.querySelector('#ph-bulk-modal-bg');
+    if (existing) existing.remove();
+
+    const cfLabelSet = new Map<string, string>();
+    for (const p of products) for (const cf of p.custom_fields) cfLabelSet.set(cf.id, cf.label);
+    const cfIds = [...cfLabelSet.keys()];
+
+    const priceOf = (p: HubProduct, mp: Mp) => String(p.mp_entries.find(x => x.mp === mp)?.price ?? '');
+    const descOf  = (p: HubProduct, mp: Mp) => {
+      const r = mp === 'ozon' ? this.rawOzProd(p.article) : mp === 'wb' ? this.rawWbProd(p.article) : this.rawYmProd(p.article);
+      return r?.description ?? '';
+    };
+    const photosOf = (p: HubProduct, mp: Mp) => {
+      const e = p.mp_entries.find(x => x.mp === mp);
+      return e?.images ?? [];
+    };
+
+    const thead = `<tr>
+      <th>Артикул</th>
+      <th>Название</th><th>Бренд</th><th>Штрихкод</th><th>Себестоимость</th>
+      <th>Вес кг</th><th>Длина</th><th>Ширина</th><th>Высота</th>
+      <th>Цена ВБ</th><th>Описание ВБ</th><th>Фото ВБ</th>
+      <th>Цена Озон</th><th>Описание Озон</th><th>Фото Озон</th>
+      <th>Цена Яндекс</th><th>Описание Яндекс</th><th>Фото Яндекс</th>
+      ${cfIds.map(id => `<th>${esc(cfLabelSet.get(id)!)}</th>`).join('')}
+    </tr>`;
+
+    const inp = (article: string, field: string, value: string, type = 'text', wide = false) =>
+      `<input class="ph-bulk-input${wide ? ' wide' : ''}" ${type !== 'text' ? `type="${type}"` : ''} data-article="${esc(article)}" data-field="${esc(field)}" value="${esc(value)}" />`;
+
+    const photoCell = (p: HubProduct, mp: Mp) => {
+      const photos = photosOf(p, mp);
+      const thumbs = photos.slice(0, 3).map(u => `<img src="${esc(u)}" class="ph-bulk-thumb" onerror="this.style.display='none'">`).join('');
+      const extra  = photos.length > 3 ? `<span class="ph-bulk-photo-more">+${photos.length - 3}</span>` : '';
+      return `<td class="ph-bulk-photo-cell">
+        ${thumbs}${extra}
+        <button class="ph-bulk-photo-btn" onclick="window.productsHubModule?.selectProduct('${esc(p.article).replace(/'/g,'&#39;')}');document.getElementById('ph-bulk-modal-bg')?.remove()">Изменить</button>
+      </td>`;
+    };
+
+    const tableRows = products.map(p => {
+      const cfCells = cfIds.map(id =>
+        `<td>${inp(p.article, `cf:${id}`, String(p.custom_fields.find(c => c.id === id)?.value ?? ''))}</td>`
+      ).join('');
+      return `<tr>
+        <td class="ph-bulk-art">${esc(p.article)}</td>
+        <td>${inp(p.article, 'name',       p.name,              'text', true)}</td>
+        <td>${inp(p.article, 'brand',      p.brand ?? '')}</td>
+        <td>${inp(p.article, 'barcode',    p.barcode ?? '')}</td>
+        <td>${inp(p.article, 'cost',       String(p.cost_price ?? ''), 'number')}</td>
+        <td>${inp(p.article, 'weight_kg',  String(p.weight_kg ?? ''),  'number')}</td>
+        <td>${inp(p.article, 'length_cm',  String(p.length_cm ?? ''),  'number')}</td>
+        <td>${inp(p.article, 'width_cm',   String(p.width_cm ?? ''),   'number')}</td>
+        <td>${inp(p.article, 'height_cm',  String(p.height_cm ?? ''),  'number')}</td>
+        <td>${inp(p.article, 'price:wb',   priceOf(p,'wb'),   'number')}</td>
+        <td>${inp(p.article, 'desc:wb',    descOf(p,'wb'),    'text', true)}</td>
+        ${photoCell(p, 'wb')}
+        <td>${inp(p.article, 'price:ozon', priceOf(p,'ozon'), 'number')}</td>
+        <td>${inp(p.article, 'desc:ozon',  descOf(p,'ozon'),  'text', true)}</td>
+        ${photoCell(p, 'ozon')}
+        <td>${inp(p.article, 'price:yandex', priceOf(p,'yandex'), 'number')}</td>
+        <td>${inp(p.article, 'desc:yandex',  descOf(p,'yandex'),  'text', true)}</td>
+        ${photoCell(p, 'yandex')}
+        ${cfCells}
+      </tr>`;
+    }).join('');
+
+    const modal = document.createElement('div');
+    modal.id = 'ph-bulk-modal-bg';
+    modal.className = 'ph-bulk-modal-bg';
+    modal.innerHTML = `
+      <div class="ph-bulk-modal">
+        <div class="ph-bulk-modal-head">
+          <span>Редактировать: ${products.length} товаров</span>
+          <button class="ph-bulk-close" id="ph-bulk-close">✕</button>
+        </div>
+        <div class="ph-bulk-table-wrap">
+          <table class="ph-bulk-table"><thead>${thead}</thead><tbody>${tableRows}</tbody></table>
+        </div>
+        <div class="ph-bulk-modal-foot">
+          <span class="ph-bulk-note">Цены и описания синхронизируются с маркетплейсами. Фото — через карточку товара.</span>
+          <button class="ph-action secondary" id="ph-bulk-cancel">Отмена</button>
+          <button class="ph-action primary" id="ph-bulk-save">Сохранить и синхронизировать</button>
+        </div>
+      </div>`;
+    this.el.appendChild(modal);
+
+    const close = () => modal.remove();
+    modal.querySelector('#ph-bulk-close')?.addEventListener('click', close);
+    modal.querySelector('#ph-bulk-cancel')?.addEventListener('click', close);
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+
+    modal.querySelector('#ph-bulk-save')?.addEventListener('click', async () => {
+      const saveBtn = modal.querySelector<HTMLButtonElement>('#ph-bulk-save')!;
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Сохраняем…';
+
+      const inputs = modal.querySelectorAll<HTMLInputElement>('.ph-bulk-input');
+      const changes: Record<string, Record<string, string>> = {};
+      for (const inp2 of inputs) {
+        const art = inp2.dataset.article!;
+        const field = inp2.dataset.field!;
+        if (!changes[art]) changes[art] = {};
+        changes[art][field] = inp2.value.trim();
+      }
+
+      let saved = 0;
+      const syncTasks: Array<() => Promise<void>> = [];
+
+      for (const [article, fields] of Object.entries(changes)) {
+        const p = this.items.find(x => x.article === article);
+        if (!p) continue;
+
+        const n = (k: string) => { const v = parseFloat(fields[k]?.replace(',','.')); return isNaN(v) ? null : v; };
+
+        if (fields.name)     p.name    = fields.name;
+        if (fields.brand)    p.brand   = fields.brand;
+        if (fields.barcode)  p.barcode = fields.barcode;
+        if (n('cost') !== null) { try { costPriceDb.set(article, n('cost')!); } catch {} p.cost_price = n('cost'); p.has_cost = true; }
+        if (n('weight_kg') !== null) p.weight_kg = n('weight_kg');
+        if (n('length_cm') !== null) p.length_cm = n('length_cm');
+        if (n('width_cm')  !== null) p.width_cm  = n('width_cm');
+        if (n('height_cm') !== null) p.height_cm = n('height_cm');
+
+        // Sync price + description per MP
+        for (const mp of ['wb','ozon','yandex'] as Mp[]) {
+          const entry = p.mp_entries.find(e => e.mp === mp);
+          if (!entry) continue;
+          const stores: any[] = mp === 'ozon' ? this.ozStores : mp === 'wb' ? this.wbStores : this.ymStores;
+          const store = stores.find((s: any) => s.name === entry.store_name);
+          if (!store) continue;
+          const storeId: string = store.id;
+          let st = this.editState.get(storeId);
+          if (!st) continue;
+          let dirty = false;
+          const np = n(`price:${mp}`);
+          if (np !== null && String(np) !== st.price) { st.price = String(np); entry.price = np; dirty = true; }
+          const desc = fields[`desc:${mp}`];
+          if (desc !== undefined && desc !== st.description) { st.description = desc; dirty = true; }
+          if (fields.name && fields.name !== st.name) { st.name = fields.name; dirty = true; }
+          if (fields.brand && fields.brand !== st.brand) { st.brand = fields.brand; dirty = true; }
+          if (n('weight_kg') !== null) { st.weight_kg = String(n('weight_kg')!); dirty = true; }
+          if (n('length_cm') !== null) { st.length_cm = String(n('length_cm')!); dirty = true; }
+          if (n('width_cm')  !== null) { st.width_cm  = String(n('width_cm')!);  dirty = true; }
+          if (n('height_cm') !== null) { st.height_cm = String(n('height_cm')!); dirty = true; }
+          if (dirty) {
+            this.editState.set(storeId, st);
+            syncTasks.push(() => this.doSaveCard(article, storeId, mp).catch(() => {}));
+          }
+        }
+
+        for (const [field, val] of Object.entries(fields)) {
+          if (!field.startsWith('cf:')) continue;
+          const cfId = field.slice(3);
+          try { customColumnsDb.setValue(article, cfId, val); } catch {}
+          const cf = p.custom_fields.find(c => c.id === cfId);
+          if (cf) cf.value = val;
+        }
+        saved++;
+      }
+
+      for (const t of syncTasks) await t();
+
+      close();
+      this.applyFilters();
+      this.renderList();
+      if (this.selectedArticle) {
+        const pp = this.items.find(x => x.article === this.selectedArticle);
+        if (pp) this.renderCard(pp);
+      }
+      showToast(`Сохранено: ${saved} товаров${syncTasks.length ? `, синхронизировано с МП` : ''}`, 'success');
+    });
+  }
+
+  // ─── Public AI methods (called from aiPageCapabilities) ─────────────────────
+
+  /** Returns a compact text summary of selected (or all) products for SIMA context. */
+  getAiSelectedContext(): string {
+    const selected = this.selectedArticles.size > 0
+      ? this.items.filter(p => this.selectedArticles.has(p.article))
+      : [];
+    if (!selected.length) return '';
+    const MP_NAMES: Record<string, string> = { wb: 'ВБ', ozon: 'Озон', yandex: 'Яндекс' };
+    return selected.map(p => {
+      const prices = p.mp_entries
+        .filter(e => e.price != null)
+        .map(e => `${MP_NAMES[e.mp] ?? e.mp} ${e.price}₽ (${e.store_name})`)
+        .join(', ');
+      const stocks = p.mp_entries
+        .filter(e => e.stock_total > 0)
+        .map(e => `${MP_NAMES[e.mp] ?? e.mp} ${e.stock_total}шт`)
+        .join(', ');
+      return `• ${p.article} «${p.name}»${prices ? ' | цена: ' + prices : ' | цена: не указана'}${stocks ? ' | остаток: ' + stocks : ''}`;
+    }).join('\n');
+  }
+
+  /** Set price for a specific article on a specific marketplace. Called by SIMA. */
+  async aiSetPrice(a: { article: string; mp: string; price: number; store?: string }): Promise<string> {
+    const { article, mp, price, store: storeName } = a;
+    const p = this.items.find(x => x.article.toLowerCase() === article.toLowerCase()
+      || x.article.toLowerCase().includes(article.toLowerCase()));
+    if (!p) throw new Error(`Товар с артикулом «${article}» не найден`);
+    const normMp = mp.toLowerCase().replace('яндекс', 'yandex').replace('wildberries', 'wb').replace('вб', 'wb').replace('озон', 'ozon');
+    const entries = p.mp_entries.filter(e => e.mp === normMp);
+    if (!entries.length) throw new Error(`Товар «${p.article}» не представлен на маркетплейсе ${mp}`);
+    if (entries.length > 1 && !storeName) {
+      const names = entries.map(e => e.store_name).join(', ');
+      throw new Error(`Товар «${p.article}» есть в нескольких магазинах: ${names}. Уточни в каком именно.`);
+    }
+    const entry = storeName
+      ? entries.find(e => e.store_name.toLowerCase().includes(storeName.toLowerCase())) ?? entries[0]
+      : entries[0];
+    if (!this.editState.has(entry.store_id)) this.initEditState(p);
+    const st = this.editState.get(entry.store_id);
+    if (!st) throw new Error('Не удалось получить данные магазина');
+    const oldPrice = entry.price;
+    st.price = String(price);
+    this.editState.set(entry.store_id, st);
+    entry.price = price;
+    await this.doSaveCard(p.article, entry.store_id, normMp as any);
+    this.renderList();
+    if (this.selectedArticle === p.article) this.renderCard(p);
+    return `Цена на «${p.article}» в ${entry.store_name} (${mp}) изменена: ${oldPrice ?? '?'}₽ → ${price}₽`;
+  }
+
+  /** Apply price delta (absolute or %) to selected (or specified) articles on a marketplace. Called by SIMA. */
+  async aiApplyPriceDelta(a: { mp: string; delta: number; percent?: boolean; articles?: string[] }): Promise<string> {
+    const { delta, percent, articles: artList } = a;
+    const normMp = a.mp.toLowerCase().replace('яндекс', 'yandex').replace('wildberries', 'wb').replace('вб', 'wb').replace('озон', 'ozon');
+    const targets = artList?.length
+      ? this.items.filter(p => artList.some(a2 => p.article.toLowerCase().includes(a2.toLowerCase())))
+      : this.selectedArticles.size > 0
+        ? this.items.filter(p => this.selectedArticles.has(p.article))
+        : [];
+    if (!targets.length) throw new Error('Нет выбранных товаров. Выдели товары в списке или передай список артикулов.');
+    let changed = 0;
+    const syncTasks: Array<() => Promise<void>> = [];
+    for (const p of targets) {
+      const entries = p.mp_entries.filter(e => e.mp === normMp && e.price != null);
+      for (const entry of entries) {
+        if (!this.editState.has(entry.store_id)) this.initEditState(p);
+        const st = this.editState.get(entry.store_id);
+        if (!st) continue;
+        const newPrice = percent
+          ? Math.round(entry.price! * (1 + delta / 100))
+          : Math.round(entry.price! + delta);
+        if (newPrice <= 0) continue;
+        st.price = String(newPrice);
+        entry.price = newPrice;
+        this.editState.set(entry.store_id, st);
+        syncTasks.push(() => this.doSaveCard(p.article, entry.store_id, normMp as any).catch(() => {}));
+        changed++;
+      }
+    }
+    for (const t of syncTasks) await t();
+    this.renderList();
+    return `Изменено цен: ${changed} в ${targets.length} товарах на ${a.mp}. Дельта: ${percent ? delta + '%' : delta + '₽'}`;
   }
 }

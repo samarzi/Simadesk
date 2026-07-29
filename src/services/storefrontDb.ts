@@ -15,6 +15,8 @@ export interface StorefrontSettings {
   show_price_filter: boolean;
   show_brand_filter: boolean;
   show_category_filter: boolean;
+  show_stock: boolean;
+  hide_out_of_stock: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -26,6 +28,21 @@ export interface StorefrontGroup {
   cover_url: string;
   sort_order: number;
   vendor_codes?: string[];
+  created_at?: string;
+}
+
+export interface StorefrontVariantItem {
+  vendor_code: string;
+  label: string;
+  color: string;
+  sort_order: number;
+}
+
+export interface StorefrontVariantGroup {
+  id: string;
+  company_id?: string;
+  sort_order: number;
+  items: StorefrontVariantItem[];
   created_at?: string;
 }
 
@@ -47,6 +64,8 @@ export interface StorefrontProduct {
   sort_order: number;
   ozon_sku: number | null;
   yandex_market_model_id: number | null;
+  stock: number;
+  custom_title?: string;
 }
 
 export interface StorefrontBanner {
@@ -87,13 +106,13 @@ export const storefrontDb = {
   async getProducts(companyId: string): Promise<StorefrontProduct[]> {
     const [wb, ozon, yandex] = await Promise.allSettled([
       dbFetch<any[]>(
-        `wb_stores?company_id=eq.${companyId}&select=id,wb_products(nm_id,title,pictures,price,discount,vendor_code,brand,subject)`,
+        `wb_stores?company_id=eq.${companyId}&select=id,wb_products(nm_id,title,pictures,price,discount,vendor_code,brand,subject,stock_total)`,
       ),
       dbFetch<any[]>(
-        `ozon_stores?company_id=eq.${companyId}&select=id,ozon_products(product_id,sku,name,images,price,old_price,offer_id,category)`,
+        `ozon_stores?company_id=eq.${companyId}&select=id,ozon_products(product_id,sku,name,images,price,old_price,offer_id,category,stock_fbs,stock_fbo)`,
       ),
       dbFetch<any[]>(
-        `yandex_stores?company_id=eq.${companyId}&select=id,yandex_products(market_sku,market_model_id,name,pictures,basic_price,vendor_code,vendor,archived,category_name)`,
+        `yandex_stores?company_id=eq.${companyId}&select=id,yandex_products(market_sku,market_model_id,name,pictures,basic_price,offer_id,vendor_code,vendor,archived,category_name,stock_total,stock_available)`,
       ),
     ]);
 
@@ -121,6 +140,7 @@ export const storefrontDb = {
             sort_order: 0,
             ozon_sku: null,
             yandex_market_model_id: null,
+            stock: p.stock_total ?? 0,
           });
         }
       }
@@ -149,6 +169,7 @@ export const storefrontDb = {
             sort_order: 0,
             ozon_sku: p.sku ? Number(p.sku) : null,
             yandex_market_model_id: null,
+            stock: (p.stock_fbs ?? 0) + (p.stock_fbo ?? 0),
           });
         }
       }
@@ -168,7 +189,7 @@ export const storefrontDb = {
             price: p.basic_price,
             original_price: p.basic_price,
             discount: 0,
-            vendor_code: p.vendor_code ?? '',
+            vendor_code: (p.vendor_code && p.vendor_code.trim()) || p.offer_id || '',
             brand: p.vendor ?? '',
             category: p.category_name ?? '',
             is_hidden: false,
@@ -177,6 +198,7 @@ export const storefrontDb = {
             sort_order: 0,
             ozon_sku: null,
             yandex_market_model_id: p.market_model_id ? Number(p.market_model_id) : null,
+            stock: p.stock_available ?? p.stock_total ?? 0,
           });
         }
       }
@@ -185,9 +207,9 @@ export const storefrontDb = {
     return products;
   },
 
-  async getOverrides(companyId: string): Promise<Map<string, { is_hidden: boolean; custom_url: string; sort_order: number; custom_price: number | null }>> {
+  async getOverrides(companyId: string): Promise<Map<string, { is_hidden: boolean; custom_url: string; sort_order: number; custom_price: number | null; custom_title: string }>> {
     const rows = await dbFetch<any[]>(
-      `storefront_product_overrides?company_id=eq.${companyId}&select=source,source_id,is_hidden,custom_url,sort_order,custom_price`,
+      `storefront_product_overrides?company_id=eq.${companyId}&select=source,source_id,is_hidden,custom_url,sort_order,custom_price,custom_title`,
     );
     const map = new Map<string, any>();
     for (const r of (rows ?? [])) {
@@ -200,12 +222,45 @@ export const storefrontDb = {
     companyId: string,
     source: string,
     sourceId: string,
-    data: { is_hidden?: boolean; custom_url?: string; sort_order?: number; custom_price?: number | null },
+    data: { is_hidden?: boolean; custom_url?: string; sort_order?: number; custom_price?: number | null; custom_title?: string },
   ): Promise<void> {
     await dbFetch('storefront_product_overrides', {
       method: 'POST',
       body: JSON.stringify({ company_id: companyId, source, source_id: sourceId, ...data }),
     }, { 'Prefer': 'resolution=merge-duplicates,return=minimal' });
+  },
+
+  async uploadGroupImage(file: File, companyId: string): Promise<string> {
+    return storefrontDb._uploadStorageFile(file, `${companyId}/groups/${Date.now()}`);
+  },
+
+  async uploadLogoImage(file: File, companyId: string): Promise<string> {
+    return storefrontDb._uploadStorageFile(file, `${companyId}/logo`);
+  },
+
+  async _uploadStorageFile(file: File, pathNoExt: string): Promise<string> {
+    const { authService } = await import('./authService');
+    const token = authService.getAccessToken();
+    const apiUrl = import.meta.env.VITE_API_URL as string;
+    const apiKey = import.meta.env.VITE_API_KEY as string;
+    const rawExt = (file.name.split('.').pop() ?? 'jpg').toLowerCase().replace(/[^a-z]/g, '');
+    const safeExt = ['jpg','jpeg','png','webp','gif'].includes(rawExt) ? rawExt : 'jpg';
+    const path = `${pathNoExt}.${safeExt}`;
+    const res = await fetch(`${apiUrl}/storage/v1/object/storefront-banners/${path}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token ?? apiKey}`,
+        'apikey': apiKey,
+        'Content-Type': file.type || 'image/jpeg',
+        'x-upsert': 'true',
+      },
+      body: file,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as { message?: string }).message || `Upload failed: ${res.status}`);
+    }
+    return `${apiUrl}/storage/v1/object/public/storefront-banners/${path}`;
   },
 
   // ── Banners ────────────────────────────────────────────────────────────────
@@ -359,6 +414,54 @@ export const storefrontDb = {
     const map = new Map<string, string>(); // vendor_code → group_id
     for (const r of (rows ?? [])) map.set(r.vendor_code, r.group_id);
     return map;
+  },
+
+  // ── Variant Groups ────────────────────────────────────────────────────────
+
+  async getVariantGroups(companyId: string): Promise<StorefrontVariantGroup[]> {
+    const groups = await dbFetch<StorefrontVariantGroup[]>(
+      `storefront_variant_groups?company_id=eq.${companyId}&order=sort_order.asc,created_at.asc`,
+    );
+    if (!groups?.length) return [];
+    const ids = groups.map(g => g.id);
+    const items = await dbFetch<(StorefrontVariantItem & { variant_group_id: string })[]>(
+      `storefront_variant_items?variant_group_id=in.(${ids.join(',')})&order=sort_order.asc`,
+    );
+    const byGroup = new Map<string, StorefrontVariantItem[]>();
+    for (const it of (items ?? [])) {
+      if (!byGroup.has(it.variant_group_id)) byGroup.set(it.variant_group_id, []);
+      byGroup.get(it.variant_group_id)!.push(it);
+    }
+    return groups.map(g => ({ ...g, items: byGroup.get(g.id) ?? [] }));
+  },
+
+  async addVariantGroup(companyId: string, items: StorefrontVariantItem[], sortOrder = 0): Promise<string> {
+    const rows = await dbFetch<{ id: string }[]>('storefront_variant_groups', {
+      method: 'POST',
+      body: JSON.stringify({ company_id: companyId, sort_order: sortOrder }),
+    }, { 'Prefer': 'return=representation' });
+    const gid = rows[0].id;
+    if (items.length) {
+      await dbFetch('storefront_variant_items', {
+        method: 'POST',
+        body: JSON.stringify(items.map((it, i) => ({ variant_group_id: gid, vendor_code: it.vendor_code, label: it.label, color: it.color, sort_order: i }))),
+      }, { 'Prefer': 'return=minimal' });
+    }
+    return gid;
+  },
+
+  async updateVariantGroup(groupId: string, items: StorefrontVariantItem[]): Promise<void> {
+    await dbFetch(`storefront_variant_items?variant_group_id=eq.${groupId}`, { method: 'DELETE' });
+    if (items.length) {
+      await dbFetch('storefront_variant_items', {
+        method: 'POST',
+        body: JSON.stringify(items.map((it, i) => ({ variant_group_id: groupId, vendor_code: it.vendor_code, label: it.label, color: it.color, sort_order: i }))),
+      }, { 'Prefer': 'return=minimal' });
+    }
+  },
+
+  async deleteVariantGroup(id: string): Promise<void> {
+    await dbFetch(`storefront_variant_groups?id=eq.${id}`, { method: 'DELETE' });
   },
 
   buildBuyUrl(p: StorefrontProduct): string {

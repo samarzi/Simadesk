@@ -99,6 +99,10 @@ export interface Order {
   net_profit: number;
   /** Фактически выплачено (Σ tx.amount по этому posting). */
   payout_actual: number;
+  /** Финальный финотчёт ещё не пришёл, цифры предварительные. */
+  pending_settlement?: boolean;
+  /** Техническая строка расходов без найденного заказа. */
+  is_orphan?: boolean;
 
   /** Откуда взяты финансовые цифры. */
   source: SourceQuality;
@@ -106,13 +110,6 @@ export interface Order {
   missing_cogs_count: number;
   /** Сырые транзакции связанные с этим заказом — для аудит-истории. */
   tx_ids: string[];
-  /** Нет транзакций финотчёта МП вообще (заказ ещё не рассчитан) — комиссия/логистика
-   *  могут не отражать реальность, а сам заказ ещё может быть отменён в ПВЗ.
-   *  Не выставляется для cancelled/returned — там уже всё зануляем явно. */
-  pending_settlement: boolean;
-  /** Заказ не пришёл живым из МП — собран только из «осиротевшей» транзакции
-   *  (упаковка/сервис без сопоставленного posting'а). Не показываем как заказ в списке. */
-  is_orphan: boolean;
 }
 
 /** Свёрнутая аналитика по периоду. */
@@ -217,7 +214,7 @@ export interface StoreInfo {
   tax_model: TaxModel;
   tax_rate: number;
   fulfillment: string | null;
-  created_at?: string; // ISO — дата добавления магазина в систему
+  created_at?: string;
 }
 
 /** Один диапазон дат. */

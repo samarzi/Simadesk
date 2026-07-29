@@ -12,7 +12,9 @@ const BUCKET   = 'product-photos';
 /** Загрузить файл в Supabase Storage, вернуть публичный URL */
 export async function uploadPhoto(file: File, productId: string): Promise<string> {
   const ext  = file.name.split('.').pop() || 'jpg';
-  const path = `${productId}/${Date.now()}.${ext}`;
+  // Storage paths must be ASCII-safe — Supabase rejects Cyrillic and special chars with 400.
+  const safeId = productId.replace(/[^\w.-]/g, '_');
+  const path = `${safeId}/${Date.now()}.${ext}`;
 
   try {
     const res = await fetch(`${API_URL}/storage/v1/object/${BUCKET}/${path}`, {
@@ -42,9 +44,9 @@ export async function uploadPhoto(file: File, productId: string): Promise<string
       if (res2.ok) return `${API_URL}/storage/v1/object/public/${BUCKET}/${path}`;
     }
     throw new Error(`Storage upload failed: ${res.status}`);
-  } catch (e: any) {
+  } catch (e: unknown) {
     // Fallback: вернуть data URL (только для превью, не синхронизируется с МП)
-    console.warn('[photoUpload] Storage недоступен, используем data:URL:', e.message);
+    console.warn('[photoUpload] Storage недоступен, используем data:URL:', (e instanceof Error ? e.message : String(e)));
     return await fileToDataUrl(file);
   }
 }

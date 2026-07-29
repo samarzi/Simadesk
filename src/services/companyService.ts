@@ -235,10 +235,33 @@ class CompanyService {
     first_name: string;
     telegram_username: string | null;
     photo_url: string | null;
+    users?: { first_name: string | null; telegram_username: string | null; photo_url: string | null };
   }>> {
-    return dbFetch(
-      `company_members?company_id=eq.${companyId}&select=id,user_id,role,joined_at,joined_via_link_id,users(first_name,telegram_username,photo_url)`,
-    );
+    const members = await dbFetch<Array<{
+      id: string; user_id: string; role: CompanyRole; joined_at: string; joined_via_link_id: string | null;
+    }>>(`company_members?company_id=eq.${companyId}&select=id,user_id,role,joined_at,joined_via_link_id`);
+
+    if (!members.length) return [];
+
+    const ids = [...new Set(members.map(m => m.user_id))].join(',');
+    const profiles = await dbFetch<Array<{
+      id: string; first_name: string | null; telegram_username: string | null; photo_url: string | null;
+    }>>(`users?id=in.(${ids})&select=id,first_name,telegram_username,photo_url`).catch(() => [] as any[]);
+
+    const byId = new Map(profiles.map(u => [u.id, u]));
+    return members.map(m => {
+      const u = byId.get(m.user_id);
+      const users = u
+        ? { first_name: u.first_name, telegram_username: u.telegram_username, photo_url: u.photo_url }
+        : undefined;
+      return {
+        ...m,
+        users,
+        first_name: u?.first_name ?? '',
+        telegram_username: u?.telegram_username ?? null,
+        photo_url: u?.photo_url ?? null,
+      };
+    });
   }
 
   async removeMember(memberId: string): Promise<void> {

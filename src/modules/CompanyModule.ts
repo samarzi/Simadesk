@@ -65,17 +65,20 @@ export class CompanyModule {
     document.body.appendChild(this.settingsOverlay);
   }
 
+  private get bgHtml(): string {
+    return `<div class="auth-bg"><div class="auth-orb auth-orb-1"></div><div class="auth-orb auth-orb-2"></div><div class="auth-orb auth-orb-3"></div></div>`;
+  }
+
   // ── Entry point after login ───────────────────────────────────────────────
 
   async boot(): Promise<void> {
     // Show loading state while fetching companies
     this.gateEl.classList.remove('hidden');
-    this.gateEl.innerHTML = `
+    this.gateEl.innerHTML = `${this.bgHtml}
       <div class="company-picker-card" style="align-items:center;gap:20px;padding:40px 24px">
-        <div style="width:32px;height:32px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:cp-spin .8s linear infinite"></div>
         <div style="color:var(--text2);font-size:13px">Загружаем рабочие пространства...</div>
       </div>
-      <style>@keyframes cp-spin{to{transform:rotate(360deg)}}</style>
+      <div class="spinner"></div>
     `;
 
     try {
@@ -102,7 +105,7 @@ export class CompanyModule {
     } catch (err) {
       console.error('[CompanyModule.boot] ERROR:', err);
       // Show error with details so we can debug
-      this.gateEl.innerHTML = `
+      this.gateEl.innerHTML = `${this.bgHtml}
         <div class="company-picker-card" style="gap:16px;padding:32px 24px">
           <div style="font-size:16px;font-weight:700;color:var(--text)">Ошибка загрузки</div>
           <div style="font-size:12px;color:var(--text2);word-break:break-all;max-width:340px">
@@ -124,12 +127,11 @@ export class CompanyModule {
   // ── Claim invite link on first boot (new user with no companies) ─────────
 
   private async claimInviteAndBoot(token: string): Promise<void> {
-    this.gateEl.innerHTML = `
+    this.gateEl.innerHTML = `${this.bgHtml}
       <div class="company-picker-card" style="align-items:center;gap:20px;padding:40px 24px">
-        <div style="width:32px;height:32px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:cp-spin .8s linear infinite"></div>
         <div style="color:var(--text2);font-size:13px">Присоединяемся к компании…</div>
       </div>
-      <style>@keyframes cp-spin{to{transform:rotate(360deg)}}</style>
+      <div class="spinner"></div>
     `;
 
     try {
@@ -172,7 +174,7 @@ export class CompanyModule {
 
   private showPicker(companies: Company[]): void {
     this.gateEl.classList.remove('hidden');
-    this.gateEl.innerHTML = `
+    this.gateEl.innerHTML = `${this.bgHtml}
       <div class="company-picker-card">
         <div class="cp-head">
           <div class="cp-title">Выберите компанию</div>
@@ -235,7 +237,7 @@ export class CompanyModule {
   }
 
   private renderCreateStep1(showBackBtn: boolean): void {
-    this.gateEl.innerHTML = `
+    this.gateEl.innerHTML = `${this.bgHtml}
       <div class="company-create-card">
         <div class="cc-head">
           <div class="cc-title">Создайте рабочее пространство</div>
@@ -350,7 +352,7 @@ export class CompanyModule {
   }
 
   private renderCreateStep2(name: string, showBackBtn: boolean): void {
-    this.gateEl.innerHTML = `
+    this.gateEl.innerHTML = `${this.bgHtml}
       <div class="company-create-card">
         <div class="cc-head">
           <div class="cc-title">
@@ -506,7 +508,7 @@ export class CompanyModule {
       showToast(`Компания создана ${I.partyPopper('', 16)}`, 'success');
       this.onReady();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Ошибка создания';
+      const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка создания';
       showToast(msg, 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Создать'; }
     }
@@ -855,8 +857,8 @@ export class CompanyModule {
         } else {
           this.showPicker(remaining);
         }
-      } catch (err: any) {
-        showToast(err.message ?? 'Ошибка удаления', 'error');
+      } catch (err: unknown) {
+        showToast((err instanceof Error ? err.message : String(err)) ?? 'Ошибка удаления', 'error');
         if (btn) { btn.disabled = false; btn.textContent = 'Удалить'; }
       }
     };
@@ -884,8 +886,8 @@ export class CompanyModule {
         this.settingsOverlay.classList.add('hidden');
         this.renderSwitcher();
         showToast('Настройки сохранены ✓', 'success');
-      } catch (err: any) {
-        showToast(err.message ?? 'Ошибка сохранения', 'error');
+      } catch (err: unknown) {
+        showToast((err instanceof Error ? err.message : String(err)) ?? 'Ошибка сохранения', 'error');
         btn.disabled = false; btn.textContent = 'Сохранить изменения';
       }
     });
@@ -928,8 +930,8 @@ export class CompanyModule {
       await companyService.update(companyId, updates);
       showToast('Реквизиты сохранены ✓', 'success');
       if (btn) { btn.disabled = false; btn.textContent = 'Сохранить реквизиты'; }
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка сохранения', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка сохранения', 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Сохранить реквизиты'; }
     }
   }
@@ -973,8 +975,8 @@ export class CompanyModule {
       await companyService.inviteByUsername(companyId, username, role);
       if (usernameEl) usernameEl.value = '';
       showToast('Приглашение добавлено ✓', 'success');
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -983,8 +985,8 @@ export class CompanyModule {
     try {
       await companyService.removeMember(memberId);
       showToast('Участник удалён', 'success');
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -992,8 +994,8 @@ export class CompanyModule {
     try {
       await companyService.updateMemberRole(memberId, role as any);
       showToast('Роль обновлена', 'success');
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -1001,8 +1003,8 @@ export class CompanyModule {
     try {
       await companyService.cancelPendingInvitation(inviteId);
       showToast('Приглашение отменено', 'success');
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
     }
   }
 

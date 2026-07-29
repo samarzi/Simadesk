@@ -58,7 +58,7 @@ function statusCss(s: string): string {
 function fmtDateTime(d: string | null | undefined): string {
   if (!d) return '—';
   return new Date(d).toLocaleString('ru', {
-    day: '2-digit', month: '2-digit', year: '2-digit',
+    day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
 }
@@ -704,7 +704,7 @@ export class OzonOrdersModule {
       })
       .catch((err: unknown) => {
         if (modal!.style.display !== 'none')
-          this.fillModalError(modal!, err instanceof Error ? err.message : String(err));
+          this.fillModalError(modal!, err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err));
       });
   }
 
@@ -894,8 +894,8 @@ export class OzonOrdersModule {
       await ozonOrdersApi.shipFbsPosting(ctx.creds, postingNumber, [{ products }]);
       alert('✓ Заказ отгружен');
       this.refresh();
-    } catch (err: any) {
-      alert(`Ошибка отгрузки: ${err?.message ?? err}`);
+    } catch (err: unknown) {
+      alert(`Ошибка отгрузки: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
     }
   }
 
@@ -905,8 +905,8 @@ export class OzonOrdersModule {
     try {
       const blob = await ozonOrdersApi.getFbsPackageLabelPdf(ctx.creds, [postingNumber]);
       downloadBlob(blob, `ozon-label-${postingNumber}.pdf`);
-    } catch (err: any) {
-      alert(`Не удалось получить этикетку: ${err?.message ?? err}\n\nВозможные причины: заказ ещё не собран, у магазина нет прав или истекли.`);
+    } catch (err: unknown) {
+      alert(`Не удалось получить этикетку: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}\n\nВозможные причины: заказ ещё не собран, у магазина нет прав или истекли.`);
     }
   }
 
@@ -926,8 +926,8 @@ export class OzonOrdersModule {
       await ozonOrdersApi.cancelFbsPosting(ctx.creds, postingNumber, reason.id, message);
       alert('✓ Заказ отменён');
       this.refresh();
-    } catch (err: any) {
-      alert(`Не удалось отменить: ${err?.message ?? err}`);
+    } catch (err: unknown) {
+      alert(`Не удалось отменить: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
     }
   }
 
@@ -1063,15 +1063,15 @@ export class OzonOrdersModule {
         this.postings.set('rfbs', fbsAll.filter(p => p.delivery_scheme === 'rfbs'));
       }
       this.lastUpdated = new Date();
-    } catch (err: any) {
-      if (err?.name === 'AbortError') { this.loading = false; this.render(); return; }
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') { this.loading = false; this.render(); return; }
       this.loading = false;
       this.render();
       const errEl = document.getElementById('ord-content');
       if (errEl) errEl.innerHTML = `
         <div class="oz-empty">
           <div class="oz-empty-title" style="color:#ef4444">
-            Ошибка: ${this.esc(err.message ?? String(err))}
+            Ошибка: ${this.esc((err instanceof Error ? err.message : String(err)) ?? String(err))}
           </div>
           <div class="oz-empty-sub">Проверьте Client-ID и API-ключ в настройках магазина</div>
         </div>`;
@@ -1233,9 +1233,9 @@ export class OzonOrdersModule {
     this.render();
 
     await Promise.all([
-      this._fetchFbsData(since, to, signal).catch((e: Error) => { console.warn('[Orders] FBS:', e.message); }),
-      this._fetchFboData(since, to, signal).catch((e: Error) => { console.warn('[Orders] FBO:', e.message); }),
-      this._fetchRfbsData(since, to, signal).catch((e: Error) => { console.warn('[Orders] RFBS:', e.message); }),
+      this._fetchFbsData(since, to, signal).catch((e: Error) => { console.warn('[Orders] FBS:', (e instanceof Error ? e.message : String(e))); }),
+      this._fetchFboData(since, to, signal).catch((e: Error) => { console.warn('[Orders] FBO:', (e instanceof Error ? e.message : String(e))); }),
+      this._fetchRfbsData(since, to, signal).catch((e: Error) => { console.warn('[Orders] RFBS:', (e instanceof Error ? e.message : String(e))); }),
     ]);
 
     // Если нас уже сменил новый _reloadAll — выходим без побочных эффектов

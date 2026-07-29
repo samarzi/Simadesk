@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta name="theme-color" content="#000d0a">
   <title>SimaStore</title>
   <link rel="stylesheet" href="/surpriset.css">
@@ -11,9 +12,13 @@
     body { margin: 0; }
     * { box-sizing: border-box; }
     .no-underline { text-decoration: none !important; }
+    #ss-progress { position:fixed;top:0;left:0;right:0;height:2px;z-index:9999;pointer-events:none;transition:opacity .3s }
+    #ss-progress-bar { height:100%;width:40%;background:linear-gradient(90deg,transparent,#C9A84C,transparent);box-shadow:0 0 8px #C9A84C;animation:ss-pg-slide 1s linear infinite }
+    @keyframes ss-pg-slide { 0%{transform:translateX(-150%)} 100%{transform:translateX(350%)} }
   </style>
 </head>
 <body>
+  <div id="ss-progress"><div id="ss-progress-bar"></div></div>
   <div id="root"></div>
   <script type="module" src="/src/storefront-main.ts"></script>
 </body>

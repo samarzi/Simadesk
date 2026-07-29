@@ -104,8 +104,8 @@ export class BoxMpLinkModule {
       idbCache.remove(boxId).catch((e) => debug.warn('[BoxMpLinkModule] swallowed error', e));
       if (this.app.activeBoxId === boxId) await this.app.loadBoxProducts();
       this.showMpSyncReport(results, box.name || boxId, 'Яндекс Маркет', '#fc3f1d');
-    } catch (e: any) {
-      this.app.toast('Ошибка синхронизации ЯМ: ' + e.message, 'error');
+    } catch (e: unknown) {
+      this.app.toast('Ошибка синхронизации ЯМ: ' + (e instanceof Error ? e.message : String(e)), 'error');
     }
   }
 
@@ -205,8 +205,8 @@ export class BoxMpLinkModule {
       idbCache.remove(boxId).catch((e) => debug.warn('[BoxMpLinkModule] swallowed error', e));
       if (this.app.activeBoxId === boxId) await this.app.loadBoxProducts();
       this.showMpSyncReport(results, box.name || boxId, 'Wildberries', '#cb11ab');
-    } catch (e: any) {
-      this.app.toast('Ошибка синхронизации WB: ' + e.message, 'error');
+    } catch (e: unknown) {
+      this.app.toast('Ошибка синхронизации WB: ' + (e instanceof Error ? e.message : String(e)), 'error');
     }
   }
 
@@ -484,8 +484,8 @@ export class BoxMpLinkModule {
 
       this.showSyncReport(results, colMap, box.name || boxId);
 
-    } catch (e: any) {
-      this.app.toast('Ошибка синхронизации: ' + e.message, 'error');
+    } catch (e: unknown) {
+      this.app.toast('Ошибка синхронизации: ' + (e instanceof Error ? e.message : String(e)), 'error');
     }
   }
 

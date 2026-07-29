@@ -169,10 +169,11 @@ async function fetchWbBuyerPrices(nmIds: number[], db: any): Promise<Map<number,
   const showcaseMap = new Map<number, number>();
   if (nmIds.length === 0) return showcaseMap;
 
-  const { data } = await db
+  const { data, error: wbBpErr } = await db
     .from('wb_buyer_prices')
     .select('nm_id, buyer_price, checked_at')
     .in('nm_id', nmIds);
+  if (wbBpErr) console.error('[mrc-scan] wb_buyer_prices error:', wbBpErr.message);
 
   const staleBefore = Date.now() - BUYER_PRICE_STALE_MS;
   for (const row of data ?? []) {
@@ -370,11 +371,12 @@ async function fetchOzonBuyerPrices(storeId: string, offerIds: string[], db: any
   const showcaseMap = new Map<string, number>();
   if (offerIds.length === 0) return showcaseMap;
 
-  const { data: products } = await db
+  const { data: products, error: ozProdErr } = await db
     .from('ozon_products')
     .select('offer_id, product_id')
     .eq('store_id', storeId)
     .in('offer_id', offerIds);
+  if (ozProdErr) console.error('[mrc-scan] ozon_products error:', ozProdErr.message);
 
   const productIdByOfferId = new Map<string, number>();
   for (const p of products ?? []) {
@@ -383,10 +385,11 @@ async function fetchOzonBuyerPrices(storeId: string, offerIds: string[], db: any
   const productIds = [...productIdByOfferId.values()];
   if (productIds.length === 0) return showcaseMap;
 
-  const { data } = await db
+  const { data, error: ozBpErr } = await db
     .from('ozon_buyer_prices')
     .select('product_id, buyer_price, checked_at')
     .in('product_id', productIds);
+  if (ozBpErr) console.error('[mrc-scan] ozon_buyer_prices error:', ozBpErr.message);
 
   const offerIdByProductId = new Map<number, string>();
   for (const [offerId, productId] of productIdByOfferId) offerIdByProductId.set(productId, offerId);
@@ -471,14 +474,11 @@ async function processOzon(db: any, rules: any[], log: any[]): Promise<void> {
         auto_action_enabled: 'DISABLED',
       });
       adjustedCtx.set(item.productId, { rule, item, target, oldSeller: seller, oldShowcase: showcase as number, newSeller });
-      getState(rule, item).lastUpdateAt = new Date().toISOString();
-      rule.data.lastAppliedAt = new Date().toISOString();
-      touchedRuleIds.add(rule.id);
       log.push({ mp: 'ozon', store: store.name, offerId: item.productId, mrcPrice: target, showcase, oldSeller: seller, newSeller, action: 'adjusted' });
     }
 
-    let uploadOk = true;
     if (updates.length > 0) {
+      const failedOfferIds = new Set<string>();
       for (let i = 0; i < updates.length; i += 100) {
         const batch = updates.slice(i, i + 100);
         let resp: Response | null = null;
@@ -491,7 +491,7 @@ async function processOzon(db: any, rules: any[], log: any[]): Promise<void> {
           await sleep(1000 * Math.pow(2, attempt));
         }
         if (!resp || !resp.ok) {
-          uploadOk = false;
+          for (const b of batch) failedOfferIds.add(b.offer_id);
           const text = resp ? await resp.text().catch(() => '') : '';
           log.push({ mp: 'ozon', store: store.name, error: `import ${resp?.status}: ${text.slice(0, 200)}` });
           await logError(db, {
@@ -503,13 +503,19 @@ async function processOzon(db: any, rules: any[], log: any[]): Promise<void> {
       }
 
       for (const { rule, item, target, oldSeller, oldShowcase, newSeller } of adjustedCtx.values()) {
+        const ok = !failedOfferIds.has(item.productId);
+        if (ok) {
+          getState(rule, item).lastUpdateAt = new Date().toISOString();
+          rule.data.lastAppliedAt = new Date().toISOString();
+          touchedRuleIds.add(rule.id);
+        }
         await logEvent(db, {
           rule_id: rule.id, marketplace: 'ozon', store_name: store.name,
           product_id: item.productId, vendor_code: item.vendorCode, product_title: item.productTitle,
           old_seller_price: oldSeller, new_seller_price: newSeller, old_buyer_price: oldShowcase,
           target_mrc_price: target, action: 'adjusted',
           api_request: { offer_id: item.productId, price: String(newSeller) },
-          api_response: { ok: uploadOk }, success: uploadOk, error: uploadOk ? null : 'import/prices failed',
+          api_response: { ok }, success: ok, error: ok ? null : 'import/prices failed',
         });
       }
 
@@ -585,11 +591,12 @@ async function fetchYandexBuyerPrices(storeId: string, offerIds: string[], db: a
   const showcaseMap = new Map<string, number>();
   if (offerIds.length === 0) return showcaseMap;
 
-  const { data: products } = await db
+  const { data: products, error: ymProdErr } = await db
     .from('yandex_products')
     .select('offer_id, market_sku')
     .eq('store_id', storeId)
     .in('offer_id', offerIds);
+  if (ymProdErr) console.error('[mrc-scan] yandex_products error:', ymProdErr.message);
 
   const skuByOfferId = new Map<string, number>();
   for (const p of products ?? []) {
@@ -598,10 +605,11 @@ async function fetchYandexBuyerPrices(storeId: string, offerIds: string[], db: a
   const skus = [...skuByOfferId.values()];
   if (skus.length === 0) return showcaseMap;
 
-  const { data } = await db
+  const { data, error: ymBpErr } = await db
     .from('yandex_buyer_prices')
     .select('market_sku, buyer_price, checked_at')
     .in('market_sku', skus);
+  if (ymBpErr) console.error('[mrc-scan] yandex_buyer_prices error:', ymBpErr.message);
 
   const offerIdBySku = new Map<number, string>();
   for (const [offerId, sku] of skuByOfferId) offerIdBySku.set(sku, offerId);
@@ -684,9 +692,6 @@ async function processYandex(db: any, rules: any[], log: any[]): Promise<void> {
       const newPrice = computeNewSellerPrice(target, currentSetPrice, showcase);
       updates.push({ offerId: item.productId, price: newPrice });
       adjustedCtx.set(item.productId, { rule, item, target, oldPrice: currentSetPrice, oldShowcase: showcase, newPrice });
-      getState(rule, item).lastUpdateAt = new Date().toISOString();
-      rule.data.lastAppliedAt = new Date().toISOString();
-      touchedRuleIds.add(rule.id);
       log.push({ mp: 'yandex', store: store.name, offerId: item.productId, mrcPrice: target, currentSetPrice, showcase, newPrice, action: 'adjusted' });
     }
 
@@ -719,6 +724,11 @@ async function processYandex(db: any, rules: any[], log: any[]): Promise<void> {
       }
 
       for (const { rule, item, target, oldPrice, oldShowcase, newPrice } of adjustedCtx.values()) {
+        if (updateOk) {
+          getState(rule, item).lastUpdateAt = new Date().toISOString();
+          rule.data.lastAppliedAt = new Date().toISOString();
+          touchedRuleIds.add(rule.id);
+        }
         await logEvent(db, {
           rule_id: rule.id, marketplace: 'yandex', store_name: store.name,
           product_id: item.productId, vendor_code: item.vendorCode, product_title: item.productTitle,
@@ -740,13 +750,13 @@ async function processYandex(db: any, rules: any[], log: any[]): Promise<void> {
     // цену продавца на витрине, что делает поддержание МРЦ бессмысленным).
     if (offerIds.length > 0 && store.business_id) {
       try {
-        const resp = await fetch(`https://api.partner.market.yandex.ru/businesses/${store.business_id}/promos`, {
+        const resp = await fetch(`https://api.partner.market.yandex.ru/v2/businesses/${store.business_id}/promos`, {
           method: 'POST', headers, body: JSON.stringify({ statuses: ['ACTIVE', 'UPCOMING'] }),
         });
         const respJson = await resp.json();
         const promos: any[] = respJson?.promos ?? [];
         await Promise.allSettled(promos.map((promo: any) =>
-          fetch(`https://api.partner.market.yandex.ru/businesses/${store.business_id}/promos/offers/delete`, {
+          fetch(`https://api.partner.market.yandex.ru/v2/businesses/${store.business_id}/promos/offers/delete`, {
             method: 'POST', headers, body: JSON.stringify({ promoId: promo.id, deleteAllOffers: false, offerIds }),
           }),
         ));

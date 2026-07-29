@@ -196,8 +196,8 @@ export function evaluateFormula(formula: string, costPrice: number): { ok: true;
     const result = evalRPN(rpn, { cost_price: costPrice });
     if (!isFinite(result)) return { ok: false, error: 'Результат не число' };
     return { ok: true, value: result };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? String(e) };
+  } catch (e: unknown) {
+    return { ok: false, error: (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e) };
   }
 }
 

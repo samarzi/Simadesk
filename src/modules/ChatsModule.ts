@@ -92,11 +92,17 @@ export class ChatsModule {
   private pendingAttachment: { name: string; mime: string; base64: string; dataUrl: string; file: File } | null = null;
   private notesOpen = false;
 
+  private readonly _escHandler = (ev: KeyboardEvent) => {
+    if (ev.key === 'Escape' && this.previewImage) this.closeImagePreview();
+  };
+
   constructor(container: HTMLElement) {
     this.container = container;
-    document.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Escape' && this.previewImage) this.closeImagePreview();
-    });
+    document.addEventListener('keydown', this._escHandler);
+  }
+
+  destroy(): void {
+    document.removeEventListener('keydown', this._escHandler);
   }
 
   openImagePreview(url: string): void {
@@ -347,8 +353,8 @@ export class ChatsModule {
       }
       e.chats.sort((a, b) => new Date(b.lastTime).getTime() - new Date(a.lastTime).getTime());
       e.loaded = true;
-    } catch (err: any) {
-      e.error = err?.message ?? 'Ошибка загрузки чатов';
+    } catch (err: unknown) {
+      e.error = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? 'Ошибка загрузки чатов';
     }
     e.loading = false;
     this.render();
@@ -375,7 +381,7 @@ export class ChatsModule {
           // если нашли настоящее сообщение (текст или вложение), иначе он остаётся скрытым.
           chat.empty = !chat.lastMessage;
         } catch (err) {
-          if (previewErrors++ === 0) console.warn('[Ozon chat] не удалось загрузить превью последнего сообщения:', err);
+          if (previewErrors++ === 0) debug.warn('[Ozon chat] не удалось загрузить превью последнего сообщения:', err);
         }
         // Обновляем список постепенно, не дожидаясь загрузки всех превью — так
         // чаты «появляются» с превью по мере загрузки, а не все разом в конце.
@@ -409,7 +415,7 @@ export class ChatsModule {
           // остаётся скрытым как пустой автосозданный чат.
           chat.empty = !chat.lastMessage;
         } catch (err) {
-          if (previewErrors++ === 0) console.warn('[Yandex chat] не удалось загрузить превью последнего сообщения:', err);
+          if (previewErrors++ === 0) debug.warn('[Yandex chat] не удалось загрузить превью последнего сообщения:', err);
         }
         if (++completed % 5 === 0) this.refreshChatList();
       }
@@ -479,9 +485,9 @@ export class ChatsModule {
       }
       // Сбросить счётчик непрочитанных в локальном списке
       chat.unread = 0;
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (this.activeChatId !== chatId) return;
-      this.messagesError = err?.message ?? 'Ошибка загрузки сообщений';
+      this.messagesError = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? 'Ошибка загрузки сообщений';
     }
     if (this.activeChatId !== chatId) return;
     this.messagesLoading = false;
@@ -537,8 +543,8 @@ export class ChatsModule {
       this.shouldScrollToBottom = true;
       if (ta) ta.value = '';
       this.pendingAttachment = null;
-    } catch (err: any) {
-      const msg = String(err?.message ?? err);
+    } catch (err: unknown) {
+      const msg = String((err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err);
       const friendly = /premium plus subscription/i.test(msg)
         ? 'Отправка сообщений в чат Ozon доступна только с подпиской Premium Plus'
         : 'Ошибка отправки: ' + msg;
@@ -712,7 +718,7 @@ export class ChatsModule {
         img.src = blobUrl;
         img.style.opacity = '1';
         img.onclick = () => this.openImagePreview(blobUrl);
-      }).catch(err => console.warn('[Ozon chat] не удалось загрузить вложение:', err));
+      }).catch(err => debug.warn('[Ozon chat] не удалось загрузить вложение:', err));
     });
   }
 

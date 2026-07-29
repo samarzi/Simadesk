@@ -41,7 +41,7 @@ export class BoxModalsModule {
       this.app.closeModal();
       this.app.toast(`Группа «${name}» создана`, 'success');
       await this.app.selectBox(box.id);
-    } catch (e: any) { this.app.toast('Ошибка: ' + e.message, 'error'); }
+    } catch (e: unknown) { this.app.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error'); }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ export class BoxModalsModule {
       this.app.renderBoxes();
       this.app.closeModal();
       this.app.toast('Название и стикер обновлены', 'success');
-    } catch (e: any) { this.app.toast('Ошибка: ' + e.message, 'error'); }
+    } catch (e: unknown) { this.app.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error'); }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -281,9 +281,9 @@ export class BoxModalsModule {
       try {
         await apiService.updateBox(id, { name, sticker, ozon_preferred_store_id });
         boxActions.updateBox(id, { name, sticker, ozon_preferred_store_id });
-      } catch (err: any) {
+      } catch (err: unknown) {
         // Если ошибка 400 (вероятно, не добавлена колонка в БД), пробуем обновить без нее
-        if (err.message?.includes('400') || err.message?.includes('column "ozon_preferred_store_id" does not exist')) {
+        if ((err instanceof Error ? err.message : String(err))?.includes('400') || (err instanceof Error ? err.message : String(err))?.includes('column "ozon_preferred_store_id" does not exist')) {
            console.warn('Column ozon_preferred_store_id missing in DB, skipping field update');
            await apiService.updateBox(id, { name, sticker });
            boxActions.updateBox(id, { name, sticker });
@@ -301,8 +301,8 @@ export class BoxModalsModule {
       if (!showedWarning) {
         this.app.toast('Настройки сохранены', 'success');
       }
-    } catch (e: any) {
-      this.app.toast('Ошибка: ' + e.message, 'error');
+    } catch (e: unknown) {
+      this.app.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Сохранить'; }
     }
   }
@@ -321,8 +321,8 @@ export class BoxModalsModule {
       this.app.renderBoxes();
       window.settingsHub?.init?.();
       setTimeout(() => this.app.syncLinkedBox(boxId), 300);
-    } catch (e: any) {
-      this.app.toast('Ошибка: ' + e.message, 'error');
+    } catch (e: unknown) {
+      this.app.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Связать'; }
     }
   }
@@ -336,8 +336,8 @@ export class BoxModalsModule {
       this.app.closeModal();
       this.app.renderBoxes();
       window.settingsHub?.init?.();
-    } catch (e: any) {
-      this.app.toast('Ошибка: ' + e.message, 'error');
+    } catch (e: unknown) {
+      this.app.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error');
     }
   }
 
@@ -385,7 +385,7 @@ export class BoxModalsModule {
         }
         this.openBoxSettings(boxId);
       }
-    } catch (e: any) { this.app.toast('Ошибка: ' + e.message, 'error'); }
+    } catch (e: unknown) { this.app.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error'); }
   }
 
   deleteProductFromBox(boxId: string, prodId: string, art: string) {
@@ -413,7 +413,7 @@ export class BoxModalsModule {
       this.app.loadBoxCount(boxId);
       // Открываем настройки заново, чтобы пользователь видел обновлённый список
       this.openBoxSettings(boxId);
-    } catch (e: any) { this.app.toast('Ошибка: ' + e.message, 'error'); }
+    } catch (e: unknown) { this.app.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error'); }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -457,6 +457,6 @@ export class BoxModalsModule {
       this.app.renderBoxes();
       this.app.closeModal();
       this.app.toast('Группа удалена', 'success');
-    } catch (e: any) { this.app.toast('Ошибка: ' + e.message, 'error'); }
+    } catch (e: unknown) { this.app.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error'); }
   }
 }

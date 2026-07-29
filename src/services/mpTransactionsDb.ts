@@ -177,9 +177,9 @@ export const mpTransactionsDb = {
             body: JSON.stringify(slice),
           });
           break;
-        } catch (e: any) {
+        } catch (e: unknown) {
           attempt++;
-          const msg = String(e?.message ?? e);
+          const msg = String((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e);
           const retriable = msg.includes('Failed to fetch')
                           || msg.includes('CONNECTION_CLOSED')
                           || msg.includes('504')

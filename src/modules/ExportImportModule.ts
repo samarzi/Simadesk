@@ -274,7 +274,7 @@ export class ExportImportModule {
          this.app.toast(`Файл ${fname} скачан (с оригинальными стилями)`, 'success');
          this.app.closeModal();
             return;
-         } catch (e: any) {
+         } catch (e: unknown) {
             console.error('ExcelJS OOM or Error:', e);
             this.app.toast('ExcelJS не справился, использую стандартный метод...', 'info');
          }
@@ -302,9 +302,9 @@ export class ExportImportModule {
       XLSX.writeFile(wb, fname);
       this.app.toast(`Файл ${fname} скачан`, 'success');
       this.app.closeModal();
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      this.app.toast('Ошибка выгрузки: ' + String(e.stack || e.message || e), 'error');
+      this.app.toast('Ошибка выгрузки: ' + (e instanceof Error ? e.stack || e.message : String(e)), 'error');
     }
   }
 
@@ -547,7 +547,7 @@ export class ExportImportModule {
         if (!headers.filter(Boolean).length || !rows.length) { this.app.toast('Не удалось прочитать файл', 'error'); return; }
         this.parsedImport = { filename: file.name, headers: headers as string[], rows, format, templateHeaders, template_file_b64 };
         this.renderImportPreview();
-      } catch (err: any) { this.app.toast('Ошибка: ' + err.message, 'error'); }
+      } catch (err: unknown) { this.app.toast('Ошибка: ' + (err instanceof Error ? err.message : String(err)), 'error'); }
     };
     reader.readAsArrayBuffer(file);
   }
@@ -716,8 +716,8 @@ export class ExportImportModule {
       }
 
       await this.performImport(boxId, filename, headers, rows, selColIdxs, selRowIdxs, artIdx, existingArts, btn, 'all');
-    } catch (e: any) {
-      this.app.toast('Ошибка: ' + e.message, 'error');
+    } catch (e: unknown) {
+      this.app.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Импортировать'; }
     }
   }
@@ -832,8 +832,8 @@ export class ExportImportModule {
       this.app.closeModal();
       this.app.loadBoxCount(boxId);
       if (this.app.activeBoxId === boxId) await this.app.loadBoxProducts();
-    } catch (e: any) {
-      this.app.toast('Ошибка импорта: ' + e.message, 'error');
+    } catch (e: unknown) {
+      this.app.toast('Ошибка импорта: ' + (e instanceof Error ? e.message : String(e)), 'error');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Импортировать'; }
     }

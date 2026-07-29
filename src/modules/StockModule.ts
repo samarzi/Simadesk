@@ -35,8 +35,8 @@ interface StockItem {
   stockTotal: number;
   imageUrl: string | null;
   nmId?: number;
-  /** Метка модели хранения для редактируемого столбца остатка: FBS / FBY / DBS */
-  stockLabel: 'FBS' | 'FBY' | 'DBS';
+  /** Метка модели хранения: FBS/DBS — редактируемые, FBY/FBW — склад МП (readonly) */
+  stockLabel: 'FBS' | 'FBY' | 'FBW' | 'DBS';
 }
 
 interface Warehouse { id: number; name: string; }
@@ -118,7 +118,12 @@ export class StockModule {
       ...ymStores.map(s => ({ id: s.id, name: s.name, mp: 'yandex' as Mp })),
     ];
     const storeNames = new Map(this.stores.map(s => [s.id, s.name]));
-    const ymFulfillment = new Map(ymStores.map(s => [s.id, (s.fulfillment_model || s.placement_type || 'FBS') as string]));
+    const wbFulfillment = new Map(wbStores.map(s => [s.id, s.fulfillment_model ?? null]));
+    // If fbs_warehouse_id is set on a YM store, it's definitively FBS regardless of fulfillment_model in DB
+    const ymFbsStoreIds = new Set(ymStores.filter(s => s.fbs_warehouse_id).map(s => s.id));
+    const ymFulfillment = new Map(ymStores.map(s => [s.id,
+      ymFbsStoreIds.has(s.id) ? 'FBS' : (s.fulfillment_model || s.placement_type || 'FBS') as string,
+    ]));
     const items: StockItem[] = [];
 
     for (const p of ozProducts) {
@@ -130,19 +135,27 @@ export class StockModule {
     }
     for (const p of wbProducts) {
       const tot = p.stock_total ?? 0;
+      // Only treat as FBW (marketplace warehouse, read-only) when explicitly set; default to FBS (seller-managed)
+      const isFbw = wbFulfillment.get(p.store_id) === 'FBW';
+      const wbLabel: StockItem['stockLabel'] = isFbw ? 'FBW' : 'FBS';
       items.push({ id: `wb:${p.store_id}:${p.vendor_code}`, mp: 'wb', storeId: p.store_id,
         storeName: storeNames.get(p.store_id) ?? '', offerId: p.vendor_code || String(p.nm_id),
         name: p.title || p.vendor_code || String(p.nm_id), price: p.price ?? null,
-        stockFbs: tot, stockFbo: 0, stockTotal: tot, imageUrl: null, nmId: p.nm_id, stockLabel: 'FBS' });
+        stockFbs: isFbw ? 0 : tot, stockFbo: isFbw ? tot : 0,
+        stockTotal: tot, imageUrl: null, nmId: p.nm_id, stockLabel: wbLabel });
     }
     for (const p of ymProducts) {
       const tot = p.stock_total ?? 0;
       const model = ymFulfillment.get(p.store_id) ?? 'FBS';
       const label: StockItem['stockLabel'] = model === 'FBY' ? 'FBY' : model === 'DBS' ? 'DBS' : 'FBS';
+      const isFby = label === 'FBY';
+      // FBY = склад Яндекса (аналог FBO/FBW) → stockFbo; FBS/DBS → stockFbs (seller-managed)
       items.push({ id: `yandex:${p.store_id}:${p.offer_id}`, mp: 'yandex', storeId: p.store_id,
         storeName: storeNames.get(p.store_id) ?? '', offerId: p.vendor_code || p.offer_id,
         name: p.name || p.offer_id, price: p.basic_price ?? null,
-        stockFbs: p.stock_available ?? tot, stockFbo: 0, stockTotal: tot, imageUrl: null, stockLabel: label });
+        stockFbs: isFby ? 0 : (p.stock_available ?? tot),
+        stockFbo: isFby ? tot : 0,
+        stockTotal: tot, imageUrl: null, stockLabel: label });
     }
     this.items = items;
   }
@@ -191,8 +204,8 @@ export class StockModule {
             }));
             await ozonDb.replaceStoreProducts(store.id, updated);
           }
-        } catch (e: any) {
-          const msg = `Ozon «${store.name}»: ${e?.message ?? 'ошибка'}`;
+        } catch (e: unknown) {
+          const msg = `Ozon «${store.name}»: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'ошибка'}`;
           console.warn('[Stock]', msg, e);
           this.syncErrors.push(msg);
           this.syncStatus = msg;
@@ -231,8 +244,8 @@ export class StockModule {
             }));
             await wbDb.replaceStoreProducts(store.id, updated);
           }
-        } catch (e: any) {
-          const msg = `WB «${store.name}»: ${e?.message ?? 'ошибка'}`;
+        } catch (e: unknown) {
+          const msg = `WB «${store.name}»: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'ошибка'}`;
           console.warn('[Stock]', msg, e);
           this.syncErrors.push(msg);
           this.syncStatus = msg;
@@ -283,8 +296,8 @@ export class StockModule {
             });
             await yandexDb.replaceStoreProducts(store.id, updated);
           }
-        } catch (e: any) {
-          const msg = `ЯМ «${store.name}»: ${e?.message ?? 'ошибка'}`;
+        } catch (e: unknown) {
+          const msg = `ЯМ «${store.name}»: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'ошибка'}`;
           console.warn('[Stock]', msg, e);
           this.syncErrors.push(msg);
           this.syncStatus = msg;
@@ -309,7 +322,7 @@ export class StockModule {
   async openEdit(itemId: string): Promise<void> {
     const item = this.items.find(i => i.id === itemId);
     if (!item) return;
-    if (item.mp === 'yandex' && item.stockLabel === 'FBY') return; // FBY-остатками управляет Яндекс, ручное изменение через API недоступно
+    if (item.stockLabel === 'FBY' || item.stockLabel === 'FBW') return; // Склад МП — не редактируется через FBS API
     this.editItemId = itemId;
     this.editValue = item.stockFbs;
     this.editWarehouseId = null;
@@ -333,7 +346,10 @@ export class StockModule {
         if (!this.ymWarehouses.has(item.storeId)) {
           const store = this.ymStores.find(s => s.id === item.storeId);
           if (store) {
-            const list = await fetchYandexWarehouses(store);
+            let list = await fetchYandexWarehouses(store);
+            if (list.length === 0 && store.fbs_warehouse_id) {
+              list = [{ warehouseId: store.fbs_warehouse_id, name: 'FBS склад' }];
+            }
             this.ymWarehouses.set(item.storeId, list.map(w => ({ id: w.warehouseId, name: w.name })));
           }
         }
@@ -346,9 +362,65 @@ export class StockModule {
         this.editWarehouses = this.wbWarehouses.get(item.storeId) ?? [];
       }
       if (this.editWarehouses.length === 1) this.editWarehouseId = this.editWarehouses[0].id;
-    } catch (e: any) { this.editError = 'Ошибка загрузки складов: ' + (e?.message ?? ''); }
+    } catch (e: unknown) { this.editError = 'Ошибка загрузки складов: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? ''); }
     this.editLoading = false;
     this.render();
+  }
+
+  /** Inline-редактирование FBS прямо из строки таблицы. */
+  async inlineSave(itemId: string, newValue: number): Promise<void> {
+    const item = this.items.find(i => i.id === itemId);
+    if (!item) return;
+    if (newValue < 0) newValue = 0;
+
+    // Загружаем склады если ещё не кешированы
+    try {
+      if (item.mp === 'ozon' && !this.ozWarehouses.has(item.storeId)) {
+        const store = this.ozStores.find(s => s.id === item.storeId);
+        if (store) {
+          const { ozonApi } = await import('@/services/ozonApi');
+          const list = await ozonApi.getWarehouses({ client_id: store.client_id, api_key: store.api_key });
+          this.ozWarehouses.set(item.storeId, list.map((w: any) => ({ id: w.warehouse_id, name: w.name ?? '' })));
+        }
+      } else if (item.mp === 'yandex' && !this.ymWarehouses.has(item.storeId)) {
+        const store = this.ymStores.find(s => s.id === item.storeId);
+        if (store) {
+          let list = await fetchYandexWarehouses(store);
+          if (list.length === 0 && store.fbs_warehouse_id) {
+            list = [{ warehouseId: store.fbs_warehouse_id, name: 'FBS склад' }];
+          }
+          this.ymWarehouses.set(item.storeId, list.map(w => ({ id: w.warehouseId, name: w.name })));
+        }
+      } else if (item.mp === 'wb' && !this.wbWarehouses.has(item.storeId)) {
+        const store = this.wbStores.find(s => s.id === item.storeId);
+        if (store) { this.wbWarehouses.set(item.storeId, await wbApi.getWarehouses(store.api_key)); }
+      }
+    } catch (e: unknown) {
+      this.editError = 'Ошибка загрузки складов: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? '');
+      this.editItemId = itemId; this.editValue = newValue;
+      this.editWarehouses = []; this.editLoading = false; this.editSaving = false;
+      this.render(); return;
+    }
+
+    const warehouses = item.mp === 'ozon' ? (this.ozWarehouses.get(item.storeId) ?? [])
+      : item.mp === 'yandex' ? (this.ymWarehouses.get(item.storeId) ?? [])
+      : (this.wbWarehouses.get(item.storeId) ?? []);
+
+    this.editItemId = itemId;
+    this.editValue = newValue;
+    this.editWarehouses = warehouses;
+    this.editError = '';
+    this.editLoading = false;
+    this.editSaving = false;
+
+    if (warehouses.length === 1) {
+      this.editWarehouseId = warehouses[0].id;
+      await this.saveEdit();
+    } else {
+      // Несколько складов — показываем модал для выбора
+      this.editWarehouseId = null;
+      this.render();
+    }
   }
 
   closeEdit(): void { this.editItemId = null; this.editWarehouses = []; this.editError = ''; this.render(); }
@@ -381,7 +453,7 @@ export class StockModule {
         item.stockFbs = this.editValue; item.stockTotal = this.editValue;
       }
       this.editItemId = null; this.editWarehouses = [];
-    } catch (e: any) { this.editError = e?.message ?? 'Ошибка'; }
+    } catch (e: unknown) { this.editError = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка'; }
     this.editSaving = false; this.render();
   }
 
@@ -530,10 +602,8 @@ export class StockModule {
     if (this.loading) {
       this.container.innerHTML = `
         <div class="oz-wrap"><div class="ord-loader">
-          <div class="ord-loader-spinner">
-            <svg class="oz-spin" viewBox="0 0 40 40" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" style="width:48px;height:48px"><path d="M36 20A16 16 0 1 1 20 4" stroke-dasharray="60 30"/></svg>
-          </div>
           <div class="ord-loader-title">Загружаем остатки…</div>
+          <div class="ord-loader-bar"><div class="ord-loader-bar-fill"></div></div>
         </div></div>`;
       return;
     }
@@ -600,34 +670,31 @@ export class StockModule {
         </div>
 
         ${this.syncErrors.length ? `
-        <div style="padding:8px 16px;background:rgba(239,68,68,.08);border-bottom:1px solid rgba(239,68,68,.2);display:flex;align-items:flex-start;gap:8px">
+        <div style="padding:8px 16px;background:rgba(239,68,68,.08);border-bottom:1px solid rgba(239,68,68,.2);flex-shrink:0;display:flex;align-items:flex-start;gap:8px">
           <svg viewBox="0 0 16 16" fill="none" stroke="#ef4444" stroke-width="1.5" stroke-linecap="round" style="width:14px;height:14px;flex-shrink:0;margin-top:1px"><circle cx="8" cy="8" r="6"/><path d="M8 5v4M8 11v.5"/></svg>
           <div style="font-size:11px;color:#ef4444">${this.syncErrors.map(e => `<div>${e}</div>`).join('')}</div>
         </div>` : ''}
 
-        <div style="flex:1;overflow:auto;padding-bottom:90px">
+        <!-- ── Stat strip ── -->
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:0;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0">
+          ${[
+            { v: this.fmtN(total),          l: 'Всего позиций',   c: 'var(--text)' },
+            { v: this.fmtN(inStock),         l: 'В наличии',       c: '#16a34a' },
+            { v: this.fmtN(low),             l: `Мало (≤${this.lowThreshold})`, c: '#f59e0b' },
+            { v: this.fmtN(outOfStock),      l: 'Нет в наличии',  c: '#ef4444' },
+            { v: this.fmtN(totalUnits),      l: 'Единиц итого',   c: 'var(--text)' },
+            { v: this.fmtMoney(totalValue),  l: 'Склад',          c: 'var(--accent)' },
+          ].map((s, i) => `
+            <div style="padding:10px 14px;${i < 5 ? 'border-right:1px solid var(--border);' : ''}text-align:center">
+              <div style="font-size:15px;font-weight:800;color:${s.c};letter-spacing:-.3px">${s.v}</div>
+              <div style="font-size:9px;color:var(--text-2);margin-top:2px;font-weight:600;text-transform:uppercase;letter-spacing:.3px">${s.l}</div>
+            </div>
+          `).join('')}
+        </div>
 
-          <!-- ── Stat strip ── -->
-          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:0;border-bottom:1px solid var(--border);background:var(--bg2)">
-            ${[
-              { v: this.fmtN(total),          l: 'Всего позиций',   c: 'var(--text)' },
-              { v: this.fmtN(inStock),         l: 'В наличии',       c: '#16a34a' },
-              { v: this.fmtN(low),             l: `Мало (≤${this.lowThreshold})`, c: '#f59e0b' },
-              { v: this.fmtN(outOfStock),      l: 'Нет в наличии',  c: '#ef4444' },
-              { v: this.fmtN(totalUnits),      l: 'Единиц итого',   c: 'var(--text)' },
-              { v: this.fmtMoney(totalValue),  l: 'Склад',          c: 'var(--accent)' },
-            ].map((s, i) => `
-              <div style="padding:12px 14px;${i < 5 ? 'border-right:1px solid var(--border);' : ''}text-align:center">
-                <div style="font-size:16px;font-weight:800;color:${s.c};letter-spacing:-.3px">${s.v}</div>
-                <div style="font-size:9px;color:var(--text-2);margin-top:2px;font-weight:600;text-transform:uppercase;letter-spacing:.3px">${s.l}</div>
-              </div>
-            `).join('')}
-          </div>
-
-          <div style="padding:16px 20px 80px">
-
-            <!-- ── Filters ── -->
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <!-- ── Filters + chips ── -->
+        <div style="padding:10px 16px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <input type="search" placeholder="Поиск по артикулу или названию…" value="${this.esc(this.search)}"
                 oninput="window.stockModule.setSearch(this.value)"
                 style="flex:1;min-width:200px;padding:8px 14px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:8px;font-size:12px">
@@ -642,39 +709,39 @@ export class StockModule {
 
               ${availableStores.length > 1 ? `
                 <select onchange="window.stockModule.setStoreFilter(this.value)"
-                  style="padding:8px 12px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:8px;font-size:12px">
+                  style="padding:7px 10px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:8px;font-size:12px">
                   <option value="">Все магазины</option>
                   ${availableStores.map(s => `<option value="${s.id}" ${this.storeFilter===s.id?'selected':''}>${this.esc(s.name)}</option>`).join('')}
                 </select>
               ` : ''}
-            </div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${tabBtn('all',      'Все',          total,      'var(--accent)')}
+            ${tabBtn('in-stock', 'В наличии',    inStock,    '#16a34a')}
+            ${tabBtn('low',      `Мало ≤${this.lowThreshold}`, low, '#f59e0b')}
+            ${tabBtn('out',      'Нет',          outOfStock, '#ef4444')}
+          </div>
+        </div>
 
-            <!-- Status chips -->
-            <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap">
-              ${tabBtn('all',      'Все',          total,      'var(--accent)')}
-              ${tabBtn('in-stock', 'В наличии',    inStock,    '#16a34a')}
-              ${tabBtn('low',      `Мало ≤${this.lowThreshold}`, low, '#f59e0b')}
-              ${tabBtn('out',      'Нет',          outOfStock, '#ef4444')}
+        <!-- ── Table ── -->
+        <div style="flex:1;overflow:auto;padding:16px 20px;padding-bottom:90px">
+          ${filtered.length === 0 ? `
+            <div style="text-align:center;padding:60px 20px;color:var(--text-2)">
+              ${total === 0 ? `
+                <div style="font-size:36px;margin-bottom:12px">${I.package('',36)}</div>
+                <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px">Нет данных об остатках</div>
+                <div style="font-size:12px;margin-bottom:18px">Нажмите «Синхр. из API» чтобы загрузить актуальные остатки,<br>или синхронизируйте магазины в разделе API Маркет</div>
+                <button onclick="window.stockModule.syncStocksFromApi()"
+                  style="padding:9px 22px;border:none;background:var(--accent);color:#000;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700">
+                  Синхронизировать из API
+                </button>
+              ` : `
+                <div style="font-size:14px;color:var(--text-2)">Нет позиций по заданным фильтрам</div>
+              `}
             </div>
-
-            <!-- ── Table ── -->
-            ${filtered.length === 0 ? `
-              <div style="text-align:center;padding:60px 20px;color:var(--text-2)">
-                ${total === 0 ? `
-                  <div style="font-size:36px;margin-bottom:12px">${I.package('',36)}</div>
-                  <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px">Нет данных об остатках</div>
-                  <div style="font-size:12px;margin-bottom:18px">Нажмите «Синхр. из API» чтобы загрузить актуальные остатки,<br>или синхронизируйте магазины в разделе API Маркет</div>
-                  <button onclick="window.stockModule.syncStocksFromApi()"
-                    style="padding:9px 22px;border:none;background:var(--accent);color:#000;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700">
-                    Синхронизировать из API
-                  </button>
-                ` : `
-                  <div style="font-size:14px;color:var(--text-2)">Нет позиций по заданным фильтрам</div>
-                `}
-              </div>
-            ` : `
-              <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden">
-                <div style="overflow:auto;max-height:calc(100vh - 360px)">
+          ` : `
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+              <div>
                   <table style="width:100%;border-collapse:collapse">
                     <thead>
                       <tr style="background:var(--bg2);position:sticky;top:0;z-index:1;border-bottom:1px solid var(--border)">
@@ -682,8 +749,8 @@ export class StockModule {
                         <th style="${thStyle}">Артикул</th>
                         ${thBtn('name',  'Название')}
                         ${thBtn('stock', 'Всего')}
-                        <th style="${thStyle}">Остаток ${I.edit()}</th>
-                        <th style="${thStyle}">FBO</th>
+                        <th style="${thStyle}">FBS</th>
+                        <th style="${thStyle}">Склад МП</th>
                         ${thBtn('price', 'Цена')}
                         <th style="${thStyle}">Магазин</th>
                       </tr>
@@ -725,24 +792,28 @@ export class StockModule {
                             <!-- Всего -->
                             <td style="padding:8px 12px;text-align:center">${this.stockBadge(item.stockTotal)}</td>
 
-                            <!-- Остаток (редактируемый, метка модели хранения по магазину) -->
-                            <td style="padding:8px 12px;text-align:center">
-                              <div style="display:inline-flex;align-items:center;gap:4px">
-                                <span style="font-size:9px;font-weight:700;color:var(--text-2)">${item.stockLabel}</span>
-                                <span style="font-size:12px;color:var(--text);font-weight:${item.stockFbs > 0 ? '700' : '400'}">${this.fmtN(item.stockFbs)}</span>
-                                ${(item.mp === 'yandex' && item.stockLabel === 'FBY') ? '' : `
-                                <button onclick="event.stopPropagation();window.stockModule.openEdit(${safeId})"
-                                  title="Изменить остаток (${item.stockLabel})"
-                                  style="border:none;background:none;cursor:pointer;opacity:.35;transition:opacity .1s;padding:2px;line-height:1"
-                                  onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.35'">
-                                  <svg viewBox="0 0 14 14" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" style="width:12px;height:12px"><path d="M10 2l2 2-7 7H3v-2L10 2z"/></svg>
-                                </button>`}
-                              </div>
+                            <!-- FBS — inline input для редактируемых моделей, readonly для FBY/FBW -->
+                            <td style="padding:6px 12px;text-align:center">
+                              ${(item.stockLabel === 'FBS' || item.stockLabel === 'DBS') ? `
+                                <input type="number" min="0" value="${item.stockFbs}"
+                                  onclick="event.stopPropagation()"
+                                  onchange="event.stopPropagation();window.stockModule.inlineSave(${safeId},+this.value)"
+                                  style="width:64px;padding:4px 6px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:7px;font-size:12px;font-weight:700;text-align:center;outline:none"
+                                  onfocus="this.style.borderColor='var(--accent)'"
+                                  onblur="this.style.borderColor='var(--border)'">
+                              ` : `
+                                <span style="font-size:11px;color:var(--text-3)">—</span>
+                              `}
                             </td>
 
-                            <!-- FBO -->
+                            <!-- Склад МП (FBO / FBW / FBY — readonly) -->
                             <td style="padding:8px 12px;text-align:center;font-size:11px;color:var(--text-2)">
-                              ${item.mp === 'ozon' ? this.fmtN(item.stockFbo) : '—'}
+                              ${item.stockFbo > 0 ? `
+                                <span style="display:inline-flex;align-items:center;gap:4px">
+                                  <span style="font-size:9px;font-weight:700;color:var(--text-3)">${item.stockLabel === 'FBW' ? 'FBW' : item.stockLabel === 'FBY' ? 'FBY' : 'FBO'}</span>
+                                  <span>${this.fmtN(item.stockFbo)}</span>
+                                </span>
+                              ` : '—'}
                             </td>
 
                             <!-- Цена -->
@@ -767,38 +838,9 @@ export class StockModule {
                       ` : ''}
                     </tbody>
                   </table>
-                </div>
               </div>
-
-              <!-- ── По маркетплейсам ── -->
-              ${(() => {
-                const byMp = new Map<Mp, { count: number; units: number; oos: number }>();
-                for (const it of this.items) {
-                  const c = byMp.get(it.mp) ?? { count: 0, units: 0, oos: 0 };
-                  c.count++; c.units += it.stockTotal; if (it.stockTotal === 0) c.oos++;
-                  byMp.set(it.mp, c);
-                }
-                return `
-                  <div style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
-                    ${(['ozon','wb','yandex'] as Mp[]).filter(mp => byMp.has(mp)).map(mp => {
-                      const d = byMp.get(mp)!;
-                      return `
-                        <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;border-left:3px solid ${MP_COLOR[mp]}">
-                          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                            <span style="font-size:11px;font-weight:700;color:${MP_COLOR[mp]}">${MP_LABEL[mp]}</span>
-                            <span style="font-size:10px;color:var(--text-2)">${((d.count / total) * 100).toFixed(1)}%</span>
-                          </div>
-                          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:11px">
-                            <div><div style="color:var(--text-2);font-size:9px;text-transform:uppercase">Позиций</div><div style="font-weight:700;color:var(--text)">${this.fmtN(d.count)}</div></div>
-                            <div><div style="color:var(--text-2);font-size:9px;text-transform:uppercase">Единиц</div><div style="font-weight:700;color:var(--text)">${this.fmtN(d.units)}</div></div>
-                            <div><div style="color:var(--text-2);font-size:9px;text-transform:uppercase">OoS</div><div style="font-weight:700;color:#ef4444">${this.fmtN(d.oos)}</div></div>
-                          </div>
-                        </div>`;
-                    }).join('')}
-                  </div>`;
-              })()}
-            `}
-          </div>
+            </div>
+          `}
         </div>
       </div>
     `;

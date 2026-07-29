@@ -134,8 +134,18 @@ export class UserProfileModule {
           </div>
         </div>
 
-        <!-- Выход -->
+        <!-- Юридические документы + Выход -->
         <div class="profile-footer">
+          <div style="display:flex;gap:12px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+            <a href="/offer" target="_blank" rel="noopener" style="font-size:11px;color:var(--text2);text-decoration:none;display:flex;align-items:center;gap:5px;opacity:.7;transition:opacity .15s" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.7'">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="14" rx="2"/><path d="M5 5h6M5 8h6M5 11h4"/></svg>
+              Лицензионный договор
+            </a>
+            <a href="/privacy" target="_blank" rel="noopener" style="font-size:11px;color:var(--text2);text-decoration:none;display:flex;align-items:center;gap:5px;opacity:.7;transition:opacity .15s" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.7'">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1L2 4v4c0 3.3 2.5 6.4 6 7 3.5-.6 6-3.7 6-7V4L8 1z"/></svg>
+              Политика конфиденциальности
+            </a>
+          </div>
           <button class="profile-logout-btn" id="profile-logout-btn">
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
               <path d="M10 3h3v10h-3M7 5l-4 3 4 3M3 8h8"/>

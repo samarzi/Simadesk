@@ -8,13 +8,14 @@
  */
 
 import { showToast } from '@/utils/toast';
-import { detectSimaDeskExtension } from '@/services/extensionDetect';
+import { detectSimaDeskExtension, sendConfigToExtension } from '@/services/extensionDetect';
 import { companyService } from '@/services/companyService';
 import { taskDb, reminderDb } from '@/services/taskDb';
 import { producerDb, producerFieldDb } from '@/services/producerDb';
 import { costPriceDb } from '@/services/costPriceDb';
 import { autoReplyDb } from '@/services/autoReplyDb';
 import { customColumnsDb } from '@/services/customColumnsDb';
+import { debug } from '@/utils/debug';
 
 export class SettingsModule {
   private el: HTMLElement;
@@ -29,6 +30,7 @@ export class SettingsModule {
     this.render();
     detectSimaDeskExtension().then((ok) => {
       this.extensionConnected = ok;
+      if (ok) sendConfigToExtension();
       this.render();
     });
   }
@@ -103,46 +105,61 @@ export class SettingsModule {
         <div class="settings-group">
           <div class="settings-group-title">Расширение SimaDesk</div>
 
-          <div class="settings-row">
+          <div class="settings-row" style="flex-wrap:wrap;gap:10px">
             <div class="settings-row-info">
-              <div class="settings-row-label">
-                Статус
+              <div class="settings-row-label" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                Статус расширения
                 ${this.extensionConnected === null
-                  ? '<span style="margin-left:8px;font-size:12px;color:var(--text3)">Проверка…</span>'
+                  ? '<span style="font-size:12px;color:var(--text3)">⏳ Проверка…</span>'
                   : this.extensionConnected
-                    ? '<span style="margin-left:8px;font-size:12px;color:#16a34a;font-weight:600">● Установлено</span>'
-                    : '<span style="margin-left:8px;font-size:12px;color:#dc2626;font-weight:600">○ Не найдено</span>'}
+                    ? '<span style="font-size:12px;color:#16a34a;font-weight:600">● Установлено и активно</span>'
+                    : '<span style="font-size:12px;color:#dc2626;font-weight:600">○ Не найдено</span>'}
               </div>
-              <div class="settings-row-desc">
-                Расширение для Chrome нужно для автоматизации складов/тарифов на WB, Ozon, Яндекс Маркете,
-
+              <div class="settings-row-desc" style="margin-top:4px">
+                ${this.extensionConnected === false
+                  ? 'Расширение не обнаружено. Скачайте, установите по инструкции ниже и <b style="color:var(--text)">перезагрузите эту страницу</b>.'
+                  : 'Нужно для автоматизации складов, тарифов и цен на WB, Ozon, Яндекс Маркете.'}
               </div>
             </div>
-            <a href="/simadesk-extension.zip" download class="btn btn-primary" style="text-decoration:none;white-space:nowrap">
-              Скачать расширение
-            </a>
+            <div style="display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap">
+              ${this.extensionConnected !== true ? `<a href="/simadesk-extension.zip" download class="btn btn-primary" style="text-decoration:none;white-space:nowrap">⬇ Скачать</a>` : ''}
+              <button class="btn" id="ext-recheck-btn" style="white-space:nowrap">
+                ${this.extensionConnected === null ? '⏳' : '🔄'} Проверить снова
+              </button>
+              ${this.extensionConnected === false ? `<button class="btn btn-primary" onclick="location.reload()" style="white-space:nowrap">↺ Перезагрузить страницу</button>` : ''}
+            </div>
           </div>
 
           <div class="settings-row" style="display:block">
             <div class="settings-row-desc" style="line-height:1.7">
               <b style="color:var(--text)">Как установить:</b>
               <ol style="margin:6px 0 10px;padding-left:20px">
-                <li>Скачайте архив кнопкой выше и распакуйте его в отдельную папку (правой кнопкой → «Извлечь все» / «Распаковать»).</li>
-                <li>
-                  Откройте страницу расширений вашего браузера — введите в адресную строку:
-                  <ul style="margin:4px 0;padding-left:18px">
-                    <li><code>chrome://extensions</code> — Google Chrome</li>
-                    <li><code>browser://extensions</code> — Яндекс Браузер</li>
-                    <li><code>edge://extensions</code> — Microsoft Edge</li>
-                    <li><code>opera://extensions</code> — Opera</li>
-                  </ul>
-                  Другие браузеры на Chromium (Vivaldi, Brave, Arc и т.п.) — аналогично: <code>название-браузера://extensions</code> в адресной строке.
-                  Если ваш браузер не на Chromium (например, Safari или Firefox) — расширение, к сожалению, не подойдёт,
-                  используйте один из браузеров выше.
+                <li>Скачайте архив кнопкой выше и распакуйте в отдельную папку (ПКМ → «Извлечь все»).</li>
+                <li style="margin-bottom:10px">
+                  Откройте страницу расширений — нажмите на свой браузер:
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+                    <button class="ext-url-copy" data-url="chrome://extensions" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;border:1px solid var(--border);background:var(--bg2);cursor:pointer;text-align:left;font-size:12px;color:var(--text)">
+                      <svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#fff" stroke="#e0e0e0" stroke-width="0.5"/><circle cx="12" cy="12" r="4.5" fill="#4285F4"/><path d="M12 7.5h8.66A10 10 0 0 0 12 2v5.5z" fill="#EA4335"/><path d="M20.66 7.5H3.34A10 10 0 0 0 3.66 16.5l4.33-7.5H20.66z" fill="#EA4335" opacity="0"/><path d="M12 7.5H3.34A10 10 0 0 0 7.5 20.33L12 12.5 12 7.5z" fill="#34A853" opacity="0"/><circle cx="12" cy="12" r="4.5" fill="#4285F4"/><path fill="#EA4335" d="M12 7.5h8.66A10 10 0 0 0 12 2Z"/><path fill="#FBBC05" d="M3.34 7.5A10 10 0 0 0 7.5 20.33L12 12.5Z"/><path fill="#34A853" d="M12 22a10 10 0 0 0 8.66-5.5L12 12.5Z"/></svg>
+                      <div><div style="font-weight:600;font-size:12px">Google Chrome</div><div style="font-size:10px;color:var(--text3);margin-top:1px">chrome://extensions</div></div>
+                    </button>
+                    <button class="ext-url-copy" data-url="browser://extensions" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;border:1px solid var(--border);background:var(--bg2);cursor:pointer;text-align:left;font-size:12px;color:var(--text)">
+                      <svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#FF0000"/><text x="12" y="16" text-anchor="middle" fill="white" font-size="10" font-weight="bold">Я</text></svg>
+                      <div><div style="font-weight:600;font-size:12px">Яндекс Браузер</div><div style="font-size:10px;color:var(--text3);margin-top:1px">browser://extensions</div></div>
+                    </button>
+                    <button class="ext-url-copy" data-url="edge://extensions" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;border:1px solid var(--border);background:var(--bg2);cursor:pointer;text-align:left;font-size:12px;color:var(--text)">
+                      <svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#0078d4"/><path d="M18 10c0 4-4 7-9 6.5 2 1.5 5.5 1.5 7.5-1 .5-1 1-3.5 1.5-5.5z" fill="#50e6ff"/><path d="M6 16c-1-2-1-6 2-8.5C10.5 5 15 5.5 17 8c-2-1.5-6-1.5-8 1.5-1.5 2-1.5 5.5-3 6.5z" fill="white" opacity="0.9"/></svg>
+                      <div><div style="font-weight:600;font-size:12px">Microsoft Edge</div><div style="font-size:10px;color:var(--text3);margin-top:1px">edge://extensions</div></div>
+                    </button>
+                    <button class="ext-url-copy" data-url="opera://extensions" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;border:1px solid var(--border);background:var(--bg2);cursor:pointer;text-align:left;font-size:12px;color:var(--text)">
+                      <svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#FF1B2D"/><ellipse cx="12" cy="12" rx="4.5" ry="7" fill="none" stroke="white" stroke-width="2"/></svg>
+                      <div><div style="font-weight:600;font-size:12px">Opera</div><div style="font-size:10px;color:var(--text3);margin-top:1px">opera://extensions</div></div>
+                    </button>
+                  </div>
+                  <div style="margin-top:6px;font-size:11px;color:var(--text3)">Нажмите на свой браузер — адрес скопируется. Вставьте в адресную строку и нажмите Enter.</div>
                 </li>
-                <li>В правом верхнем углу страницы расширений включите переключатель «Режим разработчика» (Developer mode).</li>
-                <li>Нажмите появившуюся кнопку «Загрузить распакованное расширение» (Load unpacked) и выберите папку, которую вы распаковали на шаге 1.</li>
-                <li>Расширение появится в списке, и статус выше на этой странице сменится на «Установлено» (может понадобиться обновить страницу SimaDesk).</li>
+                <li>Включите «Режим разработчика» (Developer mode) в правом верхнем углу страницы расширений.</li>
+                <li>Нажмите «Загрузить распакованное расширение» (Load unpacked) и выберите папку из шага 1.</li>
+                <li>Статус выше сменится на «Установлено» (обновите страницу SimaDesk если нужно).</li>
               </ol>
             </div>
           </div>
@@ -187,6 +204,42 @@ export class SettingsModule {
         <div style="height:80px;flex-shrink:0"></div>
       </div>
     `;
+    const recheckBtn = this.el.querySelector<HTMLButtonElement>('#ext-recheck-btn');
+    if (recheckBtn) {
+      recheckBtn.addEventListener('click', () => {
+        recheckBtn.textContent = '⏳ Проверка…';
+        recheckBtn.disabled = true;
+        this.extensionConnected = null;
+        detectSimaDeskExtension().then((ok) => {
+          this.extensionConnected = ok;
+          if (ok) sendConfigToExtension();
+          this.render();
+        });
+      });
+    }
+
+    this.el.querySelectorAll<HTMLElement>('.ext-url-copy').forEach(el => {
+      el.addEventListener('click', () => {
+        const url = el.dataset.url ?? '';
+        const origHTML = el.innerHTML;
+        const origBorder = el.style.borderColor;
+
+        const showMsg = (html: string, color: string) => {
+          el.innerHTML = html;
+          el.style.borderColor = color;
+          el.style.color = color;
+          setTimeout(() => { el.innerHTML = origHTML; el.style.borderColor = origBorder; el.style.color = ''; }, 3000);
+        };
+
+        // chrome://, browser://, edge://, opera:// — cannot be opened from a web page (browser security).
+        // Copy to clipboard and guide user to paste in address bar.
+        navigator.clipboard.writeText(url).then(() => {
+          showMsg('📋 Скопировано! Нажмите Ctrl+L → вставьте → Enter', '#f59e0b');
+        }).catch(() => {
+          showMsg('Вставьте вручную: ' + url, '#dc2626');
+        });
+      });
+    });
   }
 
   toggleTheme(light: boolean): void {
@@ -261,7 +314,7 @@ export class SettingsModule {
 
       showToast('Данные экспортированы', 'success');
     } catch (e) {
-      console.error('[exportData]', e);
+      debug.warn('[exportData]', e);
       showToast('Ошибка при экспорте', 'error');
     }
   }
@@ -381,7 +434,7 @@ export class SettingsModule {
 
         showToast('Импорт завершён', 'success');
       } catch (e) {
-        console.error('[importData]', e);
+        debug.warn('[importData]', e);
         showToast('Ошибка при импорте', 'error');
       }
     };

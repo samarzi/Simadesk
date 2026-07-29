@@ -23,6 +23,7 @@ export class WbModule {
   private syncing: Record<string, boolean> = {};
   private addBusy = false;
   private lastError = '';
+  private pendingStore: { apiKey: string; name: string } | null = null;
 
   constructor(container: HTMLElement) { this.container = container; }
 
@@ -199,7 +200,36 @@ export class WbModule {
     `;
   }
 
+  private renderPendingStore(): string {
+    const p = this.pendingStore!;
+    return `
+      <div style="flex:1;overflow:auto;padding:24px 24px 100px">
+        <div style="max-width:760px;margin:0 auto">
+          <div class="ym-card">
+            <div class="ym-card-title">Найден магазин</div>
+            <div class="ym-card-desc">Проверь данные и подтверди добавление.</div>
+            <label class="mp-pending-row" style="margin:12px 0">
+              <input type="checkbox" checked disabled>
+              <div class="mp-pending-info">
+                <span class="mp-pending-name">${this.esc(p.name)}</span>
+                <span class="mp-pending-meta">Wildberries</span>
+              </div>
+            </label>
+            ${this.lastError ? `<div class="ym-error">${this.esc(this.lastError)}</div>` : ''}
+            <div style="display:flex;gap:8px;margin-top:4px">
+              <button class="btn btn-primary" onclick="window.wbModule.confirmPending()"
+                ${this.addBusy ? 'disabled' : ''}>
+                ${this.addBusy ? 'Добавление…' : 'Добавить магазин'}
+              </button>
+              <button class="btn" onclick="window.wbModule.cancelPending()">Назад</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+
   private renderStoresView(): string {
+    if (this.pendingStore) return this.renderPendingStore();
     return `
       <div style="flex:1;overflow:auto;padding:24px 24px 100px">
         <div style="max-width:760px;margin:0 auto">
@@ -218,7 +248,7 @@ export class WbModule {
                 placeholder="Название (опционально)" style="max-width:200px"
                 autocomplete="off" spellcheck="false">
               <button class="btn btn-primary" onclick="window.wbModule.addStore()" ${this.addBusy ? 'disabled' : ''}>
-                ${this.addBusy ? 'Проверка…' : 'Добавить'}
+                ${this.addBusy ? 'Проверка…' : 'Найти магазин'}
               </button>
             </div>
             <div class="ym-card-hint">
@@ -362,7 +392,7 @@ export class WbModule {
       await wbDb.updateStore(storeId, { tax_model, tax_rate });
       const s = this.stores.find(x => x.id === storeId);
       if (s) { s.tax_model = tax_model; s.tax_rate = tax_rate; }
-    } catch (err) { console.error('[WB] saveTax error:', err); }
+    } catch (err) { debug.warn('[WB] saveTax error:', err); }
   }
 
   async renameStore(storeId: string, name: string): Promise<void> {
@@ -374,7 +404,7 @@ export class WbModule {
       await wbDb.updateStore(storeId, { name: trimmed });
       s.name = trimmed;
       this.render();
-    } catch (err) { console.error('[WB] renameStore error:', err); this.render(); }
+    } catch (err) { debug.warn('[WB] renameStore error:', err); this.render(); }
   }
 
   async saveFulfillment(storeId: string): Promise<void> {
@@ -385,7 +415,7 @@ export class WbModule {
       const s = this.stores.find(x => x.id === storeId);
       if (s) { s.fulfillment_model = fulfillment_model; }
       this.render();
-    } catch (err) { console.error('[WB] saveFulfillment error:', err); }
+    } catch (err) { debug.warn('[WB] saveFulfillment error:', err); }
   }
 
   async saveFeedbackToken(storeId: string): Promise<void> {
@@ -396,7 +426,7 @@ export class WbModule {
       const s = this.stores.find(x => x.id === storeId);
       if (s) s.feedback_api_key = feedback_api_key;
       try { window.app?.toast?.('Токен для чатов и отзывов сохранён', 'success'); } catch (e) { debug.warn('[WbModule] swallowed error', e); }
-    } catch (err) { console.error('[WB] saveFeedbackToken error:', err); }
+    } catch (err) { debug.warn('[WB] saveFeedbackToken error:', err); }
   }
 
   async syncAll(): Promise<void> {
@@ -424,9 +454,9 @@ export class WbModule {
         }
       }
       this.products = await wbDb.getProducts();
-    } catch (err: any) {
-      this.lastError = `Синхронизация «${store.name}»: ${err.message ?? err}`;
-      console.error('[WB] sync error:', err);
+    } catch (err: unknown) {
+      this.lastError = `Синхронизация «${store.name}»: ${(err instanceof Error ? err.message : String(err)) ?? err}`;
+      debug.warn('[WB] sync error:', err);
     }
     this.syncing[storeId] = false; this.render();
   }
@@ -452,30 +482,50 @@ export class WbModule {
     this.addBusy = true; this.render();
 
     try {
-      // Пробуем получить инфо о магазине — но не блокируем добавление если WB недоступен
       let sellerName = customName || 'Wildberries';
       try {
         const info = await wbApi.checkToken(apiKey);
         sellerName = customName || (info?.name ?? info?.trademark ?? (info?.sid ? `WB ${info.sid}` : '')) || 'Wildberries';
       } catch {
-        // WB может отклонять запросы с хостинг-IP — сохраняем магазин и проверяем при синхронизации
+        // WB может отклонять запросы с хостинг-IP — продолжаем без названия
       }
+      this.pendingStore = { apiKey, name: sellerName };
+      this.addBusy = false;
+      this.render();
+    } catch (err: unknown) {
+      this.lastError = (err instanceof Error ? err.message : String(err)) ?? String(err);
+      this.addBusy = false;
+      this.render();
+    }
+  }
+
+  cancelPending(): void {
+    this.pendingStore = null;
+    this.lastError = '';
+    this.render();
+  }
+
+  async confirmPending(): Promise<void> {
+    if (!this.pendingStore) return;
+    this.addBusy = true;
+    this.lastError = '';
+    this.render();
+    try {
       await wbDb.createStore({
-        name: sellerName,
-        api_key: apiKey,
+        name: this.pendingStore.name,
+        api_key: this.pendingStore.apiKey,
         seller_id: null,
         seller_name: null,
         trademark: null,
       });
       this.stores = await wbDb.getStores();
       refreshNavLockState();
+      this.pendingStore = null;
       this.addBusy = false;
-      if (keyInp) keyInp.value = '';
-      if (nameInp) nameInp.value = '';
       this.view = 'products';
       this.render();
-    } catch (err: any) {
-      this.lastError = err.message ?? String(err);
+    } catch (err: unknown) {
+      this.lastError = (err instanceof Error ? err.message : String(err)) ?? String(err);
       this.addBusy = false;
       this.render();
     }

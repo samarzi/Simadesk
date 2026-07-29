@@ -91,8 +91,6 @@ const TABS: TabConfig[] = [
 const SERVER_URL = 'http://localhost:8899';
 const LOG_POLL_MS = 1500;
 
-const EXTENSION_ID = '';
-
 // ══════════════════════════════════════════════════════════════════════════════
 //  AutomationModule
 // ══════════════════════════════════════════════════════════════════════════════
@@ -244,13 +242,6 @@ export class AutomationModule {
       });
     };
 
-    // Если ID задан — используем его
-    if (EXTENSION_ID) {
-      this.extensionConnected = await tryId(EXTENSION_ID);
-      if (this.extensionConnected) this.detectedExtensionId = EXTENSION_ID;
-      return;
-    }
-
     // Проверяем через window event (расширение могло установить маркер)
     if (window.__SIMADESK_EXTENSION_ID) {
       const id = window.__SIMADESK_EXTENSION_ID;
@@ -279,7 +270,7 @@ export class AutomationModule {
       this.tabState['oz-warehouses'].savedScans = ozonScans;
       this.tabState['oz-warehouses'].scansLoaded = true;
     } catch (e) {
-      console.error('Failed to load saved scans:', e);
+      debug.warn('Failed to load saved scans:', e);
     }
   }
 
@@ -939,8 +930,8 @@ export class AutomationModule {
         if (tab.key === 'ya-tariffs') this.tabState['ya-warehouses'].savedScans = st.savedScans;
         this.showToast('Скан удалён', 'success');
         this.render();
-      } catch (e: any) {
-        this.showToast(`Ошибка: ${e.message}`, 'error');
+      } catch (e: unknown) {
+        this.showToast(`Ошибка: ${(e instanceof Error ? e.message : String(e))}`, 'error');
       }
     });
 
@@ -971,8 +962,8 @@ export class AutomationModule {
         st.editingScanId = null;
         this.showToast('Скан переименован', 'success');
         this.render();
-      } catch (e: any) {
-        this.showToast(`Ошибка: ${e.message}`, 'error');
+      } catch (e: unknown) {
+        this.showToast(`Ошибка: ${(e instanceof Error ? e.message : String(e))}`, 'error');
       }
     });
     this.container.querySelector('#auto-edit-scan-cancel')?.addEventListener('click', () => {
@@ -1135,9 +1126,9 @@ export class AutomationModule {
         this.buildOzonDiagnostics(st);
         this.render();
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       st.ozonScanning = false;
-      this.showToast(`Ошибка: ${e.message}`, 'error');
+      this.showToast(`Ошибка: ${(e instanceof Error ? e.message : String(e))}`, 'error');
       this.render();
     }
   }
@@ -1308,7 +1299,7 @@ export class AutomationModule {
     this.render();
 
     const warehouseNames = indicesToRescan.map(i => st.ozonWarehouses[i]?.name).filter(Boolean);
-    console.info(`[AutoDiag] Пересканирование зон для складов: ${warehouseNames.join(', ')}`);
+    debug.log(`[AutoDiag] Пересканирование зон для складов: ${warehouseNames.join(', ')}`);
 
     // Отправляем запрос на пересканирование зон конкретных складов
     try {
@@ -1321,7 +1312,7 @@ export class AutomationModule {
         st.ozonDiagRunning = false;
         if (chrome.runtime.lastError || res?.error) {
           // Fallback: если расширение не поддерживает rescan-ozon-zones, делаем полный ресканr
-          console.warn('[AutoDiag] rescan-ozon-zones не поддерживается, делаем полное сканирование');
+          debug.warn('[AutoDiag] rescan-ozon-zones не поддерживается, делаем полное сканирование');
           this.scanOzonWarehouses();
           return;
         }
@@ -1332,7 +1323,7 @@ export class AutomationModule {
             const updated = res.warehouses[i];
             if (updated && st.ozonWarehouses[origIdx]) {
               const prev = st.ozonWarehouses[origIdx];
-              console.info(`[AutoDiag] Склад "${prev.name}": зон было ${prev.zones.length}, стало ${updated.zones?.length ?? 0}`);
+              debug.log(`[AutoDiag] Склад "${prev.name}": зон было ${prev.zones.length}, стало ${updated.zones?.length ?? 0}`);
               st.ozonWarehouses[origIdx] = {
                 ...prev,
                 zones: updated.zones || prev.zones,
@@ -1350,9 +1341,9 @@ export class AutomationModule {
         }
         this.render();
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       st.ozonDiagRunning = false;
-      this.showToast(`Ошибка: ${e.message}`, 'error');
+      this.showToast(`Ошибка: ${(e instanceof Error ? e.message : String(e))}`, 'error');
       this.render();
     }
   }
@@ -1405,9 +1396,9 @@ export class AutomationModule {
         }
         this.render();
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       st.yandexScanning = false;
-      this.showToast(`Ошибка: ${e.message}`, 'error');
+      this.showToast(`Ошибка: ${(e instanceof Error ? e.message : String(e))}`, 'error');
       this.render();
     }
   }
@@ -1450,8 +1441,8 @@ export class AutomationModule {
       }
       this.showToast('Сканирование сохранено', 'success');
       this.render();
-    } catch (e: any) {
-      this.showToast(`Ошибка: ${e.message}`, 'error');
+    } catch (e: unknown) {
+      this.showToast(`Ошибка: ${(e instanceof Error ? e.message : String(e))}`, 'error');
     }
   }
 
@@ -1505,7 +1496,7 @@ export class AutomationModule {
       });
       this.showToast('Отчёт сохранён', 'success');
     } catch (e) {
-      console.error('Failed to save report:', e);
+      debug.warn('Failed to save report:', e);
     }
   }
 
@@ -1573,7 +1564,7 @@ export class AutomationModule {
         this.updateCitiesListFromZones(st);
       }
     } catch (e) {
-      console.error('Error reading Excel:', e);
+      debug.warn('Error reading Excel:', e);
       st.citiesList = [];
       st.zonesData = {};
       st.selectedZones = new Set();
@@ -1687,9 +1678,9 @@ export class AutomationModule {
         // Также поллим на случай если порт не работает
         this.startExtensionLogPolling();
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       st.status = 'error';
-      st.logs.push(`[Ошибка] Расширение: ${e.message}`);
+      st.logs.push(`[Ошибка] Расширение: ${(e instanceof Error ? e.message : String(e))}`);
       this.render();
     }
   }
@@ -1711,9 +1702,9 @@ export class AutomationModule {
       st.taskId = data.task_id;
       this.render();
       this.startLogPolling();
-    } catch (e: any) {
+    } catch (e: unknown) {
       st.status = 'error';
-      st.logs.push(`[Ошибка] Не удалось запустить: ${e.message}`);
+      st.logs.push(`[Ошибка] Не удалось запустить: ${(e instanceof Error ? e.message : String(e))}`);
       this.render();
     }
   }

@@ -24,7 +24,7 @@ import { debug } from '@/utils/debug';
 import { updateWbPrices } from '@/services/wbApi';
 import { ozonApi } from '@/services/ozonApi';
 import { yandexApi } from '@/services/yandexApi';
-import { detectSimaDeskExtension, checkPriceNow } from '@/services/extensionDetect';
+import { detectSimaDeskExtension, checkPriceNow, sendConfigToExtension } from '@/services/extensionDetect';
 import type { CheckPriceNowParams } from '@/services/extensionDetect';
 import type { WbStore, WbProduct } from '@/types/wb';
 import type { OzonStore, OzonProduct } from '@/types/ozon';
@@ -48,6 +48,15 @@ import {
 } from './priceApi';
 
 const MAX_LOG_ENTRIES = 200;
+
+// Задержка propagation: маркетплейс принял цену в ЛК, но витрина ещё не пересчиталась.
+// Для ЯМ — типично 15–30 мин. Проверяем раз в 10 мин, ждём не дольше 45 мин.
+const MRC_PROPAGATION_RETRY_MS = 10 * 60_000;
+const MRC_PROPAGATION_MAX_WAIT_MS = 45 * 60_000;
+// Порог «витрина не изменилась»: если |current - before| < N ₽, считаем что не обновилась
+const MRC_SHOWCASE_UNCHANGED_RUB = 50;
+// Окно недавнего применения (для скана): если не старше этого, suppressим needs_update
+const MRC_PROPAGATION_SCAN_WINDOW_MS = 35 * 60_000;
 
 const MP_LABEL: Record<Mp, string> = { wb: 'WB', ozon: 'Ozon', yandex: 'ЯМ' };
 
@@ -89,6 +98,7 @@ export class MrcScanner {
   scanProgress: { current: number; total: number } | null = null;
   /** Доступно ли расширение SimaDesk — проверяется при каждом скане. */
   extensionAvailable: boolean | null = null;
+  private verifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(private ctx: MrcScannerContext) {
     this.scanLog = loadJson(MRC_SCAN_LOG_KEY, []);
@@ -184,14 +194,17 @@ export class MrcScanner {
    *   для повторных итераций adaptивного подбора (verify), где товар уже сняли с акций
    *   на первом применении в этой цепочке корректировок.
    */
-  private async applyPrice(item: MrcItem, prices: ItemPrices, opts: { skipPromoRemoval?: boolean } = {}): Promise<number> {
+  private async applyPrice(item: MrcItem, prices: ItemPrices, opts: { skipPromoRemoval?: boolean; priceOverride?: number } = {}): Promise<number> {
     const targetShowcase = item.mrcPrice;
+    const calcPrice = opts.priceOverride != null
+      ? (_sp: number, _bp: number) => opts.priceOverride!
+      : (sp: number, bp: number) => computeNewSellerPrice(targetShowcase, sp, bp);
 
     if (item.mp === 'wb') {
       const store = this.ctx.getWbStores().find(s => s.id === item.storeId);
       if (!store) throw new Error('Магазин WB не найден');
       const nmId = Number(item.productId);
-      const newPrice = computeNewSellerPrice(targetShowcase, prices.sellerPrice, prices.buyerPrice);
+      const newPrice = calcPrice(prices.sellerPrice, prices.buyerPrice);
       if (!isFinite(newPrice) || newPrice <= 0) throw new Error(`Рассчитанная цена некорректна (${newPrice})`);
       await updateWbPrices(store.api_key, [{ nmID: nmId, price: newPrice }]);
       // Обновляем локальный кеш, чтобы verify видел актуальные данные без пересинхронизации каталога
@@ -203,7 +216,7 @@ export class MrcScanner {
     if (item.mp === 'ozon') {
       const store = this.ctx.getOzonStores().find(s => s.id === item.storeId);
       if (!store) throw new Error('Магазин Ozon не найден');
-      const newPrice = computeNewSellerPrice(targetShowcase, prices.sellerPrice, prices.buyerPrice);
+      const newPrice = calcPrice(prices.sellerPrice, prices.buyerPrice);
       if (!isFinite(newPrice) || newPrice <= 0) throw new Error(`Рассчитанная цена некорректна (${newPrice})`);
       const minP = Math.min(newPrice - 1, Math.round(newPrice * 0.8));
       await ozonApi.updatePrices({ client_id: store.client_id, api_key: store.api_key }, [{
@@ -213,13 +226,15 @@ export class MrcScanner {
         min_price: String(Math.max(1, minP)),
         auto_action_enabled: 'DISABLED',
       }]);
+      const cachedOzon = this.ctx.getOzonProducts().find(p => p.offer_id === item.productId && p.store_id === item.storeId);
+      if (cachedOzon) (cachedOzon as any).price = newPrice;
       return newPrice;
     }
 
     // yandex
     const store = this.ctx.getYmStores().find(s => s.id === item.storeId);
     if (!store?.campaign_id) throw new Error('Магазин ЯМ не найден');
-    const newPrice = computeNewSellerPrice(targetShowcase, prices.sellerPrice, prices.buyerPrice);
+    const newPrice = calcPrice(prices.sellerPrice, prices.buyerPrice);
     if (!isFinite(newPrice) || newPrice <= 0) throw new Error(`Рассчитанная цена некорректна (${newPrice})`);
     if (store.business_id && !opts.skipPromoRemoval) {
       await yandexApi.removeOffersFromAllPromos(store.api_key, store.business_id, [item.productId]);
@@ -227,6 +242,8 @@ export class MrcScanner {
     await yandexApi.updateOfferPrices(store.api_key, String(store.campaign_id), [{
       offerId: item.productId, price: newPrice, clearDiscountBase: true,
     }]);
+    const cachedYm = this.ctx.getYmProducts().find(p => p.offer_id === item.productId && p.store_id === item.storeId);
+    if (cachedYm) cachedYm.basic_price = newPrice;
     return newPrice;
   }
 
@@ -255,6 +272,7 @@ export class MrcScanner {
       const items = this.enabledItems();
 
       this.extensionAvailable = await detectSimaDeskExtension().catch(() => false);
+      if (this.extensionAvailable) sendConfigToExtension();
       debug.log('[mrcScanner] scan start', { extensionAvailable: this.extensionAvailable, items: items.length });
 
       for (let i = 0; i < items.length; i++) {
@@ -284,6 +302,7 @@ export class MrcScanner {
     this.ctx.onChange();
     try {
       this.extensionAvailable = await detectSimaDeskExtension().catch(() => false);
+      if (this.extensionAvailable) sendConfigToExtension();
       await this.scanOne(ri.rule, ri.item);
     } finally {
       this.scanning = false;
@@ -313,8 +332,8 @@ export class MrcScanner {
             extensionError = res.error ?? 'Не удалось проверить цену на странице товара';
           }
         }
-      } catch (e: any) {
-        extensionError = e?.message ?? String(e);
+      } catch (e: unknown) {
+        extensionError = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e);
       }
       if (extensionError) debug.warn(`[mrcScanner] ${item.productTitle} (${item.mp}): ${extensionError}`);
     }
@@ -362,14 +381,33 @@ export class MrcScanner {
         return;
       }
 
+      // Витрина отклонилась, но возможно цена только что поставлена — маркетплейс ещё не
+      // пересчитал витрину (ЯМ: 15–30 мин). Если в лог-журнале есть недавняя 'adjusted'
+      // запись для этой ячейки с той же ЛК-ценой — не показываем needs_update, ждём.
+      if (prices.sellerPrice > 0) {
+        const recentApply = this.scanLog.find(e =>
+          e.ruleId === rule.id &&
+          e.itemKey === item.key &&
+          e.action === 'adjusted' &&
+          e.newPrice != null &&
+          e.newPrice === prices.sellerPrice &&
+          Date.now() - new Date(e.scannedAt).getTime() < MRC_PROPAGATION_SCAN_WINDOW_MS,
+        );
+        if (recentApply) {
+          this.pushEntry(rule, item, prices.sellerPrice, prices.buyerPrice, 'adjusted',
+            undefined, recentApply.newPrice, extensionError);
+          return;
+        }
+      }
+
       const suggested = exactSellerPriceForMrc(item.mrcPrice, prices.sellerPrice, prices.buyerPrice);
 
       this.pushEntry(rule, item, prices.sellerPrice, prices.buyerPrice, 'needs_update', undefined, suggested, extensionError);
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Если расширение успело получить витринную цену до того, как API ЛК упало —
       // сохраняем её, чтобы хотя бы показать в ячейке.
       const buyerForErr = extensionBuyerPrice ?? 0;
-      this.pushEntry(rule, item, 0, buyerForErr, 'error', e?.message ?? String(e), undefined, extensionError);
+      this.pushEntry(rule, item, 0, buyerForErr, 'error', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e), undefined, extensionError);
     }
   }
 
@@ -387,10 +425,12 @@ export class MrcScanner {
       const prices = await this.fetchItemPrices(ri.item);
       if (!prices) throw new Error('Не удалось получить цены');
 
-      const newPrice = await this.applyPrice(ri.item, prices);
+      // Apply exactly the price shown to the user at scan time ("поставьте цену N ₽").
+      // This avoids stale-buyerPrice pitfalls and the ±20% cap — both belong only in verify().
+      const newPrice = await this.applyPrice(ri.item, prices, { priceOverride: entry.newPrice });
 
       entry.sellerPrice = prices.sellerPrice;
-      entry.buyerPrice = prices.buyerPrice;
+      entry.buyerPrice = entry.buyerPrice; // keep scan-time showcase price
       entry.action = 'adjusted';
       entry.newPrice = newPrice;
       entry.adjustIteration = 0;
@@ -399,9 +439,9 @@ export class MrcScanner {
       this.saveLog();
       this.ctx.onChange();
       this.scheduleVerify(ri.rule.id, ri.item.key, entry.id);
-    } catch (e: any) {
+    } catch (e: unknown) {
       entry.action = 'error';
-      entry.errorMsg = e?.message ?? String(e);
+      entry.errorMsg = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e);
       this.saveLog();
       this.ctx.onChange();
     }
@@ -412,7 +452,10 @@ export class MrcScanner {
    *  изменение цены и не упереться в rate-limit (особенно у WB). */
   async applyAllDeviations(): Promise<void> {
     const ids = this.scanLog.filter(e => e.action === 'needs_update').map(e => e.id);
-    for (const id of ids) await this.applyEntry(id);
+    for (const id of ids) {
+      await this.applyEntry(id);
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
   }
 
   private findRuleItem(ruleId: string, itemKey: string): { rule: RepricerRule; item: MrcItem } | null {
@@ -432,10 +475,15 @@ export class MrcScanner {
    * Параметры ruleId/itemKey/entryId (а не объекты) позволяют корректно
    * возобновить verify после перезагрузки страницы через resumePendingVerifies().
    */
-  private scheduleVerify(ruleId: string, itemKey: string, entryId: string): void {
-    const verifyAt = new Date(Date.now() + MRC_VERIFY_DELAY_MS).toISOString();
+  private scheduleVerify(ruleId: string, itemKey: string, entryId: string, delayMs = MRC_VERIFY_DELAY_MS): void {
+    if (this.verifyTimers.has(entryId)) clearTimeout(this.verifyTimers.get(entryId)!);
+    const verifyAt = new Date(Date.now() + delayMs).toISOString();
     this.addPendingVerify({ ruleId, itemKey, entryId, verifyAt });
-    setTimeout(() => { void this.verify(ruleId, itemKey, entryId); }, MRC_VERIFY_DELAY_MS);
+    const handle = setTimeout(() => {
+      this.verifyTimers.delete(entryId);
+      void this.verify(ruleId, itemKey, entryId);
+    }, delayMs);
+    this.verifyTimers.set(entryId, handle);
   }
 
   private async verify(ruleId: string, itemKey: string, entryId: string): Promise<void> {
@@ -452,7 +500,40 @@ export class MrcScanner {
       prices = await this.fetchItemPrices(ri.item);
     } catch (e) { debug.warn('[mrcScanner] verify:', e); }
 
+    if (prices?.buyerPriceKnown === false) {
+      entry.needsConfirm = true;
+      this.saveLog();
+      this.ctx.onChange();
+      return;
+    }
+
     const buyerPrice = prices?.buyerPrice ?? 0;
+    const sellerPrice = prices?.sellerPrice ?? 0;
+
+    // Цена поставлена в ЛК (sellerPrice совпадает с тем, что мы отправили), витрина сдвинулась
+    // незначительно и ещё отклонена от МРЦ — маркетплейс обрабатывает изменение (ЯМ: 15–30 мин).
+    // Условие: 1) showcase ПЕРЕМЕСТИЛСЯ (хоть немного) — признак идущей propagation;
+    //           2) всё ещё отклонён от МРЦ — если уже сошлось, сразу переходим к OK.
+    if (
+      buyerPrice > 0 &&
+      sellerPrice > 0 &&
+      entry.newPrice != null &&
+      sellerPrice === entry.newPrice &&
+      entry.buyerPrice > 0 &&
+      buyerPrice !== entry.buyerPrice &&
+      Math.abs(buyerPrice - entry.buyerPrice) < MRC_SHOWCASE_UNCHANGED_RUB &&
+      mrcShowcaseDeviated(buyerPrice, ri.item.mrcPrice)
+    ) {
+      const elapsed = Date.now() - new Date(entry.scannedAt).getTime();
+      if (elapsed < MRC_PROPAGATION_MAX_WAIT_MS) {
+        this.scheduleVerify(ruleId, itemKey, entryId, MRC_PROPAGATION_RETRY_MS);
+      } else {
+        entry.needsConfirm = true;
+        this.saveLog();
+        this.ctx.onChange();
+      }
+      return;
+    }
 
     if (buyerPrice && !mrcShowcaseDeviated(buyerPrice, ri.item.mrcPrice)) {
       entry.buyerPrice = buyerPrice;
@@ -471,6 +552,7 @@ export class MrcScanner {
     // применении (applyEntry) — повторно снимать не нужно (skipPromoRemoval).
     if (buyerPrice > 0 && prices && iteration < MRC_MAX_ADJUST_ITERATIONS) {
       try {
+        if (entry.action !== 'adjusted') return;
         const newPrice = await this.applyPrice(ri.item, prices, { skipPromoRemoval: true });
 
         entry.sellerPrice = prices.sellerPrice;
@@ -483,8 +565,8 @@ export class MrcScanner {
         this.ctx.onChange();
         this.scheduleVerify(ruleId, itemKey, entryId);
         return;
-      } catch (e: any) {
-        entry.errorMsg = e?.message ?? String(e);
+      } catch (e: unknown) {
+        entry.errorMsg = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e);
         entry.action = 'error';
       }
     } else {
@@ -573,7 +655,14 @@ export class MrcScanner {
       ...(extensionError ? { extensionError } : {}),
     };
     this.scanLog.unshift(entry);
-    if (this.scanLog.length > MAX_LOG_ENTRIES) this.scanLog.length = MAX_LOG_ENTRIES;
+    if (this.scanLog.length > MAX_LOG_ENTRIES) {
+      const pendingIds = new Set(loadJson<PendingVerify[]>(MRC_PENDING_VERIFY_KEY, []).map(p => p.entryId));
+      const excess = this.scanLog.slice(MAX_LOG_ENTRIES);
+      this.scanLog = [
+        ...this.scanLog.slice(0, MAX_LOG_ENTRIES),
+        ...excess.filter(e => pendingIds.has(e.id)),
+      ];
+    }
     return entry;
   }
 

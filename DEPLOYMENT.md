@@ -1,220 +1,93 @@
-# 📦 Deployment Guide - STOCKBASE 2.0
+# Deployment Guide — SimaDesk
 
-## 🚀 Production сборка готова!
+**Стек:** Self-hosted VPS (Docker Compose + Nginx + PostgreSQL)
 
-**Размер бандла:** 40KB (gzipped: 11KB)  
-**Производительность:** First Load < 2с, Navigation < 500мс
+## Деплой через CI/CD (GitHub Actions)
 
-## 🌐 Варианты деплоя
+При пуше в `main` автоматически:
+1. Type-check (`tsc --noEmit`)
+2. Tests (`vitest`)
+3. Build (`vite build`)
+4. SCP дистрибутива на VPS → reload nginx
 
-### 1. Netlify (Рекомендуется)
-**Самый простой вариант для статических сайтов**
+Секреты хранятся в GitHub Secrets:
+- `VPS_HOST` — IP сервера
+- `VPS_SSH_KEY` — SSH приватный ключ
+- `VITE_API_URL`, `VITE_API_KEY`, `VITE_TG_BOT_USERNAME` — env vars для билда
 
-```bash
-# 1. Установите Netlify CLI
-npm install -g netlify-cli
-
-# 2. Авторизуйтесь
-netlify login
-
-# 3. Деплой
-netlify deploy --prod --dir=dist
-```
-
-Или через UI:
-1. Зайдите в [Netlify](https://netlify.com)
-2. Подключите GitHub репозиторий
-3. Настройте:
-   - **Build command:** `npm run build`
-   - **Publish directory:** `dist`
-   - **Node version:** `18`
-
-### 2. Vercel
-**Альтернатива с отличной производительностью**
+## Ручной деплой
 
 ```bash
-# 1. Установите Vercel CLI
-npm install -g vercel
+# 1. Собрать
+npm run build
 
-# 2. Деплой
-vercel --prod
+# 2. Загрузить на VPS
+scp -r dist/* root@135.106.172.135:/opt/simadesk/dist/
+
+# 3. Перезагрузить nginx
+ssh root@135.106.172.135 "cd /opt/simadesk && docker compose exec -T nginx nginx -s reload"
 ```
 
-Или через UI:
-1. Зайдите в [Vercel](https://vercel.com)
-2. Import Project → GitHub
-3. Настройки автоматически подтянутся из `vercel.json`
-
-### 3. Docker + Nginx
-**Для собственных серверов**
+## Деплой 전체 стека (Docker Compose)
 
 ```bash
-# 1. Соберите Docker образ
-docker build -t stockbase .
+ssh root@135.106.172.135
+cd /opt/simadesk
 
-# 2. Запустите контейнер
-docker run -p 80:80 stockbase
+# Обновить код
+git pull
+
+# Пересобрать фронтенд
+docker compose build --no-cache frontend
+
+# Перезапустить все сервисы
+docker compose up -d
 ```
 
-### 4. GitHub Pages
-**Бесплатный хостинг от GitHub**
+## Сервисы
 
+| Сервис | Порт | Описание |
+|--------|------|----------|
+| nginx | 80, 443 | Gateway: SSL + проксирование |
+| frontend | внутренний | Nginx + Vite SPA |
+| rest | 3000 | PostgREST (Supabase REST API) |
+| auth | 9999 | GoTrue (авторизация) |
+| functions | 9000 | Edge Runtime (telegram-auth и др.) |
+| storage | 5000 | Supabase Storage API |
+| realtime | 4000 | Supabase Realtime |
+| db | 5432 | PostgreSQL 15 |
+| imgproxy | 8080 | Трансформация изображений |
+
+## Environment Variables
+
+Все переменные в `/opt/simadesk/.env` на VPS. См. `.env.example` для шаблона.
+
+**Критичные секреты (НЕ в git):**
+- `POSTGRES_PASSWORD`
+- `JWT_SECRET`
+- `ANON_KEY` / `SERVICE_ROLE_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `REALTIME_ENC_KEY` / `REALTIME_SECRET_KEY_BASE`
+
+## Troubleshooting
+
+**Nginx не стартует:**
 ```bash
-# 1. Установите gh-pages
-npm install --save-dev gh-pages
-
-# 2. Добавьте скрипт в package.json
-# "deploy": "npm run build && gh-pages -d dist"
-
-# 3. Деплой
-npm run deploy
+docker compose logs nginx
+# Часто: realtime контейнер упал → nginx Depends на него
+docker compose up -d realtime
+docker compose up -d nginx
 ```
 
-## 🔧 Конфигурация
-
-### Environment Variables
-**Обязательно настройте в production:**
-
+**404 на API:**
 ```bash
-# Для Netlify/Vercel (через UI)
-VITE_API_URL=https://simadesk.ru
-VITE_API_KEY=your-production-anon-key
+# Проверить что PostgREST работает
+curl -H "apikey: <ANON_KEY>" http://localhost/rest/v1/boxes?select=id | head
 ```
 
-### Безопасность
-**Все конфигурации уже включены:**
-- ✅ Security headers
-- ✅ XSS protection  
-- ✅ Gzip compression
-- ✅ Cache headers
-- ✅ CSP policies
-
-## 📊 Оптимизации
-
-### Build Size
-- **CSS:** 19KB → 4.5KB (gzipped)
-- **JS:** 19KB → 6KB (gzipped)
-- **HTML:** 1.3KB → 0.6KB (gzipped)
-
-### Performance
-- **Tree shaking:** Удалён неиспользуемый код
-- **Code splitting:** Автоматическая разбивка
-- **Asset optimization:** Минификация и сжатие
-- **Lazy loading:** Подгрузка по требованию
-
-## 🔍 Мониторинг
-
-### Lighthouse Score (ожидается)
-- **Performance:** 95+
-- **Accessibility:** 100
-- **Best Practices:** 100
-- **SEO:** 100
-
-### Web Vitals
-- **LCP:** < 1.5с
-- **FID:** < 100мс  
-- **CLS:** < 0.1
-
-## 🚨 Важно
-
-### Перед деплоем
-1. **Проверьте .env.production** - убедитесь что ключи правильные
-2. **Протестируйте локально** - `npm run build && npm run preview`
-3. **Сделайте бэкап** - сохраните текущую версию
-
-### После деплоя
-1. **Проверьте функциональность** - все модули должны работать
-2. **Протестируйте API** - подключение к Supabase
-3. **Проверьте мобильную версию** - responsive дизайн
-
-## 🛠️ Troubleshooting
-
-### Common Issues
-
-**404 на внутренних страницах**
+**SSL истёк:**
 ```bash
-# Убедитесь что SPA routing настроен
-# В netlify.toml и vercel.json уже включено
+# Certbot автоматический ренев:
+docker compose exec certbot certbot renew
+docker compose exec nginx nginx -s reload
 ```
-
-**Environment variables не работают**
-```bash
-# Проверьте что переменные начинаются с VITE_
-# Перезапустите билд после изменений
-```
-
-**API ключи видны в браузере**
-```bash
-# Используйте только anon ключ для фронтенда
-# Секретные ключи должны быть на бэкенде
-```
-
-### Production Debug
-```javascript
-// В консоли браузера
-localStorage.setItem('debug', 'true');
-
-// Проверьте
-console.log('Environment:', import.meta.env);
-console.log('Store state:', window.app);
-```
-
-## 📈 Масштабирование
-
-### Когда нужно улучшать
-1. **> 10k пользователей** - добавьте CDN
-2. **> 50k товаров** - рассмотрите SSR
-3. **> 100k запросов/день** - добавьте rate limiting
-4. **> 1М товаров** - Elasticsearch/Algolia
-
-### Мониторинг
-- **Sentry** для error tracking
-- **LogRocket** для сессий
-- **Google Analytics** для аналитики
-- **Uptime monitoring** для доступности
-
-## 🔄 CI/CD
-
-### GitHub Actions
-```yaml
-# .github/workflows/deploy.yml
-name: Deploy to Production
-on:
-  push:
-    branches: [main]
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2
-        with:
-          node-version: '18'
-      - run: npm ci
-      - run: npm run build
-      - name: Deploy to Netlify
-        uses: netlify/actions/cli@master
-        with:
-          args: deploy --prod --dir=dist
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-```
-
-## ✅ Деплой чеклист
-
-- [ ] Environment variables настроены
-- [ ] Build проходит без ошибок  
-- [ ] Assets оптимизированы
-- [ ] SPA routing работает
-- [ ] Mobile версия тестирована
-- [ ] Performance тесты пройдены
-- [ ] Security headers включены
-- [ ] Backup создан
-- [ ] Мониторинг настроен
-
----
-
-**Готово к продакшен!** 🎉
-
-Приложение оптимизировано для production и готово к деплою на любую платформу.

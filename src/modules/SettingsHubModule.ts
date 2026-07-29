@@ -864,7 +864,7 @@ export class SettingsHubModule {
       this.pendingInvites = pending;
       this.inviteLinks = links ?? [];
       this.render();
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error('[Team]', e);
     }
   }
@@ -1052,8 +1052,8 @@ export class SettingsHubModule {
       input.value = '';
       window.app?.toast?.('Приглашение добавлено — пользователь увидит компанию при входе', 'success');
       this.loadTeamData();
-    } catch (e: any) {
-      window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
+    } catch (e: unknown) {
+      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
     }
   }
 
@@ -1063,8 +1063,8 @@ export class SettingsHubModule {
       await companyService.removeMember(memberId);
       window.app?.toast?.('Участник удалён', 'success');
       this.loadTeamData();
-    } catch (e: any) {
-      window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
+    } catch (e: unknown) {
+      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
     }
   }
 
@@ -1072,8 +1072,8 @@ export class SettingsHubModule {
     try {
       await companyService.updateMemberRole(memberId, role as CompanyRole);
       window.app?.toast?.('Роль обновлена', 'success');
-    } catch (e: any) {
-      window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
+    } catch (e: unknown) {
+      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
     }
   }
 
@@ -1082,8 +1082,8 @@ export class SettingsHubModule {
       await companyService.cancelPendingInvitation(inviteId);
       window.app?.toast?.('Приглашение отменено', 'success');
       this.loadTeamData();
-    } catch (e: any) {
-      window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
+    } catch (e: unknown) {
+      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
     }
   }
 
@@ -1096,8 +1096,8 @@ export class SettingsHubModule {
       await companyService.createInviteLink(cid, role);
       window.app?.toast?.('Ссылка создана', 'success');
       this.loadTeamData();
-    } catch (e: any) {
-      window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
+    } catch (e: unknown) {
+      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
     }
   }
 
@@ -1108,8 +1108,8 @@ export class SettingsHubModule {
       this.inviteLinks = this.inviteLinks.filter(l => l.id !== linkId);
       window.app?.toast?.('Ссылка отозвана', 'success');
       this.loadTeamData();
-    } catch (e: any) {
-      window.app?.toast?.('Ошибка: ' + (e?.message ?? e), 'error');
+    } catch (e: unknown) {
+      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
     }
   }
 

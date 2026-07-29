@@ -8,8 +8,10 @@
 
 import { companyService, Company } from '@/services/companyService';
 import { authService, LinkedAccounts } from '@/services/authService';
+import { adminService } from '@/services/adminService';
 import { showToast } from '@/utils/toast';
 import { copyButton } from '@/utils/copyButton';
+import { debug } from '@/utils/debug';
 
 const ROLE_LABELS: Record<string, string> = {
   owner: 'Владелец',
@@ -27,6 +29,7 @@ const ROLE_COLORS: Record<string, string> = {
 export class ProfileModule {
   private el: HTMLElement;
   private activeTab: 'companies' | 'team' | 'requisites' | 'account' = 'companies';
+  private _isAdmin = false;
   private linkedAccounts: LinkedAccounts = {
     telegram_id: null, yandex_id: null, telegram_username: null,
     yandex_login: null, profile_source: null,
@@ -49,6 +52,7 @@ export class ProfileModule {
     this.activeTab = 'companies';
     this.render();
     this.refreshCompanies();
+    adminService.checkAdmin().then(r => { this._isAdmin = r.is_admin; if (r.is_admin) this.render(); });
   }
 
   hide(): void {
@@ -91,10 +95,22 @@ export class ProfileModule {
               <div class="profile-page-username">${user?.username ? '@' + this.esc(user.username) : ''}</div>
             </div>
           </div>
-          <button class="profile-page-logout" onclick="window.profileModule.logout()">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-            Выйти
-          </button>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            ${this._isAdmin ? `
+              <button class="profile-page-logout" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none" onclick="window.profileModule.hide();window.app?.navigateTo?.('admin')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                Админ-панель
+              </button>
+            ` : ''}
+            <button class="profile-page-logout" style="background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;border:none" onclick="window.profileModule.hide();window.app?.navigateTo?.('billing')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+              Тариф и оплата
+            </button>
+            <button class="profile-page-logout" onclick="window.profileModule.logout()">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+              Выйти
+            </button>
+          </div>
         </div>
 
         <div class="profile-page-tabs">
@@ -552,11 +568,71 @@ export class ProfileModule {
         ${yaRow}
         ${sourceSelector}
         ${bothLinked && !sourceSelector.includes('source-tg-btn') ? '' : ''}
+
+        <div style="margin-top:28px;padding-top:20px;border-top:1px solid var(--border2)">
+          <div class="profile-section-title" style="margin-bottom:12px">Поддержка</div>
+          <button id="open-support-btn" style="display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-weight:500;cursor:pointer;margin-bottom:12px;text-align:left;transition:border-color .15s">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.6;flex-shrink:0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Написать в поддержку
+          </button>
+          <div id="support-form-wrap" style="display:none;flex-direction:column;gap:10px;margin-bottom:16px">
+            <input id="support-subject" class="profile-input" placeholder="Тема обращения" style="padding:9px 12px;font-size:13px">
+            <textarea id="support-message" class="profile-input" placeholder="Опишите проблему или вопрос…" rows="4" style="padding:9px 12px;font-size:13px;resize:vertical"></textarea>
+            <div style="display:flex;gap:8px">
+              <button id="support-send-btn" class="profile-btn-primary" style="font-size:13px;padding:9px 18px">Отправить</button>
+              <button id="support-cancel-btn" style="font-size:13px;padding:9px 18px;border-radius:9px;border:1px solid var(--border2);background:transparent;color:var(--text2);cursor:pointer">Отмена</button>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:28px;padding-top:20px;border-top:1px solid var(--border2)">
+          <div class="profile-section-title" style="margin-bottom:12px">Документы</div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <a href="/offer" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;text-decoration:none;color:var(--text);background:var(--bg3);border:1px solid var(--border2);font-size:13px;font-weight:500;transition:border-color .15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border2)'">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.6;flex-shrink:0"><rect x="2" y="1" width="12" height="14" rx="2"/><path d="M5 5h6M5 8h6M5 11h4"/></svg>
+              <span>Лицензионный договор</span>
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="margin-left:auto;opacity:.35"><path d="M6 3h7v7M13 3L3 13"/></svg>
+            </a>
+            <a href="/privacy" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;text-decoration:none;color:var(--text);background:var(--bg3);border:1px solid var(--border2);font-size:13px;font-weight:500;transition:border-color .15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border2)'">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.6;flex-shrink:0"><path d="M8 1L2 4v4c0 3.3 2.5 6.4 6 7 3.5-.6 6-3.7 6-7V4L8 1z"/></svg>
+              <span>Политика конфиденциальности</span>
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="margin-left:auto;opacity:.35"><path d="M6 3h7v7M13 3L3 13"/></svg>
+            </a>
+          </div>
+        </div>
       </div>
     `;
   }
 
   private bindAccountEvents(): void {
+    // Support form toggle
+    document.getElementById('open-support-btn')?.addEventListener('click', () => {
+      const wrap = document.getElementById('support-form-wrap');
+      if (wrap) { wrap.style.display = wrap.style.display === 'none' ? 'flex' : 'none'; }
+    });
+    document.getElementById('support-cancel-btn')?.addEventListener('click', () => {
+      const wrap = document.getElementById('support-form-wrap');
+      if (wrap) wrap.style.display = 'none';
+    });
+    document.getElementById('support-send-btn')?.addEventListener('click', async () => {
+      const subject = (document.getElementById('support-subject') as HTMLInputElement)?.value?.trim();
+      const message = (document.getElementById('support-message') as HTMLTextAreaElement)?.value?.trim();
+      if (!message) { showToast('Введите сообщение', 'error'); return; }
+      const btn = document.getElementById('support-send-btn') as HTMLButtonElement;
+      btn.disabled = true; btn.textContent = 'Отправляем…';
+      const company = companyService.getActive();
+      const id = await adminService.createTicket(message, subject || 'Обращение в поддержку', company?.id);
+      if (id) {
+        showToast('Обращение отправлено! Мы ответим в ближайшее время.', 'success');
+        (document.getElementById('support-form-wrap') as HTMLElement).style.display = 'none';
+        (document.getElementById('support-message') as HTMLTextAreaElement).value = '';
+        (document.getElementById('support-subject') as HTMLInputElement).value = '';
+      } else {
+        showToast('Ошибка отправки', 'error');
+      }
+      btn.disabled = false; btn.textContent = 'Отправить';
+    });
+
     document.getElementById('source-tg-btn')?.addEventListener('click', () => {
       this.pendingSource = 'telegram';
       this.render();
@@ -665,7 +741,7 @@ export class ProfileModule {
     if (linksRes.status === 'fulfilled') {
       this.inviteLinks = linksRes.value ?? [];
     } else {
-      console.warn('[ProfileModule] getInviteLinks error:', linksRes.reason);
+      debug.warn('[ProfileModule] getInviteLinks error:', linksRes.reason);
       showToast('Ошибка загрузки ссылок: ' + (linksRes.reason?.message ?? linksRes.reason), 'error');
     }
 
@@ -676,8 +752,8 @@ export class ProfileModule {
     try {
       await companyService.updateMemberRole(memberId, role as any);
       showToast('Роль обновлена', 'success');
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -688,8 +764,8 @@ export class ProfileModule {
       showToast('Участник удалён', 'success');
       const c = companyService.getActive();
       if (c) this.loadTeam(c.id);
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -699,8 +775,8 @@ export class ProfileModule {
       showToast('Приглашение отменено', 'success');
       const c = companyService.getActive();
       if (c) this.loadTeam(c.id);
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -717,8 +793,8 @@ export class ProfileModule {
       if (usernameEl) usernameEl.value = '';
       showToast('Приглашение добавлено', 'success');
       this.loadTeam(company.id);
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -744,8 +820,8 @@ export class ProfileModule {
     try {
       await companyService.update(company.id, updates);
       showToast('Реквизиты сохранены', 'success');
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -781,7 +857,7 @@ export class ProfileModule {
       await companyService.load();
       this.myIncomingInvites = await companyService.getMyPendingInvitations();
     } catch (e) {
-      console.warn('[ProfileModule] refreshCompanies:', e);
+      debug.warn('[ProfileModule] refreshCompanies:', e);
       this.myIncomingInvites = [];
     }
     if (this.activeTab === 'companies') this.render();
@@ -795,8 +871,8 @@ export class ProfileModule {
       this.render();
       // Update switcher
       window.companyModule?.renderSwitcher?.();
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка принятия', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка принятия', 'error');
     }
   }
 
@@ -806,8 +882,8 @@ export class ProfileModule {
       showToast('Приглашение отклонено', 'info');
       this.myIncomingInvites = this.myIncomingInvites.filter(i => i.id !== inviteId);
       this.render();
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -820,8 +896,8 @@ export class ProfileModule {
       await companyService.createInviteLink(company.id, role);
       showToast('Ссылка создана', 'success');
       this.loadTeam(company.id);
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -832,8 +908,8 @@ export class ProfileModule {
       showToast('Ссылка отозвана', 'success');
       const c = companyService.getActive();
       if (c) this.loadTeam(c.id);
-    } catch (e: any) {
-      showToast(e?.message ?? 'Ошибка', 'error');
+    } catch (e: unknown) {
+      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
     }
   }
 

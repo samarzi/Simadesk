@@ -81,9 +81,9 @@ async function ozonOrdersPost<T>(
         body: JSON.stringify(body),
         signal,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Propagate AbortError immediately without retrying
-      if (err?.name === 'AbortError') throw err;
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
       lastErr = err instanceof Error ? err : new Error(String(err));
       continue;
     }

@@ -22,8 +22,12 @@ services:
   db:
     image: supabase/postgres:15.8.1.060
     restart: unless-stopped
+    # Bind Postgres to the VPS loopback ONLY — never expose 5432 to the public
+    # internet. For remote administration/migrations use an SSH tunnel, e.g.:
+    #   ssh -L 5432:127.0.0.1:5432 user@135.106.172.135
+    # then connect your client to localhost:5432.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_HOST: /var/run/postgresql
       PGPORT: 5432
@@ -67,7 +71,7 @@ services:
       GOTRUE_JWT_EXP: 3600
       GOTRUE_JWT_SECRET: ${JWT_SECRET}
 
-      GOTRUE_EXTERNAL_EMAIL_ENABLED: "false"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
 
       GOTRUE_MAILER_AUTOCONFIRM: "true"
@@ -170,12 +174,24 @@ services:
       SUPABASE_DB_URL: "postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres"
       VERIFY_JWT: "true"
       BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}
+      YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
+      # AES-256-GCM key for marketplace api_key encryption (never leaves the server)
+      MP_ENC_KEY: ${MP_ENC_KEY:-}
     volumes:
       - ./backend/functions:/home/deno/functions:ro
     command:
       - start
       - --main-service
       - /home/deno/functions/telegram-auth
+
+  # ── TTS server (edge-tts Python) ───────────────────────────────────────────
+  tts-server:
+    build:
+      context: ./backend/tts-server
+    restart: unless-stopped
+    expose:
+      - "8765"
 
   # ── Frontend (Nginx SPA) ───────────────────────────────────────────────────
   frontend:

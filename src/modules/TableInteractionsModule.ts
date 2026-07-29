@@ -181,8 +181,8 @@ export class TableInteractionsModule {
 
       this.app.toast('Товар добавлен', 'success');
       this.app.closeModal();
-    } catch (e: any) {
-      this.app.toast('Ошибка: ' + e.message, 'error');
+    } catch (e: unknown) {
+      this.app.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error');
       if (btn) { btn.disabled = false; btn.textContent = '+ Добавить'; }
     }
   }

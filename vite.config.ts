@@ -254,12 +254,16 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: 'dist',
-      sourcemap: true,
+      sourcemap: false,
       chunkSizeWarningLimit: 600,
       rollupOptions: {
         input: {
           main:       resolve(__dirname, 'index.html'),
           storefront: resolve(__dirname, 'storefront.html'),
+          info:       resolve(__dirname, 'info.html'),
+          legal:      resolve(__dirname, 'legal.html'),
+          privacy:    resolve(__dirname, 'privacy.html'),
+          offer:      resolve(__dirname, 'offer.html'),
         },
         output: { manualChunks: { xlsx: ['xlsx'] } },
       },

@@ -18,6 +18,7 @@ export class OzonModule {
   private syncing: Record<string, boolean> = {};
   private addBusy = false;
   private lastError = '';
+  private pendingStore: { clientId: string; apiKey: string; name: string } | null = null;
 
   constructor(container: HTMLElement) { this.container = container; }
 
@@ -211,7 +212,36 @@ export class OzonModule {
     `;
   }
 
+  private renderPendingStore(): string {
+    const p = this.pendingStore!;
+    return `
+      <div style="flex:1;overflow:auto;padding:24px 24px 100px">
+        <div style="max-width:760px;margin:0 auto">
+          <div class="ym-card">
+            <div class="ym-card-title">Найден магазин</div>
+            <div class="ym-card-desc">Проверь данные и подтверди добавление.</div>
+            <label class="mp-pending-row" style="margin:12px 0">
+              <input type="checkbox" checked disabled>
+              <div class="mp-pending-info">
+                <span class="mp-pending-name">${this.esc(p.name)}</span>
+                <span class="mp-pending-meta">Ozon · Client ID: ${this.esc(p.clientId)}</span>
+              </div>
+            </label>
+            ${this.lastError ? `<div class="ym-error">${this.esc(this.lastError)}</div>` : ''}
+            <div style="display:flex;gap:8px;margin-top:4px">
+              <button class="btn btn-primary" onclick="window.ozonModule.confirmPending()"
+                ${this.addBusy ? 'disabled' : ''}>
+                ${this.addBusy ? 'Добавление…' : 'Добавить магазин'}
+              </button>
+              <button class="btn" onclick="window.ozonModule.cancelPending()">Назад</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+
   private renderStoresView(): string {
+    if (this.pendingStore) return this.renderPendingStore();
     return `
       <div style="flex:1;overflow:auto;padding:24px 24px 100px">
         <div style="max-width:760px;margin:0 auto">
@@ -234,7 +264,7 @@ export class OzonModule {
                 placeholder="Название (опционально)" style="max-width:200px"
                 autocomplete="off" spellcheck="false">
               <button class="btn btn-primary" onclick="window.ozonModule.addStore()" ${this.addBusy ? 'disabled' : ''}>
-                ${this.addBusy ? 'Проверка…' : 'Добавить'}
+                ${this.addBusy ? 'Проверка…' : 'Найти магазин'}
               </button>
             </div>
             <div class="ym-card-hint">
@@ -356,7 +386,7 @@ export class OzonModule {
       await ozonDb.updateStore(storeId, { tax_model, tax_rate });
       const s = this.stores.find(x => x.id === storeId);
       if (s) { s.tax_model = tax_model; s.tax_rate = tax_rate; }
-    } catch (err) { console.error('[Ozon] saveTax error:', err); }
+    } catch (err) { debug.warn('[Ozon] saveTax error:', err); }
   }
 
   async renameStore(storeId: string, name: string): Promise<void> {
@@ -368,7 +398,7 @@ export class OzonModule {
       await ozonDb.updateStore(storeId, { name: trimmed });
       s.name = trimmed;
       this.render();
-    } catch (err) { console.error('[Ozon] renameStore error:', err); this.render(); }
+    } catch (err) { debug.warn('[Ozon] renameStore error:', err); this.render(); }
   }
 
   async saveFulfillment(storeId: string): Promise<void> {
@@ -379,7 +409,7 @@ export class OzonModule {
       const s = this.stores.find(x => x.id === storeId);
       if (s) { s.fulfillment_model = fulfillment_model; }
       this.render();
-    } catch (err) { console.error('[Ozon] saveFulfillment error:', err); }
+    } catch (err) { debug.warn('[Ozon] saveFulfillment error:', err); }
   }
 
   async syncAll(): Promise<void> {
@@ -398,9 +428,9 @@ export class OzonModule {
         await ozonDb.replaceStoreProducts(storeId, products);
       }
       this.products = await ozonDb.getProducts();
-    } catch (err: any) {
-      this.lastError = `Синхронизация «${store.name}»: ${err.message ?? err}`;
-      console.error('[Ozon] sync error:', err);
+    } catch (err: unknown) {
+      this.lastError = `Синхронизация «${store.name}»: ${(err instanceof Error ? err.message : String(err)) ?? err}`;
+      debug.warn('[Ozon] sync error:', err);
     }
     this.syncing[storeId] = false;
     this.render();
@@ -429,21 +459,45 @@ export class OzonModule {
     try {
       const creds = { client_id: clientId, api_key: apiKey };
       await ozonApi.checkToken(creds);
-      await ozonDb.createStore({
+      this.pendingStore = {
+        clientId,
+        apiKey,
         name: customName || `Ozon ${clientId}`,
-        client_id: clientId,
-        api_key: apiKey,
+      };
+      this.addBusy = false;
+      this.render();
+    } catch (err: unknown) {
+      this.lastError = (err instanceof Error ? err.message : String(err)) ?? String(err);
+      this.addBusy = false;
+      this.render();
+    }
+  }
+
+  cancelPending(): void {
+    this.pendingStore = null;
+    this.lastError = '';
+    this.render();
+  }
+
+  async confirmPending(): Promise<void> {
+    if (!this.pendingStore) return;
+    this.addBusy = true;
+    this.lastError = '';
+    this.render();
+    try {
+      await ozonDb.createStore({
+        name: this.pendingStore.name,
+        client_id: this.pendingStore.clientId,
+        api_key: this.pendingStore.apiKey,
       });
       this.stores = await ozonDb.getStores();
       refreshNavLockState();
+      this.pendingStore = null;
       this.addBusy = false;
-      if (clientIdInp) clientIdInp.value = '';
-      if (keyInp) keyInp.value = '';
-      if (nameInp) nameInp.value = '';
       this.view = 'products';
       this.render();
-    } catch (err: any) {
-      this.lastError = err.message ?? String(err);
+    } catch (err: unknown) {
+      this.lastError = (err instanceof Error ? err.message : String(err)) ?? String(err);
       this.addBusy = false;
       this.render();
     }

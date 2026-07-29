@@ -4,30 +4,46 @@ import type { App } from '../App';
 import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
 import { wbDb } from '@/services/wbDb';
+import { setActiveAiPage } from '@/services/aiPageCapabilities';
 
 /** Разделы, доступные ДО подключения хотя бы одного магазина МП. Всё остальное
  *  без магазина бессмысленно (пустой каталог/заказы/аналитика и т.п.). */
 const ALLOWED_WITHOUT_STORE = new Set<AppPage>([
-  'marketplaces', 'ozon', 'yandex', 'wb', 'settings', 'settings-hub', 'profile',
+  'marketplaces', 'ozon', 'yandex', 'wb', 'settings', 'settings-hub', 'profile', 'docs', 'admin', 'billing',
 ]);
 
 /** dock-item id → закрашивать серым и блокировать клик, пока нет ни одного магазина. */
 const LOCKABLE_NAV_IDS = [
   'nav-home', 'nav-tasks', 'nav-products',
-  'nav-catalog', 'nav-orders', 'nav-stock', 'nav-producers',
-  'nav-analytics', 'nav-repricer', 'nav-reviews', 'nav-chats',
+  'nav-orders', 'nav-stock', 'nav-producers',
+  'nav-finance', 'nav-analytics', 'nav-repricer', 'nav-reviews', 'nav-chats',
   'dock-more-btn', 'nav-sku-audit', 'nav-automation', 'nav-logs',
   'nav-simastore',
 ];
 
+// In-memory cache: avoid 3 DB queries on every navigation.
+// Invalidated by invalidateStoreCache() called after adding/removing a store.
+let _storeCache: { hasStore: boolean; at: number } | null = null;
+const STORE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/** Сбросить кэш наличия магазинов — вызывать при подключении/отключении магазина. */
+export function invalidateStoreCache(): void {
+  _storeCache = null;
+}
+
 /** Есть ли хотя бы один подключённый магазин (Ozon/WB/ЯМ) у текущей компании. */
 export async function hasAnyStoreConnected(): Promise<boolean> {
+  if (_storeCache && Date.now() - _storeCache.at < STORE_CACHE_TTL_MS) {
+    return _storeCache.hasStore;
+  }
   const [oz, ym, wb] = await Promise.all([
     ozonDb.getStores().catch(() => []),
     yandexDb.getStores().catch(() => []),
     wbDb.getStores().catch(() => []),
   ]);
-  return oz.length + ym.length + wb.length > 0;
+  const hasStore = oz.length + ym.length + wb.length > 0;
+  _storeCache = { hasStore, at: Date.now() };
+  return hasStore;
 }
 
 /**
@@ -77,26 +93,6 @@ export class NavigationModule {
     return b?.name ?? null;
   }
 
-  toggleMarketplaces() {
-    const navGroupMarketplaces = document.getElementById('nav-group-marketplaces');
-    const navMarketplaces = document.getElementById('nav-marketplaces');
-    if (navGroupMarketplaces && navMarketplaces) {
-      const isHidden = navGroupMarketplaces.style.display === 'none';
-      navGroupMarketplaces.style.display = isHidden ? '' : 'none';
-      navMarketplaces.classList.toggle('active', isHidden);
-    }
-  }
-
-  toggleOrders() {
-    const navGroupOrders = document.getElementById('nav-group-orders');
-    const navOrders = document.getElementById('nav-orders');
-    if (navGroupOrders && navOrders) {
-      const isHidden = navGroupOrders.style.display === 'none';
-      navGroupOrders.style.display = isHidden ? '' : 'none';
-      navOrders.classList.toggle('active', isHidden);
-    }
-  }
-
   /** Скрыть все маркетплейс/orders секции. */
   private hideAllMarketplaceSections(): void {
     const ids = [
@@ -106,8 +102,8 @@ export class NavigationModule {
       'profile-section', 'settings-section',
       'repricer-section',
       'sku-audit-section', 'reviews-section', 'chats-section', 'logs-section', 'automation-section',
-      'catalog-section', 'producers-section', 'products-hub-section',
-      'simastore-section',
+      'producers-section', 'products-hub-section',
+      'simastore-section', 'docs-section', 'notifications-section', 'billing-section',
     ];
     for (const id of ids) {
       const el = document.getElementById(id);
@@ -128,17 +124,20 @@ export class NavigationModule {
     w.settingsModule?.hide();
     w.seoModule?.hide();
     w.repricerModule?.hide();
-    w.skuAuditModule?.hide();
+    w.myAnalysisModule?.hide();
     w.reviewsModule?.hide();
     w.chatsModule?.hide();
     w.logsModule?.hide();
     w.automationModule?.hide();
     w.taskManagerModule?.hide();
     w.stockModule?.hide();
-    w.catalogMpModule?.hide();
     w.producersModule?.hide();
     w.productsHubModule?.hide();
     w.simaStoreModule?.hide();
+    w.docsModule?.hide();
+    w.notificationsModule?.hide();
+    w.adminModule?.hide();
+    w.billingModule?.hide();
   }
 
   /** Сбросить active-классы у всех nav/dock элементов. */
@@ -150,12 +149,12 @@ export class NavigationModule {
     }
     // Legacy nav elements
     const ids = [
-      'nav-home','nav-products','nav-analytics','nav-settings-hub','nav-settings','nav-orders','nav-marketplaces',
+      'nav-home','nav-finance','nav-analytics','nav-settings','nav-orders','nav-marketplaces',
       'nav-ozon','nav-yandex','nav-wb',
       'nav-orders-ozon','nav-orders-yandex','nav-orders-wb',
       'nav-repricer',
-      'nav-sku-audit','nav-reviews','nav-chats','nav-logs','nav-automation','nav-tasks','nav-stock','nav-catalog','nav-producers','nav-products-hub',
-      'nav-simastore',
+      'nav-sku-audit','nav-reviews','nav-chats','nav-logs','nav-automation','nav-tasks','nav-stock','nav-producers',
+      'nav-simastore', 'nav-docs',
     ];
     for (const id of ids) {
       document.getElementById(id)?.classList.remove('active');
@@ -164,7 +163,7 @@ export class NavigationModule {
 
   async navigateTo(
     page: AppPage,
-    { loadAll = false }: { loadAll?: boolean } = {},
+    _opts: { loadAll?: boolean } = {},
   ): Promise<void> {
     // Без подключённого магазина большинство разделов бессмысленны (пустые данные) —
     // до первого подключения пускаем только на API Маркет/Настройки/Профиль.
@@ -180,6 +179,16 @@ export class NavigationModule {
     this.app.currentPage = page;
     localStorage.setItem('last_page', page);
 
+    // Сообщаем ассистенту, на какой странице мы теперь — чтобы он «понимал»
+    // её структуру и предлагал релевантные кнопки/действия.
+    setActiveAiPage(page);
+
+    // Push SPA history entry so browser Back stays within the app (not /slug)
+    if (history.state?.sdPage !== page) {
+      const hashPath = page === 'home' ? '/' : `/#/${page}`;
+      history.pushState({ sdPage: page }, '', hashPath);
+    }
+
     const topbarEl             = document.querySelector<HTMLElement>('.topbar');
     const content              = document.querySelector<HTMLElement>('.content');
     const sideboxes            = document.getElementById('sidebar-boxes-section');
@@ -191,10 +200,15 @@ export class NavigationModule {
       page === 'analytics' || page === 'settings-hub' || page === 'settings' || page === 'profile' ||
       page === 'repricer' ||
       page === 'sku-audit' || page === 'reviews' || page === 'chats' || page === 'logs' || page === 'automation' ||
-      page === 'tasks' || page === 'stock' || page === 'catalog' || page === 'producers' || page === 'products-hub' ||
-      page === 'simastore';
+      page === 'tasks' || page === 'stock' || page === 'producers' || page === 'products-hub' ||
+      page === 'simastore' || page === 'docs' || page === 'notifications' || page === 'admin' || page === 'billing';
 
     const groupsBar = document.getElementById('groups-bar');
+    // Restore dock when leaving admin/billing
+    if (page !== 'admin' && page !== 'billing') {
+      const dock = document.getElementById('app-dock');
+      if (dock) dock.style.display = '';
+    }
 
     if (isModulePage) {
       this.hideAllMarketplaceSections();
@@ -212,7 +226,7 @@ export class NavigationModule {
 
       switch (page) {
         case 'analytics':
-          document.getElementById('nav-analytics')?.classList.add('active');
+          document.getElementById('nav-finance')?.classList.add('active');
           w.analyticsModule?.show();
           break;
         case 'settings-hub':
@@ -262,8 +276,9 @@ export class NavigationModule {
           w.repricerModule?.show();
           break;
         case 'sku-audit':
+          document.getElementById('nav-analytics')?.classList.add('active');
           document.getElementById('nav-sku-audit')?.classList.add('active');
-          w.skuAuditModule?.show();
+          w.myAnalysisModule?.show();
           break;
         case 'reviews':
           document.getElementById('nav-reviews')?.classList.add('active');
@@ -289,10 +304,6 @@ export class NavigationModule {
           document.getElementById('nav-stock')?.classList.add('active');
           w.stockModule?.show();
           break;
-        case 'catalog':
-          document.getElementById('nav-catalog')?.classList.add('active');
-          w.catalogMpModule?.show();
-          break;
         case 'producers':
           document.getElementById('nav-producers')?.classList.add('active');
           w.producersModule?.show();
@@ -305,17 +316,34 @@ export class NavigationModule {
           document.getElementById('nav-simastore')?.classList.add('active');
           w.simaStoreModule?.show();
           break;
+        case 'docs':
+          document.getElementById('nav-docs')?.classList.add('active');
+          w.docsModule?.show();
+          break;
+        case 'notifications':
+          document.getElementById('nav-settings')?.classList.add('active');
+          w.notificationsModule?.show();
+          break;
+        case 'admin': {
+          const dock = document.getElementById('app-dock');
+          if (dock) dock.style.display = 'none';
+          w.adminModule?.show();
+          break;
+        }
+        case 'billing': {
+          const dock = document.getElementById('app-dock');
+          if (dock) dock.style.display = 'none';
+          w.billingModule?.show();
+          break;
+        }
       }
       return;
     }
 
-    // ── home / products: показываем стандартный layout ─────────────────────
+    // ── home ─────────────────────────────────────────────────────────────────
     this.hideAllMarketplaceSections();
-    if (topbarEl) topbarEl.style.display = '';
-
     this.resetNavActive();
     document.getElementById('nav-home')?.classList.toggle('active', page === 'home');
-    document.getElementById('nav-products')?.classList.toggle('active', page === 'products');
     window.ensureDockExpandedForPage?.(page);
 
     const sb = document.getElementById('sidebar-boxes-section');
@@ -324,35 +352,13 @@ export class NavigationModule {
     const tb = document.querySelector<HTMLElement>('.topbar');
     const cnt = document.querySelector<HTMLElement>('.content');
 
-    if (page === 'home') {
-      if (sb) sb.style.display = 'none';
-      if (filterPanel) filterPanel.style.display = 'none';
-      if (tableHeader) tableHeader.style.display = 'none';
-      if (tb) tb.style.display = 'none';
-      if (cnt) cnt.style.display = '';
-      if (groupsBar) groupsBar.style.display = 'none';
-      this.app.renderDashboard();
-      this.app.updateResultStat();
-    } else {
-      if (sb) sb.style.display = 'none';
-      if (filterPanel) filterPanel.style.display = '';
-      if (tableHeader) tableHeader.style.display = '';
-      if (tb) tb.style.display = '';
-      if (cnt) cnt.style.display = '';
-      if (groupsBar) groupsBar.style.display = 'flex';
-      this.app.renderBoxes();
-      if (loadAll) {
-        // Coming from nav button: reset box selection and show ALL products
-        this.app.activeBoxId = null;
-        this.app.searchQ = '';
-        const inp = document.getElementById('search-inp') as HTMLInputElement;
-        if (inp) inp.value = '';
-        const addBtn = document.getElementById('add-product-btn');
-        if (addBtn) addBtn.style.display = 'none';
-        this.app.renderBoxes();
-        this.app.loadAllProducts();
-      }
-      // When called from selectBox/setView, those methods handle loading themselves
-    }
+    if (sb) sb.style.display = 'none';
+    if (filterPanel) filterPanel.style.display = 'none';
+    if (tableHeader) tableHeader.style.display = 'none';
+    if (tb) tb.style.display = 'none';
+    if (cnt) cnt.style.display = '';
+    if (groupsBar) groupsBar.style.display = 'none';
+    this.app.renderDashboard();
+    this.app.updateResultStat();
   }
 }

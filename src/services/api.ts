@@ -146,11 +146,16 @@ class ApiService {
   }
 
   async createProductsBatch(prods: Omit<Product, 'id' | 'created_at' | 'updated_at'>[]): Promise<void> {
-    for (let i = 0; i < prods.length; i += 100) {
-      await this.request('products', {
-        method: 'POST',
-        body: JSON.stringify(prods.slice(i, i + 100)),
-      });
+    const BATCH = 100;
+    const CONCURRENCY = 4;
+    const chunks: Array<typeof prods> = [];
+    for (let i = 0; i < prods.length; i += BATCH) chunks.push(prods.slice(i, i + BATCH));
+    for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+      await Promise.all(
+        chunks.slice(i, i + CONCURRENCY).map(chunk =>
+          this.request('products', { method: 'POST', body: JSON.stringify(chunk) }),
+        ),
+      );
     }
   }
 

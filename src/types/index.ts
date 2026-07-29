@@ -1,10 +1,10 @@
 /** Все страницы/разделы приложения, доступные через navigateTo(). */
 export type AppPage =
-  | 'home' | 'products' | 'analytics' | 'settings-hub' | 'settings' | 'profile' | 'orders' | 'marketplaces'
+  | 'home' | 'analytics' | 'settings-hub' | 'settings' | 'profile' | 'orders' | 'marketplaces'
   | 'ozon' | 'yandex' | 'wb'
   | 'orders-ozon' | 'orders-yandex' | 'orders-wb'
-  | 'repricer' | 'stock' | 'catalog' | 'producers' | 'products-hub'
-  | 'sku-audit' | 'reviews' | 'chats' | 'logs' | 'automation' | 'tasks' | 'simastore';
+  | 'repricer' | 'stock' | 'producers' | 'products-hub'
+  | 'sku-audit' | 'reviews' | 'chats' | 'logs' | 'automation' | 'tasks' | 'simastore' | 'docs' | 'notifications' | 'admin' | 'billing';
 
 export interface Box {
   id: string;

@@ -1,3 +1,5 @@
+import { setFavicon } from './utils/favicon';
+
 const API_URL = import.meta.env.VITE_API_URL as string;
 const API_KEY = import.meta.env.VITE_API_KEY as string;
 const REST_URL = `${API_URL}/rest/v1`;
@@ -15,6 +17,8 @@ interface Settings {
   show_price_filter?: boolean;
   show_brand_filter?: boolean;
   show_category_filter?: boolean;
+  show_stock?: boolean;
+  hide_out_of_stock?: boolean;
 }
 interface Product {
   source: string;
@@ -32,11 +36,16 @@ interface Product {
   category?: string;
   custom_url?: string;
   custom_price?: number;
+  custom_title?: string;
+  is_hidden?: boolean;
+  stock?: number;
   weight_kg?: number | null;
   height_cm?: number | null;
   width_cm?: number | null;
   length_cm?: number | null;
 }
+interface VariantItem { vendor_code: string; label: string; color: string; sort_order: number; }
+interface VariantGroup { id: string; sort_order: number; items: VariantItem[]; }
 interface GroupedProduct {
   key: string;
   vendor_code: string;
@@ -46,6 +55,7 @@ interface GroupedProduct {
   category?: string;
   price_min: number;
   price_max: number;
+  totalStock: number;
   weight_kg?: number | null;
   height_cm?: number | null;
   width_cm?: number | null;
@@ -53,25 +63,19 @@ interface GroupedProduct {
   entries: Product[]; // sorted cheapest first
 }
 interface Banner { id: number; title?: string; image_url: string; link_url?: string; }
-interface StoreData { settings: Settings; products: Product[]; banners: Banner[]; }
+interface SGroup { id: string; name: string; cover_url: string; sort_order: number; vendor_codes: string[]; }
+interface StoreData { settings: Settings; products: Product[]; banners: Banner[]; variants?: VariantGroup[]; groups?: SGroup[]; }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const BADGE: Record<string,string>    = { wb:'WB', ozon:'Ozon', yandex:'Яндекс' };
 const BADGE_BG: Record<string,string> = { wb:'rgba(203,73,167,.9)', ozon:'rgba(0,91,255,.9)', yandex:'rgba(255,172,0,.9)' };
 const BUY_LABEL: Record<string,string>= { wb:'Купить на WB', ozon:'Купить на Ozon', yandex:'Купить на Яндекс' };
-const PRICE_GRAD = 'background:linear-gradient(to right,#00FFCC,#00CCAA);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function esc(s: unknown): string {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function fmt(n: number): string {
-  return new Intl.NumberFormat('ru-RU',{style:'currency',currency:'RUB',maximumFractionDigits:0}).format(n ?? 0);
-}
-function fmtRange(min: number, max: number): string {
-  return min === max ? fmt(min) : `${fmt(min)} — ${fmt(max)}`;
 }
 function getImages(p: Product): string[] {
   const validUrl = (u: unknown): u is string =>
@@ -92,19 +96,23 @@ function buildEntryUrl(p: Product): string {
   }
   return '#';
 }
-function groupProducts(products: Product[]): GroupedProduct[] {
+function groupProducts(products: Product[], hideOos = false): GroupedProduct[] {
   const map = new Map<string, GroupedProduct>();
   for (const p of products) {
+    if (p.is_hidden) continue;
     const effectivePrice = p.custom_price != null ? p.custom_price : p.price;
     if (effectivePrice <= 0) continue;
     const vc = (p.vendor_code ?? '').trim().toLowerCase();
     const key = vc ? `v:${vc}` : `s:${p.source}:${p.source_id}`;
     const imgs = getImages(p);
+    const title = p.custom_title || p.title;
+    const pStock = p.stock ?? 0;
     if (!map.has(key)) {
       map.set(key, {
-        key, vendor_code: vc, title: p.title,
+        key, vendor_code: vc, title,
         images: imgs, brand: p.brand, category: p.category,
-        price_min: p.price, price_max: p.price,
+        price_min: effectivePrice, price_max: effectivePrice,
+        totalStock: pStock,
         weight_kg: p.weight_kg, height_cm: p.height_cm,
         width_cm: p.width_cm, length_cm: p.length_cm,
         entries: [p],
@@ -112,10 +120,14 @@ function groupProducts(products: Product[]): GroupedProduct[] {
     } else {
       const g = map.get(key)!;
       g.entries.push(p);
-      g.price_min = Math.min(g.price_min, p.price);
-      g.price_max = Math.max(g.price_max, p.price);
+      g.totalStock += pStock;
+      const ep = p.custom_price != null ? p.custom_price : p.price;
+      g.price_min = Math.min(g.price_min, ep);
+      g.price_max = Math.max(g.price_max, ep);
+      if (p.custom_title && !g.title) g.title = p.custom_title;
       if (imgs.length > g.images.length) {
-        g.images = imgs; g.title = p.title;
+        g.images = imgs;
+        if (!p.custom_title) g.title = title;
         g.brand = p.brand; g.category = p.category;
       }
       if (!g.weight_kg && p.weight_kg) g.weight_kg = p.weight_kg;
@@ -125,7 +137,9 @@ function groupProducts(products: Product[]): GroupedProduct[] {
     }
   }
   for (const g of map.values()) g.entries.sort((a, b) => a.price - b.price);
-  return Array.from(map.values());
+  let result = Array.from(map.values());
+  if (hideOos) result = result.filter(g => g.totalStock > 0);
+  return result;
 }
 
 // ─── CSS injection ────────────────────────────────────────────────────────────
@@ -133,6 +147,7 @@ function groupProducts(products: Product[]): GroupedProduct[] {
 function injectCSS(): void {
   const el = document.createElement('style');
   el.textContent = `
+html { scrollbar-gutter: stable; }
 @keyframes ss-spin { to { transform: rotate(360deg); } }
 @keyframes ss-shimmer { 0%,100%{opacity:.5} 50%{opacity:1} }
 @keyframes ss-fadein { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
@@ -208,6 +223,41 @@ function injectCSS(): void {
 .ss-card-img img { width:100%; height:100%; object-fit:cover; }
 .ss-card-grad { position:absolute; inset:0; background:linear-gradient(to top,rgba(0,0,0,.6) 0%,rgba(0,0,0,.2) 40%,transparent 100%); pointer-events:none; }
 .ss-card-body { padding:.5rem .625rem .375rem; }
+/* ── Favourites ── */
+.ss-fav-btn {
+  position:absolute; top:.4rem; left:.4rem; z-index:5;
+  width:1.75rem; height:1.75rem; border-radius:50%;
+  background:rgba(0,0,0,.45); backdrop-filter:blur(6px);
+  border:none; cursor:pointer; display:flex; align-items:center; justify-content:center;
+  transition:transform .2s, background .2s;
+}
+.ss-fav-btn:active { transform:scale(.85); }
+.ss-fav-btn svg { width:14px; height:14px; transition:fill .2s, stroke .2s; }
+.ss-fav-btn svg { stroke:#fff; fill:none; }
+.ss-fav-btn.active { background:rgba(220,38,38,.85); }
+.ss-fav-btn.active svg { stroke:#fff; fill:#fff; }
+@keyframes ss-fav-pop { 0%{transform:scale(1)} 40%{transform:scale(1.4)} 70%{transform:scale(.9)} 100%{transform:scale(1)} }
+.ss-fav-btn.pop { animation:ss-fav-pop .35s ease; }
+.ss-fav-header-btn {
+  display:flex; align-items:center; gap:.35rem;
+  background:none; border:1.5px solid hsl(var(--border)/.6); border-radius:999px;
+  cursor:pointer; padding:.3rem .75rem .3rem .5rem; color:hsl(var(--foreground));
+  font-size:.75rem; font-weight:700; transition:border-color .15s, background .15s;
+}
+.ss-fav-header-btn:hover { border-color:hsl(0 72% 51%/.5); background:hsl(0 72% 51%/.07); }
+.ss-fav-header-btn.active { border-color:hsl(0 72% 51%/.7); color:hsl(0 72% 51%); }
+.ss-fav-header-btn svg { width:14px; height:14px; }
+.ss-fav-header-btn.active svg { fill:hsl(0 72% 51%); stroke:hsl(0 72% 51%); }
+.ss-det-fav-btn {
+  display:flex; align-items:center; gap:.5rem; width:100%;
+  padding:.75rem 1rem; border-radius:.875rem;
+  border:1.5px solid hsl(var(--border)/.6); background:none; cursor:pointer;
+  font-size:.875rem; font-weight:700; color:hsl(var(--foreground));
+  transition:border-color .15s, background .15s, color .15s;
+}
+.ss-det-fav-btn.active { border-color:hsl(0 72% 51%/.6); color:hsl(0 72% 51%); background:hsl(0 72% 51%/.07); }
+.ss-det-fav-btn svg { width:16px; height:16px; flex-shrink:0; transition:fill .2s; }
+.ss-det-fav-btn.active svg { fill:hsl(0 72% 51%); stroke:hsl(0 72% 51%); }
 .ss-card-title { font-size:.75rem; font-weight:700; line-height:1.3; color:hsl(var(--foreground)); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:2em; }
 .ss-card-price-row { display:flex; align-items:center; gap:.35rem; flex-wrap:wrap; padding:.35rem 0 .25rem; }
 .ss-card-buy { padding:.25rem .5rem .5rem; }
@@ -217,6 +267,24 @@ function injectCSS(): void {
   background:linear-gradient(135deg,#00FFCC,#00CCAA); color:#000;
   border-radius:.5rem; border:none; cursor:pointer;
 }
+
+/* ── Variant selector buttons (detail panel only) ── */
+.ss-det-var-btn {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:3rem; height:2.75rem; padding:0 .75rem;
+  border-radius:.625rem; border:2px solid hsl(var(--border)/.6);
+  font-size:.8rem; font-weight:800; letter-spacing:.03em;
+  color:hsl(var(--foreground)); background:hsl(var(--card));
+  cursor:pointer; white-space:nowrap; overflow:hidden;
+  transition:transform .15s, box-shadow .15s, border-color .15s, background .15s;
+  outline:none; position:relative;
+}
+.ss-det-var-btn.has-color { color:#fff; text-shadow:0 1px 4px rgba(0,0,0,.65); border-color:transparent; }
+.ss-det-var-btn:hover:not(:disabled) { transform:scale(1.07); box-shadow:0 4px 14px rgba(0,0,0,.22); border-color:hsl(var(--primary)/.5); }
+.ss-det-var-btn.has-color:hover:not(:disabled) { box-shadow:0 6px 18px rgba(0,0,0,.45); border-color:rgba(255,255,255,.45); }
+.ss-det-var-btn.active { border-color:hsl(var(--primary))!important; box-shadow:0 0 0 3px hsl(var(--primary)/.28), 0 4px 14px rgba(0,0,0,.2)!important; transform:scale(1.06)!important; }
+.ss-det-var-btn.has-color.active { border-color:#fff!important; box-shadow:0 0 0 3px hsl(var(--primary)/.4), 0 6px 18px rgba(0,0,0,.4)!important; }
+.ss-det-var-btn:disabled, .ss-det-var-btn.disabled { opacity:.35; cursor:not-allowed; text-decoration:line-through; transform:none!important; }
 
 .ss-catalog-btn {
   display:flex; align-items:center; justify-content:center; gap:.75rem;
@@ -230,6 +298,20 @@ function injectCSS(): void {
 .ss-catalog-btn:hover { transform:translateY(-2px); box-shadow:0 14px 40px rgba(0,255,204,.35); }
 .ss-catalog-btn svg { transition:transform .2s; }
 .ss-catalog-btn:hover svg { transform:translateX(4px); }
+
+.ss-groups-row { display:flex; flex-wrap:wrap; gap:.5rem; }
+.ss-group-chip {
+  display:inline-flex; align-items:center; gap:.5rem;
+  padding:.375rem .75rem .375rem .375rem;
+  border:1px solid hsl(var(--border)/.6); border-radius:999px;
+  background:hsl(var(--card)); cursor:pointer;
+  font-size:.8rem; font-weight:700; color:hsl(var(--foreground));
+  transition:border-color .15s, box-shadow .15s;
+}
+.ss-group-chip:hover { border-color:hsl(var(--primary)); box-shadow:0 2px 12px rgba(0,255,204,.2); }
+.ss-group-chip-img { width:24px; height:24px; border-radius:50%; object-fit:cover; flex-shrink:0; }
+.ss-group-chip-ph { width:24px; height:24px; border-radius:50%; background:hsl(var(--primary)/.2); display:flex; align-items:center; justify-content:center; font-size:.7rem; font-weight:900; color:hsl(var(--primary)); flex-shrink:0; }
+.ss-group-chip-lbl { white-space:nowrap; }
 
 .ss-detail {
   position:fixed; inset:0; z-index:100;
@@ -307,7 +389,7 @@ function injectCSS(): void {
 .ss-meta { display:flex; flex-direction:column; gap:.4rem; margin-bottom:1rem; }
 .ss-meta-row { font-size:.8rem; color:hsl(var(--muted-foreground)); }
 .ss-meta-row span { color:hsl(var(--foreground)); font-weight:600; }
-.ss-buy-col { display:none; flex-direction:column; gap:.6rem; margin-bottom:1.5rem; }
+.ss-buy-col { display:flex; flex-direction:column; gap:.6rem; margin-bottom:1.5rem; }
 .ss-btn-pri {
   display:flex; align-items:center; justify-content:center; gap:.5rem;
   padding:.9rem 1.5rem; border-radius:.875rem; font-weight:800; font-size:.95rem;
@@ -324,23 +406,15 @@ function injectCSS(): void {
   background:hsl(var(--secondary)); border:1.5px solid hsl(var(--border)); transition:background .15s; cursor:pointer;
 }
 .ss-btn-sec:hover { background:hsl(var(--accent)); }
-.ss-mobile-bar {
-  position:fixed; bottom:0; left:0; right:0; z-index:50;
-  background:hsl(var(--background)/.95); backdrop-filter:blur(16px);
-  border-top:1px solid hsl(var(--border)/.5);
-  padding:.75rem 1rem env(safe-area-inset-bottom,.5rem);
-  display:flex; gap:.5rem;
-}
-@media (min-width:1024px) { .ss-mobile-bar{display:none;} .ss-buy-col{display:flex;} }
 
 .ss-search {
   width:100%; padding:.75rem 1rem .75rem 2.5rem;
-  background:hsl(var(--muted)/.5); border:1px solid hsl(var(--border)/.6);
+  background:hsl(var(--muted)); border:1px solid hsl(var(--border)/.8);
   border-radius:.875rem; color:hsl(var(--foreground)); font-size:.875rem; outline:none;
-  transition:border-color .15s;
+  transition:border-color .15s, background .15s;
 }
-.ss-search:focus { border-color:hsl(var(--primary)/.5); }
-.ss-search::placeholder { color:hsl(var(--muted-foreground)); }
+.ss-search:focus { border-color:hsl(var(--primary)/.6); background:hsl(var(--muted)/1.2); }
+.ss-search::placeholder { color:hsl(var(--muted-foreground)/.8); }
 
 /* ── Floating glass search bar ── */
 .ss-float-bar {
@@ -348,15 +422,15 @@ function injectCSS(): void {
   transform:translateX(-50%) translateY(calc(-200% - 4.5rem));
   width:min(520px,calc(100vw - 2rem));
   padding:.28rem .28rem .28rem .28rem;
-  background:rgba(255,255,255,.12);
-  backdrop-filter:blur(32px) saturate(200%);
-  -webkit-backdrop-filter:blur(32px) saturate(200%);
-  border:1px solid rgba(255,255,255,.22);
+  background:rgba(10,20,18,.72);
+  backdrop-filter:blur(32px) saturate(180%);
+  -webkit-backdrop-filter:blur(32px) saturate(180%);
+  border:1px solid rgba(255,255,255,.1);
   border-radius:999px;
   box-shadow:
-    0 8px 32px rgba(0,0,0,.45),
-    inset 0 1px 0 rgba(255,255,255,.3),
-    inset 0 -1px 0 rgba(0,0,0,.15);
+    0 8px 32px rgba(0,0,0,.6),
+    inset 0 1px 0 rgba(255,255,255,.08),
+    inset 0 -1px 0 rgba(0,0,0,.25);
   display:flex; align-items:center; gap:.5rem;
   pointer-events:none; opacity:0;
   transition:none;
@@ -416,7 +490,7 @@ function injectCSS(): void {
 }
 .ss-filter-drawer-hdr { display:flex; align-items:center; justify-content:space-between; padding:.875rem 1rem .625rem; border-bottom:1px solid hsl(var(--border)/.4); flex-shrink:0; }
 .ss-filter-drawer-body { overflow-y:auto; padding:.875rem 1rem; flex:1; display:flex; flex-direction:column; gap:1rem; }
-.ss-filter-drawer-footer { display:flex; gap:.5rem; padding:.75rem 1rem env(safe-area-inset-bottom,.5rem); border-top:1px solid hsl(var(--border)/.4); flex-shrink:0; }
+.ss-filter-drawer-footer { display:flex; gap:.5rem; padding:.75rem 1rem max(1.25rem, env(safe-area-inset-bottom, 1.25rem)); border-top:1px solid hsl(var(--border)/.4); flex-shrink:0; }
 .ss-filter-pill { display:flex; align-items:center; gap:.5rem; width:100%; padding:.625rem 1rem; border-radius:.875rem; border:1.5px solid hsl(var(--border)/.7); background:hsl(var(--muted)/.4); cursor:pointer; font-size:.875rem; font-weight:700; color:hsl(var(--foreground)); transition:background .15s; }
 .ss-filter-pill.has-active { border-color:hsl(var(--primary)/.6); color:hsl(var(--primary)); }
 .ss-filter-cnt { background:hsl(var(--primary)); color:#000; border-radius:999px; padding:.05rem .375rem; font-size:.68rem; font-weight:900; margin-left:auto; }
@@ -633,13 +707,28 @@ ${n > 1 ? `
 
 // ─── Product card HTML ────────────────────────────────────────────────────────
 
-function renderCard(group: GroupedProduct): string {
+const HEART_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
+
+function renderCard(
+  group: GroupedProduct,
+  favs?: Set<string>,
+  _variantMap?: Map<string, { items: VariantItem[]; groupId: string }>,
+  showStock = false,
+  _allGroups?: GroupedProduct[],
+): string {
   const img = group.images[0] ?? null;
-  const priceStr = fmtRange(group.price_min, group.price_max);
   const srcKeys = [...new Set(group.entries.map(e => e.source))];
   const badgesHtml = srcKeys.map(src =>
     `<span style="background:${BADGE_BG[src]??'rgba(100,100,100,.85)'};color:#fff;padding:.12rem .35rem;border-radius:999px;font-size:9px;font-weight:700">${BADGE[src]??src}</span>`
   ).join('');
+  const isFav = favs?.has(group.key) ?? false;
+
+  // Stock badge
+  const stockHtml = showStock
+    ? group.totalStock > 0
+      ? `<div style="display:inline-flex;align-items:center;font-size:10px;font-weight:700;color:#44dd88;background:rgba(68,221,136,.12);padding:2px 7px;border-radius:6px;margin-top:4px">${group.totalStock} шт.</div>`
+      : `<div style="display:inline-flex;align-items:center;font-size:10px;font-weight:700;color:#ff6b6b;background:rgba(255,107,107,.1);padding:2px 7px;border-radius:6px;margin-top:4px">нет в наличии</div>`
+    : '';
 
   return `
 <div class="ss-card" data-key="${esc(group.key)}">
@@ -648,13 +737,12 @@ function renderCard(group: GroupedProduct): string {
       ? `<img src="${esc(img)}" alt="${esc(group.title)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling&&(this.nextElementSibling.style.display='flex')" style="display:block"><div style="display:none;width:100%;height:100%;align-items:center;justify-content:center;color:hsl(var(--foreground)/.15)"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`
       : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:hsl(var(--foreground)/.15)"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>`}
     <div class="ss-card-grad"></div>
+    <button class="ss-fav-btn${isFav?' active':''}" data-fav="${esc(group.key)}">${HEART_SVG}</button>
     <div style="position:absolute;top:.4rem;right:.4rem;display:flex;flex-direction:column;gap:.2rem;align-items:flex-end">${badgesHtml}</div>
   </div>
   <div class="ss-card-body">
     <div class="ss-card-title">${esc(group.title)}</div>
-    <div class="ss-card-price-row">
-      <span style="${PRICE_GRAD};font-size:.9rem;font-weight:900">${priceStr}</span>
-    </div>
+    ${stockHtml}
   </div>
   <div class="ss-card-buy">
     <div class="ss-card-buy-btn">Купить</div>
@@ -769,13 +857,15 @@ function shuffleSlice<T>(arr: T[], n: number): T[] {
   return copy.slice(0, n);
 }
 
-function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups: GroupedProduct[], onCatalog: () => void): (() => void) | null {
+function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups: GroupedProduct[], onCatalog: (groupFilter?: string) => void, _variantMap?: Map<string, { items: VariantItem[]; groupId: string }>, _showStock = false): (() => void) | null {
   const { settings: s, banners } = data;
+  const storeGroups = (data.groups ?? []).filter(g => g.vendor_codes && g.vendor_codes.length > 0);
   const RECOMMENDED_COUNT = 12;
   const featured = groups.length > RECOMMENDED_COUNT ? shuffleSlice(groups, RECOMMENDED_COUNT) : [...groups];
   const mobContacts = contactLinksHtml(s);
 
-  document.title = `${s.store_name} — SimaStore`;
+  document.title = s.store_name;
+  if (s.logo_url) setFavicon(s.logo_url);
 
   root.innerHTML = `
 <div style="min-height:100vh;background:hsl(var(--background));color:hsl(var(--foreground))">
@@ -784,7 +874,7 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
   ${mobContacts ? `<div class="ss-mob-contacts">${mobContacts}</div>` : ''}
 
   ${banners.length > 0 ? `
-  <div style="padding:.5rem 0 .75rem">
+  <div style="padding:1.25rem 0 .75rem">
     <div style="max-width:1400px;margin:0 auto;padding:0 .75rem" id="ss-banner-area"></div>
   </div>` : ''}
 
@@ -803,6 +893,18 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
         <h3 style="font-size:1.25rem;font-weight:700;margin-bottom:.5rem">Товары появятся скоро</h3>
         <p style="color:hsl(var(--muted-foreground));font-size:.875rem">Магазин пока пустой, загляните позже</p>
       </div>`}
+
+      ${storeGroups.length > 0 ? `
+      <div style="padding:1.25rem 0 .25rem">
+        <div style="font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:hsl(var(--muted-foreground));margin-bottom:.625rem">Разделы</div>
+        <div class="ss-groups-row" id="ss-home-groups">
+          ${storeGroups.map(g => `
+          <button class="ss-group-chip" data-gid="${esc(g.id)}" title="${esc(g.name)}">
+            ${g.cover_url ? `<img src="${esc(g.cover_url)}" alt="" class="ss-group-chip-img">` : `<div class="ss-group-chip-ph">${esc(g.name.charAt(0).toUpperCase())}</div>`}
+            <span class="ss-group-chip-lbl">${esc(g.name)}</span>
+          </button>`).join('')}
+        </div>
+      </div>` : ''}
 
       ${groups.length > 0 ? `
       <div style="padding:1.5rem 0 .5rem">
@@ -828,7 +930,12 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
     if (area) bannerCarousel = new Carousel(area, banners);
   }
 
-  document.getElementById('ss-to-catalog')?.addEventListener('click', onCatalog);
+  document.getElementById('ss-to-catalog')?.addEventListener('click', () => onCatalog());
+  document.getElementById('ss-home-groups')?.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('.ss-group-chip') as HTMLElement|null;
+    if (!btn) return;
+    onCatalog(btn.dataset.gid!);
+  });
 
   // Rec carousel animation
   let recRaf = 0;
@@ -847,9 +954,6 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
   </div>
   <div class="ss-card-body">
     <div class="ss-card-title">${esc(g.title)}</div>
-    <div class="ss-card-price-row">
-      <span style="${PRICE_GRAD};font-size:.85rem;font-weight:900">${fmtRange(g.price_min, g.price_max)}</span>
-    </div>
   </div>
 </div>`;
     }).join('');
@@ -882,9 +986,22 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
 
 // ─── Catalog view ─────────────────────────────────────────────────────────────
 
-function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, groups: GroupedProduct[], onBack: () => void): void {
+function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, allGroups: GroupedProduct[], onBack: () => void, variantMap?: Map<string, { items: VariantItem[]; groupId: string }>, showStock = false, initialGroupId?: string): void {
   const { settings: s } = data;
   document.title = `Каталог — ${s.store_name}`;
+
+  // If a group filter was pre-selected, narrow the product list
+  let groups = allGroups;
+  if (initialGroupId) {
+    const sg = (data.groups ?? []).find(g => g.id === initialGroupId);
+    if (sg && sg.vendor_codes.length > 0) {
+      const vcSet = new Set(sg.vendor_codes.map(v => v.trim().toLowerCase()));
+      groups = allGroups.filter(g => {
+        const vc = g.entries[0]?.vendor_code?.trim().toLowerCase() ?? '';
+        return vcSet.has(vc) || vcSet.has(g.key.replace(/^[vs]:/, ''));
+      });
+    }
+  }
 
   const hasSrc = (src: string) => groups.some(g => g.entries.some(e => e.source === src));
 
@@ -895,8 +1012,12 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
   <div style="max-width:1400px;margin:0 auto;padding:.75rem .75rem 4rem">
 
     <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.75rem;flex-wrap:wrap">
-      <h1 style="font-size:clamp(1.25rem,5vw,2rem);font-weight:900;text-transform:uppercase;letter-spacing:-.01em;color:hsl(var(--foreground));margin:0">Каталог</h1>
+      <h1 style="font-size:clamp(1.25rem,5vw,2rem);font-weight:900;text-transform:uppercase;letter-spacing:-.01em;color:hsl(var(--foreground));margin:0">${initialGroupId ? esc((data.groups ?? []).find(g => g.id === initialGroupId)?.name ?? 'Каталог') : 'Каталог'}</h1>
       <span id="ss-count" style="padding:.2rem .625rem;border-radius:999px;font-size:.75rem;font-weight:800;background:hsl(var(--primary)/.1);border:1px solid hsl(var(--primary)/.2);color:hsl(var(--primary))">${groups.length}</span>
+      <button class="ss-fav-header-btn" id="ss-favs-toggle" style="margin-left:auto">
+        ${HEART_SVG}
+        <span id="ss-favs-count">Избранное</span>
+      </button>
     </div>
 
     <div id="ss-search-anchor" style="margin-bottom:.75rem">
@@ -949,6 +1070,7 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
   let filterW: number | null = null;
   let filterL: number | null = null;
   let filterKg: number | null = null;
+  let filterStock: 'instock' | 'oos' | '' = '';
 
   // Restore filter state from URL on load
   {
@@ -962,6 +1084,8 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
     filterW        = pn('w');
     filterL        = pn('l');
     filterKg       = pn('kg');
+    const sv = qp.get('stock') || '';
+    filterStock = (sv === 'instock' || sv === 'oos') ? sv : '';
   }
 
   function updateFilterUrl(): void {
@@ -974,24 +1098,68 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
     if (filterW  != null)       qp.set('w',  String(filterW));
     if (filterL  != null)       qp.set('l',  String(filterL));
     if (filterKg != null)       qp.set('kg', String(filterKg));
+    if (filterStock)            qp.set('stock', filterStock);
     const qs = qp.toString();
     history.replaceState({}, '', `/${_slug}/catalog${qs ? '?' + qs : ''}`);
   }
+
+  // ── Favourites ────────────────────────────────────────────────────────────────
+  const FAV_KEY = `ss-favs-${_slug}`;
+  const favs = new Set<string>(JSON.parse(localStorage.getItem(FAV_KEY) || '[]'));
+  let showFavsOnly = false;
+
+  function saveFavs(): void {
+    localStorage.setItem(FAV_KEY, JSON.stringify([...favs]));
+  }
+
+  function updateFavHeaderBtn(): void {
+    const btn = document.getElementById('ss-favs-toggle');
+    const lbl = document.getElementById('ss-favs-count');
+    if (!btn) return;
+    btn.classList.toggle('active', showFavsOnly);
+    if (lbl) lbl.textContent = favs.size > 0 ? `Избранное (${favs.size})` : 'Избранное';
+  }
+
+  function toggleFav(key: string, el?: HTMLElement | null): void {
+    if (favs.has(key)) favs.delete(key); else favs.add(key);
+    saveFavs();
+    // Update all card hearts in the grid
+    document.querySelectorAll<HTMLElement>(`.ss-fav-btn[data-fav="${CSS.escape(key)}"]`).forEach(btn => {
+      btn.classList.toggle('active', favs.has(key));
+      btn.classList.remove('pop');
+      void btn.offsetWidth; // reflow to restart animation
+      btn.classList.add('pop');
+    });
+    if (el) {
+      el.classList.toggle('active', favs.has(key));
+      el.classList.remove('pop');
+      void el.offsetWidth;
+      el.classList.add('pop');
+    }
+    updateFavHeaderBtn();
+    if (showFavsOnly) refreshGrid();
+  }
+  _sharedFavs = favs;
+  _sharedToggleFav = toggleFav;
+  // ─────────────────────────────────────────────────────────────────────────────
 
   const hasDims = groups.some(g => g.height_cm || g.width_cm || g.length_cm || g.weight_kg);
 
   const allBrands     = [...new Set(groups.map(g => g.brand).filter((b): b is string => !!b))].sort();
   const allCategories = [...new Set(groups.map(g => g.category).filter((c): c is string => !!c))].sort();
 
-  const showPrice = s.show_price_filter !== false;
+  const anyPriceVisible = groups.some(g => g.entries.some(e => e.custom_price != null));
+  const showPrice = s.show_price_filter !== false && anyPriceVisible;
   const showBrand = !!s.show_brand_filter && allBrands.length > 1;
   const showCat   = !!s.show_category_filter && allCategories.length > 1;
+  const hideOos = !!s.hide_out_of_stock;
+  const showStockFilter = showStock && !hideOos;
 
-  const hasAnyFilter = showPrice || showBrand || showCat || hasDims;
+  const hasAnyFilter = showPrice || showBrand || showCat || hasDims || showStockFilter;
 
   function activeFilterCount(): number {
     return [filterPriceMin, filterPriceMax, filterBrand || null, filterCat || null,
-            filterH, filterW, filterL, filterKg].filter(v => v != null).length;
+            filterH, filterW, filterL, filterKg, filterStock || null].filter(v => v != null).length;
   }
 
   function renderFiltersBar(): void {
@@ -1039,6 +1207,13 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
         <div class="ss-chips">
           ${allCategories.map(c => `<button class="ss-chip${filterCat===c?' active':''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}
         </div>
+      </div>` : ''}
+      ${showStockFilter ? `<div class="ss-filter-group">
+        <div class="ss-filter-label">Наличие</div>
+        <div class="ss-chips">
+          <button class="ss-chip${filterStock==='instock'?' active':''}" data-stock="instock">В наличии</button>
+          <button class="ss-chip${filterStock==='oos'?' active':''}" data-stock="oos">Нет в наличии</button>
+        </div>
       </div>` : ''}`;
   }
 
@@ -1066,7 +1241,9 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
       const matchW     = filterW  == null || !g.width_cm  || g.width_cm   <= filterW;
       const matchL     = filterL  == null || !g.length_cm || g.length_cm  <= filterL;
       const matchKg    = filterKg == null || !g.weight_kg || g.weight_kg  <= filterKg;
-      return matchSrc && matchQ && matchPMin && matchPMax && matchBrand && matchCat && matchH && matchW && matchL && matchKg;
+      const matchFavs  = !showFavsOnly || favs.has(g.key);
+      const matchStock = !filterStock || (filterStock === 'instock' ? g.totalStock > 0 : g.totalStock === 0);
+      return matchSrc && matchQ && matchPMin && matchPMax && matchBrand && matchCat && matchH && matchW && matchL && matchKg && matchFavs && matchStock;
     });
   }
 
@@ -1074,9 +1251,9 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
     const start = page * PAGE_SIZE;
     const slice = f.slice(start, start + PAGE_SIZE);
     if (page === 0) {
-      grid.innerHTML = slice.map(g => renderCard(g)).join('');
+      grid.innerHTML = slice.map(g => renderCard(g, favs, variantMap, showStock, allGroups)).join('');
     } else {
-      slice.forEach(g => { grid.insertAdjacentHTML('beforeend', renderCard(g)); });
+      slice.forEach(g => { grid.insertAdjacentHTML('beforeend', renderCard(g, favs, variantMap, showStock, allGroups)); });
     }
     const sentinel = document.getElementById('ss-cat-sentinel');
     sentinel?.remove();
@@ -1213,8 +1390,26 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
     }, 500);
   });
 
+  requestAnimationFrame(() => updateFavHeaderBtn());
+
   root.addEventListener('click', (e) => {
     const t = e.target as HTMLElement;
+
+    // Favourites toggle (header button)
+    if (t.closest('#ss-favs-toggle')) {
+      showFavsOnly = !showFavsOnly;
+      updateFavHeaderBtn();
+      refreshGrid();
+      return;
+    }
+
+    // Heart button on card
+    const favBtn = t.closest('.ss-fav-btn') as HTMLElement|null;
+    if (favBtn) {
+      e.stopPropagation();
+      toggleFav(favBtn.dataset.fav!, favBtn);
+      return;
+    }
 
     // Open filter modal
     if (t.closest('#ss-open-filters')) { openFilterModal(); return; }
@@ -1237,10 +1432,17 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
       filterCat = filterCat === c ? '' : c;
       updateFilterUrl(); renderFiltersBar(); refreshGrid(); return;
     }
+    // Stock chip
+    const stockChip = t.closest('[data-stock]') as HTMLElement|null;
+    if (stockChip) {
+      const sv = stockChip.dataset.stock as 'instock' | 'oos';
+      filterStock = filterStock === sv ? '' : sv;
+      updateFilterUrl(); renderFiltersBar(); refreshGrid(); return;
+    }
     // Reset
     if (t.id === 'sf-reset') {
       filterPriceMin = null; filterPriceMax = null;
-      filterBrand = ''; filterCat = '';
+      filterBrand = ''; filterCat = ''; filterStock = '';
       filterH = null; filterW = null; filterL = null; filterKg = null;
       updateFilterUrl(); renderFiltersBar(); refreshGrid(); return;
     }
@@ -1258,30 +1460,103 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, gro
 
 // ─── Detail overlay ───────────────────────────────────────────────────────────
 
-function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: string, onClose: () => void): void {
-  const imgs = group.images;
-  const cheapest = group.entries[0];
+// Shared favorites refs — set by mountCatalogPage, read by openProduct in init()
+let _sharedFavs: Set<string> | undefined;
+let _sharedToggleFav: ((key: string, el?: HTMLElement|null) => void) | undefined;
 
-  // Build buy buttons — cheapest entry gets primary style
-  const buyButtonsHtml = group.entries.map((entry, i) => {
+// Brand colors for each marketplace
+const MKT_COLOR: Record<string, string> = {
+  wb:     'background:#CB11AB;color:#fff;border:none;box-shadow:0 4px 16px rgba(203,17,171,.3)',
+  ozon:   'background:#005BFF;color:#fff;border:none;box-shadow:0 4px 16px rgba(0,91,255,.3)',
+  yandex: 'background:#FDE100;color:#000;border:none;box-shadow:0 4px 16px rgba(253,225,0,.35)',
+};
+
+function openDetail(
+  group: GroupedProduct, allGroups: GroupedProduct[], slug: string, onClose: () => void,
+  favs?: Set<string>, toggleFav?: (key: string, el?: HTMLElement|null) => void,
+  variantMap?: Map<string, { items: VariantItem[]; groupId: string }>, showStock = false
+): void {
+  const imgs = group.images;
+
+  // Build brand-colored buy buttons for all entries
+  const mktBtn = (entry: typeof group.entries[0]) => {
     const url   = buildEntryUrl(entry);
     const label = BUY_LABEL[entry.source] ?? 'Купить';
-    const price = entry.custom_price != null ? ` · ${fmt(entry.custom_price)}` : ` · ${fmt(entry.price)}`;
-    return `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="${i === 0 ? 'ss-btn-pri' : 'ss-btn-sec'}">${label}${price} ↗</a>`;
-  }).join('');
+    const style = MKT_COLOR[entry.source] ?? '';
+    return `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="ss-btn-pri" style="${style}">${label} ↗</a>`;
+  };
+  const buyButtonsHtml = group.entries.map(mktBtn).join('');
 
   // Custom URL button (extra "buy on website" button)
   const customEntry = group.entries.find(e => e.custom_url && e.custom_url.trim());
   const customBtnHtml = customEntry?.custom_url
-    ? `<a href="${esc(customEntry.custom_url)}" target="_blank" rel="noopener noreferrer" class="ss-btn-sec" style="border-color:hsl(var(--primary)/.4);color:hsl(var(--primary));font-weight:800;display:inline-flex;align-items:center;gap:.4rem">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg> Купить у продавца${customEntry.custom_price != null ? ` · ${fmt(customEntry.custom_price)}` : ''} ↗
+    ? `<a href="${esc(customEntry.custom_url)}" target="_blank" rel="noopener noreferrer" class="ss-btn-sec" style="border-color:hsl(var(--primary)/.4);color:hsl(var(--primary));font-weight:800;display:flex;align-items:center;gap:.4rem">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg> Купить у продавца ↗
       </a>`
     : '';
+
 
   const related = allGroups
     .filter(g => g.key !== group.key)
     .sort(() => Math.random() - 0.5)
     .slice(0, 6);
+
+  // Stock badge for detail panel — per-marketplace breakdown
+  const MKT_LABEL: Record<string, string> = { wb: 'WB', ozon: 'Ozon', yandex: 'Яндекс' };
+  const stockHtmlDet = showStock
+    ? group.totalStock > 0
+      ? (() => {
+          const parts = group.entries
+            .filter(e => (e.stock ?? 0) > 0)
+            .map(e => `${MKT_LABEL[e.source] ?? e.source}: ${e.stock ?? 0} шт.`)
+            .join(' · ');
+          return `<div style="display:inline-flex;align-items:center;gap:.35rem;margin-top:.5rem;padding:.35rem .65rem;border-radius:.5rem;background:hsl(142 72% 29% / .15);border:1px solid hsl(142 72% 29% / .3);font-size:.8rem;font-weight:700;color:hsl(142 72% 45%)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+          ${parts || `В наличии: ${group.totalStock} шт.`}
+        </div>`;
+        })()
+      : `<div style="display:inline-flex;align-items:center;gap:.35rem;margin-top:.5rem;padding:.35rem .65rem;border-radius:.5rem;background:hsl(var(--muted)/.4);font-size:.8rem;font-weight:700;color:hsl(var(--muted-foreground))">Нет в наличии</div>`
+    : '';
+
+  // Variant buttons for detail panel
+  let variantsBtnsDet = '';
+  if (variantMap) {
+    const vg = variantMap.get(group.key);
+    if (vg && vg.items.length > 1) {
+      const btns = vg.items.map(it => {
+        const itKey = `v:${it.vendor_code.trim().toLowerCase()}`;
+        const isActive = itKey === group.key;
+        const targetGroup = allGroups.find(g => g.key === itKey);
+        const inStock = showStock ? (targetGroup?.totalStock ?? 0) : 1;
+        const noTarget = !targetGroup;
+        const oos = showStock && inStock === 0;
+        // Color parsing: supports "color1|color2" for diagonal split
+        const rawColor = (it.color ?? '').trim();
+        const isNoColor = !rawColor || rawColor === '#888888';
+        let btnStyle = '';
+        if (!isNoColor) {
+          const parts = rawColor.split('|');
+          btnStyle = parts.length >= 2
+            ? `background:linear-gradient(135deg,${parts[0].trim()} 50%,${parts[1].trim()} 50%)`
+            : `background:${rawColor}`;
+        }
+        const stockLabel = showStock && targetGroup ? (inStock > 0 ? ` · ${inStock} шт.` : ' · нет') : '';
+        const tooltip = `${targetGroup?.title ?? it.label}${stockLabel}`;
+        return `<button
+          class="ss-det-var-btn${isActive ? ' active' : ''}${(noTarget || oos) ? ' disabled' : ''}${!isNoColor ? ' has-color' : ''}"
+          data-var-key="${esc(itKey)}"
+          ${btnStyle ? `style="${btnStyle}"` : ''}
+          title="${esc(tooltip)}"
+          ${noTarget ? 'disabled' : ''}
+        >${esc(it.label)}</button>`;
+      }).join('');
+      variantsBtnsDet = `
+        <div style="margin:.875rem 0 .25rem">
+          <div style="font-size:.7rem;font-weight:700;color:hsl(var(--muted-foreground));text-transform:uppercase;letter-spacing:.07em;margin-bottom:.5rem">Вариант</div>
+          <div style="display:flex;flex-wrap:wrap;gap:.375rem">${btns}</div>
+        </div>`
+    }
+  }
 
   const swipeInd = document.createElement('div');
   swipeInd.className = 'ss-swipe-ind';
@@ -1330,19 +1605,13 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
 
     <div>
       <h1 class="ss-det-title">${esc(group.title)}</h1>
-      <div class="ss-price-row">
-        <span class="ss-price-big">${fmtRange(group.price_min, group.price_max)}</span>
-        ${cheapest.discount > 0 && group.price_min === group.price_max
-          ? `<span class="ss-price-old">${fmt(cheapest.original_price)}</span><span class="ss-price-disc">−${cheapest.discount}%</span>`
-          : ''}
-      </div>
-      <div class="ss-meta">
-        ${group.vendor_code ? `<div class="ss-meta-row">Артикул: <span>${esc(group.vendor_code)}</span></div>` : ''}
-        ${group.brand ? `<div class="ss-meta-row">Бренд: <span>${esc(group.brand)}</span></div>` : ''}
-      </div>
+      ${stockHtmlDet}
+      ${variantsBtnsDet}
+      <div class="ss-meta"></div>
       <div class="ss-buy-col" id="ss-buy-desktop">
         ${buyButtonsHtml}
         ${customBtnHtml}
+        ${favs !== undefined ? `<button class="ss-det-fav-btn${favs.has(group.key)?' active':''}" id="ss-det-fav">${HEART_SVG}${favs.has(group.key) ? 'В избранном' : 'В избранное'}</button>` : ''}
       </div>
       <div style="display:flex;flex-direction:column;gap:.25rem;margin-top:.5rem">
         ${group.vendor_code ? `<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0;border-bottom:1px solid hsl(var(--border)/.3)"><span style="color:hsl(var(--muted-foreground))">Артикул</span><span style="font-weight:600">${esc(group.vendor_code)}</span></div>` : ''}
@@ -1360,14 +1629,11 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
   ${related.length > 0 ? `
   <div style="margin-top:2rem">
     <h2 style="font-size:1rem;font-weight:800;margin-bottom:.75rem;color:hsl(var(--foreground))">Ещё товары</h2>
-    <div class="ss-grid">${related.map(g => renderCard(g)).join('')}</div>
+    <div class="ss-grid">${related.map(g => renderCard(g, favs, variantMap, showStock, allGroups)).join('')}</div>
   </div>` : ''}
 </div>
 
-<div class="ss-mobile-bar">
-  <a href="${esc(buildEntryUrl(cheapest))}" target="_blank" rel="noopener noreferrer" class="ss-btn-pri" style="flex:1">${BUY_LABEL[cheapest.source] ?? 'Купить'} ↗</a>
-  ${customEntry?.custom_url ? `<a href="${esc(customEntry.custom_url)}" target="_blank" rel="noopener noreferrer" class="ss-btn-sec" style="display:inline-flex;align-items:center;gap:.35rem"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg> Сайт</a>` : ''}
-</div>`;
+`;
 
   document.body.appendChild(panel);
   requestAnimationFrame(() => requestAnimationFrame(() => { panel.classList.add('open'); }));
@@ -1401,7 +1667,49 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
       galMain.scrollTo({ left: idx * galMain.clientWidth, behavior:'smooth' });
       syncIdx(idx);
     });
+
+    // Touch swipe on gallery
+    let galTouchX = 0, galTouchY = 0, galTouchLocked = false, galTouchIsH = false;
+    galMain.addEventListener('touchstart', (e: TouchEvent) => {
+      galTouchX = e.changedTouches[0].clientX;
+      galTouchY = e.changedTouches[0].clientY;
+      galTouchLocked = false; galTouchIsH = false;
+    }, { passive: true });
+    galMain.addEventListener('touchmove', (e: TouchEvent) => {
+      if (!galTouchLocked) {
+        const dx = Math.abs(e.changedTouches[0].clientX - galTouchX);
+        const dy = Math.abs(e.changedTouches[0].clientY - galTouchY);
+        if (dx > 6 || dy > 6) { galTouchIsH = dx > dy; galTouchLocked = true; }
+      }
+      if (galTouchIsH) e.preventDefault();
+    }, { passive: false });
+    galMain.addEventListener('touchend', (e: TouchEvent) => {
+      if (!galTouchIsH) return;
+      const dx = e.changedTouches[0].clientX - galTouchX;
+      if (Math.abs(dx) < 40) return;
+      const idx = dx < 0
+        ? (galIdx + 1) % imgs.length
+        : (galIdx - 1 + imgs.length) % imgs.length;
+      galMain.scrollTo({ left: idx * galMain.clientWidth, behavior: 'smooth' });
+      syncIdx(idx);
+    }, { passive: true });
   }
+
+  // Variant buttons inside detail panel
+  panel.querySelectorAll<HTMLElement>('.ss-det-var-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetKey = btn.dataset.varKey;
+      if (!targetKey || (btn as HTMLButtonElement).disabled || targetKey === group.key) return;
+      const targetGroup = allGroups.find(g => g.key === targetKey);
+      if (!targetGroup) return;
+      history.replaceState({ productKey: targetKey }, '', `/${slug}/product/${encodeURIComponent(targetKey)}`);
+      // Open new panel immediately (no slide-out animation to avoid jerk)
+      window.removeEventListener('popstate', onPop);
+      openDetail(targetGroup, allGroups, slug, onClose, favs, toggleFav, variantMap, showStock);
+      panel.remove();
+      swipeInd.remove();
+    });
+  });
 
   // Tabs
   panel.querySelectorAll('.ss-tab-btn').forEach(btn => {
@@ -1414,6 +1722,24 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
     });
   });
 
+  // Favourites button inside detail
+  if (toggleFav && favs) {
+    const detFavBtn = panel.querySelector('#ss-det-fav') as HTMLElement|null;
+    detFavBtn?.addEventListener('click', () => {
+      toggleFav(group.key, detFavBtn);
+      detFavBtn.classList.toggle('active', favs.has(group.key));
+      detFavBtn.innerHTML = `${HEART_SVG}${favs.has(group.key) ? 'В избранном' : 'В избранное'}`;
+    });
+  }
+
+  // Heart buttons on related cards
+  panel.querySelectorAll<HTMLElement>('.ss-fav-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (toggleFav && favs) toggleFav(btn.dataset.fav!, btn);
+    });
+  });
+
   // Related card clicks
   panel.querySelectorAll('.ss-card').forEach(card => {
     card.addEventListener('click', () => {
@@ -1422,9 +1748,10 @@ function openDetail(group: GroupedProduct, allGroups: GroupedProduct[], slug: st
       const g = allGroups.find(x => x.key === key);
       if (!g) return;
       history.replaceState({ productKey: g.key }, '', `/${slug}/product/${encodeURIComponent(g.key)}`);
-      panel.scrollTo({ top:0, behavior:'instant' });
-      closePanel(false);
-      openDetail(g, allGroups, slug, onClose);
+      window.removeEventListener('popstate', onPop);
+      openDetail(g, allGroups, slug, onClose, favs, toggleFav, variantMap, showStock);
+      panel.remove();
+      swipeInd.remove();
     });
   });
 
@@ -1489,14 +1816,9 @@ async function init(): Promise<void> {
   injectCSS();
 
   const root = document.getElementById('root')!;
+  const progress = document.getElementById('ss-progress');
 
-  root.innerHTML = `
-<div style="min-height:100vh;background:hsl(var(--background));display:flex;align-items:center;justify-content:center">
-  <div style="text-align:center">
-    <div style="width:3.5rem;height:3.5rem;border:3px solid hsl(var(--primary)/.3);border-top-color:hsl(var(--primary));border-radius:9999px;animation:ss-spin .8s linear infinite;margin:0 auto 1rem"></div>
-    <p style="color:hsl(var(--muted-foreground));font-size:.875rem">Загружаем магазин…</p>
-  </div>
-</div>`;
+  root.innerHTML = `<div style="min-height:100vh;background:hsl(var(--background))"></div>`;
 
   const parts = window.location.pathname.replace(/^\//, '').split('/');
   const slug  = parts[0];
@@ -1507,9 +1829,12 @@ async function init(): Promise<void> {
     return;
   }
 
+  const hideProgress = () => { if (progress) progress.style.opacity = '0'; };
+
   let data: StoreData | null = null;
   try { data = await fetchStoreData(slug); }
   catch {
+    hideProgress();
     root.innerHTML = `<div style="min-height:100vh;background:hsl(var(--background));display:flex;align-items:center;justify-content:center;text-align:center;padding:2rem">
       <div><div style="display:flex;justify-content:center;margin-bottom:1rem;color:hsl(var(--foreground)/.2)"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0119 12.55M5 12.55a10.94 10.94 0 015.17-2.39M10.71 5.05A16 16 0 0122.56 9M1.42 9a15.91 15.91 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01"/></svg></div><h1 style="font-size:1.25rem;font-weight:900;color:hsl(var(--foreground));margin-bottom:.5rem">Ошибка соединения</h1>
       <p style="color:hsl(var(--muted-foreground));margin-bottom:1.5rem">Проверьте подключение к интернету</p>
@@ -1518,6 +1843,7 @@ async function init(): Promise<void> {
   }
 
   if (!data) {
+    hideProgress();
     root.innerHTML = `<div style="min-height:100vh;background:hsl(var(--background));display:flex;align-items:center;justify-content:center;text-align:center;padding:2rem">
       <div><div style="display:flex;justify-content:center;margin-bottom:1rem;color:hsl(var(--foreground)/.2)"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div><h1 style="font-size:1.5rem;font-weight:900;color:hsl(var(--foreground));margin-bottom:.5rem">Магазин не найден</h1>
       <p style="color:hsl(var(--muted-foreground));margin-bottom:1.5rem">Проверьте адрес или попросите владельца поделиться ссылкой</p>
@@ -1525,7 +1851,30 @@ async function init(): Promise<void> {
     return;
   }
 
-  const groups = groupProducts(data.products);
+  hideProgress();
+
+  const showStock = !!data.settings.show_stock;
+  const hideOos   = !!data.settings.hide_out_of_stock;
+  const groups = groupProducts(data.products, hideOos);
+
+  // Build variant map: group.key → {items, groupId}
+  const variantMap = new Map<string, { items: VariantItem[]; groupId: string }>();
+  for (const vg of (data.variants ?? [])) {
+    for (const it of vg.items) {
+      const k = `v:${it.vendor_code.trim().toLowerCase()}`;
+      variantMap.set(k, { items: vg.items, groupId: vg.id });
+    }
+  }
+
+  // Deduplicate: for variant groups, show only the first representative card
+  const _seenVGIds = new Set<string>();
+  const catalogGroups = groups.filter(g => {
+    const vm = variantMap.get(g.key);
+    if (!vm) return true;
+    if (_seenVGIds.has(vm.groupId)) return false;
+    _seenVGIds.add(vm.groupId);
+    return true;
+  });
 
   type View = 'home' | 'catalog';
   let view: View = 'home';
@@ -1537,10 +1886,23 @@ async function init(): Promise<void> {
     history.pushState({ productKey: key }, '', `/${slug}/product/${encodeURIComponent(key)}`);
     openDetail(group, groups, slug, () => {
       history.replaceState({}, '', view === 'catalog' ? `/${slug}/catalog` : `/${slug}`);
-    });
+    }, _sharedFavs, _sharedToggleFav, variantMap, showStock);
   }
 
   root.addEventListener('click', (e) => {
+    // Heart button stops propagation already, but guard here too
+    if ((e.target as HTMLElement).closest('.ss-fav-btn')) return;
+
+    // Variant button — switch to that variant's card
+    const varBtn = (e.target as HTMLElement).closest('.ss-var-btn') as HTMLElement | null;
+    if (varBtn) {
+      e.stopPropagation();
+      if (varBtn.hasAttribute('disabled')) return;
+      const targetKey = varBtn.dataset.varKey!;
+      openProduct(targetKey);
+      return;
+    }
+
     const card = (e.target as HTMLElement).closest('[data-key]') as HTMLElement | null;
     if (!card) return;
     const key = card.dataset.key;
@@ -1549,7 +1911,7 @@ async function init(): Promise<void> {
       const group = groups.find(g => g.key === key);
       if (!group) return;
       history.pushState({ productKey: key }, '', `/${slug}/product/${encodeURIComponent(key)}`);
-      openDetail(group, groups, slug, () => { showCatalog(); });
+      openDetail(group, groups, slug, () => { showCatalog(); }, _sharedFavs, _sharedToggleFav, variantMap, showStock);
     } else {
       openProduct(key);
     }
@@ -1559,15 +1921,15 @@ async function init(): Promise<void> {
     view = 'home';
     history.replaceState({}, '', `/${slug}`);
     pageCleanup?.();
-    pageCleanup = mountHomePage(root, data!, slug, groups, showCatalog);
+    pageCleanup = mountHomePage(root, data!, slug, groups, showCatalog, variantMap, showStock);
   }
 
-  function showCatalog(): void {
+  function showCatalog(groupId?: string): void {
     view = 'catalog';
     history.replaceState({}, '', `/${slug}/catalog`);
     pageCleanup?.();
     pageCleanup = null;
-    mountCatalogPage(root, data!, slug, groups, showHome);
+    mountCatalogPage(root, data!, slug, catalogGroups, showHome, variantMap, showStock, groupId);
   }
 
   const isProduct = parts[1] === 'product' && parts[2];

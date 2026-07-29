@@ -90,7 +90,7 @@ async function refreshFromServer(): Promise<void> {
 
     // Восстанавливаем локальные записи и пушим на сервер
     if (localOnly.length > 0) {
-      console.info(`[costPriceDb] Допушиваем ${localOnly.length} записей из localStorage на сервер`);
+      debug.log(`[costPriceDb] Допушиваем ${localOnly.length} записей из localStorage на сервер`);
       const toUpload: Array<{ company_id: string; vendor_code: string; cost: number; updated_at: string }> = [];
       for (const entry of localOnly) {
         cache[norm(entry.vendorCode)] = { ...entry, companyId: cid };
@@ -107,22 +107,22 @@ async function refreshFromServer(): Promise<void> {
           method: 'POST',
           headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
           body: JSON.stringify(toUpload.slice(i, i + 50)),
-        }).catch(e => console.warn('[costPriceDb] re-push batch:', e));
+        }).catch(e => debug.warn('[costPriceDb] re-push batch:', e));
       }
     }
 
     cacheCompanyId = cid;
     saveCache();
     dbAvailable = true;
-  } catch (e: any) {
-    const msg = String(e?.message ?? '');
+  } catch (e: unknown) {
+    const msg = String((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? '');
     if (msg.includes('42P01') || (msg.includes('cost_prices') && msg.includes('not found'))) {
       // Миграция не применена — работаем чисто на localStorage
       dbAvailable = false;
-      console.warn('[costPriceDb] Supabase table cost_prices не найдена. Используется localStorage.');
+      debug.warn('[costPriceDb] Supabase table cost_prices не найдена. Используется localStorage.');
     } else {
       // 401, сетевая ошибка и т.д. — пробуем работать из localStorage
-      console.warn('[costPriceDb] load failed (will use localStorage cache):', msg);
+      debug.warn('[costPriceDb] load failed (will use localStorage cache):', msg);
       // Загружаем из localStorage если кеш пуст
       if (Object.keys(cache).length === 0) {
         cache = loadCache();
@@ -144,13 +144,13 @@ async function pushToServer(vendorCode: string, cost: number, retries = 2): Prom
         body: JSON.stringify({ company_id: cid, vendor_code: vendorCode, cost, updated_at: new Date().toISOString() }),
       });
       return; // успех
-    } catch (e: any) {
-      const msg = String(e?.message ?? '');
+    } catch (e: unknown) {
+      const msg = String((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? '');
       if (msg.includes('cost_prices') && msg.includes('42P01')) {
         dbAvailable = false;
         return;
       }
-      console.warn(`[costPriceDb] push "${vendorCode}" attempt ${attempt + 1}/${retries + 1}:`, msg);
+      debug.warn(`[costPriceDb] push "${vendorCode}" attempt ${attempt + 1}/${retries + 1}:`, msg);
       if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
     }
   }
@@ -165,7 +165,7 @@ async function removeFromServer(vendorCode: string): Promise<void> {
       `cost_prices?company_id=eq.${cid}&vendor_code=eq.${encodeURIComponent(vendorCode)}`,
       { method: 'DELETE' },
     );
-  } catch (e) { console.warn('[costPriceDb] remove:', e); }
+  } catch (e) { debug.warn('[costPriceDb] remove:', e); }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -216,8 +216,8 @@ export const costPriceDb = {
         headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
         body: JSON.stringify(toUpload),
       }).catch((e: any) => {
-        if (String(e?.message ?? '').includes('cost_prices')) dbAvailable = false;
-        console.warn('[costPriceDb] bulkSet:', e);
+        if (String((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? '').includes('cost_prices')) dbAvailable = false;
+        debug.warn('[costPriceDb] bulkSet:', e);
       });
     }
     return { saved, skipped };
@@ -262,11 +262,11 @@ export const costPriceDb = {
         }
       }
       if (items.length > 0) {
-        console.info(`[costPriceDb] Синхронизация из customColumnsDb: ${items.length} новых записей`);
+        debug.log(`[costPriceDb] Синхронизация из customColumnsDb: ${items.length} новых записей`);
         costPriceDb.bulkSet(items);
       }
     } catch (e) {
-      console.warn('[costPriceDb] syncFromCustomColumns:', e);
+      debug.warn('[costPriceDb] syncFromCustomColumns:', e);
     }
   },
 };

@@ -15,6 +15,16 @@ import { yandexApi, fetchAllYandexProducts } from '@/services/yandexApi';
 
 type View = 'products' | 'stores';
 
+interface PendingCampaign {
+  id: number;
+  name: string;
+  domain: string;
+  business?: { id: number; name?: string };
+  placementType?: string;
+  alreadyAdded: boolean;
+  selected: boolean;
+}
+
 export class YandexModule {
   private container: HTMLElement;
   private stores: YandexStore[] = [];
@@ -25,6 +35,9 @@ export class YandexModule {
   private syncing: Record<string, boolean> = {};   // storeId → syncing?
   private addBusy = false;
   private lastError = '';
+  private pendingApiKey = '';
+  private pendingCustomName = '';
+  private pendingCampaigns: PendingCampaign[] | null = null;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -228,7 +241,93 @@ export class YandexModule {
 
   // ── View: Магазины ──────────────────────────────────────────────────────────
 
+  private renderPendingCampaigns(): string {
+    const campaigns = this.pendingCampaigns!;
+    const newOnes = campaigns.filter(c => !c.alreadyAdded);
+    const selectedCount = newOnes.filter(c => c.selected).length;
+    return `
+      <div style="flex:1;overflow:auto;padding:24px 24px 100px">
+        <div style="max-width:760px;margin:0 auto">
+          <div class="ym-card">
+            <div class="ym-card-title">Найдено магазинов: ${campaigns.length}</div>
+            <div class="ym-card-desc">Выбери, какие магазины добавить. Уже подключённые отмечены серым.</div>
+            <div style="display:flex;flex-direction:column;gap:8px;margin:12px 0">
+              ${campaigns.map(c => {
+                const label = c.name || c.domain || `Campaign ${c.id}`;
+                const badge = c.placementType ? `<span class="ym-badge" style="margin-left:6px">${this.esc(c.placementType)}</span>` : '';
+                const bizName = c.business?.name ? `· ${this.esc(c.business.name)}` : '';
+                if (c.alreadyAdded) {
+                  return `
+                    <label class="mp-pending-row mp-pending-row--disabled">
+                      <input type="checkbox" disabled checked style="opacity:0.4">
+                      <div class="mp-pending-info">
+                        <span class="mp-pending-name">${this.esc(label)}${badge}</span>
+                        <span class="mp-pending-meta">Campaign ${c.id} ${bizName} · уже подключён</span>
+                      </div>
+                    </label>`;
+                }
+                return `
+                  <label class="mp-pending-row">
+                    <input type="checkbox" ${c.selected ? 'checked' : ''}
+                      onchange="window.yandexModule.togglePending(${c.id})">
+                    <div class="mp-pending-info">
+                      <span class="mp-pending-name">${this.esc(label)}${badge}</span>
+                      <span class="mp-pending-meta">Campaign ${c.id} ${bizName}</span>
+                    </div>
+                  </label>`;
+              }).join('')}
+            </div>
+            ${this.lastError ? `<div class="ym-error">${this.esc(this.lastError)}</div>` : ''}
+            <div style="display:flex;gap:8px;margin-top:4px">
+              <button class="btn btn-primary" onclick="window.yandexModule.confirmPending()"
+                ${this.addBusy || selectedCount === 0 ? 'disabled' : ''}>
+                ${this.addBusy ? 'Добавление…' : `Добавить выбранные (${selectedCount})`}
+              </button>
+              <button class="btn" onclick="window.yandexModule.cancelPending()">Назад</button>
+            </div>
+          </div>
+          ${this.stores.length > 0 ? this.renderExistingStores() : ''}
+        </div>
+      </div>`;
+  }
+
+  private renderExistingStores(): string {
+    return `<div class="ym-stores">
+      <div class="ym-stores-title">Подключённые магазины (${this.stores.length})</div>
+      ${this.stores.map(s => {
+        const cnt = this.products.filter(p => p.store_id === s.id).length;
+        const busy = this.syncing[s.id];
+        return `
+          <div class="ym-store-card">
+            <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0">
+              <div class="ym-store-ic">Я</div>
+              <div style="min-width:0;flex:1">
+                <input class="ym-store-name-input" value="${this.esc(s.name)}"
+                  onchange="window.yandexModule.renameStore('${s.id}', this.value)"
+                  onkeydown="if(event.key==='Enter') this.blur()">
+                <div class="ym-store-meta">
+                  <span>Campaign: <b>${s.campaign_id ?? '—'}</b></span>
+                  ${s.business_id ? `<span>· Business: ${s.business_id}</span>` : ''}
+                  ${s.placement_type ? `<span class="ym-badge">${s.placement_type}</span>` : ''}
+                  <span>· Товаров: <b>${cnt}</b></span>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="btn" onclick="window.yandexModule.syncStore('${s.id}')" ${busy ? 'disabled' : ''}
+                style="padding:5px 12px;font-size:12px">
+                ${busy ? 'Синхронизация…' : 'Синхронизировать'}
+              </button>
+              <button class="btn btn-danger" onclick="window.yandexModule.removeStore('${s.id}')"
+                style="padding:5px 12px;font-size:12px">Удалить</button>
+            </div>
+          </div>`;
+      }).join('')}
+    </div>`;
+  }
+
   private renderStoresView(): string {
+    if (this.pendingCampaigns) return this.renderPendingCampaigns();
     return `
       <div style="flex:1;overflow:auto;padding:24px 24px 100px">
         <div style="max-width:760px;margin:0 auto">
@@ -237,7 +336,7 @@ export class YandexModule {
             <div class="ym-card-desc">
               Введи <b>Api-Key токен</b> из кабинета продавца
               (<a href="https://partner.market.yandex.ru/" target="_blank" rel="noopener" style="color:#fc3f1d">partner.market.yandex.ru</a>
-              → Настройки → API-ключи). После проверки токена все доступные магазины будут добавлены автоматически.
+              → Настройки → API-ключи). Мы проверим токен и покажем все найденные магазины.
             </div>
             <div class="ym-form-row">
               <input type="password" id="ym-key" class="ym-input"
@@ -248,7 +347,7 @@ export class YandexModule {
                 autocomplete="off" spellcheck="false">
               <button class="btn btn-primary" id="ym-add-btn"
                 onclick="window.yandexModule.addStore()" ${this.addBusy ? 'disabled' : ''}>
-                ${this.addBusy ? 'Проверка…' : 'Добавить'}
+                ${this.addBusy ? 'Проверка…' : 'Найти магазины'}
               </button>
             </div>
             <div class="ym-card-hint">
@@ -335,6 +434,22 @@ export class YandexModule {
                         </div>
                         <div style="font-size:10px;color:var(--text-3);margin-top:4px">FBY — хранение и доставка ЯМ; FBS — своё хранение, курьер ЯМ; DBS — полностью своё. Влияет на аналитику логистики.</div>
                       </div>
+                      <!-- FBS склад ID -->
+                      <div style="width:100%;margin-top:8px;padding-top:10px;border-top:1px solid var(--border)">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                          <div style="font-size:11px;font-weight:600;color:var(--text-2);white-space:nowrap">FBS Склад ID:</div>
+                          <input type="number" id="ym-wh-${s.id}" class="ym-input"
+                            style="width:160px;padding:5px 8px;font-size:12px" placeholder="Напр. 12345"
+                            value="${s.fbs_warehouse_id ?? ''}"
+                            onchange="window.yandexModule.saveFbsWarehouse('${s.id}')">
+                          <button class="btn" style="padding:4px 10px;font-size:11px"
+                            onclick="window.yandexModule.saveFbsWarehouse('${s.id}')">Сохранить</button>
+                        </div>
+                        <div style="font-size:10px;color:var(--text-3);margin-top:4px">
+                          ID вашего FBS-склада из ЯМ ЛК → Логистика → Склады. Используется для обновления остатков FBS.
+                          Если не заполнено — ID склада загружается через API автоматически.
+                        </div>
+                      </div>
                     </div>
                   `;
                 }).join('')}
@@ -383,7 +498,7 @@ export class YandexModule {
       await yandexDb.updateStore(storeId, { tax_model, tax_rate });
       const s = this.stores.find(x => x.id === storeId);
       if (s) { s.tax_model = tax_model; s.tax_rate = tax_rate; }
-    } catch (err) { console.error('[YM] saveTax error:', err); }
+    } catch (err) { debug.warn('[YM] saveTax error:', err); }
   }
 
   async renameStore(storeId: string, name: string): Promise<void> {
@@ -395,7 +510,7 @@ export class YandexModule {
       await yandexDb.updateStore(storeId, { name: trimmed });
       s.name = trimmed;
       this.render();
-    } catch (err) { console.error('[Yandex] renameStore error:', err); this.render(); }
+    } catch (err) { debug.warn('[Yandex] renameStore error:', err); this.render(); }
   }
 
   async saveFulfillment(storeId: string): Promise<void> {
@@ -406,7 +521,18 @@ export class YandexModule {
       const s = this.stores.find(x => x.id === storeId);
       if (s) { s.fulfillment_model = fulfillment_model; }
       this.render();
-    } catch (err) { console.error('[YM] saveFulfillment error:', err); }
+    } catch (err) { debug.warn('[YM] saveFulfillment error:', err); }
+  }
+
+  async saveFbsWarehouse(storeId: string): Promise<void> {
+    const el = document.getElementById(`ym-wh-${storeId}`) as HTMLInputElement | null;
+    const raw = el?.value.trim() ?? '';
+    const fbs_warehouse_id = raw ? Number(raw) : null;
+    try {
+      await yandexDb.updateStore(storeId, { fbs_warehouse_id } as any);
+      const s = this.stores.find(x => x.id === storeId);
+      if (s) { s.fbs_warehouse_id = fbs_warehouse_id; }
+    } catch (err) { debug.warn('[YM] saveFbsWarehouse error:', err); }
   }
 
   async syncAll(): Promise<void> {
@@ -428,9 +554,9 @@ export class YandexModule {
         await yandexDb.replaceStoreProducts(storeId, products);
       }
       this.products = await yandexDb.getProducts();
-    } catch (err: any) {
-      this.lastError = `Синхронизация «${store.name}»: ${err.message ?? err}`;
-      console.error('[Yandex] sync error:', err);
+    } catch (err: unknown) {
+      this.lastError = `Синхронизация «${store.name}»: ${(err instanceof Error ? err.message : String(err)) ?? err}`;
+      debug.warn('[Yandex] sync error:', err);
     }
     this.syncing[storeId] = false;
     this.render();
@@ -444,19 +570,14 @@ export class YandexModule {
 
     const apiKey = rawKey
       .replace(/[ ​-‍﻿]/g, '')
-      .replace(/[‘’“”]/g, '')
+      .replace(/[''””]/g, '')
       .trim();
 
     this.lastError = '';
-    if (!apiKey) {
-      this.lastError = 'Введи Api-Key токен';
-      this.render();
-      return;
-    }
+    if (!apiKey) { this.lastError = 'Введи Api-Key токен'; this.render(); return; }
     if (!/^[\x21-\x7E]+$/.test(apiKey)) {
       this.lastError = 'В токене недопустимые символы (кириллица, фигурные кавычки, невидимые пробелы). Скопируй заново из кабинета Я.Маркета.';
-      this.render();
-      return;
+      this.render(); return;
     }
 
     this.addBusy = true;
@@ -471,24 +592,66 @@ export class YandexModule {
         this.render();
         return;
       }
-      for (const c of campaigns) {
+      const existingCampaignIds = new Set(this.stores.map(s => s.campaign_id));
+      this.pendingApiKey = apiKey;
+      this.pendingCustomName = customName;
+      this.pendingCampaigns = campaigns.map(c => ({
+        id: c.id,
+        name: c.domain || `Campaign ${c.id}`,
+        domain: c.domain ?? '',
+        business: c.business,
+        placementType: c.placementType,
+        alreadyAdded: existingCampaignIds.has(c.id),
+        selected: !existingCampaignIds.has(c.id),
+      }));
+      this.addBusy = false;
+      this.render();
+    } catch (err: unknown) {
+      this.lastError = (err instanceof Error ? err.message : String(err)) ?? String(err);
+      this.addBusy = false;
+      this.render();
+    }
+  }
+
+  togglePending(campaignId: number): void {
+    const c = this.pendingCampaigns?.find(x => x.id === campaignId);
+    if (c && !c.alreadyAdded) { c.selected = !c.selected; this.render(); }
+  }
+
+  cancelPending(): void {
+    this.pendingCampaigns = null;
+    this.pendingApiKey = '';
+    this.pendingCustomName = '';
+    this.lastError = '';
+    this.render();
+  }
+
+  async confirmPending(): Promise<void> {
+    const toAdd = (this.pendingCampaigns ?? []).filter(c => c.selected && !c.alreadyAdded);
+    if (!toAdd.length) return;
+    this.addBusy = true;
+    this.lastError = '';
+    this.render();
+    try {
+      for (const c of toAdd) {
         await yandexDb.createStore({
-          name: customName || c.domain || `Campaign ${c.id}`,
-          api_key: apiKey,
+          name: this.pendingCustomName || c.name || `Campaign ${c.id}`,
+          api_key: this.pendingApiKey,
           campaign_id: c.id,
           business_id: c.business?.id ?? null,
-          placement_type: c.placementType,
+          placement_type: c.placementType as any,
         });
       }
       this.stores = await yandexDb.getStores();
       refreshNavLockState();
+      this.pendingCampaigns = null;
+      this.pendingApiKey = '';
+      this.pendingCustomName = '';
       this.addBusy = false;
-      if (keyInp) keyInp.value = '';
-      if (nameInp) nameInp.value = '';
       this.view = 'products';
       this.render();
-    } catch (err: any) {
-      this.lastError = err.message ?? String(err);
+    } catch (err: unknown) {
+      this.lastError = (err instanceof Error ? err.message : String(err)) ?? String(err);
       this.addBusy = false;
       this.render();
     }

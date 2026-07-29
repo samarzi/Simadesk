@@ -12,6 +12,7 @@ import { fetchAllOzonProducts } from '@/services/ozonApi';
 import { fetchAllWbProducts } from '@/services/wbApi';
 import { fetchAllYandexProducts } from '@/services/yandexApi';
 import { refreshNavLockState } from '@/modules/NavigationModule';
+import { debug } from '@/utils/debug';
 
 interface SyncLogEntry {
   store: string;
@@ -191,9 +192,9 @@ export class MarketplacesDashboard {
           }
           entry.status = 'done';
           entry.total = products.length;
-        } catch (e: any) {
+        } catch (e: unknown) {
           entry.status = 'error';
-          entry.error = e?.message || String(e);
+          entry.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e);
         }
         idx++;
         this.render();
@@ -215,9 +216,9 @@ export class MarketplacesDashboard {
           }
           entry.status = 'done';
           entry.total = products.length;
-        } catch (e: any) {
+        } catch (e: unknown) {
           entry.status = 'error';
-          entry.error = e?.message || String(e);
+          entry.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e);
         }
         idx++;
         this.render();
@@ -239,9 +240,9 @@ export class MarketplacesDashboard {
           }
           entry.status = 'done';
           entry.total = products.length;
-        } catch (e: any) {
+        } catch (e: unknown) {
           entry.status = 'error';
-          entry.error = e?.message || String(e);
+          entry.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e);
         }
         idx++;
         this.render();
@@ -249,7 +250,7 @@ export class MarketplacesDashboard {
 
       await this.load();
     } catch (e) {
-      console.error('[MpDashboard] syncAll error:', e);
+      debug.warn('[MpDashboard] syncAll error:', e);
     }
     this.syncing = false;
     this.render();
@@ -274,7 +275,7 @@ export class MarketplacesDashboard {
             entry.stage = `Сохраняем ${products.length} товаров...`; this.renderSyncPanel();
             if (products.length > 0) await ozonDb.replaceStoreProducts(stores[i].id, products);
             entry.status = 'done'; entry.total = products.length;
-          } catch (e: any) { entry.status = 'error'; entry.error = e?.message || String(e); }
+          } catch (e: unknown) { entry.status = 'error'; entry.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e); }
           this.render();
         }
       } else if (key === 'yandex') {
@@ -289,7 +290,7 @@ export class MarketplacesDashboard {
             entry.stage = `Сохраняем ${products.length} товаров...`; this.renderSyncPanel();
             if (products.length > 0) await yandexDb.replaceStoreProducts(stores[i].id, products);
             entry.status = 'done'; entry.total = products.length;
-          } catch (e: any) { entry.status = 'error'; entry.error = e?.message || String(e); }
+          } catch (e: unknown) { entry.status = 'error'; entry.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e); }
           this.render();
         }
       } else {
@@ -304,12 +305,12 @@ export class MarketplacesDashboard {
             entry.stage = `Сохраняем ${products.length} товаров...`; this.renderSyncPanel();
             if (products.length > 0) await wbDb.replaceStoreProducts(stores[i].id, products);
             entry.status = 'done'; entry.total = products.length;
-          } catch (e: any) { entry.status = 'error'; entry.error = e?.message || String(e); }
+          } catch (e: unknown) { entry.status = 'error'; entry.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e); }
           this.render();
         }
       }
       await this.load();
-    } catch (e) { console.error('[MpDashboard] syncMp error:', e); }
+    } catch (e) { debug.warn('[MpDashboard] syncMp error:', e); }
     this.syncing = false;
     this.render();
   }
@@ -378,10 +379,8 @@ export class MarketplacesDashboard {
     if (this.loading) {
       this.container.innerHTML = `
         <div class="oz-wrap"><div class="ord-loader">
-          <div class="ord-loader-spinner">
-            <svg class="oz-spin" viewBox="0 0 40 40" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" style="width:48px;height:48px"><path d="M36 20A16 16 0 1 1 20 4" stroke-dasharray="60 30"/></svg>
-          </div>
           <div class="ord-loader-title">Загружаем данные…</div>
+          <div class="ord-loader-bar"><div class="ord-loader-bar-fill"></div></div>
         </div></div>`;
       return;
     }

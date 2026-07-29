@@ -394,6 +394,35 @@ class AuthService {
    * подделывался токен на клиенте — из-за этого все запросы к Supabase падали
    * с "Expected 3 parts in JWT" (не JWT вовсе, а произвольная строка).
    */
+  /** Вход по email + пароль через GoTrue (для проверяющих / ЮКасса) */
+  async loginWithEmail(email: string, password: string): Promise<void> {
+    const res = await fetch(`${API_URL}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': API_KEY,
+      },
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error_description || err.error || 'Неверный логин или пароль');
+    }
+
+    const data = await res.json();
+    const session: AuthSession = {
+      access_token:  data.access_token,
+      refresh_token: data.refresh_token,
+      expires_in:    data.expires_in ?? 3600,
+      user_id:       data.user.id,
+      first_name:    data.user.user_metadata?.first_name ?? email.split('@')[0],
+      username:      null,
+      photo_url:     null,
+    };
+    this.saveSession(session);
+  }
+
   async devLogin(telegramId = 999999999, name = 'Dev User'): Promise<void> {
     const authDate = String(Math.floor(Date.now() / 1000));
     await this.loginWithTelegram({

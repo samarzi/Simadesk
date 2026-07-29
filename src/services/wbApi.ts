@@ -10,6 +10,11 @@ import { debug } from '@/utils/debug';
 import { WbStore, WbProduct, WbOrder, WbOrderItem, WbOrderStatus } from '@/types/wb';
 import { wbDb } from './wbDb';
 
+/** Extract a human-readable message from an unknown catch value. */
+function errMsg(e: unknown): string {
+  return e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e);
+}
+
 const API_URL  = import.meta.env.VITE_API_URL as string;
 const API_KEY  = import.meta.env.VITE_API_KEY as string;
 // На VPS WB-запросы проксируются напрямую через nginx (/wb-*/), не через edge function.
@@ -21,6 +26,11 @@ const RETRYABLE = new Set([500, 502, 503, 504]);
 // поэтому держим короткий fallback (60 сек) вместо 10 минут.
 const WB_COOLDOWN_KEY = 'wb_cooldown_until_v2';
 const WB_COOLDOWN_MS = 60_000; // 1 минута — fallback если заголовки WB не пришли
+// WB stats API иногда возвращает X-Ratelimit-Retry в несколько тысяч секунд (до ~3ч).
+// Мы никогда не «спим» дольше этого порога внутри запроса — вместо этого ставим cooldown
+// и сразу отдаём управление, чтобы не подвешивать загрузку Ozon/Яндекса.
+const WB_MAX_INLINE_WAIT_S = 30;
+const WB_MAX_COOLDOWN_MS = 5 * 60_000; // потолок cooldown — 5 минут
 
 /** Префикс пути вида "/wb-stats/..." → "wb-stats". */
 function prefixOf(path: string): string {
@@ -38,8 +48,8 @@ let wbCooldowns: Record<string, number> = readCooldowns();
 // Все известные WB хосты — при 429 на любом из них блокируем все,
 // т.к. WB rate-limit привязан к API-ключу, а не к отдельному хосту.
 
-function setCooldown(prefix: string): void {
-  wbCooldowns[prefix] = Date.now() + WB_COOLDOWN_MS;
+function setCooldown(prefix: string, ms: number = WB_COOLDOWN_MS): void {
+  wbCooldowns[prefix] = Date.now() + Math.min(ms, WB_MAX_COOLDOWN_MS);
   writeCooldowns(wbCooldowns);
 }
 
@@ -113,8 +123,8 @@ async function wbFetch<T>(
         body: body ? JSON.stringify(body) : undefined,
         signal,
       });
-    } catch (err: any) {
-      if (err?.name === 'AbortError') throw err;
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
       lastErr = err instanceof Error ? err : new Error(String(err));
       continue;
     }
@@ -133,20 +143,29 @@ async function wbFetch<T>(
       // WB сообщает точное время ожидания в заголовках:
       // X-Ratelimit-Retry — через сколько секунд можно слать следующий запрос
       // X-Ratelimit-Reset  — через сколько секунд лимит восстановится полностью
-      const retryAfter = Number(
+      const hdr = Number(
         res.headers.get('x-ratelimit-retry') ??
         res.headers.get('retry-after') ??
-        (attempt === 0 ? 5 : attempt === 1 ? 10 : attempt === 2 ? 20 : 40),
+        0,
       );
+      const fallback = attempt === 0 ? 5 : attempt === 1 ? 10 : attempt === 2 ? 20 : 40;
+      const retryAfter = hdr > 0 ? hdr : fallback;
+
+      // WB может попросить ждать тысячи секунд (сброс всего окна лимита). Никогда не «спим»
+      // столько внутри запроса — иначе подвиснет вся загрузка. Ставим cooldown (с потолком)
+      // и сразу выходим: UI покажет «WB rate-limit», а Ozon/Яндекс догрузятся без ожидания.
+      if (retryAfter > WB_MAX_INLINE_WAIT_S || attempt >= retries - 1) {
+        setCooldown(prefix, retryAfter * 1000);
+        const waitS = wbCooldownRemaining(prefix);
+        console.warn(`[WB API] 429 на ${path} — лимит запросов, cooldown ${waitS} сек`);
+        lastErr = new Error(`WB 429: превышен лимит запросов, повтор через ${waitS} сек`);
+        throw lastErr;
+      }
+
       console.warn(`[WB API] 429 на ${path} — жду ${retryAfter} сек (попытка ${attempt + 1}/${retries})`);
       lastErr = new Error(`WB 429: повтор через ${retryAfter} сек`);
-      if (attempt < retries - 1) {
-        await sleep(retryAfter * 1000, signal);
-        continue;
-      }
-      // Все ретраи исчерпаны — короткий кулдаун как last resort
-      setCooldown(prefix);
-      throw lastErr;
+      await sleep(retryAfter * 1000, signal);
+      continue;
     }
 
     console.error(`[WB API] ${method} ${path} → ${res.status}:`, text.slice(0, 300));
@@ -196,8 +215,8 @@ export const wbApi = {
   async checkToken(apiKey: string, signal?: AbortSignal): Promise<any> {
     try {
       return await wbFetch('/wb-common/api/v1/seller-info', 'GET', apiKey, undefined, signal, 1);
-    } catch (err: any) {
-      if (err?.message?.includes('429')) {
+    } catch (err: unknown) {
+      if (errMsg(err).includes('429')) {
         throw new Error('Wildberries ограничил частоту запросов. Подождите 1–2 минуты и попробуйте снова.');
       }
       throw err;
@@ -275,6 +294,7 @@ export const wbApi = {
     nmID: number,
     updates: {
       dimensions?: { length: number; width: number; height: number };
+      weightBrutto?: number | null;  // кг, WB dimensions.weightBrutto
       photos?: string[];
       title?: string;
       brand?: string;
@@ -289,22 +309,26 @@ export const wbApi = {
     if (!card) throw new Error(`WB card not found: nmID=${nmID}`);
 
     const updated: any = { ...card };
-    if (updates.dimensions) {
-      updated.dimensions = {
-        ...(card.dimensions ?? {}),
-        ...updates.dimensions,
-      };
+    if (updates.dimensions || updates.weightBrutto != null) {
+      updated.dimensions = { ...(card.dimensions ?? {}) };
+      if (updates.dimensions) Object.assign(updated.dimensions, updates.dimensions);
+      if (updates.weightBrutto != null) updated.dimensions.weightBrutto = updates.weightBrutto;
     }
+    // WB GET returns photos as [{big:"...", c246x328:"...",...}] but cards/update expects [{url:"..."}].
+    // Always transform to the correct format; use explicit new photos if provided.
     if (updates.photos) {
-      updated.photos = updates.photos.map((url: string) => ({
-        url, mediaType: 'image/jpeg',
-      }));
+      updated.photos = updates.photos.map((url: string) => ({ url }));
+    } else {
+      updated.photos = (card.photos ?? [])
+        .map((p: any) => ({ url: p.big ?? p.c516x688 ?? p.url ?? '' }))
+        .filter((p: any) => p.url);
     }
     if (updates.title !== undefined) updated.title = updates.title;
     if (updates.brand !== undefined) updated.brand = updates.brand;
     if (updates.description !== undefined) updated.description = updates.description;
 
-    await wbFetch<any>('/wb-content/content/v2/cards/update', 'POST', apiKey, [updated]);
+    const result = await wbFetch<any>('/wb-content/content/v2/cards/update', 'POST', apiKey, [updated]);
+    if (result?.error) throw new Error(`WB: ${result.errorText ?? 'Ошибка обновления карточки'}`);
   },
 
   /** Получить title/brand/description карточки по nm_id (для ленивой загрузки в редакторе). */
@@ -716,9 +740,9 @@ export async function updateWbPrices(
 ): Promise<void> {
   try {
     await wbFetch('/wb-prices/api/v2/upload/task', 'POST', apiKey, { data: items }, signal, 3);
-  } catch (err: any) {
+  } catch (err: unknown) {
     // WB возвращает 400 когда цена уже установлена — не ошибка
-    if (err?.message?.includes('already set')) return;
+    if (errMsg(err).includes('already set')) return;
     throw err;
   }
 }
@@ -780,9 +804,9 @@ export async function fetchAllWbProducts(
       cursor = { updatedAt: newCursor.updatedAt, nmID: newCursor.nmID };
     }
     cardsOk = true;
-  } catch (err: any) {
-    if (err?.name === 'AbortError') throw err;
-    console.warn('[WB Cards] fetch failed, falling back to DB:', err?.message);
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
+    console.warn('[WB Cards] fetch failed, falling back to DB:', errMsg(err));
   }
 
   // Если карточки недоступны (rate-limit) — не трогаем БД, UI подгрузит из БД через load()
@@ -797,7 +821,7 @@ export async function fetchAllWbProducts(
       if (!isFinite(nm)) continue;
       stocksMap.set(nm, (stocksMap.get(nm) ?? 0) + (Number(s.quantity) || 0));
     }
-  } catch (err: any) { console.error('[WB Stocks] fetch failed:', err?.message ?? err); /* остатки опциональны */ }
+  } catch (err: unknown) { console.error('[WB Stocks] fetch failed:', errMsg(err)); /* остатки опциональны */ }
 
   // Цены и скидки — отдельный API (discounts-prices), в cards/list их нет
   let pricesMap = new Map<number, { price: number; discount: number; priceWithDisc: number }>();
@@ -817,7 +841,7 @@ export async function fetchAllWbProducts(
   }
 
   const now = new Date().toISOString();
-  return cards.map((c: any): WbProduct => {
+  const products = cards.map((c: any): WbProduct => {
     const pictures = (c.photos ?? []).map((ph: any) =>
       typeof ph === 'string' ? ph : (ph.big ?? ph.tm ?? ph.c246x328 ?? Object.values(ph)[0] ?? '')
     ).filter(Boolean);
@@ -850,6 +874,19 @@ export async function fetchAllWbProducts(
       }
     }
 
+    // Characteristics: flatten to {name, value} pairs (skip weight — already in dims)
+    const characteristics: Array<{ name: string; value: string }> = [];
+    for (const ch of (c.characteristics ?? []) as any[]) {
+      const name = String(ch.name ?? '').trim();
+      if (!name || name.toLowerCase().includes('вес')) continue;
+      const raw = Array.isArray(ch.value) ? ch.value[0] : ch.value;
+      const value = String(raw ?? '').trim();
+      if (value) characteristics.push({ name, value });
+    }
+
+    // Barcode: first SKU from first size
+    const barcode: string = (c.sizes as any[])?.[0]?.skus?.[0] ?? c.barcodes?.[0] ?? '';
+
     return {
       store_id: store.id,
       nm_id: c.nmID,
@@ -866,11 +903,41 @@ export async function fetchAllWbProducts(
       length_cm,
       width_cm,
       height_cm,
+      characteristics,
+      barcode,
       created_at: c.createdAt,
       updated_at: c.updatedAt,
       synced_at: now,
     };
   });
+
+  // Батч-запрос реальных цен покупателя (с СПП) из публичного WB API.
+  // Один запрос на 100 nmIDs, данные опциональны — при ошибке buyer_price остаётся null.
+  const buyerPriceMap = new Map<number, number>();
+  const BATCH = 100;
+  for (let i = 0; i < products.length; i += BATCH) {
+    if (signal?.aborted) break;
+    const batch = products.slice(i, i + BATCH);
+    const nmParam = batch.map(p => p.nm_id).join(';');
+    try {
+      const res = await fetch(
+        `/wb-card/cards/v2/detail?appType=1&curr=rub&dest=-1257786&nm=${nmParam}`,
+        { signal },
+      );
+      if (res.ok) {
+        const data = await res.json();
+        for (const item of (data?.data?.products ?? [])) {
+          const raw = item.sizes?.[0]?.price?.total ?? item.salePriceU ?? 0;
+          if (raw > 0) buyerPriceMap.set(item.id, Math.round(raw / 100));
+        }
+      }
+    } catch { /* опционально — продолжаем без buyer_price */ }
+  }
+
+  return products.map(p => ({
+    ...p,
+    buyer_price: buyerPriceMap.get(p.nm_id) ?? null,
+  }));
 }
 
 /** Получить заказы WB за период (от даты), смаппить. */
@@ -881,7 +948,7 @@ export async function fetchAllWbOrders(
 ): Promise<WbOrder[]> {
   const raw = await wbApi.getOrders(store.api_key, dateFrom, signal);
   return raw.map((r: any): WbOrder => {
-    const price = Number(r.priceWithDisc ?? r.totalPrice ?? r.finishedPrice ?? 0) || 0;
+    const price = Number(r.priceWithDisc ?? r.totalPrice ?? r.finishedPrice ?? 0);
     const items: WbOrderItem[] = [{
       nm_id: r.nmId ?? r.nmID ?? 0,
       vendor_code: r.supplierArticle ?? '',

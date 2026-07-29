@@ -26,6 +26,23 @@ export async function detectSimaDeskExtension(): Promise<boolean> {
   });
 }
 
+/**
+ * Sends the API anon key to the extension so it can make Supabase requests.
+ * Called once after extension detection.
+ */
+export function sendConfigToExtension(): void {
+  const chrome = (window as any).chrome;
+  if (!chrome?.runtime?.sendMessage) return;
+
+  const extensionId = (window as any).__SIMADESK_EXTENSION_ID;
+  if (!extensionId) return;
+
+  const apiKey = import.meta.env.VITE_API_KEY as string;
+  if (!apiKey) return;
+
+  chrome.runtime.sendMessage(extensionId, { type: 'config', api_anon_key: apiKey });
+}
+
 /** Параметры для проверки точной цены на странице маркетплейса (по одной позиции). */
 export interface CheckPriceNowParams {
   marketplace: 'wb' | 'ozon' | 'yandex';
@@ -65,7 +82,7 @@ export async function checkPriceNow(params: CheckPriceNowParams): Promise<CheckP
         if (chrome.runtime.lastError) { finish({ ok: false, error: chrome.runtime.lastError.message }); return; }
         finish(res ?? { ok: false, error: 'Нет ответа от расширения' });
       });
-    } catch (e: any) { finish({ ok: false, error: e?.message ?? String(e) }); }
+    } catch (e: unknown) { finish({ ok: false, error: (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e) }); }
     setTimeout(() => finish({ ok: false, error: 'Таймаут расширения' }), 25_000);
   });
 }

@@ -19,8 +19,8 @@ export interface PriceContext {
 
 /** Применяет глобальные min/max границы правила к рассчитанной цене. */
 function clampToRule(rule: RepricerRule, price: number): number {
-  if (rule.minPrice && price < rule.minPrice) return rule.minPrice;
-  if (rule.maxPrice && price > rule.maxPrice) return rule.maxPrice;
+  if (rule.minPrice != null && price < rule.minPrice) return rule.minPrice;
+  if (rule.maxPrice != null && price > rule.maxPrice) return rule.maxPrice;
   return price;
 }
 
@@ -55,8 +55,8 @@ export function computeTargetPrice(rule: RepricerRule, ctx: PriceContext): numbe
       // Legacy single-tier
       if (rule.stockThreshold != null) {
         return stock <= rule.stockThreshold
-          ? clampToRule(rule, rule.highStockPrice ?? 0)
-          : clampToRule(rule, rule.lowStockPrice ?? 0);
+          ? (rule.highStockPrice != null ? clampToRule(rule, rule.highStockPrice) : null)
+          : (rule.lowStockPrice != null ? clampToRule(rule, rule.lowStockPrice) : null);
       }
       return null;
     }
@@ -72,7 +72,10 @@ export function computeTargetPrice(rule: RepricerRule, ctx: PriceContext): numbe
           const [th, tm] = (period.toTime || '23:59').split(':').map(Number);
           const fromMin = fh * 60 + fm;
           const toMin = th * 60 + tm;
-          if (curMin >= fromMin && curMin <= toMin) return clampToRule(rule, period.price);
+          const matches = fromMin <= toMin
+            ? curMin >= fromMin && curMin <= toMin
+            : curMin >= fromMin || curMin <= toMin;
+          if (matches) return clampToRule(rule, period.price);
         }
         return null;
       }

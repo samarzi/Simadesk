@@ -29,9 +29,16 @@ const STATUS_CSS: Record<WbOrderStatus, string> = {
 function fmtDateTime(d: string | null | undefined): string {
   if (!d) return '—';
   try {
+    // DD-MM-YYYY HH:MM:SS без timezone → локальный конструктор (не Date.parse)
+    const m = d.match(/^(\d{2})[.\-](\d{2})[.\-](\d{4})(?:[\sT](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (m) {
+      const [, dd, mm, yyyy, h = '0', mi = '0'] = m;
+      return new Date(+yyyy, +mm - 1, +dd, +h, +mi).toLocaleString('ru', {
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+      });
+    }
     return new Date(d).toLocaleString('ru', {
-      day: '2-digit', month: '2-digit', year: '2-digit',
-      hour: '2-digit', minute: '2-digit',
+      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
     });
   } catch { return d; }
 }
@@ -100,8 +107,8 @@ export class WbOrdersModule {
       try {
         const orders = await fetchAllWbOrders(store, dateFrom, signal);
         all.push(...orders);
-      } catch (err: any) {
-        if (err?.name !== 'AbortError') console.error(`[WB Orders] ${store.name}:`, err);
+      } catch (err: unknown) {
+        if (!(err instanceof DOMException && err.name === 'AbortError')) console.error(`[WB Orders] ${store.name}:`, err);
       }
     }));
     if (this.abortController !== ac) return;
@@ -210,7 +217,7 @@ export class WbOrdersModule {
           </div>
           <div class="ord-loader-title">Загружаем заказы WB</div>
           <div class="ord-loader-sub">Период: ${this.period} дней</div>
-          <div class="ord-loader-bar"><div class="ord-loader-bar-fill" style="background:linear-gradient(90deg,transparent,#cb11ab,transparent)"></div></div>
+          <div class="ord-loader-bar"><div class="ord-loader-bar-fill"></div></div>
         </div>`;
     }
     if (this.lastError) return `<div class="oz-empty"><div class="oz-empty-title" style="color:#ef4444">${this.esc(this.lastError)}</div></div>`;
@@ -398,8 +405,8 @@ export class WbOrdersModule {
       await wbApi.confirmOrder(store.api_key, orderId);
       alert('✓ Заказ принят');
       this.refresh();
-    } catch (err: any) {
-      alert(`Ошибка: ${err?.message ?? err}`);
+    } catch (err: unknown) {
+      alert(`Ошибка: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
     }
   }
 
@@ -411,8 +418,8 @@ export class WbOrdersModule {
       await wbApi.cancelOrder(store.api_key, orderId);
       alert('✓ Заказ отменён');
       this.refresh();
-    } catch (err: any) {
-      alert(`Ошибка: ${err?.message ?? err}`);
+    } catch (err: unknown) {
+      alert(`Ошибка: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
     }
   }
 
@@ -426,8 +433,8 @@ export class WbOrdersModule {
       a.href = url; a.download = `wb-sticker-${orderId}.pdf`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 100);
-    } catch (err: any) {
-      alert(`Не удалось получить стикер: ${err?.message ?? err}\n\nДля FBS-стикеров нужен токен с правами «Маркетплейс».`);
+    } catch (err: unknown) {
+      alert(`Не удалось получить стикер: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}\n\nДля FBS-стикеров нужен токен с правами «Маркетплейс».`);
     }
   }
 

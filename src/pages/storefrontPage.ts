@@ -1,4 +1,5 @@
-import type { StorefrontProduct, StorefrontBanner, StorefrontGroup } from '../services/storefrontDb';
+import type { StorefrontProduct, StorefrontBanner, StorefrontGroup, StorefrontVariantGroup, StorefrontVariantItem } from '../services/storefrontDb';
+import { setFavicon } from '../utils/favicon';
 
 const API_URL = import.meta.env.VITE_API_URL as string;
 const API_KEY  = import.meta.env.VITE_API_KEY  as string;
@@ -33,6 +34,7 @@ interface ProductGroup {
   variants: StorefrontProduct[];
   customUrl: string;
   customPrice: number | null;
+  totalStock: number;
 }
 
 function groupProducts(all: StorefrontProduct[]): ProductGroup[] {
@@ -61,15 +63,17 @@ function groupProducts(all: StorefrontProduct[]): ProductGroup[] {
     const prices   = variants.map(p => p.custom_price ?? p.price);
     const minPrice = Math.min(...prices);
     const maxPrice = Math.max(...prices);
-    const title    = variants.reduce((best, p) => p.title.length > best.length ? p.title : best, '');
+    const customTitleStr = variants.find(p => p.custom_title)?.custom_title ?? '';
+    const title    = customTitleStr || variants.reduce((best, p) => p.title.length > best.length ? p.title : best, '');
     const brand    = variants.find(p => p.brand)?.brand ?? '';
     const category = variants.find(p => p.category)?.category ?? '';
 
     const withCustomUrl = variants.find(p => p.custom_url);
     const customUrl   = withCustomUrl?.custom_url ?? '';
     const customPrice = withCustomUrl?.custom_price ?? null;
+    const totalStock  = variants.reduce((sum, v) => sum + (v.stock ?? 0), 0);
 
-    groups.push({ key, title, brand, category, image, minPrice, maxPrice, variants, customUrl, customPrice });
+    groups.push({ key, title, brand, category, image, minPrice, maxPrice, variants, customUrl, customPrice, totalStock });
   }
 
   return groups;
@@ -200,7 +204,7 @@ class BannerCarousel {
 
 /* ── Product card ──────────────────────────────────────────────────────────── */
 
-function renderCard(g: ProductGroup): string {
+function renderCard(g: ProductGroup, showStock = false, variantBtns = ''): string {
   const priceStr = g.minPrice === g.maxPrice
     ? fmt(g.minPrice)
     : `${fmt(g.minPrice)} – ${fmt(g.maxPrice)}`;
@@ -214,6 +218,12 @@ function renderCard(g: ProductGroup): string {
     `<span class="ssp-src-badge ${v.source}">${MP_LABEL[v.source]?.split(' ')[0]??v.source}</span>`
   ).join('');
 
+  const stockBadge = showStock
+    ? g.totalStock > 0
+      ? `<div class="ssp-stock">${g.totalStock} шт.</div>`
+      : `<div class="ssp-stock out">нет в наличии</div>`
+    : '';
+
   return `<div class="ssp-card" data-key="${esc(g.key)}">
     <div class="ssp-img">
       ${img}${placeholder}
@@ -223,6 +233,8 @@ function renderCard(g: ProductGroup): string {
       ${g.brand ? `<div class="ssp-brand">${esc(g.brand)}</div>` : ''}
       <div class="ssp-title">${esc(g.title)}</div>
       <div class="ssp-price">${esc(priceStr)}</div>
+      ${stockBadge}
+      ${variantBtns ? `<div class="ssp-variants">${variantBtns}</div>` : ''}
       <button class="ssp-buy-btn" type="button">Купить</button>
     </div>
   </div>`;
@@ -362,24 +374,35 @@ function renderFilters(
 
 /* ── Groups sections (when no active filter) ───────────────────────────────── */
 
+function buildVariantBtns(key: string, variantMap: Map<string, { items: StorefrontVariantItem[]; groupId: string }>, allGroups: ProductGroup[]): string {
+  const vg = variantMap.get(key); // key is already lowercase
+  if (!vg || vg.items.length < 2) return '';
+  return vg.items.map(it => {
+    const itKey = it.vendor_code.trim().toLowerCase();
+    const isActive = itKey === key;
+    const targetGroup = allGroups.find(g => g.key === itKey);
+    return `<button class="ssp-var-btn ${isActive ? 'active' : ''}"
+      style="background:${esc(it.color)};border-color:${esc(it.color)}"
+      data-var-key="${esc(itKey)}"
+      ${!targetGroup ? 'disabled' : ''}
+      title="${esc(it.label)}">${esc(it.label.slice(0, 3))}</button>`;
+  }).join('');
+}
+
 function renderGroupSections(
   groups: ProductGroup[],
   storefrontGroups: StorefrontGroup[],
+  showStock = false,
+  variantMap: Map<string, { items: StorefrontVariantItem[]; groupId: string }> = new Map(),
 ): string {
-  if (!storefrontGroups.length) return renderFlatGrid(groups);
+  if (!storefrontGroups.length) return renderFlatGrid(groups, showStock, variantMap);
 
-  // Build vendor_code → group map
-  const vcToGroup = new Map<string, StorefrontGroup>();
-  for (const sg of storefrontGroups) {
-    for (const vc of (sg.vendor_codes ?? [])) vcToGroup.set(vc, sg);
-  }
-
-  const groupedKeys  = new Set<string>();
+  const groupedKeys = new Set<string>();
   let html = '';
 
   for (const sg of storefrontGroups) {
-    const vcs      = new Set(sg.vendor_codes ?? []);
-    const inGroup  = groups.filter(g => vcs.has(g.key));
+    const vcs     = new Set(sg.vendor_codes ?? []);
+    const inGroup = groups.filter(g => vcs.has(g.key));
     if (!inGroup.length) continue;
     inGroup.forEach(g => groupedKeys.add(g.key));
 
@@ -392,7 +415,7 @@ function renderGroupSections(
 
     html += `<div class="ssp-section" id="sg-${esc(sg.id)}">
       ${cover}
-      <div class="ssp-grid">${inGroup.map(renderCard).join('')}</div>
+      <div class="ssp-grid">${inGroup.map(g => renderCard(g, showStock, buildVariantBtns(g.key, variantMap, groups))).join('')}</div>
     </div>`;
   }
 
@@ -400,20 +423,20 @@ function renderGroupSections(
   if (ungrouped.length) {
     html += `<div class="ssp-section">
       ${storefrontGroups.length > 0 ? `<div class="ssp-section-hdr"><div class="ssp-section-name-plain">Остальные товары</div></div>` : ''}
-      <div class="ssp-grid">${ungrouped.map(renderCard).join('')}</div>
+      <div class="ssp-grid">${ungrouped.map(g => renderCard(g, showStock, buildVariantBtns(g.key, variantMap, groups))).join('')}</div>
     </div>`;
   }
 
   return html || `<div class="ssp-empty"><div class="ssp-empty-ico">📦</div><div class="ssp-empty-title">Нет товаров</div></div>`;
 }
 
-function renderFlatGrid(groups: ProductGroup[]): string {
+function renderFlatGrid(groups: ProductGroup[], showStock = false, variantMap: Map<string, { items: StorefrontVariantItem[]; groupId: string }> = new Map()): string {
   if (!groups.length) return `<div class="ssp-empty">
     <div class="ssp-empty-ico">🔍</div>
     <div class="ssp-empty-title">Ничего не найдено</div>
     <div class="ssp-empty-sub">Попробуйте изменить запрос или сбросить фильтр</div>
   </div>`;
-  return `<div class="ssp-grid">${groups.map(renderCard).join('')}</div>`;
+  return `<div class="ssp-grid">${groups.map(g => renderCard(g, showStock, buildVariantBtns(g.key, variantMap, groups))).join('')}</div>`;
 }
 
 /* ── Main entry ────────────────────────────────────────────────────────────── */
@@ -458,13 +481,25 @@ export async function renderPublicStorefront(slug: string): Promise<void> {
     telegram: string; whatsapp: string; website: string; slug: string;
     logo_url?: string|null;
     show_price_filter: boolean; show_brand_filter: boolean; show_category_filter: boolean;
+    show_stock: boolean; hide_out_of_stock: boolean;
   };
   const rawProducts: StorefrontProduct[]  = data.products ?? [];
   const banners: StorefrontBanner[]       = (data.banners ?? []).filter((b: StorefrontBanner) => b.is_active);
   const storefrontGroups: StorefrontGroup[] = data.groups ?? [];
+  const storefrontVariants: StorefrontVariantGroup[] = data.variants ?? [];
   const groups = groupProducts(rawProducts);
 
+  // Build vendor_code (lowercase) → variantGroup mapping — keys must match g.key which is always lowercase
+  const variantMap = new Map<string, { items: StorefrontVariantItem[]; groupId: string }>();
+  for (const vg of storefrontVariants) {
+    for (const it of vg.items) {
+      variantMap.set(it.vendor_code.trim().toLowerCase(), { items: vg.items, groupId: vg.id });
+    }
+  }
+
   document.title = s.store_name;
+
+  if (s.logo_url) setFavicon(s.logo_url);
 
   const contactBtns = [
     s.telegram ? `<a href="https://t.me/${s.telegram.replace(/^@/,'')}" class="ss-contact-btn tg" target="_blank" rel="noopener">✈ Telegram</a>` : '',
@@ -474,6 +509,8 @@ export async function renderPublicStorefront(slug: string): Promise<void> {
 
   const sources  = [...new Set(rawProducts.map(p => p.source))];
   const hasSrc   = (src: string) => sources.includes(src as any);
+
+  const showStock = !!s.show_stock;
 
   const filters: Filters = { query: '', source: 'all', priceMin: null, priceMax: null, brand: '', category: '' };
   const hasAnyFilter = () =>
@@ -514,7 +551,7 @@ export async function renderPublicStorefront(slug: string): Promise<void> {
 
       ${renderFilters(groups, filters, s)}
 
-      <div id="ssp-content">${renderGroupSections(groups, storefrontGroups)}</div>
+      <div id="ssp-content">${renderGroupSections(groups, storefrontGroups, showStock, variantMap)}</div>
 
       <footer class="ss-footer">Powered by <a href="/" target="_blank">SimaDesk</a></footer>
     </div>`;
@@ -529,9 +566,9 @@ export async function renderPublicStorefront(slug: string): Promise<void> {
     const content = document.getElementById('ssp-content')!;
 
     if (hasAnyFilter()) {
-      content.innerHTML = renderFlatGrid(active);
+      content.innerHTML = renderFlatGrid(active, showStock, variantMap);
     } else {
-      content.innerHTML = renderGroupSections(groups, storefrontGroups);
+      content.innerHTML = renderGroupSections(groups, storefrontGroups, showStock, variantMap);
     }
     bindCards();
     // Refresh filter panel to update chip states / reset button
@@ -542,7 +579,16 @@ export async function renderPublicStorefront(slug: string): Promise<void> {
 
   function bindCards() {
     document.querySelectorAll('.ssp-card').forEach(card => {
-      card.addEventListener('click', () => {
+      card.addEventListener('click', (e) => {
+        const varBtn = (e.target as HTMLElement).closest('.ssp-var-btn') as HTMLElement|null;
+        if (varBtn) {
+          e.stopPropagation();
+          if (varBtn.hasAttribute('disabled')) return;
+          const targetKey = varBtn.dataset.varKey!;
+          const g = groups.find(x => x.key === targetKey);
+          if (g) openProductModal(g);
+          return;
+        }
         const key = (card as HTMLElement).dataset.key!;
         const g   = groups.find(x => x.key === key);
         if (g) openProductModal(g);

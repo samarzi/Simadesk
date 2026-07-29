@@ -63,7 +63,7 @@ export class AuthModule {
       (window as any).profileModule?.showAccountTab?.();
     } catch (err) {
       overlay.remove();
-      const msg = err instanceof Error ? err.message : 'Ошибка привязки Яндекс';
+      const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка привязки Яндекс';
       alert(msg);
     }
   }
@@ -108,7 +108,7 @@ export class AuthModule {
           setTimeout(() => location.reload(), 800);
         } catch (err) {
           overlay.remove();
-          const msg = err instanceof Error ? err.message : 'Ошибка объединения';
+          const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка объединения';
           alert(msg);
         }
         resolve();
@@ -130,6 +130,7 @@ export class AuthModule {
   private async handleYandexToken(token: string): Promise<void> {
     this.el.classList.remove('hidden');
     this.el.innerHTML = `
+      <div class="auth-bg"><div class="auth-orb auth-orb-1"></div><div class="auth-orb auth-orb-2"></div><div class="auth-orb auth-orb-3"></div></div>
       <div class="auth-card" style="gap:16px">
         <div class="auth-logo">SimaDesk</div>
         <div style="color:var(--text2);font-size:13px">Входим через Яндекс...</div>
@@ -143,7 +144,7 @@ export class AuthModule {
     } catch (err) {
       this.render();
       setTimeout(() => {
-        const msg = err instanceof Error ? err.message : 'Ошибка входа через Яндекс';
+        const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка входа через Яндекс';
         this.showError(msg);
       }, 0);
     }
@@ -165,12 +166,12 @@ export class AuthModule {
     // Показываем заглушку-лоадер пока логинимся
     this.el.classList.remove('hidden');
     this.el.innerHTML = `
+      <div class="auth-bg"><div class="auth-orb auth-orb-1"></div><div class="auth-orb auth-orb-2"></div><div class="auth-orb auth-orb-3"></div></div>
       <div class="auth-card" style="gap:16px">
         <div class="auth-logo">SimaDesk</div>
         <div style="color:var(--text2);font-size:13px">Входим через Telegram...</div>
-        <div style="width:32px;height:32px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite"></div>
       </div>
-      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+      <div class="spinner"></div>
     `;
 
     try {
@@ -190,6 +191,11 @@ export class AuthModule {
 
   private render(): void {
     this.el.innerHTML = `
+      <div class="auth-bg">
+        <div class="auth-orb auth-orb-1"></div>
+        <div class="auth-orb auth-orb-2"></div>
+        <div class="auth-orb auth-orb-3"></div>
+      </div>
       <div class="auth-card">
         <div class="auth-logo">SimaDesk</div>
         <div class="auth-tagline">Marketplace Desk</div>
@@ -253,7 +259,28 @@ export class AuthModule {
 
         <div class="auth-hint">
           Входя в систему, вы принимаете<br>
-          <a href="/privacy" target="_blank">Политику конфиденциальности</a>
+          <a href="/offer" target="_blank">Лицензионный договор</a> и <a href="/privacy" target="_blank">Политику конфиденциальности</a>
+        </div>
+
+        <!-- Вход для проверяющих (ЮКасса, банк и т.д.) -->
+        <div style="margin-top:16px;text-align:center">
+          <button id="reviewer-toggle" style="background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;text-decoration:underline;padding:0;font-family:inherit">
+            Войти по логину и паролю
+          </button>
+        </div>
+        <div id="reviewer-form" style="display:none;margin-top:12px">
+          <div style="border-top:1px solid var(--border2);padding-top:14px;display:flex;flex-direction:column;gap:8px">
+            <input id="reviewer-login" type="email" placeholder="Логин (email)"
+              autocomplete="off" autocorrect="off" spellcheck="false"
+              style="width:100%;padding:9px 12px;border-radius:9px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-family:inherit;outline:none">
+            <input id="reviewer-password" type="password" placeholder="Пароль"
+              autocomplete="new-password"
+              style="width:100%;padding:9px 12px;border-radius:9px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-family:inherit;outline:none">
+            <button id="reviewer-submit"
+              style="width:100%;padding:9px;border-radius:9px;border:none;background:var(--bg3);border:1px solid var(--border2);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s">
+              Войти
+            </button>
+          </div>
         </div>
       </div>
     `;
@@ -285,13 +312,50 @@ export class AuthModule {
           await authService.devLogin();
           this.success();
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'Ошибка dev-входа. Смотри консоль.';
+          const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка dev-входа. Смотри консоль.';
           this.showError(msg);
           btn.disabled = false;
           btn.style.opacity = '1';
         }
       });
     }
+
+    // Reviewer login (email/password)
+    document.getElementById('reviewer-toggle')?.addEventListener('click', () => {
+      const form = document.getElementById('reviewer-form');
+      if (!form) return;
+      const visible = form.style.display !== 'none';
+      form.style.display = visible ? 'none' : 'flex';
+      form.style.flexDirection = 'column';
+      form.style.gap = '8px';
+      if (!visible) (document.getElementById('reviewer-login') as HTMLInputElement)?.focus();
+    });
+
+    const doReviewerLogin = async () => {
+      const loginEl  = document.getElementById('reviewer-login')  as HTMLInputElement;
+      const passEl   = document.getElementById('reviewer-password') as HTMLInputElement;
+      const submitEl = document.getElementById('reviewer-submit')  as HTMLButtonElement;
+      const email    = loginEl?.value.trim();
+      const password = passEl?.value;
+      if (!email || !password) return;
+      submitEl.disabled = true;
+      submitEl.textContent = '...';
+      this.showError('');
+      try {
+        await authService.loginWithEmail(email, password);
+        this.success();
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Неверный логин или пароль';
+        this.showError(msg);
+        submitEl.disabled = false;
+        submitEl.textContent = 'Войти';
+      }
+    };
+
+    document.getElementById('reviewer-submit')?.addEventListener('click', doReviewerLogin);
+    document.getElementById('reviewer-password')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') doReviewerLogin();
+    });
 
     // If no bot username configured — show instructions
     if (!BOT_USERNAME && !IS_DEV_AUTH) {
@@ -363,7 +427,7 @@ export class AuthModule {
       await authService.loginWithTelegram(data);
       this.success();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Ошибка входа. Попробуйте снова.';
+      const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка входа. Попробуйте снова.';
       this.showError(msg);
       if (btn) btn.style.opacity = '1';
     }

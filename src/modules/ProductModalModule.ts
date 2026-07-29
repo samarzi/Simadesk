@@ -490,8 +490,8 @@ export class ProductModalModule {
       } else {
         this.app.toast(`${I.checkCircle('', 16)} Фото загружено`, 'success', 2000);
       }
-    } catch (e: any) {
-      this.app.toast('Ошибка загрузки фото: ' + e.message, 'error');
+    } catch (e: unknown) {
+      this.app.toast('Ошибка загрузки фото: ' + (e instanceof Error ? e.message : String(e)), 'error');
     } finally {
       if (row) row.style.opacity = '1';
     }
@@ -594,15 +594,15 @@ export class ProductModalModule {
               const errMsg = res.errors.slice(0, 2).join(' | ');
               this.app.toast(`⚠ МП: ${errMsg}`, 'error', 6000);
             }
-          } catch (e: any) {
-            this.app.toast(`⚠ Ошибка push на МП: ${e.message?.slice(0, 80)}`, 'error', 6000);
+          } catch (e: unknown) {
+            this.app.toast(`⚠ Ошибка push на МП: ${(e instanceof Error ? e.message : String(e))?.slice(0, 80)}`, 'error', 6000);
           }
         });
       } else if (box?.ozon_store_id) {
         // Старые группы с ручной привязкой Ozon — только цена+название
         this.pushProductToOzon(id, data, box).catch((e) => debug.warn('[ProductModalModule] swallowed error', e));
       }
-    } catch (e: any) { this.app.toast('Ошибка: ' + e.message, 'error'); }
+    } catch (e: unknown) { this.app.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error'); }
   }
 
   /**
@@ -636,8 +636,8 @@ export class ProductModalModule {
           old_price: oldPrice || undefined,
         }]);
         this.app.toast(`Цена обновлена в Ozon (${offerId})`, 'success', 2500);
-      } catch (e: any) {
-        this.app.toast(`Ozon: не удалось обновить цену — ${e.message.slice(0, 60)}`, 'error');
+      } catch (e: unknown) {
+        this.app.toast(`Ozon: не удалось обновить цену — ${(e instanceof Error ? e.message : String(e)).slice(0, 60)}`, 'error');
       }
     }
 
@@ -681,6 +681,6 @@ export class ProductModalModule {
       this.app.buildColumns();
       this.app.applyFilters();
       if (this.app.activeBoxId) this.app.loadBoxCount(this.app.activeBoxId);
-    } catch (e: any) { this.app.toast('Ошибка: ' + e.message, 'error'); }
+    } catch (e: unknown) { this.app.toast('Ошибка: ' + (e instanceof Error ? e.message : String(e)), 'error'); }
   }
 }

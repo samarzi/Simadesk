@@ -47,7 +47,44 @@ interface TransactionListResponse {
   };
 }
 
+export interface OzonTreasuryTotals {
+  /** Текущий баланс кошелька (руб). */
+  balance: number;
+  /** Заблокировано (резерв). */
+  lock: number;
+  /** Начислено, ещё не выплачено. */
+  reward: number;
+}
+
 export const ozonFinanceApi = {
+  /**
+   * POST /v1/finance/treasury/totals — текущий баланс кошелька продавца.
+   * Не зависит от периода, возвращает актуальные данные.
+   */
+  async fetchTreasuryTotals(creds: Creds, signal?: AbortSignal): Promise<OzonTreasuryTotals> {
+    const res = await fetch('/ozon-api/v1/finance/treasury/totals', {
+      method: 'POST',
+      headers: {
+        'Client-Id': creds.client_id,
+        'Api-Key': creds.api_key,
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+      signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Ozon Treasury ${res.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    const r = data?.result ?? data;
+    return {
+      balance: Number(r?.balance ?? r?.total_balance ?? 0),
+      lock:    Number(r?.lock ?? r?.locked_amount ?? 0),
+      reward:  Number(r?.reward ?? r?.pending_amount ?? 0),
+    };
+  },
+
   /**
    * Получить финансовые операции за период.
    * Пагинация: page=1..page_count, до 1000 операций на страницу.

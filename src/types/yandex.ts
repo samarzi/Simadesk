@@ -14,6 +14,7 @@ export interface YandexStore {
   tax_rate?: number | null;    // налоговая ставка %
   tax_model?: string | null;   // 'usn6' | 'usn15' | 'osn' | 'patent' | 'npd'
   fulfillment_model?: string | null; // 'FBY' | 'FBS' | 'DBS' | null (смешанный)
+  fbs_warehouse_id?: number | null;  // ID FBS-склада из ЛК ЯМ (fallback если /warehouses API пустой)
   created_at: string;
 }
 
@@ -62,6 +63,7 @@ export interface YandexProduct {
   pictures: string[];
   basic_price?: number | null;
   basic_currency?: string;
+  offer_price?: number | null;  // витринная цена на Яндекс.Маркете (из /offer-prices)
   market_sku?: number | null;   // SKU маркета
   market_model_id?: number | null; // ID модели маркета (для ссылки на карточку)
   category_id?: number | null;
@@ -70,6 +72,10 @@ export interface YandexProduct {
   stock_total?: number;         // суммарный остаток
   stock_available?: number;     // FIT + AVAILABLE
   synced_at?: string;
+  // Дополнительные поля (заполняются при синхронизации)
+  description?: string;
+  vat?: string;                 // "NO_VAT" | "VAT_10" | "VAT_20" | ...
+  barcode?: string;
   // Габариты (заполняются при синхронизации через getOfferMappings)
   weight_kg?: number | null;
   length_cm?: number | null;

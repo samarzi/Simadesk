@@ -21,6 +21,7 @@ import { renderSummaryTab, clearSummaryCache } from './tabs/SummaryTab';
 import { renderOrdersTab, OrdersFilters, clearOrdersCache } from './tabs/OrdersTab';
 import { renderProductsTab, ProductsFilters, clearProductsCache } from './tabs/ProductsTab';
 import { renderActivityTab, ActivitySubTab } from './tabs/ActivityTab';
+import { renderBalanceTab, StoreBalance } from './tabs/BalanceTab';
 import { renderOrderDrawer } from './components/OrderDetailDrawer';
 import { renderSettingsDrawer } from './components/SettingsDrawer';
 import { fmtNum } from './components/format';
@@ -31,7 +32,7 @@ function escapeHtmlJson(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-type Tab = 'summary' | 'orders' | 'products' | 'activity';
+type Tab = 'summary' | 'orders' | 'products' | 'activity' | 'balance';
 
 export class AnalyticsModule {
   private container: HTMLElement;
@@ -102,6 +103,10 @@ export class AnalyticsModule {
   private ordersFilters: OrdersFilters = { status: 'all', mp: 'all', search: '', page: 0 };
   private productsFilters: ProductsFilters = { sort: 'profit', search: '' };
   private activitySubTab: ActivitySubTab = 'heatmap';
+
+  // ── Balance tab ──────────────────────────────────────────────────────
+  private _balances: StoreBalance[] = [];
+  private _balanceLoaded = false;
 
   private openedOrderId: string | null = null;
   private settingsOpen = false;
@@ -240,7 +245,7 @@ export class AnalyticsModule {
       // Авто-синхронизация финотчёта если покрытие низкое (< 60%)
       // и в этом срезе давно не синкали (> 10 минут).
       this._maybeAutoSync(start, end, storeIds);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error('[Analytics] refresh:', e);
     } finally {
       this.loading = false;
@@ -279,10 +284,13 @@ export class AnalyticsModule {
    */
   private async _maybeAutoSync(start: Date, end: Date, storeIds: Set<string>): Promise<void> {
     if (this._autoSyncing || this.syncing) return;
-    if (!this.kpi || this.orders.length === 0) return;
+    if (!this.kpi) return;
+    if (storeIds.size === 0) return; // no stores for selected MP → nothing to sync
 
-    const coverage = this.kpi.source_real_pct;
-    if (coverage >= 60) return;
+    // Allow auto-sync when orders.length === 0 (new user, or all API calls failed).
+    // Finance sync creates orphan-transactions which produce orders even without live API.
+    const coverage = this.orders.length > 0 ? this.kpi.source_real_pct : 0;
+    if (this.orders.length > 0 && coverage >= 60) return;
 
     const spanDays = (end.getTime() - start.getTime()) / 86400_000;
     if (spanDays > 90) {
@@ -353,7 +361,58 @@ export class AnalyticsModule {
       const isActive = el.getAttribute('onclick')?.includes(`'${t}'`);
       el.classList.toggle('active', !!isActive);
     });
+    if (t === 'balance' && !this._balanceLoaded) this._loadBalances();
     this._scheduleBodyOnly();
+  }
+
+  private async _loadBalances(): Promise<void> {
+    const { ozonDb } = await import('@/services/ozonDb');
+    const { wbDb }   = await import('@/services/wbDb');
+    const { ozonFinanceApi } = await import('@/services/ozonFinanceApi');
+    const { wbFinanceApi }   = await import('@/services/wbFinanceApi');
+
+    const [ozStores, wbStores] = await Promise.all([
+      ozonDb.getStores().catch(() => []),
+      wbDb.getStores().catch(()   => []),
+    ]);
+
+    // Инициализируем — все в состоянии loading
+    this._balances = [
+      ...ozStores.map(s => ({ storeId: s.id, storeName: s.name, mp: 'ozon' as const, loading: true, error: null })),
+      ...wbStores.map(s => ({ storeId: s.id, storeName: s.name, mp: 'wb'   as const, loading: true, error: null })),
+    ];
+    this._scheduleBodyOnly();
+
+    // Загружаем параллельно
+    const updates = await Promise.all([
+      ...ozStores.map(async (s): Promise<StoreBalance> => {
+        try {
+          const t = await ozonFinanceApi.fetchTreasuryTotals({ client_id: s.client_id, api_key: s.api_key });
+          return { storeId: s.id, storeName: s.name, mp: 'ozon', loading: false, error: null, ...t };
+        } catch (e: any) {
+          return { storeId: s.id, storeName: s.name, mp: 'ozon', loading: false, error: e?.message ?? 'Ошибка' };
+        }
+      }),
+      ...wbStores.map(async (s): Promise<StoreBalance> => {
+        try {
+          const r = await wbFinanceApi.fetchWeeklyAccruals(s.api_key);
+          return { storeId: s.id, storeName: s.name, mp: 'wb', loading: false, error: null, ...r };
+        } catch (e: any) {
+          return { storeId: s.id, storeName: s.name, mp: 'wb', loading: false, error: e?.message ?? 'Ошибка' };
+        }
+      }),
+    ]);
+
+    this._balances = updates;
+    this._balanceLoaded = true;
+    this._scheduleBodyOnly();
+  }
+
+  /** Сбросить кеш баланса и перезагрузить. */
+  refreshBalances(): void {
+    this._balanceLoaded = false;
+    this._balances = [];
+    this._loadBalances();
   }
 
   setPeriod(p: string): void {
@@ -626,8 +685,8 @@ export class AnalyticsModule {
         </body></html>
       `);
       w.document.close();
-    } catch (e: any) {
-      alert('Ошибка загрузки JSON: ' + (e?.message ?? e));
+    } catch (e: unknown) {
+      alert('Ошибка загрузки JSON: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e));
     }
   }
 
@@ -810,6 +869,7 @@ export class AnalyticsModule {
           ${tabBtn('orders',   'Заказы',  this.orders.length || undefined)}
           ${tabBtn('products', 'Товары')}
           ${tabBtn('activity', 'Активность')}
+          ${tabBtn('balance',  'Баланс')}
         </div>
 
         <div class="an2-period">
@@ -928,12 +988,17 @@ export class AnalyticsModule {
   }
 
   private _tabContent(): string {
+    // Balance tab doesn't depend on analytics data — render independently
+    if (this.tab === 'balance') return renderBalanceTab(this._balances);
+
     if (this.period === 'all') {
       if (this._allState === 'seeking' || this._allState === 'confirming') return this._renderAllConfirm();
       if (this._allState === 'syncing') return this._renderAllSyncing();
     }
     if (this.loading && !this.dataLoaded) return this.renderLoader();
     if (!this.dataLoaded || !this.kpi)    return this.renderEmpty();
+    // Data loaded but no stores for selected MP → guide user to switch MP tab
+    if (this.getFilteredStoreIds().size === 0) return this.renderNoStoresForMp();
     return this.renderTab();
   }
 
@@ -996,6 +1061,7 @@ export class AnalyticsModule {
   }
 
   private renderTab(): string {
+    if (this.tab === 'balance') return renderBalanceTab(this._balances);
     if (!this.kpi) return this.renderEmpty();
     switch (this.tab) {
       case 'summary':  return renderSummaryTab(this.kpi, this.orders, this.ts, this.prevKpi, this.missingCogs);
@@ -1063,6 +1129,24 @@ export class AnalyticsModule {
         <div class="emoji">${I.chart()}</div>
         <h3>Нет заказов за период</h3>
         <p>Попробуй сменить период или нажать «Подтянуть финотчёт».</p>
+      </div>
+    `;
+  }
+
+  private renderNoStoresForMp(): string {
+    const mpNames: Record<string, string> = { ozon: 'Ozon', wb: 'Wildberries', ym: 'Яндекс.Маркет' };
+    const available = (['ozon', 'wb', 'ym'] as const).filter(mp =>
+      this.stores.some(s => s.mp === mp)
+    );
+    const buttons = available
+      .map(mp => `<button class="an2-switch-mp-btn" onclick="window.analyticsModule?.selectMp('${mp}')">${mpNames[mp]}</button>`)
+      .join('');
+    return `
+      <div class="an2-empty">
+        <div class="emoji">${I.store()}</div>
+        <h3>Нет магазинов для «${mpNames[this.selectedMp] ?? this.selectedMp}»</h3>
+        <p>У тебя нет подключённых магазинов на этом маркетплейсе. Переключись на другой:</p>
+        ${buttons ? `<div class="an2-switch-mp-btns">${buttons}</div>` : ''}
       </div>
     `;
   }

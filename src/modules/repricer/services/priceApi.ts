@@ -79,7 +79,7 @@ export async function fetchOzonBuyerPrices(items: Array<{ offerId: string; produ
   const result = new Map<string, BuyerPriceInfo>();
   const byProductId = new Map<number, string>(); // product_id → offerId (для сборки результата)
   for (const it of items) {
-    if (it.productId != null) byProductId.set(it.productId, it.offerId);
+    if (it.productId != null && !byProductId.has(it.productId)) byProductId.set(it.productId, it.offerId);
   }
   if (byProductId.size === 0) return result;
   try {
@@ -134,7 +134,7 @@ export async function fetchYmBuyerPrices(items: Array<{ offerId: string; marketS
   const result = new Map<string, BuyerPriceInfo>();
   const bySku = new Map<number, string>(); // market_sku → offerId
   for (const it of items) {
-    if (it.marketSku != null) bySku.set(it.marketSku, it.offerId);
+    if (it.marketSku != null && !bySku.has(it.marketSku)) bySku.set(it.marketSku, it.offerId);
   }
   if (bySku.size === 0) return result;
   try {

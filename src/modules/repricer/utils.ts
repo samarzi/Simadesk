@@ -1,5 +1,6 @@
 import type { RepricerRule, RuleProduct, Mp, MrcItem, UnifiedProduct } from './types';
 import { MRC_MAX_CHANGE_PCT, MRC_DEVIATION_THRESHOLD, MRC_DEVIATION_MIN_RUB } from './types';
+export { esc } from '@/utils/format';
 
 // ── Rule helpers ──────────────────────────────────────────────────────────────
 
@@ -95,7 +96,7 @@ export function exactSellerPriceForMrc(
   showcasePrice: number,
 ): number {
   if (showcasePrice <= 0 || currentSellerPrice <= 0) return currentSellerPrice;
-  return Math.ceil(currentSellerPrice * (targetShowcase / showcasePrice));
+  return Math.round(currentSellerPrice * (targetShowcase / showcasePrice));
 }
 
 /** Витринная цена отклонилась от МРЦ? Порог: max(5₽, МРЦ×1%) */
@@ -124,15 +125,6 @@ export function evalFormula(expr: string, vars: Record<string, number>): number 
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────
-
-/** HTML-escape строки. */
-export function esc(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 export function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);

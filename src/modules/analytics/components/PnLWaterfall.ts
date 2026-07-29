@@ -22,7 +22,7 @@ export function renderPnL(k: KPI, onFilterClick = 'window.analyticsModule?.openO
     { icon: 'truck', label: 'Логистика',         value: -k.logistics,     tint: '#60a5fa',         kind: 'expense', filter: 'logistics' },
     { icon: 'receipt', label: 'Услуги/штрафы/реклама', value: -k.services,  tint: '#a78bfa',         kind: 'expense' },
     { icon: 'package', label: 'Себестоимость',     value: -k.cogs,          tint: '#22d3ee',         kind: 'expense' },
-    { icon: 'landmark',  label: 'Налог',             value: -k.tax,           tint: '#f472b6',         kind: 'expense' },
+    { icon: 'percent',   label: 'Налог',             value: -k.tax,           tint: '#f472b6',         kind: 'expense' },
     { icon: 'dollarSign', label: 'Чистая прибыль',    value: k.net_profit,     tint: k.net_profit >= 0 ? 'var(--green)' : 'var(--red)', kind: 'total' },
   ];
 
