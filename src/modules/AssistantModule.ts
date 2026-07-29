@@ -2494,12 +2494,11 @@ export class AssistantModule {
       }
       const lastResult = results[results.length - 1];
       if (lastResult?.isFinal) {
-        this.stopVoice();
-        if (this.voiceSendOnEnd && combined.trim()) {
-          this.voiceSendOnEnd = false;
+        const shouldSend = this.voiceSendOnEnd && !!combined.trim();
+        this.stopVoice(); // resets voiceSendOnEnd — check after capturing above
+        if (shouldSend) {
           setTimeout(() => this.handleSend(), 80);
         } else {
-          this.voiceSendOnEnd = false;
           this.textareaEl?.focus();
         }
       }
