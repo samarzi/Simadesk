@@ -925,10 +925,13 @@ export class AssistantModule {
 
     const startResize = (clientX: number, clientY: number) => {
       startX = clientX; startY = clientY;
-      startW = panel.offsetWidth; startH = panel.offsetHeight;
-      pendingW = startW; pendingH = startH;
-      // Unlock max-height so CSS constraint doesn't fight JS height
+      startW = panel.offsetWidth;
+      // Pin height explicitly BEFORE removing maxHeight so panel doesn't jump
+      const currentH = panel.offsetHeight;
+      panel.style.height = currentH + 'px';
       panel.style.maxHeight = 'none';
+      startH = panel.offsetHeight; // re-read after pin
+      pendingW = startW; pendingH = startH;
       panel.classList.add('sd-ap-resizing');
       document.body.style.userSelect = 'none';
     };
