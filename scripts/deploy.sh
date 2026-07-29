@@ -26,6 +26,18 @@ cd "$(dirname "$0")/.."
 command -v rsync &>/dev/null || err "rsync не найден"
 command -v ssh   &>/dev/null || err "SSH не найден"
 
+# ── Проверка: не деплоить если есть незакоммиченные изменения или сташ ────────
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  err "Есть незакоммиченные изменения! Сделай 'git add -A && git commit' перед деплоем."
+fi
+if git stash list | grep -q .; then
+  echo -e "\033[1;33mПРЕДУПРЕЖДЕНИЕ: В git stash есть сохранённые изменения:\033[0m"
+  git stash list
+  echo ""
+  read -r -p "Продолжить деплой БЕЗ этих изменений? (y/N): " CONFIRM
+  [[ "$CONFIRM" =~ ^[Yy]$ ]] || err "Деплой отменён. Примени сташ: git stash pop"
+fi
+
 # ── Синхронизация исходного кода ──────────────────────────────────────────────
 log "[1/4] Синхронизация кода на ВПС"
 rsync -az --delete \
