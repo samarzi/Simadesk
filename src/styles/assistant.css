@@ -560,15 +560,26 @@ html.light .sd-ap-mode-tab.active { color: #fff; }
   transition: grid-template-rows 0.24s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .sd-ap-quick-actions.open .sd-ap-qa-body { grid-template-rows: 1fr; }
-.sd-ap-qa-body > * { overflow: hidden; min-height: 0; }
+/* Вертикальный padding обнуляем в закрытом виде: трек 0fr задаёт нулевую
+   высоту, но padding в неё не входит и остаётся видимой полоской. */
+.sd-ap-qa-body > * {
+  overflow: hidden;
+  min-height: 0;
+  padding-block: 0;
+  transition: padding-block 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.sd-ap-quick-actions.open .sd-ap-qa-grid      { padding-block: 2px 10px; }
+.sd-ap-quick-actions.open .sd-ap-settings-body { padding-block: 2px 11px; }
 
+/* Прокрутка внутри аккордеона не нужна — длинный список разворачивает
+   внешний .sd-ap-scroll. Своё overflow-y здесь перебивало overflow:hidden
+   у `.sd-ap-qa-body > *` (равная специфичность, правило ниже) — из-за этого
+   закрытый аккордеон подтекал содержимым. */
 .sd-ap-qa-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 5px;
-  padding: 2px 9px 10px;
-  max-height: 210px;
-  overflow-y: auto;
+  padding-inline: 9px;
 }
 
 .sd-ap-qa-btn {
@@ -598,7 +609,7 @@ html.light .sd-ap-mode-tab.active { color: #fff; }
 }
 
 /* Настройки ассистента */
-.sd-ap-settings-body { padding: 2px 11px 11px; display: flex; flex-direction: column; gap: 10px; }
+.sd-ap-settings-body { padding-inline: 11px; display: flex; flex-direction: column; gap: 10px; }
 .sd-ap-setting-row   { display: flex; flex-direction: column; gap: 5px; }
 .sd-ap-setting-label { font-size: 11px; color: var(--ap-txt-2); font-weight: 500; }
 .sd-ap-speed-row     { display: flex; align-items: center; gap: 9px; }
@@ -702,12 +713,26 @@ html.light .sd-ap-mode-tab.active { color: #fff; }
 
 /* ═══ ЛЕНТА СООБЩЕНИЙ ═════════════════════════════════════════════════════════ */
 
-.sd-ap-messages {
+/* Единая область прокрутки: вступительные блоки + лента сообщений.
+   Композер и чипы остаются приколоты к низу панели — раньше, когда каждый блок
+   был flex-shrink:0, их суммарная высота выдавливала поле ввода за границу. */
+.sd-ap-scroll {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
+}
+.sd-ap-scroll::-webkit-scrollbar { width: 6px; }
+.sd-ap-scroll::-webkit-scrollbar-track { background: transparent; }
+.sd-ap-scroll::-webkit-scrollbar-thumb { background: var(--ap-surface-3); border-radius: 3px; }
+.sd-ap-scroll::-webkit-scrollbar-thumb:hover { background: var(--ap-line-str); }
+
+.sd-ap-messages {
+  flex: 1 0 auto;
+  min-height: 0;
   padding: 12px var(--ap-pad);
   display: flex;
   flex-direction: column;
@@ -715,10 +740,6 @@ html.light .sd-ap-mode-tab.active { color: #fff; }
   scrollbar-width: thin;
   scrollbar-color: var(--ap-surface-3) transparent;
 }
-.sd-ap-messages::-webkit-scrollbar { width: 6px; }
-.sd-ap-messages::-webkit-scrollbar-track { background: transparent; }
-.sd-ap-messages::-webkit-scrollbar-thumb { background: var(--ap-surface-3); border-radius: 3px; }
-.sd-ap-messages::-webkit-scrollbar-thumb:hover { background: var(--ap-line-str); }
 
 .sd-ap-msg {
   display: flex;

@@ -746,6 +746,7 @@ export class AssistantModule {
         <button class="sd-ap-mode-tab active" data-mode="ai">Сима</button>
         <button class="sd-ap-mode-tab" data-mode="support">Поддержка<span class="sd-ap-tab-dot" id="sd-ap-sup-dot" style="display:none"></span></button>
       </div>
+      <div class="sd-ap-scroll" id="sd-ap-scroll">
       ${noKey ? `
       <div class="sd-ap-key-setup">
         <div class="sd-ap-key-label">Введите API-ключ OpenRouter для активации AI</div>
@@ -805,6 +806,7 @@ export class AssistantModule {
       <div class="sd-ap-hints">${hints}</div>
       <div class="sd-ap-page-actions" id="sd-ap-page-actions"></div>
       <div class="sd-ap-messages" id="sd-ap-messages"></div>
+      </div>
       <div class="sd-ap-ctx-chip" id="sd-ap-ctx-chip" style="display:none">
         <span class="sd-ap-ctx-icon" id="sd-ap-ctx-icon">📋</span>
         <span class="sd-ap-ctx-label" id="sd-ap-ctx-label"></span>
@@ -1694,7 +1696,7 @@ export class AssistantModule {
 
     // Show/hide by class on a wrapper — use attribute selector on all AI-only elements
     const aiEls = this.panel.querySelectorAll<HTMLElement>(
-      '.sd-ap-key-setup, .sd-ap-quick-actions, #sd-ap-page-actions, .sd-ap-hints, .sd-ap-messages, .sd-ap-attach-chips, .sd-ap-input-area'
+      '.sd-ap-scroll, .sd-ap-attach-chips, .sd-ap-input-area'
     );
     aiEls.forEach(el => { el.style.display = mode === 'ai' ? '' : 'none'; });
     void aiContent; // suppress unused warning
@@ -2197,10 +2199,10 @@ export class AssistantModule {
 
   private scrollToBottom(): void {
     this.updateChatLayout();
-    if (this.messagesEl) {
-      requestAnimationFrame(() => {
-        if (this.messagesEl) this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
-      });
+    // Прокручивается обёртка, а не сама лента — у ленты своего скролла больше нет
+    const scroller = this.panel?.querySelector<HTMLElement>('.sd-ap-scroll');
+    if (scroller) {
+      requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
     }
   }
 
