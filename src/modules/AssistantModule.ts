@@ -808,7 +808,7 @@ export class AssistantModule {
           </svg>
         </button>
         <input class="sd-ap-file-input" type="file" accept=".xlsx,.xls,.docx,.doc,.pdf,.jpg,.jpeg,.png,.webp,.gif,.txt,.csv" multiple style="display:none">
-        <button class="sd-ap-btn sd-ap-mic-btn" id="sd-ap-mic" title="Голосовой ввод">
+        <button class="sd-ap-btn sd-ap-mic-btn" id="sd-ap-mic" title="Голосовой ввод — держи и говори&#10;Горячая клавиша: Alt+Пробел (зажми → говори → отпусти → отправит)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <rect x="9" y="3" width="6" height="11" rx="3"/>
             <path d="M5 11a7 7 0 0014 0M12 18v3M9 21h6"/>
@@ -2460,10 +2460,6 @@ export class AssistantModule {
 
   // ── Voice input ───────────────────────────────────────────────────────────────
 
-  private toggleVoice(): void {
-    if (this.isListening) this.stopVoice();
-    else this.startVoice();
-  }
 
   private startVoice(): void {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -2499,7 +2495,13 @@ export class AssistantModule {
       const lastResult = results[results.length - 1];
       if (lastResult?.isFinal) {
         this.stopVoice();
-        this.textareaEl?.focus();
+        if (this.voiceSendOnEnd && combined.trim()) {
+          this.voiceSendOnEnd = false;
+          setTimeout(() => this.handleSend(), 80);
+        } else {
+          this.voiceSendOnEnd = false;
+          this.textareaEl?.focus();
+        }
       }
     };
 
@@ -2529,6 +2531,8 @@ export class AssistantModule {
       this.recognition = null;
     }
     this.isListening = false;
+    this.voiceSendOnEnd = false;
+    this.voiceHotkeyHeld = false;
     const micBtn = this.panel?.querySelector<HTMLElement>('.sd-ap-mic-btn');
     if (micBtn) micBtn.classList.remove('listening');
     this.btn?.classList.remove('listening');
