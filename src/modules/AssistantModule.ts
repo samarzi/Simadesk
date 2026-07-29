@@ -853,6 +853,7 @@ export class AssistantModule {
     this.messagesEl.innerHTML = '';
     this.history = [];
     this.stopMsgTts();
+    this.updateChatLayout();
     this.addAssistantMessage('Чат очищен. Чем могу помочь?');
   }
 
@@ -997,7 +998,7 @@ export class AssistantModule {
 
     const dock = document.querySelector('.dock') || document.querySelector('nav') || document.body;
     const obs = new MutationObserver(() => {
-      if (this.isOpen) this.positionPanel();
+      if (this.isOpen && !this.isResizing) this.positionPanel();
     });
     obs.observe(dock, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
 
@@ -2126,11 +2127,24 @@ export class AssistantModule {
   }
 
   private scrollToBottom(): void {
+    this.updateChatLayout();
     if (this.messagesEl) {
       requestAnimationFrame(() => {
         if (this.messagesEl) this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
       });
     }
+  }
+
+  private updateChatLayout(): void {
+    if (!this.panel) return;
+    const hasMessages = this.messagesEl ? this.messagesEl.childElementCount > 0 : false;
+    // When chatting, hide collapsible sections and hints to reduce clutter
+    const hideWhenChatting = this.panel.querySelectorAll<HTMLElement>(
+      '#sd-ap-quick-actions, #sd-ap-settings-section, .sd-ap-hints'
+    );
+    hideWhenChatting.forEach(el => {
+      el.style.display = hasMessages ? 'none' : '';
+    });
   }
 
   private setStatus(text: string, cls = ''): void {
