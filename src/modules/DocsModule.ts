@@ -55,7 +55,7 @@ export class DocsModule {
   private activeSheetIdx: number = 0;
   private xlVirtData: CellData[][] | null = null;
   private isFullscreen: boolean = false;
-  private recent: Array<{id:string;title:string;type:DocType;updated_at:number}> = [];
+  private recent: Array<{id:string;title:string;type:DocType;updated_at:number;content?:string}> = [];
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -96,7 +96,7 @@ export class DocsModule {
 
   private touchRecent(doc: DocItem): void {
     this.recent = this.recent.filter(r => r.id !== doc.id);
-    this.recent.unshift({ id: doc.id, title: doc.title, type: doc.type, updated_at: doc.updated_at });
+    this.recent.unshift({ id: doc.id, title: doc.title, type: doc.type, updated_at: doc.updated_at, content: doc.content });
     if (this.recent.length > MAX_RECENT) this.recent = this.recent.slice(0, MAX_RECENT);
     this.saveRecent();
   }
@@ -1796,7 +1796,7 @@ export class DocsModule {
         }
         const rec = this.recent.find(r => r.id === id);
         if (!rec) return;
-        const newDoc: DocItem = { id: this.newId(), type, title: rec.title, content: type === 'word' ? '' : this.emptyExcel(), updated_at: Date.now() };
+        const newDoc: DocItem = { id, type, title: rec.title, content: rec.content ?? (type === 'word' ? '' : this.emptyExcel()), updated_at: rec.updated_at };
         this.addDoc(newDoc);
       });
     });
