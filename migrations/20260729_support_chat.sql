@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS support_chat_msgs_chat_created_idx ON support_chat_me
 -- ── User RPCs ──────────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION create_support_chat(p_reason text)
-RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE v_chat_id uuid; v_company_id uuid;
 BEGIN
   SELECT id INTO v_company_id FROM companies WHERE created_by = auth.uid() ORDER BY created_at LIMIT 1;
@@ -37,7 +37,7 @@ BEGIN
   INSERT INTO support_chats (company_id, user_id, reason)
   VALUES (v_company_id, auth.uid(), p_reason)
   RETURNING id INTO v_chat_id;
-  RETURN v_chat_id;
+  RETURN to_jsonb(v_chat_id::text);
 END;
 $$;
 
@@ -64,16 +64,13 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION send_support_message(p_chat_id uuid, p_content text, p_attachments jsonb DEFAULT '[]')
-RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE v_msg_id uuid;
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM support_chats WHERE id = p_chat_id AND user_id = auth.uid() AND status = 'open') THEN
     RAISE EXCEPTION 'Chat not found or closed';
   END IF;
   INSERT INTO support_chat_messages (chat_id, sender_role, content, attachments)
-  VALUES (p_chat_id, 'user', p_content, p_attachments)
-  RETURNING id INTO v_msg_id;
-  RETURN v_msg_id;
+  VALUES (p_chat_id, 'user', p_content, p_attachments);
 END;
 $$;
 
@@ -164,16 +161,13 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION admin_send_support_message(p_chat_id uuid, p_content text, p_attachments jsonb DEFAULT '[]')
-RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE v_msg_id uuid;
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()) THEN
     RAISE EXCEPTION 'Access denied';
   END IF;
   INSERT INTO support_chat_messages (chat_id, sender_role, content, attachments)
-  VALUES (p_chat_id, 'admin', p_content, p_attachments)
-  RETURNING id INTO v_msg_id;
-  RETURN v_msg_id;
+  VALUES (p_chat_id, 'admin', p_content, p_attachments);
 END;
 $$;
 

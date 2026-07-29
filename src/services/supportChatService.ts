@@ -51,10 +51,13 @@ export const SUPPORT_REASONS: Record<string, string> = {
 
 class SupportChatService {
   async createChat(reason: string): Promise<string> {
+    // Returns jsonb string (UUID) — PostgREST returns scalar jsonb as the raw value
     const res = await dbFetch<string>('/rpc/create_support_chat', {
       method: 'POST',
       body: JSON.stringify({ p_reason: reason }),
     });
+    // Handle both direct string and possible array wrapping by PostgREST versions
+    if (Array.isArray(res)) return String(Object.values(res[0] ?? {})[0] ?? res[0]);
     return res!;
   }
 

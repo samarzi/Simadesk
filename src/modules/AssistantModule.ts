@@ -1375,6 +1375,9 @@ export class AssistantModule {
 
     // In docs fullscreen mode, use full-height right sidebar
     const docsFullscreen = !!document.querySelector('.docs-shell.docs-fullscreen');
+    // Hide mode tabs in fullscreen editor — no space for switching
+    const modeTabs = this.panel.querySelector<HTMLElement>('#sd-ap-mode-tabs');
+    if (modeTabs) modeTabs.style.display = docsFullscreen ? 'none' : '';
     if (docsFullscreen) {
       this.panel.classList.add('sidebar');
       this.panel.style.bottom = '';
