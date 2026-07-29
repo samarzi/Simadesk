@@ -540,7 +540,12 @@ export class AssistantModule {
 
     panel.querySelector('.sd-ap-close')?.addEventListener('click', () => this.closePanel());
     panel.querySelector('.sd-ap-send-btn')?.addEventListener('click', () => this.handleSend());
-    panel.querySelector('.sd-ap-mic-btn')?.addEventListener('click', () => this.toggleVoice());
+    const micBtn = panel.querySelector<HTMLElement>('.sd-ap-mic-btn');
+    if (micBtn) {
+      micBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.voiceSendOnEnd = false; this.startVoice(); });
+      micBtn.addEventListener('pointerup',   () => { this.stopVoice(); });
+      micBtn.addEventListener('pointercancel', () => { this.stopVoice(); });
+    }
 
     // Mode tabs: Сима / Поддержка
     panel.querySelectorAll<HTMLElement>('.sd-ap-mode-tab').forEach(tab => {
@@ -621,6 +626,7 @@ export class AssistantModule {
     this.setupFileAttach(panel);
     this.setupPositionTracking();
     this.setupSelectionCtx(panel);
+    this.setupVoiceHotkey();
 
     // Listen for native text selection on any page
     document.addEventListener('selectionchange', () => {
@@ -1403,6 +1409,37 @@ export class AssistantModule {
     });
 
     this.panel.appendChild(overlay);
+  }
+
+  private setupVoiceHotkey(): void {
+    // Alt+Space — hold to record, release to send
+    // Fires only when focus is NOT inside an input/textarea (to avoid blocking typing)
+    document.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (!e.altKey || e.key !== ' ') return;
+      const tag = (document.activeElement as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement as HTMLElement)?.isContentEditable) return;
+      if (this.voiceHotkeyHeld) return; // already held
+      e.preventDefault();
+      this.voiceHotkeyHeld = true;
+      this.voiceSendOnEnd = true;
+      if (!this.isOpen) this.openPanel();
+      // Small delay so panel renders before we start listening
+      setTimeout(() => {
+        if (this.voiceHotkeyHeld) this.startVoice();
+      }, 150);
+    });
+
+    document.addEventListener('keyup', (e: KeyboardEvent) => {
+      if (e.key !== ' ' && e.key !== 'Alt') return;
+      if (!this.voiceHotkeyHeld) return;
+      // Only trigger on Space release (Alt release alone = accidental)
+      if (e.key !== ' ' && e.key !== 'Alt') return;
+      this.voiceHotkeyHeld = false;
+      if (this.isListening) {
+        // stopVoice will trigger onresult → isFinal → handleSend via voiceSendOnEnd
+        this.recognition?.stop();
+      }
+    });
   }
 
   togglePanel(): void {
