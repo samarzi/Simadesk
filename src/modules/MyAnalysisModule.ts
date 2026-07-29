@@ -46,6 +46,20 @@ interface OzonStore { id: string; name: string; client_id: string; api_key: stri
 interface WbStore   { id: string; name: string; api_key: string; }
 interface YaStore   { id: string; name: string; api_key: string; business_id: number|null; campaign_id: number|null; }
 
+interface FixedItem {
+  uid: string;
+  mp: Mp;
+  vendorCode: string;
+  storeName: string;
+  storeId: string;
+  oldName: string;
+  newName: string;
+  fixedIssues: Array<{ code: string; label: string; severity: Severity }>;
+  fixedAt: number;
+  status: 'pending' | 'confirmed' | 'unchanged';
+  verifiedAt?: number;
+}
+
 // ─── Issue detection ──────────────────────────────────────────────────────────
 
 function auditCard(c: Omit<ProductCard,'issues'|'score'>): Issue[] {
@@ -128,10 +142,16 @@ export class MyAnalysisModule {
   private drawerAiLoading: 'name'|'desc'|null = null;
   private drawerAiNames: string[] = [];   // AI name suggestions
 
+  // Fixed-items tab
+  private activeTab: 'issues' | 'fixed' = 'issues';
+  private fixedItems: FixedItem[] = [];
+  private fixedVerifying = false;
+
   constructor(el: HTMLElement) {
     this.el = el;
     this.el.style.cssText = 'display:none;flex-direction:column;flex:1;overflow:hidden;';
     (window as any).myAnalysisModule = this;
+    try { this.fixedItems = JSON.parse(localStorage.getItem('sd_ca_fixed') || '[]'); } catch { this.fixedItems = []; }
   }
 
   async show() {
@@ -150,6 +170,58 @@ export class MyAnalysisModule {
   setSort(s: typeof this.sortBy){ this.sortBy = s; this._paint(); }
   setSearch(v: string)     { this.searchQ = v; this._paint(); }
   async reload()           { this.loaded = false; await this._load(); }
+
+  setTab(t: 'issues' | 'fixed') { this.activeTab = t; this._paint(); }
+
+  async verifyFixed(uid: string) {
+    const fixed = this.fixedItems.find(f => f.uid === uid);
+    if (!fixed || this.fixedVerifying) return;
+    this.fixedVerifying = true;
+    this._paint();
+    await this._load();
+    const current = this.cards.find(c => c.uid === uid);
+    if (current) {
+      const stillHasIssues = fixed.fixedIssues.some(fi => current.issues.some(ci => ci.code === fi.code));
+      fixed.status = stillHasIssues ? 'unchanged' : 'confirmed';
+    } else {
+      fixed.status = 'confirmed';
+    }
+    fixed.verifiedAt = Date.now();
+    this.fixedVerifying = false;
+    this._saveFixed();
+    this._paint();
+  }
+
+  async verifyAllFixed() {
+    if (this.fixedVerifying) return;
+    this.fixedVerifying = true;
+    this._paint();
+    await this._load();
+    for (const fixed of this.fixedItems) {
+      if (fixed.status === 'confirmed') continue;
+      const current = this.cards.find(c => c.uid === fixed.uid);
+      if (current) {
+        const stillHasIssues = fixed.fixedIssues.some(fi => current.issues.some(ci => ci.code === fi.code));
+        fixed.status = stillHasIssues ? 'unchanged' : 'confirmed';
+      } else {
+        fixed.status = 'confirmed';
+      }
+      fixed.verifiedAt = Date.now();
+    }
+    this.fixedVerifying = false;
+    this._saveFixed();
+    this._paint();
+  }
+
+  removeFixed(uid: string) {
+    this.fixedItems = this.fixedItems.filter(f => f.uid !== uid);
+    this._saveFixed();
+    this._paint();
+  }
+
+  private _saveFixed() {
+    localStorage.setItem('sd_ca_fixed', JSON.stringify(this.fixedItems));
+  }
 
   openDrawer(uid: string) {
     const card = this.cards.find(c => c.uid === uid);
@@ -273,12 +345,25 @@ export class MyAnalysisModule {
 
       // Update in-memory card
       const idx = this.cards.findIndex(c => c.uid === card.uid);
+      const oldIssues = card.issues.slice();
       if (idx >= 0) {
         this.cards[idx].name      = this.drawerName;
         this.cards[idx].photoUrls = [...this.drawerPhotos];
         this.cards[idx].issues    = auditCard(this.cards[idx]);
         this.cards[idx].score     = scoreCard(this.cards[idx].issues);
         this.drawerCard           = this.cards[idx];
+      }
+      // Track as fixed item for deferred verification
+      if (oldIssues.length > 0) {
+        const fixed: FixedItem = {
+          uid: card.uid, mp: card.mp, vendorCode: card.vendorCode,
+          storeName: card.storeName, storeId: card.storeId,
+          oldName: card.name, newName: this.drawerName,
+          fixedIssues: oldIssues.map(i => ({ code: i.code, label: i.label, severity: i.severity })),
+          fixedAt: Date.now(), status: 'pending',
+        };
+        this.fixedItems = [fixed, ...this.fixedItems.filter(f => f.uid !== card.uid)];
+        this._saveFixed();
       }
       (window as any).app?.toast?.('Карточка обновлена', 'success');
     } catch (e: unknown) {
@@ -426,12 +511,27 @@ export class MyAnalysisModule {
   private _paint() {
     cancelAnimationFrame(this._raf);
     this._raf = requestAnimationFrame(() => {
+      // Preserve focused textarea state before wiping innerHTML
+      const activeEl = document.activeElement;
+      let restoreTaId: string | null = null;
+      let restoreSel = [0, 0];
+      if (activeEl instanceof HTMLTextAreaElement && this.el.contains(activeEl) && activeEl.id) {
+        restoreTaId = activeEl.id;
+        restoreSel = [activeEl.selectionStart ?? 0, activeEl.selectionEnd ?? 0];
+      }
+
       const hadDrawer = this._drawerOpen;
       this._drawerOpen = !!this.drawerCard;
       this.el.innerHTML =
         this._styles(hadDrawer) +
         `<div class="ca-root">${this._head()}${this._body()}</div>` +
         this._drawer(hadDrawer);
+
+      // Restore focus and cursor position
+      if (restoreTaId) {
+        const ta = this.el.querySelector<HTMLTextAreaElement>(`#${restoreTaId}`);
+        if (ta) { ta.focus(); ta.setSelectionRange(restoreSel[0], restoreSel[1]); }
+      }
     });
   }
 
@@ -449,6 +549,7 @@ export class MyAnalysisModule {
     const errN  = this.cards.filter(c=>c.issues.some(i=>i.severity==='error')).length;
     const warnN = this.cards.filter(c=>!c.issues.some(i=>i.severity==='error') && c.issues.some(i=>i.severity==='warning')).length;
 
+    const fixedCount = this.fixedItems.length;
     return `<div class="ca-head">
       <div class="ca-head-top">
         <div class="ca-title">
@@ -465,7 +566,14 @@ export class MyAnalysisModule {
         </button>
       </div>
 
-      <div class="ca-filters">
+      <div class="ca-tabs">
+        <button class="ca-tab${this.activeTab==='issues'?' on':''}" onclick="window.myAnalysisModule?.setTab('issues')">Проблемы</button>
+        <button class="ca-tab${this.activeTab==='fixed'?' on':''}" onclick="window.myAnalysisModule?.setTab('fixed')">
+          Исправленные${fixedCount ? `<span class="ca-tab-badge">${fixedCount}</span>` : ''}
+        </button>
+      </div>
+
+      ${this.activeTab === 'issues' ? `<div class="ca-filters">
         <div class="ca-search-row">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input class="ca-search" placeholder="Поиск по названию или артикулу…" value="${this._e(this.searchQ)}"
@@ -502,11 +610,13 @@ export class MyAnalysisModule {
             ${(['score','name','photos','mp'] as const).map(s=>`<button class="ca-pill${this.sortBy===s?' on':''}" onclick="window.myAnalysisModule?.setSort('${s}')">${{score:'Оценка',name:'Название',photos:'Фото',mp:'МП'}[s]}</button>`).join('')}
           </div>
         </div>
-      </div>
+      </div>` : ''}
     </div>`;
   }
 
   private _body() {
+    if (this.activeTab === 'fixed') return this._fixedBody();
+
     if (this.loading && !this.loaded)
       return `<div class="ca-body ca-ctr"><div class="ca-spin"></div><span class="ca-hint">${this.loadMsg}</span></div>`;
     if (this.error)
@@ -523,6 +633,43 @@ export class MyAnalysisModule {
         <button class="ca-btn" onclick="window.myAnalysisModule?.setIssueFilter('all');window.myAnalysisModule?.setMp('all');window.myAnalysisModule?.setStore('all')">Сбросить фильтры</button></div>`;
 
     return `<div class="ca-body"><div class="ca-list">${list.map(c=>this._row(c)).join('')}</div></div>`;
+  }
+
+  private _fixedBody(): string {
+    if (!this.fixedItems.length)
+      return `<div class="ca-body ca-ctr"><div style="font-size:40px">✅</div>
+        <div class="ca-hint">Здесь появятся товары после того, как вы сохраните изменения в карточке.<br>Мы отследим, приняли ли маркетплейсы ваши правки.</div></div>`;
+
+    const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+    const statusIcon = (s: FixedItem['status']) => s==='confirmed' ? '✅' : s==='unchanged' ? '⚠️' : '🔄';
+    const statusLabel = (s: FixedItem['status']) => s==='confirmed' ? 'Подтверждено' : s==='unchanged' ? 'Не изменилось' : 'Ожидает проверки';
+
+    const rows = this.fixedItems.map(f => `
+      <div class="ca-fx-row">
+        <div class="ca-fx-top">
+          <span class="ca-mp-b" style="color:${MP_COLOR[f.mp]};border-color:${MP_COLOR[f.mp]}22;background:${MP_COLOR[f.mp]}14">${MP_NAME[f.mp]}</span>
+          <span class="ca-fx-name">${this._e(f.newName || f.oldName)}</span>
+          <span class="ca-fx-date">${fmtDate(f.fixedAt)}</span>
+        </div>
+        ${f.oldName !== f.newName ? `<div class="ca-fx-rename">Переименовано: «${this._e(f.oldName)}» → «${this._e(f.newName)}»</div>` : ''}
+        <div class="ca-fx-issues">
+          Было исправлено: ${f.fixedIssues.slice(0,4).map(i=>`<span class="ca-ic sev-${i.severity}">${SEV_ICON[i.severity]} ${i.label}</span>`).join('')}
+          ${f.fixedIssues.length > 4 ? `<span class="ca-ic-more">+${f.fixedIssues.length-4}</span>` : ''}
+        </div>
+        <div class="ca-fx-status ${f.status}">${statusIcon(f.status)} ${statusLabel(f.status)}${f.verifiedAt ? ` · ${fmtDate(f.verifiedAt)}` : ''}</div>
+        <div class="ca-fx-actions">
+          <button class="ca-fx-btn${this.fixedVerifying?' busy':''}" onclick="window.myAnalysisModule?.verifyFixed('${this._e(f.uid)}')">
+            ${this.fixedVerifying?'<div class="ca-spin-sm"></div>':''} Проверить сейчас
+          </button>
+          <button class="ca-fx-del" onclick="window.myAnalysisModule?.removeFixed('${this._e(f.uid)}')">Удалить</button>
+        </div>
+      </div>`).join('');
+
+    const verifyAllBtn = `<button class="ca-fx-all-btn${this.fixedVerifying?' busy':''}" onclick="window.myAnalysisModule?.verifyAllFixed()">
+      ${this.fixedVerifying?'<div class="ca-spin-sm"></div> Проверяем…':'↻ Обновить и проверить все'}
+    </button>`;
+
+    return `<div class="ca-body"><div class="ca-fx-head">${verifyAllBtn}</div><div class="ca-fx-list">${rows}</div></div>`;
   }
 
   private _row(c: ProductCard) {
@@ -616,7 +763,7 @@ export class MyAnalysisModule {
 
         <div class="ca-sec">
           <div class="ca-sec-t">Название</div>
-          <textarea class="ca-field" rows="2"
+          <textarea id="ca-name-ta" class="ca-field" rows="2"
             oninput="window.myAnalysisModule?.drawerSetName(this.value)">${this._e(this.drawerName)}</textarea>
           <button class="ca-ai-btn${this.drawerAiLoading==='name'?' busy':''}"
             onclick="window.myAnalysisModule?.aiSuggestName()">
@@ -807,6 +954,36 @@ export class MyAnalysisModule {
 .ca-pick{font-size:11px;font-weight:800;color:var(--accent-text);flex-shrink:0;}
 .ca-vc-row{display:flex;align-items:center;gap:7px;font-size:12px;}
 .ca-vc-l{color:var(--text3);}
+
+/* Tabs */
+.ca-tabs{display:flex;gap:4px;padding:10px 20px 0;}
+.ca-tab{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text3);font-size:13px;font-weight:600;padding:7px 14px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:color .15s;}
+.ca-tab.on{color:var(--text);border-bottom-color:var(--accent);}
+.ca-tab:hover:not(.on){color:var(--text2);}
+.ca-tab-badge{background:var(--accent);color:#0a0a0a;font-size:10px;font-weight:800;padding:1px 6px;border-radius:20px;}
+
+/* Fixed items */
+.ca-fx-head{padding:10px 0 12px;display:flex;justify-content:flex-end;}
+.ca-fx-all-btn{background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:700;padding:7px 14px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;}
+.ca-fx-all-btn:hover:not(.busy){color:var(--text);border-color:var(--border2);}
+.ca-fx-all-btn.busy{opacity:.65;pointer-events:none;}
+.ca-fx-list{display:flex;flex-direction:column;gap:8px;}
+.ca-fx-row{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:13px 16px;display:flex;flex-direction:column;gap:8px;}
+.ca-fx-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.ca-fx-name{font-size:13px;font-weight:600;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ca-fx-date{font-size:11px;color:var(--text3);white-space:nowrap;margin-left:auto;}
+.ca-fx-rename{font-size:12px;color:var(--text2);font-style:italic;}
+.ca-fx-issues{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:11px;color:var(--text3);}
+.ca-fx-status{font-size:12px;font-weight:700;padding:5px 10px;border-radius:20px;align-self:flex-start;}
+.ca-fx-status.confirmed{background:rgba(68,221,136,.1);color:var(--green);}
+.ca-fx-status.unchanged{background:rgba(251,191,36,.1);color:#fbbf24;}
+.ca-fx-status.pending{background:var(--bg3);color:var(--text3);}
+.ca-fx-actions{display:flex;gap:8px;}
+.ca-fx-btn{background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:700;padding:6px 13px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:5px;}
+.ca-fx-btn:hover:not(.busy){color:var(--text);}
+.ca-fx-btn.busy{opacity:.65;pointer-events:none;}
+.ca-fx-del{background:transparent;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:6px 10px;border-radius:8px;}
+.ca-fx-del:hover{color:var(--red);}
 </style>`;
   }
 }
