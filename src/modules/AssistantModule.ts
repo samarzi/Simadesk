@@ -454,6 +454,7 @@ export class AssistantModule {
 
   private history: ChatMessage[] = [];
   private isOpen = false;
+  private isResizing = false;
   private isLoading = false;
   private pageActionsUnsub: (() => void) | null = null;
   private isListening = false;
@@ -924,13 +925,13 @@ export class AssistantModule {
     };
 
     const startResize = (clientX: number, clientY: number) => {
+      this.isResizing = true;
       startX = clientX; startY = clientY;
       startW = panel.offsetWidth;
-      // Pin height explicitly BEFORE removing maxHeight so panel doesn't jump
       const currentH = panel.offsetHeight;
       panel.style.height = currentH + 'px';
       panel.style.maxHeight = 'none';
-      startH = panel.offsetHeight; // re-read after pin
+      startH = panel.offsetHeight;
       pendingW = startW; pendingH = startH;
       panel.classList.add('sd-ap-resizing');
       document.body.style.userSelect = 'none';
@@ -940,12 +941,14 @@ export class AssistantModule {
       if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; applySize(); }
       panel.classList.remove('sd-ap-resizing');
       document.body.style.userSelect = '';
-      // Restore maxHeight to match actual height so overflow works
       const h = panel.offsetHeight;
       if (h >= 400) panel.style.maxHeight = h + 'px';
       const w = parseInt(panel.style.width, 10);
       if (w >= 340 && w <= 700) localStorage.setItem('sd_ap_w', String(w));
       if (h >= 400 && h <= window.innerHeight - 80) localStorage.setItem('sd_ap_h', String(h));
+      this.isResizing = false;
+      // Reposition arrow after resize ends
+      this.positionPanel();
     };
 
     const onMove = (e: MouseEvent) => {
@@ -998,10 +1001,9 @@ export class AssistantModule {
     });
     obs.observe(dock, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
 
-    // Update arrow when panel itself is resized (user drags resize handle)
     if (this.panel) {
       const ro = new ResizeObserver(() => {
-        if (this.isOpen) this.positionPanel();
+        if (this.isOpen && !this.isResizing) this.positionPanel();
       });
       ro.observe(this.panel);
     }
