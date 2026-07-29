@@ -2,6 +2,7 @@ import { storefrontDb } from '../services/storefrontDb';
 import type { StorefrontSettings, StorefrontProduct, StorefrontBanner, StorefrontGroup, StorefrontVariantGroup } from '../services/storefrontDb';
 import { companyService } from '../services/companyService';
 import { showToast } from '../utils/toast';
+import { reportAiUsage } from '@/services/aiUsage';
 
 function esc(s: unknown): string {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1038,6 +1039,7 @@ ${candidates.join('\n')}`;
       });
       if (!resp.ok) throw new Error(`AI API error ${resp.status}`);
       const data = await resp.json();
+      reportAiUsage('Витрина · группировка', data);
       const text = data.choices?.[0]?.message?.content ?? '';
 
       // Extract JSON from response

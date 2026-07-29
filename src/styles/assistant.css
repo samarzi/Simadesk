@@ -1338,6 +1338,62 @@ html.light .sd-sup-msg.user .sd-sup-bubble {
   line-height: 1.5;
   color: var(--ap-txt-3);
 }
+/* ── «Собеседник печатает» ─────────────────────────────────────────────── */
+.sd-sup-typing {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--ap-line);
+  border-radius: 14px 14px 14px 4px;
+  background: var(--ap-surface-2);
+  font-size: 11px;
+  color: var(--ap-txt-2);
+  animation: ap-msg-in 0.2s ease-out both;
+}
+.sd-sup-typing-dots { display: inline-flex; gap: 3px; }
+.sd-sup-typing-dots i {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--ap-accent);
+  animation: sd-typing-bounce 1.1s infinite ease-in-out both;
+}
+.sd-sup-typing-dots i:nth-child(2) { animation-delay: 0.16s; }
+.sd-sup-typing-dots i:nth-child(3) { animation-delay: 0.32s; }
+@keyframes sd-typing-bounce {
+  0%, 70%, 100% { transform: translateY(0);    opacity: 0.45; }
+  35%           { transform: translateY(-4px); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sd-sup-typing-dots i { animation: none; opacity: 0.7; }
+}
+
+/* ── Антиспам: пауза перед следующим сообщением ─────────────────────────── */
+.sd-sup-cooldown {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 var(--ap-pad) 6px;
+  padding: 8px 11px;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: var(--ap-radius-sm);
+  background: rgba(251, 191, 36, 0.10);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ap-txt-2);
+}
+.sd-sup-cooldown-icon { font-size: 14px; flex-shrink: 0; }
+.sd-sup-cooldown-timer {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--ap-warn);
+}
+.sd-sup-input-area.locked { opacity: 0.55; pointer-events: none; }
+
 .sd-sup-error {
   display: flex;
   flex-direction: column;

@@ -11,6 +11,7 @@ import {
 } from '@/services/roadmapDb';
 import { debug } from '@/utils/debug';
 import { supportChatService, supportErrorText, AdminSupportChat, SupportAttachment } from '@/services/supportChatService';
+import { reportAiUsage } from '@/services/aiUsage';
 
 type AdminTab = 'overview' | 'analytics' | 'users' | 'companies' | 'subscriptions' | 'promos' | 'support' | 'settings' | 'pages' | 'roadmap';
 
@@ -1193,6 +1194,7 @@ export class AdminModule {
         <button class="adm-btn-secondary" style="padding:5px 12px;font-size:12px;white-space:nowrap;color:#ef4444;border-color:#ef444455" id="adm-live-close-chat">Завершить диалог</button>
       </div>
       <div class="adm-live-messages" id="adm-live-messages">${msgs || '<div class="adm-live-empty" style="padding:30px">Сообщений пока нет</div>'}</div>
+      <div id="adm-live-typing"></div>
       <div class="adm-live-attach-chips" id="adm-live-attach-chips"></div>
       <div class="adm-live-input-area">
         <button class="adm-live-attach-btn" id="adm-live-attach-btn" title="Прикрепить файл">
@@ -1333,6 +1335,7 @@ export class AdminModule {
     });
     textarea?.addEventListener('input', () => {
       if (textarea) { textarea.style.height = 'auto'; textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px'; }
+      if (textarea?.value.trim()) this.signalAdminTyping();
     });
     sendBtn?.addEventListener('click', doSend);
 
@@ -1482,7 +1485,9 @@ export class AdminModule {
 
         // Poll new messages if a chat is open
         if (this.activeLiveChat) {
-          const newMsgs = await supportChatService.getMessagesSince(this.activeLiveChat.id, this.liveChatLastMsgTime);
+          const res = await supportChatService.poll(this.activeLiveChat.id, this.liveChatLastMsgTime);
+          const newMsgs = res?.messages ?? [];
+          this.renderUserTyping(!!res?.peer_typing);
           if (newMsgs.length > 0) {
             this.liveChatLastMsgTime = newMsgs.at(-1)!.created_at;
             if (!this.activeLiveChat.messages) this.activeLiveChat.messages = [];
@@ -1518,6 +1523,20 @@ export class AdminModule {
 
   private stopLiveChatPolling(): void {
     if (this.liveChatPollTimer) { clearInterval(this.liveChatPollTimer); this.liveChatPollTimer = null; }
+    this.renderUserTyping(false);
+  }
+
+  /** «Пользователь печатает…» под лентой в админской переписке. */
+  private renderUserTyping(typing: boolean): void {
+    const host = this.el.querySelector<HTMLElement>('#adm-live-typing');
+    if (!host) return;
+    if (!typing) { host.innerHTML = ''; return; }
+    const name = [this.activeLiveChat?.first_name, this.activeLiveChat?.last_name]
+      .filter(Boolean).join(' ') || 'Пользователь';
+    host.innerHTML = `<div class="adm-live-typing">
+      <span class="sd-sup-typing-dots"><i></i><i></i><i></i></span>
+      <span>${name} печатает…</span>
+    </div>`;
   }
 
   // ── Support AI auto-reply ────────────────────────────────────────────────────
@@ -1540,11 +1559,27 @@ export class AdminModule {
 
   private readonly DISSATISFACTION_PATTERNS = /не (то|так|правильно|понял|понимаю|помогло)|нет[,.]?\s*(не|это)|это не|не об этом|другой вопрос|вы не поняли|всё равно не|по-прежнему|так и не|не решил|не работает|не помогает/i;
 
+  /** Отметить «оператор печатает» — не чаще раза в 2.5 с. */
+  private supTypingSentAt = 0;
+
+  private signalAdminTyping(): void {
+    const id = this.activeLiveChat?.id;
+    if (!id) return;
+    const now = Date.now();
+    if (now - this.supTypingSentAt < 2500) return;
+    this.supTypingSentAt = now;
+    void supportChatService.setTyping(id);
+  }
+
   private async runSupAiReply(chatId: string, messages: Array<{ sender_role: string; content: string }>): Promise<void> {
     const apiKey = sessionStorage.getItem('sd_ai_key') || '';
     if (!apiKey) return;
 
     this.supAiProcessing.add(chatId);
+    // Пока модель думает, пользователь видит «Поддержка печатает…».
+    // Отметка живёт 6 с, поэтому продлеваем её каждые 3 с.
+    void supportChatService.setTyping(chatId);
+    const typingKeepAlive = setInterval(() => { void supportChatService.setTyping(chatId); }, 3000);
     try {
       const history = messages.slice(-8).map(m => ({
         role: m.sender_role === 'user' ? 'user' : 'assistant',
@@ -1579,6 +1614,7 @@ ${this.SIMADESK_KNOWLEDGE}
 
       if (!res.ok) return;
       const data = await res.json();
+      reportAiUsage('Поддержка AI', data);
       let reply: string = data?.choices?.[0]?.message?.content ?? '';
       if (!reply) return;
 
@@ -1595,6 +1631,8 @@ ${this.SIMADESK_KNOWLEDGE}
         this.updateAttentionBadge(chatId);
       }
     } catch { /* ignore AI errors */ } finally {
+      clearInterval(typingKeepAlive);
+      void supportChatService.clearTyping(chatId);
       this.supAiProcessing.delete(chatId);
     }
   }

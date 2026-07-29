@@ -40,6 +40,13 @@ export interface AdminSupportChat {
   messages?: SupportMessage[];
 }
 
+/** Ответ support_poll — всё состояние чата за один запрос. */
+export interface SupportPoll {
+  status: 'open' | 'closed';
+  peer_typing: boolean;
+  messages: SupportMessage[];
+}
+
 export const SUPPORT_REASONS: Record<string, string> = {
   question:       '❓ Вопрос',
   problem:        '🚨 Проблема',
@@ -112,6 +119,44 @@ class SupportChatService {
       body: JSON.stringify({ p_chat_id: chatId, p_content: content, p_attachments: attachments }),
     });
     this.lastError = null;
+  }
+
+  /**
+   * Один запрос вместо трёх: новые сообщения + статус чата + печатает ли
+   * собеседник. `null` — запрос не прошёл (сеть/права), вызывающий не должен
+   * трактовать это как «чат закрыт».
+   */
+  async poll(chatId: string, after: string | null = null): Promise<SupportPoll | null> {
+    try {
+      const res = await dbFetch<SupportPoll>('/rpc/support_poll', {
+        method: 'POST',
+        body: JSON.stringify({ p_chat_id: chatId, p_after: after }),
+      });
+      this.lastError = null;
+      if (!res) return null;
+      return {
+        status: res.status ?? 'open',
+        peer_typing: !!res.peer_typing,
+        messages: res.messages ?? [],
+      };
+    } catch (e) { this.fail('poll', e); return null; }
+  }
+
+  /** Отметить «я печатаю». Роль определяет сервер по auth.uid(). */
+  async setTyping(chatId: string): Promise<void> {
+    try {
+      await dbFetch('/rpc/support_set_typing', {
+        method: 'POST', body: JSON.stringify({ p_chat_id: chatId }),
+      });
+    } catch { /* индикатор набора — не повод показывать ошибку */ }
+  }
+
+  async clearTyping(chatId: string): Promise<void> {
+    try {
+      await dbFetch('/rpc/support_clear_typing', {
+        method: 'POST', body: JSON.stringify({ p_chat_id: chatId }),
+      });
+    } catch { /* см. выше */ }
   }
 
   async getMessagesSince(chatId: string, after: string | null = null): Promise<SupportMessage[]> {

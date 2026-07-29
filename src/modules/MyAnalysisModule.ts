@@ -11,6 +11,7 @@ import { ozonApi } from '../services/ozonApi';
 import { wbApi } from '../services/wbApi';
 import { yandexApi } from '../services/yandexApi';
 import { debug } from '@/utils/debug';
+import { reportAiUsage } from '@/services/aiUsage';
 
 type Mp = 'ozon' | 'wb' | 'yandex';
 type Severity = 'error' | 'warning' | 'info';
@@ -501,6 +502,7 @@ export class MyAnalysisModule {
       body: JSON.stringify({ model, messages:[{role:'user',content:prompt}], max_tokens:800, temperature:0.7 }),
     });
     const d = await r.json();
+    reportAiUsage('Мой анализ', d);
     const t = d.choices?.[0]?.message?.content;
     if (!t) throw new Error('Пустой ответ');
     return t;

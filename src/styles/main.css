@@ -5075,3 +5075,76 @@ select.adm-input { cursor: pointer; }
   flex-shrink: 0;
 }
 .adm-reason-pill { font-size: 12px; padding: 2px 7px; }
+
+/* ── Расход токенов AI (правый верхний угол) ────────────────────────────── */
+#sd-ai-usage-host {
+  position: fixed;
+  top: 14px; right: 14px;
+  z-index: 100000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.sd-ai-usage {
+  min-width: 208px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(167, 139, 250, 0.32);
+  background: rgba(24, 19, 38, 0.94);
+  color: #ece9f5;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(10px);
+  font-size: 12px;
+  animation: sdAiUsageIn 0.22s cubic-bezier(0.34, 1.2, 0.64, 1) both;
+}
+.sd-ai-usage.out { animation: sdAiUsageOut 0.2s ease-in forwards; }
+@keyframes sdAiUsageIn  { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes sdAiUsageOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(16px); } }
+
+.sd-ai-usage-top {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+}
+.sd-ai-usage-label { font-weight: 600; color: #c4b5fd; }
+.sd-ai-usage-total { font-weight: 700; font-size: 14px; }
+.sd-ai-usage-unit  { font-size: 10px; font-weight: 500; opacity: 0.6; margin-left: 4px; }
+.sd-ai-usage-bar {
+  display: flex; gap: 10px; align-items: center;
+  margin-top: 3px;
+  font-size: 11px;
+  color: rgba(236, 233, 245, 0.66);
+}
+.sd-ai-usage-cost { margin-left: auto; color: #4ade80; font-weight: 600; }
+.sd-ai-usage-sum {
+  margin-top: 5px; padding-top: 5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 10px;
+  color: rgba(236, 233, 245, 0.42);
+}
+
+html.light .sd-ai-usage {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(124, 58, 237, 0.28);
+  color: #1a1428;
+  box-shadow: 0 10px 28px rgba(60, 30, 120, 0.18);
+}
+html.light .sd-ai-usage-label { color: #6d28d9; }
+html.light .sd-ai-usage-bar   { color: rgba(26, 20, 40, 0.62); }
+html.light .sd-ai-usage-sum   { color: rgba(26, 20, 40, 0.45); border-top-color: rgba(20, 10, 40, 0.10); }
+html.light .sd-ai-usage-cost  { color: #16a34a; }
+
+@media (max-width: 560px) {
+  #sd-ai-usage-host { top: 8px; right: 8px; left: 8px; }
+  .sd-ai-usage { min-width: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sd-ai-usage, .sd-ai-usage.out { animation: none; }
+}
+
+/* ── «Собеседник печатает» в админской ленте поддержки ──────────────────── */
+.adm-live-typing {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 12px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}

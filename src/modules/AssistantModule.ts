@@ -7,6 +7,8 @@ import { changeLog } from '@/modules/LogsModule';
 import { esc } from '@/utils/format';
 import { supportChatService, supportErrorText, SupportMessage, SupportAttachment, SUPPORT_REASONS } from '@/services/supportChatService';
 import { selectionCtx } from '@/services/selectionContext';
+import { reportAiUsage } from '@/services/aiUsage';
+import { SupportSpamGuard } from '@/services/supportSpamGuard';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -1822,6 +1824,7 @@ export class AssistantModule {
       </div>
       <div class="sd-sup-messages" id="sd-sup-messages"></div>
       <div class="sd-sup-attach-chips" id="sd-sup-attach-chips"></div>
+      <div id="sd-sup-cooldown"></div>
       <div class="sd-sup-input-area">
         <button class="sd-sup-attach-btn" id="sd-sup-attach-btn" title="Прикрепить файл">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18">
@@ -1857,6 +1860,22 @@ export class AssistantModule {
       if (!textarea || !this.supportChatId) return;
       const text = textarea.value.trim();
       if (!text && this.supAttachFiles.length === 0) return;
+
+      // Пауза активна — сообщение не теряем, оставляем в поле
+      if (this.cooldownLeft() > 0) {
+        showToast(`Подождите ${this.cooldownLeft()} с — оператор уже получил ваше обращение`, 'warning');
+        return;
+      }
+
+      // Штраф считаем только пока ждём оператора: последнее сообщение — наше
+      const pendingWait = this.spamGuard.register({
+        text,
+        hasAttachment: this.supAttachFiles.length > 0,
+        awaitingOperator: this.supportMessages.length > 0
+          && this.supportMessages.at(-1)?.sender_role === 'user',
+        now: Date.now(),
+      });
+
       textarea.value = '';
       textarea.style.height = '';
       const attachSnap = [...this.supAttachFiles];
@@ -1892,6 +1911,9 @@ export class AssistantModule {
         this.renderSupportMessages();
         showToast('Сообщение не отправлено: ' + msg, 'error');
       }
+
+      // Пауза назначается уже после отправки: сообщение уходит, спам гасится
+      if (pendingWait > 0) this.startCooldown(pendingWait);
     };
 
     textarea?.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -1899,6 +1921,7 @@ export class AssistantModule {
     });
     textarea?.addEventListener('input', () => {
       if (textarea) { textarea.style.height = 'auto'; textarea.style.height = Math.min(textarea.scrollHeight, 100) + 'px'; }
+      if (textarea?.value.trim()) this.signalTyping();
     });
     sendBtn?.addEventListener('click', doSend);
 
@@ -1949,11 +1972,86 @@ export class AssistantModule {
   private supportPending = new Set<string>();
   private supportFailed  = new Map<string, string>();
 
+  // ── Индикатор набора ────────────────────────────────────────────────────────
+
+  /** Печатает ли собеседник (оператор или AI-ответчик) прямо сейчас. */
+  private supportPeerTyping = false;
+  /** Когда последний раз отправляли серверу «я печатаю» — не чаще раза в 2.5 с. */
+  private supportTypingSentAt = 0;
+
+  private signalTyping(): void {
+    if (!this.supportChatId) return;
+    const now = Date.now();
+    if (now - this.supportTypingSentAt < 2500) return;
+    this.supportTypingSentAt = now;
+    void supportChatService.setTyping(this.supportChatId);
+  }
+
+  // ── Антиспам в ожидании оператора ───────────────────────────────────────────
+  //
+  // Цель — гасить именно спам (короткие сообщения очередью, дубли), но не мешать
+  // подробно описывать проблему: длинный текст и вложения не штрафуются.
+
+  private spamGuard = new SupportSpamGuard();
+  private supportCooldownTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Оператор ответил — все штрафы снимаются. */
+  private resetSpamGuard(): void {
+    this.spamGuard.reset();
+    this.renderCooldown();
+  }
+
+  private startCooldown(seconds: number): void {
+    void seconds;
+    this.renderCooldown();
+    if (this.supportCooldownTimer) clearInterval(this.supportCooldownTimer);
+    this.supportCooldownTimer = setInterval(() => {
+      this.renderCooldown();
+      if (this.cooldownLeft() <= 0) {
+        clearInterval(this.supportCooldownTimer!);
+        this.supportCooldownTimer = null;
+      }
+    }, 500);
+  }
+
+  private cooldownLeft(): number {
+    return this.spamGuard.cooldownLeft(Date.now());
+  }
+
+  private renderCooldown(): void {
+    const box = this.panel?.querySelector<HTMLElement>('#sd-sup-cooldown');
+    const area = this.panel?.querySelector<HTMLElement>('.sd-sup-input-area');
+    if (!box) return;
+    const left = this.cooldownLeft();
+    if (left <= 0) {
+      box.innerHTML = '';
+      area?.classList.remove('locked');
+      return;
+    }
+    area?.classList.add('locked');
+    box.innerHTML = `
+      <div class="sd-sup-cooldown">
+        <span class="sd-sup-cooldown-icon">✅</span>
+        <span>Сообщение доставлено оператору — он уже видит вашу переписку.
+          Дождитесь ответа, не дублируйте вопрос.</span>
+        <span class="sd-sup-cooldown-timer">${left}&nbsp;с</span>
+      </div>`;
+  }
+
   private renderSupportMessages(): void {
     const el = this.panel?.querySelector<HTMLElement>('#sd-sup-messages');
     if (!el) return;
+
+    const typingHtml = this.supportPeerTyping
+      ? `<div class="sd-sup-typing">
+           <span class="sd-sup-typing-dots"><i></i><i></i><i></i></span>
+           <span>Поддержка печатает…</span>
+         </div>`
+      : '';
+
     if (this.supportMessages.length === 0) {
-      el.innerHTML = `<div class="sd-sup-empty">Напишите ваш вопрос — оператор ответит в ближайшее время</div>`;
+      el.innerHTML = typingHtml ||
+        `<div class="sd-sup-empty">Напишите ваш вопрос — оператор ответит в ближайшее время</div>`;
       return;
     }
     el.innerHTML = this.supportMessages.map(m => {
@@ -1972,7 +2070,7 @@ export class AssistantModule {
         <div class="sd-sup-bubble">${esc(m.content).replace(/\n/g, '<br>')}${attachHtml}</div>
         <div class="sd-sup-msg-time">${meta}</div>
       </div>`;
-    }).join('');
+    }).join('') + typingHtml;
     el.scrollTop = el.scrollHeight;
   }
 
@@ -2014,31 +2112,40 @@ export class AssistantModule {
     this.stopSupportPolling();
     if (!this.supportChatId) return;
 
-    let tick = 0;
     this.supportPollTimer = setInterval(async () => {
       if (!this.supportChatId) { this.stopSupportPolling(); return; }
-      tick++;
 
       // Первая загрузка истории не считается «новыми» сообщениями
       const isBaseline = this.supportLastMsgTime === null && this.supportMessages.length === 0;
-      const newMsgs = await supportChatService.getMessagesSince(this.supportChatId, this.supportLastMsgTime);
+      // Один запрос: сообщения + статус + печатает ли собеседник
+      const res = await supportChatService.poll(this.supportChatId, this.supportLastMsgTime);
+      if (!res) return;            // ошибка сети — состояние чата не трогаем
+
+      const viewing = this.supportMode === 'support' && this.isOpen;
+
+      if (res.peer_typing !== this.supportPeerTyping) {
+        this.supportPeerTyping = res.peer_typing;
+        if (viewing) this.renderSupportMessages();
+      }
+
+      const newMsgs = res.messages;
       if (newMsgs.length > 0) {
         this.supportMessages = [...this.supportMessages, ...newMsgs];
         this.supportLastMsgTime = newMsgs[newMsgs.length - 1].created_at;
         const fromAdmin = isBaseline ? 0 : newMsgs.filter(m => m.sender_role === 'admin').length;
-        if (this.supportMode === 'support' && this.isOpen) {
+        // Оператор ответил — снимаем накопленный антиспам-штраф
+        if (newMsgs.some(m => m.sender_role === 'admin')) this.resetSpamGuard();
+        if (viewing) {
           this.renderSupportMessages();
-        } else if (fromAdmin > 0) {
+        }
+        if (fromAdmin > 0 && !viewing) {
           this.supportUnread += fromAdmin;
           this.updateSupportBadge();
           if (!this.isOpen) showToast('Поддержка ответила на ваше обращение', 'success');
         }
       }
 
-      // Проверка «оператор завершил диалог» — раз в 5 циклов (~15 c)
-      if (tick % 5 !== 0) return;
-      const chat = await supportChatService.getMyChat();
-      if (chat !== null) return;   // undefined = ошибка запроса, чат не трогаем
+      if (res.status !== 'closed') return;
 
       this.stopSupportPolling();
       this.supportChatId = null;
@@ -2060,11 +2167,13 @@ export class AssistantModule {
         this.supportMessages = [];
         this.supportLastMsgTime = null;
       }
-    }, 3000);
+      // 2 с: отметка набора живёт 6 с, при более редком опросе индикатор мигает
+    }, 2000);
   }
 
   private stopSupportPolling(): void {
     if (this.supportPollTimer) { clearInterval(this.supportPollTimer); this.supportPollTimer = null; }
+    this.supportPeerTyping = false;
   }
 
   closePanel(): void {
@@ -2490,6 +2599,7 @@ export class AssistantModule {
       throw new Error(`API ${res.status}: ${errText}`);
     }
     const data = await res.json();
+    reportAiUsage('Сима', data);
     return data?.choices?.[0]?.message?.content ?? '';
   }
 
