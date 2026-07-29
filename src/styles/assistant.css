@@ -1742,3 +1742,50 @@ html.light .sd-sup-textarea { background: rgba(240,235,255,0.6); border-color: r
 html.light .sd-sup-textarea::placeholder { color: rgba(100,70,200,0.35); }
 html.light .sd-sup-confirm-title { color: rgba(40,10,120,0.9); }
 html.light .sd-sup-confirm-desc { color: rgba(80,50,180,0.6); }
+
+/* ── Selection Context Chip ──────────────────────────────────────────────────── */
+.sd-ap-ctx-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 12px 2px;
+  padding: 5px 8px 5px 10px;
+  background: rgba(110, 60, 240, 0.12);
+  border: 1px solid rgba(110, 60, 240, 0.3);
+  border-radius: 10px;
+  font-size: 11.5px;
+  color: rgba(180, 140, 255, 0.95);
+  min-width: 0;
+  animation: sd-ctx-appear 0.18s ease;
+}
+@keyframes sd-ctx-appear {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.sd-ap-ctx-icon { flex-shrink: 0; font-size: 13px; }
+.sd-ap-ctx-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+.sd-ap-ctx-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.5;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  transition: opacity 0.15s;
+}
+.sd-ap-ctx-close:hover { opacity: 1; }
+
+html.light .sd-ap-ctx-chip {
+  background: rgba(110, 60, 240, 0.08);
+  border-color: rgba(110, 60, 240, 0.25);
+  color: rgba(80, 30, 200, 0.9);
+}

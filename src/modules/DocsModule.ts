@@ -7,6 +7,7 @@
 import * as XLSX from 'xlsx';
 import { type AiPageCapability, type AiActionResult } from '@/services/aiPageContext';
 import { debug } from '@/utils/debug';
+import { selectionCtx } from '@/services/selectionContext';
 
 type DocType = 'word' | 'excel';
 
@@ -56,6 +57,7 @@ export class DocsModule {
   private xlVirtData: CellData[][] | null = null;
   private isFullscreen: boolean = false;
   private recent: Array<{id:string;title:string;type:DocType;updated_at:number;content?:string}> = [];
+  private xlLastSel: { r1: number; c1: number; r2: number; c2: number; docId: string; sheetIdx: number } | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -1069,6 +1071,26 @@ export class DocsModule {
       if (isFullRow) for (let r = r1; r <= r2; r++) this.root.querySelector(`th.dx-rowhdr[data-row-hdr="${r}"]`)?.classList.add('dx-hdr-selected');
       if (isFullCol) for (let c = c1; c <= c2; c++) this.root.querySelector(`th.dx-colhdr[data-col="${c}"]`)?.classList.add('dx-hdr-selected');
       updateStats(r1, c1, r2, c2);
+      // Publish selection context for Sima
+      this.xlLastSel = { r1, c1, r2, c2, docId: doc.id, sheetIdx: this.activeSheetIdx };
+      const totalCells = (r2 - r1 + 1) * (c2 - c1 + 1);
+      const rangeStr = `${this.colLetter(c1)}${r1+1}${r1!==r2||c1!==c2 ? ':'+this.colLetter(c2)+(r2+1) : ''}`;
+      const previewCells: string[] = [];
+      for (let r = r1; r <= Math.min(r2, r1 + 9); r++) {
+        for (let c = c1; c <= c2; c++) {
+          const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`);
+          const v = td?.innerText.trim() || '';
+          previewCells.push(`${this.colLetter(c)}${r+1}: ${v || '—'}`);
+          if (previewCells.length >= 20) break;
+        }
+        if (previewCells.length >= 20) break;
+      }
+      selectionCtx.set({
+        type: 'excel-cells',
+        label: `${rangeStr}${totalCells > 1 ? ` (${totalCells} яч.)` : ''} · «${doc.title}»`,
+        prompt: `[КОНТЕКСТ: выделено в Excel]\nДокумент: «${doc.title}»\nДиапазон: ${rangeStr} (${totalCells} ячеек)\nСодержимое:\n${previewCells.join('\n')}${totalCells > previewCells.length ? `\n... ещё ${totalCells - previewCells.length} ячеек` : ''}`,
+        data: { docId: doc.id, sheetIdx: this.activeSheetIdx, range: { r1, c1, r2, c2 } },
+      });
     };
 
     const updateStats = (r1: number, c1: number, r2: number, c2: number) => {
@@ -2038,6 +2060,30 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
           args: '{ docIds: string[]|"all", find: string, caseSensitive?: boolean }',
           run: (a) => this.aiMultiCount(a),
         },
+        {
+          name: 'excel_style_selection',
+          description: 'Применить форматирование к выделенным ячейкам. Использовать когда пользователь говорит «эти ячейки», «выделенные», «сделай их красными/жирными» и т.п. — то есть ссылается на текущий выбор. Не требует указания диапазона — берёт из контекста выделения.',
+          args: '{ bold?: boolean, italic?: boolean, underline?: boolean, strikethrough?: boolean, color?: "#hex", bg?: "#hex", align?: "left"|"center"|"right" }',
+          run: (a) => this.aiStyleSelection(a),
+        },
+        {
+          name: 'excel_clear_selection',
+          description: 'Очистить содержимое выделенных ячеек (удалить значения, оставить стили). Использовать когда говорят «удали что внутри», «очисти эти ячейки», «убери содержимое».',
+          args: '{}',
+          run: () => this.aiClearSelection(),
+        },
+        {
+          name: 'excel_fill_selection',
+          description: 'Заполнить все выделенные ячейки одним значением. Использовать когда говорят «поставь везде X», «заполни выделенное значением».',
+          args: '{ value: string }',
+          run: (a) => this.aiFillSelection(a),
+        },
+        {
+          name: 'excel_clear_style_selection',
+          description: 'Убрать форматирование (стили) у выделенных ячеек, оставить только значения.',
+          args: '{}',
+          run: () => this.aiClearStyleSelection(),
+        },
       ],
     };
   }
@@ -2132,6 +2178,106 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     }
     this.aiPersist(doc, ec);
     return this.docsResult(doc.id, before, `Оформлена колонка ${this.colLetter(idx)} (${n} ячеек).`, 'Отменить оформление');
+  }
+
+  private aiStyleSelection(a: { bold?: boolean; italic?: boolean; underline?: boolean; strikethrough?: boolean; color?: string; bg?: string; align?: 'left' | 'center' | 'right' }): AiActionResult {
+    if (!this.xlLastSel) throw new Error('Нет активного выделения ячеек. Сначала выдели ячейки в таблице.');
+    const { r1, c1, r2, c2, docId, sheetIdx } = this.xlLastSel;
+    const doc = this.docs.find(d => d.id === docId);
+    if (!doc) throw new Error('Документ не найден');
+    const before = doc.content;
+    const ec = this.parseExcelContent(doc.content);
+    const sheet = ec.sheets[sheetIdx] ?? ec.sheets[0];
+    if (!sheet) throw new Error('Лист не найден');
+    const css: string[] = [];
+    if (a.bold !== undefined)         css.push(`font-weight:${a.bold ? 'bold' : 'normal'}`);
+    if (a.italic !== undefined)       css.push(`font-style:${a.italic ? 'italic' : 'normal'}`);
+    if (a.underline !== undefined)    css.push(`text-decoration:${a.underline ? 'underline' : 'none'}`);
+    if (a.strikethrough !== undefined) css.push(`text-decoration:${a.strikethrough ? 'line-through' : 'none'}`);
+    if (a.color && /^#[0-9a-fA-F]{3,8}$/.test(a.color)) css.push(`color:${a.color}`);
+    if (a.bg && /^#[0-9a-fA-F]{3,8}$/.test(a.bg))       css.push(`background:${a.bg}`);
+    if (a.align && ['left','center','right'].includes(a.align)) css.push(`text-align:${a.align}`);
+    if (!css.length) throw new Error('Не заданы параметры оформления');
+    const addStyle = css.join(';') + ';';
+    let count = 0;
+    for (let r = r1; r <= r2; r++) {
+      if (!sheet.data[r]) sheet.data[r] = [];
+      for (let c = c1; c <= c2; c++) {
+        while (sheet.data[r].length <= c) sheet.data[r].push({ v: '' });
+        const cell = sheet.data[r][c] ?? { v: '' };
+        sheet.data[r][c] = { ...cell, s: ((cell.s ?? '') + ';' + addStyle).replace(/;+/g, ';').replace(/^;/, '') };
+        count++;
+      }
+    }
+    this.aiPersist(doc, ec);
+    const rangeStr = `${this.colLetter(c1)}${r1+1}:${this.colLetter(c2)}${r2+1}`;
+    return this.docsResult(doc.id, before, `Применено оформление к ${count} ячейкам (${rangeStr}).`, 'Отменить оформление');
+  }
+
+  private aiClearSelection(): AiActionResult {
+    if (!this.xlLastSel) throw new Error('Нет активного выделения ячеек. Сначала выдели ячейки в таблице.');
+    const { r1, c1, r2, c2, docId, sheetIdx } = this.xlLastSel;
+    const doc = this.docs.find(d => d.id === docId);
+    if (!doc) throw new Error('Документ не найден');
+    const before = doc.content;
+    const ec = this.parseExcelContent(doc.content);
+    const sheet = ec.sheets[sheetIdx] ?? ec.sheets[0];
+    if (!sheet) throw new Error('Лист не найден');
+    let count = 0;
+    for (let r = r1; r <= r2; r++) {
+      if (!sheet.data[r]) continue;
+      for (let c = c1; c <= c2; c++) {
+        if (sheet.data[r][c]) { sheet.data[r][c] = { v: '' }; count++; }
+      }
+    }
+    this.aiPersist(doc, ec);
+    const rangeStr = `${this.colLetter(c1)}${r1+1}:${this.colLetter(c2)}${r2+1}`;
+    return this.docsResult(doc.id, before, `Очищено ${count} ячеек (${rangeStr}).`, 'Отменить очистку');
+  }
+
+  private aiFillSelection(a: { value: string }): AiActionResult {
+    if (!this.xlLastSel) throw new Error('Нет активного выделения ячеек. Сначала выдели ячейки в таблице.');
+    const { r1, c1, r2, c2, docId, sheetIdx } = this.xlLastSel;
+    const doc = this.docs.find(d => d.id === docId);
+    if (!doc) throw new Error('Документ не найден');
+    const before = doc.content;
+    const ec = this.parseExcelContent(doc.content);
+    const sheet = ec.sheets[sheetIdx] ?? ec.sheets[0];
+    if (!sheet) throw new Error('Лист не найден');
+    const val = String(a?.value ?? '');
+    let count = 0;
+    for (let r = r1; r <= r2; r++) {
+      if (!sheet.data[r]) sheet.data[r] = [];
+      for (let c = c1; c <= c2; c++) {
+        while (sheet.data[r].length <= c) sheet.data[r].push({ v: '' });
+        sheet.data[r][c] = { ...sheet.data[r][c], v: val };
+        count++;
+      }
+    }
+    this.aiPersist(doc, ec);
+    const rangeStr = `${this.colLetter(c1)}${r1+1}:${this.colLetter(c2)}${r2+1}`;
+    return this.docsResult(doc.id, before, `Заполнено ${count} ячеек значением «${val}» (${rangeStr}).`, 'Отменить заполнение');
+  }
+
+  private aiClearStyleSelection(): AiActionResult {
+    if (!this.xlLastSel) throw new Error('Нет активного выделения ячеек. Сначала выдели ячейки в таблице.');
+    const { r1, c1, r2, c2, docId, sheetIdx } = this.xlLastSel;
+    const doc = this.docs.find(d => d.id === docId);
+    if (!doc) throw new Error('Документ не найден');
+    const before = doc.content;
+    const ec = this.parseExcelContent(doc.content);
+    const sheet = ec.sheets[sheetIdx] ?? ec.sheets[0];
+    if (!sheet) throw new Error('Лист не найден');
+    let count = 0;
+    for (let r = r1; r <= r2; r++) {
+      if (!sheet.data[r]) continue;
+      for (let c = c1; c <= c2; c++) {
+        if (sheet.data[r][c]) { sheet.data[r][c] = { v: sheet.data[r][c].v }; count++; }
+      }
+    }
+    this.aiPersist(doc, ec);
+    const rangeStr = `${this.colLetter(c1)}${r1+1}:${this.colLetter(c2)}${r2+1}`;
+    return this.docsResult(doc.id, before, `Снято оформление с ${count} ячеек (${rangeStr}).`, 'Отменить сброс стилей');
   }
 
   private aiExcelImproveDesign(a: { accent?: string }): AiActionResult {

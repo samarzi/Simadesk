@@ -6,6 +6,7 @@ import { installGlobalAiActions } from '@/services/aiPageCapabilities';
 import { changeLog } from '@/modules/LogsModule';
 import { esc } from '@/utils/format';
 import { supportChatService, SupportMessage, SupportAttachment, SUPPORT_REASONS } from '@/services/supportChatService';
+import { selectionCtx } from '@/services/selectionContext';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -471,6 +472,8 @@ export class AssistantModule {
   })();
   private voiceOnboarded = !!localStorage.getItem('sd_voice_onboarded');
   private speakingBtn: HTMLElement | null = null;
+  private voiceSendOnEnd = false;  // when true: auto-send after voice stops
+  private voiceHotkeyHeld = false; // Alt+Space hotkey currently held
 
   // ── Support chat state ─────────────────────────────────────────────────────
   private supportMode: 'ai' | 'support' = 'ai';
@@ -617,6 +620,26 @@ export class AssistantModule {
     this.setupResize(panel);
     this.setupFileAttach(panel);
     this.setupPositionTracking();
+    this.setupSelectionCtx(panel);
+
+    // Listen for native text selection on any page
+    document.addEventListener('selectionchange', () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) return;
+      const text = sel.toString().trim();
+      if (text.length < 5) return;
+      const range = sel.getRangeAt(0);
+      const container = range.commonAncestorContainer as Node;
+      const el = container.nodeType === Node.ELEMENT_NODE ? container as HTMLElement : container.parentElement;
+      // Skip: assistant panel itself, Excel cells, inputs
+      if (el?.closest('#sd-assistant-panel, #docs-excel-body, input, textarea')) return;
+      selectionCtx.set({
+        type: 'text',
+        label: `«${text.slice(0, 45)}${text.length > 45 ? '…' : ''}»`,
+        prompt: `[КОНТЕКСТ: выделенный текст на странице]\n${text.slice(0, 800)}${text.length > 800 ? '\n...' : ''}`,
+        data: { text },
+      });
+    });
 
     this.addAssistantMessage(
       'Привет! Я Сима — ваш персональный менеджер маркетплейсов. ' +
@@ -766,6 +789,11 @@ export class AssistantModule {
       <div class="sd-ap-hints">${hints}</div>
       <div class="sd-ap-page-actions" id="sd-ap-page-actions"></div>
       <div class="sd-ap-messages" id="sd-ap-messages"></div>
+      <div class="sd-ap-ctx-chip" id="sd-ap-ctx-chip" style="display:none">
+        <span class="sd-ap-ctx-icon" id="sd-ap-ctx-icon">📋</span>
+        <span class="sd-ap-ctx-label" id="sd-ap-ctx-label"></span>
+        <button class="sd-ap-ctx-close" id="sd-ap-ctx-close" title="Убрать контекст">×</button>
+      </div>
       <div class="sd-ap-attach-chips" id="sd-ap-attach-chips"></div>
       <div class="sd-ap-input-area">
         <button class="sd-ap-btn sd-ap-attach-btn" title="Прикрепить файл (Excel, Word, PDF, фото)">
@@ -946,6 +974,35 @@ export class AssistantModule {
       });
       ro.observe(this.panel);
     }
+  }
+
+  // ── Selection Context Chip ──────────────────────────────────────────────────
+
+  private setupSelectionCtx(panel: HTMLElement): void {
+    const chip    = panel.querySelector<HTMLElement>('#sd-ap-ctx-chip');
+    const iconEl  = panel.querySelector<HTMLElement>('#sd-ap-ctx-icon');
+    const labelEl = panel.querySelector<HTMLElement>('#sd-ap-ctx-label');
+    const closeEl = panel.querySelector<HTMLElement>('#sd-ap-ctx-close');
+    if (!chip || !labelEl) return;
+
+    let dismissedLabel = '';
+
+    const updateChip = () => {
+      const ctx = selectionCtx.current;
+      if (ctx.type === 'none' || ctx.label === dismissedLabel) {
+        chip.style.display = 'none';
+        return;
+      }
+      if (iconEl) iconEl.textContent = ctx.type === 'excel-cells' ? '📊' : '📋';
+      labelEl.textContent = ctx.label;
+      chip.style.display = 'flex';
+    };
+
+    selectionCtx.subscribe(updateChip);
+    closeEl?.addEventListener('click', () => {
+      dismissedLabel = selectionCtx.current.label;
+      chip.style.display = 'none';
+    });
   }
 
   // ── File Attachments ────────────────────────────────────────────────────────
@@ -1989,8 +2046,11 @@ export class AssistantModule {
     try {
       const storeCtx = getStoreContext();
       const pageFrag = aiPage.promptFragment();
+      const selCtxFrag = selectionCtx.current.type !== 'none'
+        ? '\n\n' + selectionCtx.current.prompt
+        : '';
       const messages: ChatMessage[] = [
-        { role: 'system', content: SYSTEM_PROMPT + storeCtx + pageFrag },
+        { role: 'system', content: SYSTEM_PROMPT + storeCtx + pageFrag + selCtxFrag },
         ...this.history.slice(-10),
       ];
 
