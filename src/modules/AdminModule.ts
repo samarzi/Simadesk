@@ -10,7 +10,7 @@ import {
   QUADRANT_LABELS, STATUS_LABELS, QUADRANT_COLORS,
 } from '@/services/roadmapDb';
 import { debug } from '@/utils/debug';
-import { supportChatService, AdminSupportChat, SupportAttachment } from '@/services/supportChatService';
+import { supportChatService, supportErrorText, AdminSupportChat, SupportAttachment } from '@/services/supportChatService';
 
 type AdminTab = 'overview' | 'analytics' | 'users' | 'companies' | 'subscriptions' | 'promos' | 'support' | 'settings' | 'pages' | 'roadmap';
 
@@ -79,6 +79,7 @@ export class AdminModule {
   private liveAttachFiles: SupportAttachment[] = [];
   private liveChatFilter: 'open' | 'all' = 'open';
   private liveChatReasonFilter: string | null = null;
+  private supError: string | null = null;   // причина, по которой список чатов не загрузился
 
   /* support AI auto-reply */
   private supAiEnabled: boolean = localStorage.getItem('sd_sup_ai_enabled') === '1';
@@ -124,7 +125,15 @@ export class AdminModule {
         case 'companies': { const r = await adminService.getCompanies(this.companySearch); this.companies = r.companies; this.companiesTotal = r.total; break; }
         case 'promos':    this.promos = await adminService.getPromos(); break;
         case 'support': {
-          this.liveChats = await supportChatService.adminGetChats(this.liveChatFilter);
+          // Ошибку списка чатов показываем в самой вкладке, а не роняем весь loadTab:
+          // иначе админ видит пустой экран и не понимает, что RPC недоступен.
+          try {
+            this.liveChats = await supportChatService.adminGetChats(this.liveChatFilter);
+            this.supError = null;
+          } catch (e) {
+            this.liveChats = [];
+            this.supError = supportErrorText(e);
+          }
           this.startLiveChatPolling();
           break;
         }
@@ -834,14 +843,32 @@ export class AdminModule {
 
     // Inline edit row
     const isEditing = this.inlineEdit === c.id;
+    const currentEnd = sub?.current_period_end ?? c.owner_trial_ends_at ?? null;
+    // Default date for picker: current end date, or 30 days from now if none
+    const defaultEndDate = currentEnd
+      ? new Date(currentEnd).toISOString().slice(0, 10)
+      : new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+
     const editRow = isEditing ? `
       <tr class="adm-inline-edit-row">
         <td colspan="6">
-          <div class="adm-inline-edit">
-            <span class="adm-inline-edit-label">Добавить дней к подписке:</span>
-            <input class="adm-input adm-inline-days" id="inline-days-${c.id}" type="number" min="1" max="3650" value="30" style="width:80px">
-            <button class="adm-btn-primary adm-btn-sm" data-action="confirm-extend" data-cid="${c.id}">Применить</button>
-            <button class="adm-action-btn" data-action="cancel-extend">Отмена</button>
+          <div class="adm-inline-edit" style="flex-direction:column;align-items:flex-start;gap:12px">
+            ${currentEnd ? `<div style="font-size:12px;color:var(--text2)">Текущая дата окончания: <b>${adminService.fmtDate(currentEnd)}</b></div>` : ''}
+            <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+              <div>
+                <div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:4px">Установить дату окончания</div>
+                <input class="adm-input" id="inline-date-${c.id}" type="date" value="${defaultEndDate}" style="width:160px">
+              </div>
+              <div style="display:flex;flex-direction:column;align-items:center;color:var(--text3);font-size:11px;font-weight:600;padding-bottom:8px">или</div>
+              <div>
+                <div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:4px">Добавить / убрать дни</div>
+                <input class="adm-input adm-inline-days" id="inline-days-${c.id}" type="number" min="-3650" max="3650" value="0" style="width:90px" placeholder="0">
+              </div>
+              <div style="display:flex;gap:6px;padding-bottom:2px">
+                <button class="adm-btn-primary adm-btn-sm" data-action="confirm-extend" data-cid="${c.id}">Применить</button>
+                <button class="adm-action-btn" data-action="cancel-extend">Отмена</button>
+              </div>
+            </div>
           </div>
         </td>
       </tr>` : '';
@@ -1094,7 +1121,20 @@ export class AdminModule {
       { id: 'google/gemini-flash-1.5', label: 'Gemini Flash 1.5' },
     ];
 
+    const errorBar = this.supError
+      ? `<div class="adm-sup-error-bar">
+           <span class="adm-sup-error-icon">⚠️</span>
+           <div class="adm-sup-error-text">
+             <b>Чаты не загрузились</b>
+             <span>${this.esc(this.supError)}</span>
+           </div>
+           <button class="adm-btn-secondary" id="adm-sup-diag" style="padding:5px 12px;font-size:12px">Диагностика</button>
+           <button class="adm-btn-secondary" id="adm-sup-retry" style="padding:5px 12px;font-size:12px">Повторить</button>
+         </div>`
+      : '';
+
     return `
+    ${errorBar}
     <div class="adm-sup-ai-bar">
       <label class="adm-sup-ai-toggle" title="ИИ автоматически отвечает на очевидные вопросы. Если не уверен — помечает чат 🔴">
         <span class="adm-sup-ai-toggle-track${this.supAiEnabled ? ' on' : ''}" id="sup-ai-toggle-track">
@@ -1168,6 +1208,24 @@ export class AdminModule {
   }
 
   private bindLiveChatEvents(): void {
+    // Диагностика поддержки: права админа + реальные счётчики в базе
+    this.el.querySelector('#adm-sup-retry')?.addEventListener('click', () => this.loadTab());
+    this.el.querySelector('#adm-sup-diag')?.addEventListener('click', async () => {
+      const st = await supportChatService.debugStatus();
+      if (!st) {
+        showToast('RPC support_debug_status недоступна — примените миграцию 20260730_support_chat_fix.sql', 'error');
+        return;
+      }
+      const lines = [
+        `Админ: ${st.is_admin ? 'да' : 'НЕТ — добавьте себя в platform_admins'}`,
+        `Всего чатов: ${st.total_chats} (открытых: ${st.total_open_chats})`,
+        `Всего сообщений: ${st.total_messages}`,
+        `Чатов без профиля в users: ${st.orphan_chats}`,
+      ];
+      showToast(lines.join(' · '), st.is_admin ? 'success' : 'error');
+      console.info('[Support] diagnostics', st);
+    });
+
     // AI toggle
     const aiTrack = this.el.querySelector<HTMLElement>('#sup-ai-toggle-track');
     aiTrack?.addEventListener('click', () => {
@@ -1336,7 +1394,17 @@ export class AdminModule {
       if (this.tab !== 'support') { this.stopLiveChatPolling(); return; }
       try {
         // Refresh chat list
-        const chats = await supportChatService.adminGetChats(this.liveChatFilter);
+        let chats: AdminSupportChat[];
+        try {
+          chats = await supportChatService.adminGetChats(this.liveChatFilter);
+          // Ошибка была и ушла — перерисуем вкладку, чтобы убрать баннер
+          // (render() сам перевешивает обработчики через bindEvents)
+          if (this.supError) { this.supError = null; this.liveChats = chats; this.render(); return; }
+        } catch (e) {
+          const msg = supportErrorText(e);
+          if (msg !== this.supError) { this.supError = msg; this.render(); }
+          return;
+        }
         this.liveChats = chats;
         // Update sidebar only (don't re-render whole tab — would lose detail view state)
         const list = this.el.querySelector<HTMLElement>('.adm-live-chat-list');
@@ -1955,15 +2023,36 @@ ${this.SIMADESK_KNOWLEDGE}
       this.render(); this.bindEvents();
     }
 
-    // Confirm inline day extension
+    // Confirm inline extension — date input takes priority over days offset
     if (action === 'confirm-extend' && cid) {
-      const input = document.getElementById(`inline-days-${cid}`) as HTMLInputElement | null;
-      const days = parseInt(input?.value ?? '0', 10);
-      if (!days || isNaN(days) || days < 1) { showToast('Введите корректное число дней', 'error'); return; }
+      const dateInput = document.getElementById(`inline-date-${cid}`) as HTMLInputElement | null;
+      const daysInput = document.getElementById(`inline-days-${cid}`) as HTMLInputElement | null;
       const co = this.apiCompanies.find(c => c.id === cid);
+
+      let endDateISO: string | null = null;
+      let toastMsg = '';
+
+      const daysVal = parseInt(daysInput?.value ?? '0', 10);
+      const dateVal = dateInput?.value ?? '';
+
+      if (daysVal !== 0 && !isNaN(daysVal)) {
+        // Relative: compute new end from current end (or now) ± days
+        const currentEnd = co?.subscription?.current_period_end ?? co?.owner_trial_ends_at ?? null;
+        const base = currentEnd ? new Date(currentEnd).getTime() : Date.now();
+        endDateISO = new Date(base + daysVal * 86_400_000).toISOString();
+        toastMsg = `Подписка «${co?.name ?? ''}» ${daysVal > 0 ? `продлена на ${daysVal} дн.` : `сокращена на ${Math.abs(daysVal)} дн.`}`;
+      } else if (dateVal) {
+        // Absolute date
+        endDateISO = new Date(dateVal + 'T23:59:59').toISOString();
+        toastMsg = `Дата окончания подписки «${co?.name ?? ''}» установлена на ${new Date(dateVal).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}`;
+      } else {
+        showToast('Укажите дату или количество дней', 'error');
+        return;
+      }
+
       try {
-        await adminService.extendSubscription(cid, days);
-        showToast(`Подписка «${co?.name ?? ''}» продлена на ${days} дней`, 'success');
+        await adminService.setSubscriptionEnd(cid, endDateISO);
+        showToast(toastMsg, 'success');
         this.inlineEdit = null;
         this.apiCompanies = await adminService.getCompaniesWithApi(this.apiSearch);
         this.render(); this.bindEvents();
@@ -2005,6 +2094,7 @@ ${this.SIMADESK_KNOWLEDGE}
     if (action === 'roadmap-save')    { await this.handleRoadmapSave(); return; }
     if (action === 'roadmap-edit')    { this.handleRoadmapEdit(btn.dataset.taskId ?? ''); return; }
     if (action === 'roadmap-delete')  { await this.handleRoadmapDelete(btn.dataset.taskId ?? ''); return; }
+    if (action === 'roadmap-dedup')   { await this.handleRoadmapDedup(); return; }
   }
 
   private async openPromo(p: PromoCode): Promise<void> {
@@ -2150,105 +2240,142 @@ ${this.SIMADESK_KNOWLEDGE}
 
   // ── ROADMAP ──────────────────────────────────────────────────────────────────
   private renderRoadmap(): string {
+    const quadrants: Quadrant[] = ['urgent_important', 'important_not_urgent', 'urgent_not_important', 'not_urgent_not_important'];
+    const statuses: RoadmapStatus[] = ['todo', 'in_progress', 'done'];
+
     const filtered = this.roadmapFilter === 'all'
       ? this.roadmapTasks
       : this.roadmapTasks.filter(t => t.quadrant === this.roadmapFilter);
 
-    const quadrants: Quadrant[] = ['urgent_important', 'important_not_urgent', 'urgent_not_important', 'not_urgent_not_important'];
+    // Detect duplicates (same title, case-insensitive)
+    const titleCount = new Map<string, number>();
+    for (const t of this.roadmapTasks) {
+      const key = t.title.trim().toLowerCase();
+      titleCount.set(key, (titleCount.get(key) ?? 0) + 1);
+    }
+    const dupCount = [...titleCount.values()].filter(n => n > 1).length;
+
+    const STATUS_META: Record<RoadmapStatus, { label: string; color: string; bg: string; border: string }> = {
+      todo:        { label: 'К выполнению', color: '#6b7280', bg: 'rgba(107,114,128,.08)', border: '#6b728033' },
+      in_progress: { label: 'В работе',     color: '#3b82f6', bg: 'rgba(59,130,246,.08)',  border: '#3b82f633' },
+      done:        { label: 'Готово',        color: '#22c55e', bg: 'rgba(34,197,94,.08)',   border: '#22c55e33' },
+    };
+
+    const renderCard = (t: RoadmapTask) => {
+      const qColor = QUADRANT_COLORS[t.quadrant];
+      const isDup  = (titleCount.get(t.title.trim().toLowerCase()) ?? 0) > 1;
+      return `
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:13px 14px;display:flex;flex-direction:column;gap:9px;transition:box-shadow .15s"
+           onmouseenter="this.style.boxShadow='0 2px 10px rgba(0,0,0,.12)'" onmouseleave="this.style.boxShadow=''">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span style="width:7px;height:7px;border-radius:50%;background:${qColor};flex-shrink:0"></span>
+          <span style="font-size:10px;color:${qColor};font-weight:700;text-transform:uppercase;letter-spacing:.4px">${QUADRANT_LABELS[t.quadrant]}</span>
+          ${isDup ? `<span style="margin-left:auto;font-size:10px;font-weight:700;color:#ef4444;background:rgba(239,68,68,.1);padding:1px 7px;border-radius:20px">дубликат</span>` : ''}
+        </div>
+        <div style="font-size:13px;font-weight:700;color:var(--text);line-height:1.4">${this.esc(t.title)}</div>
+        ${t.description ? `<div style="font-size:12px;color:var(--text2);line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${this.esc(t.description)}</div>` : ''}
+        <div style="display:flex;gap:6px;padding-top:8px;border-top:1px solid var(--border)">
+          <button class="adm-btn-sm" data-action="roadmap-edit" data-task-id="${t.id}" style="flex:1;justify-content:center">Редактировать</button>
+          <button class="adm-btn-sm" data-action="roadmap-delete" data-task-id="${t.id}" style="color:#ef4444;padding:4px 8px">✕</button>
+        </div>
+      </div>`;
+    };
+
+    const kanban = statuses.map(status => {
+      const cards = filtered.filter(t => t.status === status);
+      const m = STATUS_META[status];
+      return `
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;padding-bottom:10px;border-bottom:2px solid ${m.color}">
+          <div style="width:9px;height:9px;border-radius:50%;background:${m.color}"></div>
+          <span style="font-size:13px;font-weight:700;color:var(--text)">${m.label}</span>
+          <span style="font-size:11px;font-weight:800;color:${m.color};background:${m.bg};border:1px solid ${m.border};padding:1px 9px;border-radius:20px;margin-left:auto">${cards.length}</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${cards.length
+            ? cards.map(renderCard).join('')
+            : `<div style="background:var(--bg2);border:1px dashed var(--border);border-radius:10px;padding:22px 14px;text-align:center;color:var(--text3);font-size:12px">Нет задач</div>`}
+        </div>
+      </div>`;
+    }).join('');
+
+    const dupBanner = dupCount > 0 ? `
+      <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:10px;padding:11px 16px;display:flex;align-items:center;gap:10px;margin-bottom:16px">
+        <span style="font-size:14px">⚠️</span>
+        <span style="font-size:13px;color:var(--text);flex:1">Обнаружено <b>${dupCount}</b> групп задач с одинаковым названием — вероятно, дубликаты.</span>
+        <button class="adm-btn-sm" data-action="roadmap-dedup" style="color:#ef4444;white-space:nowrap">Удалить дубликаты</button>
+      </div>` : '';
 
     const filterBtns: Array<{ key: string; label: string; color?: string }> = [
       { key: 'all', label: 'Все' },
       ...quadrants.map(q => ({ key: q, label: QUADRANT_LABELS[q], color: QUADRANT_COLORS[q] })),
     ];
 
-    const taskRows = filtered.map(t => {
-      const qColor = QUADRANT_COLORS[t.quadrant];
-      const sLabel = STATUS_LABELS[t.status];
-      const sColor = t.status === 'done' ? '#22c55e' : t.status === 'in_progress' ? '#3b82f6' : '#6b7280';
-      return `
-        <tr>
-          <td>
-            <div style="display:flex;align-items:center;gap:8px">
-              <span style="width:10px;height:10px;border-radius:50%;background:${qColor};flex-shrink:0"></span>
-              <div>
-                <div style="font-weight:600;font-size:13px">${this.esc(t.title)}</div>
-                ${t.description ? `<div style="font-size:12px;color:var(--text2);margin-top:2px;max-width:500px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.esc(t.description)}</div>` : ''}
-              </div>
-            </div>
-          </td>
-          <td><span style="font-size:12px;color:${qColor};font-weight:600">${QUADRANT_LABELS[t.quadrant]}</span></td>
-          <td><span style="font-size:12px;color:${sColor};font-weight:600">${sLabel}</span></td>
-          <td style="white-space:nowrap">
-            <button class="adm-btn-sm" data-action="roadmap-edit" data-task-id="${t.id}" style="margin-right:4px">Ред.</button>
-            <button class="adm-btn-sm" data-action="roadmap-delete" data-task-id="${t.id}" style="color:#ef4444">Удал.</button>
-          </td>
-        </tr>`;
-    }).join('');
-
     const form = this.roadmapFormOpen ? `
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px">
-        <div style="font-weight:700;font-size:14px;margin-bottom:14px">${this.roadmapEditing ? 'Редактировать задачу' : 'Новая задача'}</div>
-        <div style="display:grid;gap:12px">
+        <div style="font-weight:700;font-size:14px;margin-bottom:16px;display:flex;align-items:center;gap:8px">
+          <span>${this.roadmapEditing ? '✏️ Редактировать задачу' : '➕ Новая задача'}</span>
+        </div>
+        <div style="display:grid;gap:14px">
           <div>
-            <label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Заголовок</label>
-            <input id="rm-title" type="text" value="${this.esc(this.roadmapForm.title)}" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box" />
+            <label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:5px">Заголовок *</label>
+            <input id="rm-title" type="text" value="${this.esc(this.roadmapForm.title)}"
+              placeholder="Что нужно сделать?"
+              style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box;outline:none" />
           </div>
           <div>
-            <label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Описание</label>
-            <textarea id="rm-desc" rows="3" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box;resize:vertical">${this.esc(this.roadmapForm.description)}</textarea>
+            <label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:5px">Описание</label>
+            <textarea id="rm-desc" rows="3" placeholder="Подробности, ссылки, контекст…"
+              style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box;resize:vertical;font-family:inherit">${this.esc(this.roadmapForm.description)}</textarea>
           </div>
-          <div style="display:flex;gap:12px">
-            <div style="flex:1">
-              <label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Квадрант Эйзенхауэра</label>
-              <select id="rm-quadrant" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div>
+              <label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:5px">Приоритет (квадрант)</label>
+              <select id="rm-quadrant"
+                style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
                 ${quadrants.map(q => `<option value="${q}" ${this.roadmapForm.quadrant === q ? 'selected' : ''}>${QUADRANT_LABELS[q]}</option>`).join('')}
               </select>
             </div>
-            <div style="flex:1">
-              <label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Статус</label>
-              <select id="rm-status" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px">
+            <div>
+              <label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:5px">Статус</label>
+              <select id="rm-status"
+                style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
                 ${(Object.keys(STATUS_LABELS) as RoadmapStatus[]).map(s => `<option value="${s}" ${this.roadmapForm.status === s ? 'selected' : ''}>${STATUS_LABELS[s]}</option>`).join('')}
               </select>
             </div>
           </div>
-          <div style="display:flex;gap:8px;justify-content:flex-end">
-            <button class="adm-btn" data-action="roadmap-cancel" style="background:var(--bg3);color:var(--text2)">Отмена</button>
-            <button class="adm-btn" data-action="roadmap-save" style="background:var(--accent);color:#000;font-weight:600">${this.roadmapEditing ? 'Сохранить' : 'Создать'}</button>
+          <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:4px">
+            <button class="adm-btn-sm" data-action="roadmap-cancel" style="padding:8px 16px">Отмена</button>
+            <button class="adm-btn-sm" data-action="roadmap-save" style="background:var(--accent);color:#0a0a0a;font-weight:700;padding:8px 20px;border-color:var(--accent)">
+              ${this.roadmapEditing ? 'Сохранить изменения' : 'Создать задачу'}
+            </button>
           </div>
         </div>
       </div>` : '';
 
+    const totalAll   = this.roadmapTasks.length;
+    const totalShown = filtered.length;
+
     return `
       <div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${dupBanner}
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">
             ${filterBtns.map(f => `
-              <button class="adm-pill ${this.roadmapFilter === f.key ? 'active' : ''}" data-action="roadmap-filter" data-filter="${f.key}"
-                ${f.color ? `style="--pill-color:${f.color}"` : ''}>
-                ${f.color ? `<span style="width:8px;height:8px;border-radius:50%;background:${f.color};display:inline-block"></span>` : ''}
+              <button class="adm-pill ${this.roadmapFilter === f.key ? 'active' : ''}" data-action="roadmap-filter" data-filter="${f.key}">
+                ${f.color ? `<span style="width:7px;height:7px;border-radius:50%;background:${f.color};display:inline-block;flex-shrink:0"></span>` : ''}
                 ${f.label}
-              </button>
-            `).join('')}
+              </button>`).join('')}
+            <span style="font-size:11px;color:var(--text3);margin-left:4px">${totalShown !== totalAll ? `${totalShown} / ` : ''}${totalAll} задач</span>
           </div>
-          <button class="adm-btn" data-action="roadmap-new" style="background:var(--accent);color:#000;font-weight:600">+ Новая задача</button>
+          <button class="adm-btn-sm" data-action="roadmap-new" style="background:var(--accent);color:#0a0a0a;font-weight:700;padding:7px 16px;border-color:var(--accent)">
+            + Новая задача
+          </button>
         </div>
         ${form}
-        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">
-          <table style="width:100%;border-collapse:collapse;font-size:13px">
-            <thead>
-              <tr style="border-bottom:1px solid var(--border);text-align:left">
-                <th style="padding:10px 14px;font-weight:600;color:var(--text2)">Задача</th>
-                <th style="padding:10px 14px;font-weight:600;color:var(--text2)">Приоритет</th>
-                <th style="padding:10px 14px;font-weight:600;color:var(--text2)">Статус</th>
-                <th style="padding:10px 14px;font-weight:600;color:var(--text2)">Действия</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${taskRows || '<tr><td colspan="4" style="padding:24px;text-align:center;color:var(--text2)">Нет задач</td></tr>'}
-            </tbody>
-          </table>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;align-items:start">
+          ${kanban}
         </div>
-        <div style="margin-top:12px;font-size:12px;color:var(--text2)">Всего: ${this.roadmapTasks.length} задач</div>
       </div>`;
   }
 
@@ -2313,6 +2440,28 @@ ${this.SIMADESK_KNOWLEDGE}
       this.loadTab();
     } catch (e: unknown) {
       showToast('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'неизвестная'), 'error');
+    }
+  }
+
+  private async handleRoadmapDedup(): Promise<void> {
+    const seen = new Map<string, string>(); // normalized title → first id
+    const toDelete: string[] = [];
+    for (const t of this.roadmapTasks) {
+      const key = t.title.trim().toLowerCase();
+      if (seen.has(key)) {
+        toDelete.push(t.id);
+      } else {
+        seen.set(key, t.id);
+      }
+    }
+    if (!toDelete.length) { showToast('Дубликатов не найдено', 'info'); return; }
+    if (!confirm(`Удалить ${toDelete.length} дубликат(ов)? Останется по одной задаче каждого названия.`)) return;
+    try {
+      await Promise.all(toDelete.map(id => roadmapDb.deleteTask(id)));
+      showToast(`Удалено ${toDelete.length} дубликатов`, 'success');
+      this.loadTab();
+    } catch (e: unknown) {
+      showToast('Ошибка: ' + ((e instanceof Error ? e.message : String(e)) ?? 'неизвестная'), 'error');
     }
   }
 

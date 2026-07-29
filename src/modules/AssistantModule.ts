@@ -5,7 +5,7 @@ import { aiPage, aiGlow } from '@/services/aiPageContext';
 import { installGlobalAiActions } from '@/services/aiPageCapabilities';
 import { changeLog } from '@/modules/LogsModule';
 import { esc } from '@/utils/format';
-import { supportChatService, SupportMessage, SupportAttachment, SUPPORT_REASONS } from '@/services/supportChatService';
+import { supportChatService, supportErrorText, SupportMessage, SupportAttachment, SUPPORT_REASONS } from '@/services/supportChatService';
 import { selectionCtx } from '@/services/selectionContext';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -505,6 +505,9 @@ export class AssistantModule {
     if (!this.panel) {
       this.createPanel();
       this.btn.addEventListener('click', () => this.togglePanel());
+      // Если диалог с поддержкой уже открыт — следим за ответом оператора
+      // в фоне, чтобы показать бейдж, даже пока панель закрыта.
+      if (this.supportChatId) this.startSupportPolling();
     }
 
     // Load config (may fail if unauthenticated — that's OK, key loads later)
@@ -715,12 +718,8 @@ export class AssistantModule {
           <h3>Сима</h3>
           <p>AI-менеджер маркетплейсов</p>
         </div>
-        <div class="sd-ap-mode-tabs" id="sd-ap-mode-tabs">
-          <button class="sd-ap-mode-tab active" data-mode="ai">Сима</button>
-          <button class="sd-ap-mode-tab" data-mode="support">Поддержка</button>
-        </div>
+        <div class="sd-ap-status" id="sd-ap-status">Готова</div>
         <div class="sd-ap-header-actions">
-          <div class="sd-ap-status" id="sd-ap-status">Готова</div>
           <button class="sd-ap-btn sd-ap-tts-btn" title="Озвучка текста">
             <svg class="tts-icon-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
@@ -742,6 +741,10 @@ export class AssistantModule {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
         </div>
+      </div>
+      <div class="sd-ap-mode-tabs" id="sd-ap-mode-tabs">
+        <button class="sd-ap-mode-tab active" data-mode="ai">Сима</button>
+        <button class="sd-ap-mode-tab" data-mode="support">Поддержка<span class="sd-ap-tab-dot" id="sd-ap-sup-dot" style="display:none"></span></button>
       </div>
       ${noKey ? `
       <div class="sd-ap-key-setup">
@@ -898,21 +901,23 @@ export class AssistantModule {
 
   // ── Resize ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Размер панели живёт в CSS-переменных --ap-w / --ap-h.
+   * Ограничение по экрану делает сам CSS (clamp/min), поэтому при изменении
+   * размера окна скрипт вообще ничего не пересчитывает — нечему дёргаться.
+   */
   private setupResize(panel: HTMLElement): void {
     const handle = panel.querySelector<HTMLElement>('.sd-ap-resize-handle');
     if (!handle) return;
 
-    const applyStoredSize = () => {
-      const savedW = parseInt(localStorage.getItem('sd_ap_w') || '0', 10);
-      const savedH = parseInt(localStorage.getItem('sd_ap_h') || '0', 10);
-      if (savedW >= 340 && savedW <= 700) panel.style.width = savedW + 'px';
-      else localStorage.removeItem('sd_ap_w');
-      if (savedH >= 400 && savedH <= window.innerHeight - 80) {
-        panel.style.height = savedH + 'px';
-        panel.style.maxHeight = savedH + 'px';
-      } else localStorage.removeItem('sd_ap_h');
-    };
-    applyStoredSize();
+    const MIN_W = 320, MAX_W = 760, MIN_H = 320, MAX_H = 1200;
+
+    const savedW = parseInt(localStorage.getItem('sd_ap_w') || '0', 10);
+    const savedH = parseInt(localStorage.getItem('sd_ap_h') || '0', 10);
+    if (savedW >= MIN_W && savedW <= MAX_W) panel.style.setProperty('--ap-w', savedW + 'px');
+    else localStorage.removeItem('sd_ap_w');
+    if (savedH >= MIN_H && savedH <= MAX_H) panel.style.setProperty('--ap-h', savedH + 'px');
+    else localStorage.removeItem('sd_ap_h');
 
     let startX = 0, startY = 0, startW = 0, startH = 0;
     let rafId: number | null = null;
@@ -921,43 +926,39 @@ export class AssistantModule {
 
     const applySize = () => {
       rafId = null;
-      panel.style.width = pendingW + 'px';
-      if (!isSidebar()) panel.style.height = pendingH + 'px';
+      panel.style.setProperty('--ap-w', pendingW + 'px');
+      if (!isSidebar()) panel.style.setProperty('--ap-h', pendingH + 'px');
     };
 
     const startResize = (clientX: number, clientY: number) => {
       this.isResizing = true;
       startX = clientX; startY = clientY;
-      startW = panel.offsetWidth;
-      const currentH = panel.offsetHeight;
-      panel.style.height = currentH + 'px';
-      panel.style.maxHeight = 'none';
-      startH = panel.offsetHeight;
-      pendingW = startW; pendingH = startH;
+      const rect = panel.getBoundingClientRect();
+      startW = pendingW = Math.round(rect.width);
+      startH = pendingH = Math.round(rect.height);
       panel.classList.add('sd-ap-resizing');
       document.body.style.userSelect = 'none';
+    };
+
+    const track = (clientX: number, clientY: number) => {
+      pendingW = Math.round(Math.max(MIN_W, Math.min(MAX_W, startW + (startX - clientX))));
+      if (!isSidebar()) {
+        pendingH = Math.round(Math.max(MIN_H, Math.min(MAX_H, startH + (startY - clientY))));
+      }
+      if (rafId === null) rafId = requestAnimationFrame(applySize);
     };
 
     const endResize = () => {
       if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; applySize(); }
       panel.classList.remove('sd-ap-resizing');
       document.body.style.userSelect = '';
-      const h = panel.offsetHeight;
-      if (h >= 400) panel.style.maxHeight = h + 'px';
-      const w = parseInt(panel.style.width, 10);
-      if (w >= 340 && w <= 700) localStorage.setItem('sd_ap_w', String(w));
-      if (h >= 400 && h <= window.innerHeight - 80) localStorage.setItem('sd_ap_h', String(h));
       this.isResizing = false;
-      // Reposition arrow after resize ends
+      localStorage.setItem('sd_ap_w', String(pendingW));
+      if (!isSidebar()) localStorage.setItem('sd_ap_h', String(pendingH));
       this.positionPanel();
     };
 
-    const onMove = (e: MouseEvent) => {
-      pendingW = Math.max(340, Math.min(700, startW + (startX - e.clientX)));
-      if (!isSidebar()) pendingH = Math.max(400, Math.min(window.innerHeight - 80, startH + (startY - e.clientY)));
-      if (rafId === null) rafId = requestAnimationFrame(applySize);
-    };
-
+    const onMove = (e: MouseEvent) => track(e.clientX, e.clientY);
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
@@ -965,21 +966,17 @@ export class AssistantModule {
     };
 
     handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
       startResize(e.clientX, e.clientY);
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
-      e.preventDefault();
     });
 
     handle.addEventListener('touchstart', (e) => {
+      e.preventDefault();
       const t = e.touches[0];
       startResize(t.clientX, t.clientY);
-      const onTMove = (ev: TouchEvent) => {
-        const tt = ev.touches[0];
-        pendingW = Math.max(340, Math.min(700, startW + (startX - tt.clientX)));
-        if (!isSidebar()) pendingH = Math.max(400, Math.min(window.innerHeight - 80, startH + (startY - tt.clientY)));
-        if (rafId === null) rafId = requestAnimationFrame(applySize);
-      };
+      const onTMove = (ev: TouchEvent) => { const tt = ev.touches[0]; track(tt.clientX, tt.clientY); };
       const onTEnd = () => {
         document.removeEventListener('touchmove', onTMove);
         document.removeEventListener('touchend', onTEnd);
@@ -987,26 +984,44 @@ export class AssistantModule {
       };
       document.addEventListener('touchmove', onTMove, { passive: false });
       document.addEventListener('touchend', onTEnd);
-      e.preventDefault();
     }, { passive: false });
   }
 
+  /**
+   * Слежение за положением кнопки в доке.
+   * Никаких MutationObserver на доке и ResizeObserver на самой панели: раньше
+   * positionPanel() менял стили панели → срабатывал наблюдатель → снова
+   * positionPanel(). Эта петля и давала дрожание при ресайзе окна.
+   */
   private setupPositionTracking(): void {
+    let rafId: number | null = null;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const schedule = () => {
+      if (!this.isOpen || this.isResizing || rafId !== null) return;
+      rafId = requestAnimationFrame(() => { rafId = null; this.positionPanel(); });
+    };
+
     window.addEventListener('resize', () => {
-      if (this.isOpen) this.positionPanel();
-    });
+      if (!this.isOpen) return;
+      // На время «тряски» окна глушим анимации и тени — кадры перестают проседать
+      this.panel?.classList.add('sd-ap-resizing');
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        idleTimer = null;
+        this.panel?.classList.remove('sd-ap-resizing');
+        this.positionPanel();
+      }, 140);
+      schedule();
+    }, { passive: true });
 
-    const dock = document.querySelector('.dock') || document.querySelector('nav') || document.body;
-    const obs = new MutationObserver(() => {
-      if (this.isOpen && !this.isResizing) this.positionPanel();
-    });
-    obs.observe(dock, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('orientationchange', schedule);
 
-    if (this.panel) {
-      const ro = new ResizeObserver(() => {
-        if (this.isOpen && !this.isResizing) this.positionPanel();
-      });
-      ro.observe(this.panel);
+    // Док может менять высоту (мобильная раскладка) — следим только за ним
+    const dock = document.querySelector('.dock') || document.querySelector('nav');
+    if (dock && typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(schedule).observe(dock);
     }
   }
 
@@ -1608,48 +1623,50 @@ export class AssistantModule {
     }
   }
 
+  /** Последние применённые координаты — чтобы не трогать DOM без нужды. */
+  private lastPos = '';
+
+  /**
+   * Привязка панели к кнопке в доке. Пишет только CSS-переменные
+   * (--ap-bottom / --ap-right / --arrow-left): ширину и высоту зажимает сам CSS,
+   * поэтому вызов дешёвый и не вызывает каскадных перерасчётов.
+   */
   private positionPanel(): void {
     if (!this.panel || !this.btn) return;
 
-    // In docs fullscreen mode, use full-height right sidebar
+    // Полноэкранный редактор документов — панель становится боковой
     const docsFullscreen = !!document.querySelector('.docs-shell.docs-fullscreen');
-    // Hide mode tabs in fullscreen editor — no space for switching
     const modeTabs = this.panel.querySelector<HTMLElement>('#sd-ap-mode-tabs');
     if (modeTabs) modeTabs.style.display = docsFullscreen ? 'none' : '';
+
     if (docsFullscreen) {
       this.panel.classList.add('sidebar');
-      this.panel.style.bottom = '';
-      this.panel.style.top = '0';
-      this.panel.style.right = '0';
-      this.panel.style.height = '100dvh';
-      this.panel.style.maxHeight = '100dvh';
+      this.lastPos = 'sidebar';
       return;
     }
-
-    // Normal mode: popup above the dock icon
     this.panel.classList.remove('sidebar');
-    this.panel.style.top = '';
-    this.panel.style.height = '';
 
     const btn = this.btn.getBoundingClientRect();
-    const panelW = this.panel.offsetWidth || 390;
+    const panelW = this.panel.getBoundingClientRect().width || 400;
     const gap = 12;
 
-    const bottom = window.innerHeight - btn.top + gap;
-    const right = Math.max(8, window.innerWidth - btn.right);
-
-    this.panel.style.bottom = bottom + 'px';
-    this.panel.style.right  = right + 'px';
+    const bottom = Math.round(Math.max(8, window.innerHeight - btn.top + gap));
+    const right  = Math.round(Math.max(8, window.innerWidth - btn.right));
 
     const btnCenterX = btn.left + btn.width / 2;
-    const panelRight = window.innerWidth - right;
-    const panelLeft  = panelRight - panelW;
+    const panelLeft  = (window.innerWidth - right) - panelW;
     const originXpx  = btnCenterX - panelLeft;
     const originXpct = Math.min(100, Math.max(0, (originXpx / panelW) * 100));
-    this.panel.style.transformOrigin = `${originXpct}% 100%`;
+    const arrowLeft  = Math.round(Math.min(panelW - 28, Math.max(12, originXpx - 7)));
 
-    const arrowLeft = Math.min(panelW - 30, Math.max(10, originXpx - 11));
+    const key = `${bottom}|${right}|${arrowLeft}|${originXpct.toFixed(1)}`;
+    if (key === this.lastPos) return;   // ничего не изменилось — не пишем в DOM
+    this.lastPos = key;
+
+    this.panel.style.setProperty('--ap-bottom', bottom + 'px');
+    this.panel.style.setProperty('--ap-right', right + 'px');
     this.panel.style.setProperty('--arrow-left', arrowLeft + 'px');
+    this.panel.style.transformOrigin = `${originXpct}% 100%`;
   }
 
   // ── Support chat ──────────────────────────────────────────────────────────────
@@ -1684,10 +1701,43 @@ export class AssistantModule {
 
     if (supView) {
       supView.style.display = mode === 'support' ? 'flex' : 'none';
-      if (mode === 'support') this.renderSupportView(supView);
+      if (mode === 'support') {
+        this.supportUnread = 0;
+        this.updateSupportBadge();
+        this.renderSupportView(supView);
+      }
     }
 
-    if (mode === 'ai') this.stopSupportPolling();
+    // Опрос НЕ останавливаем при уходе на вкладку Симы — иначе ответ оператора
+    // остаётся незамеченным. В фоне он только считает непрочитанные.
+    if (mode === 'ai' && this.supportChatId) this.startSupportPolling();
+  }
+
+  /** Счётчик непрочитанных ответов оператора на вкладке «Поддержка». */
+  private supportUnread = 0;
+
+  private updateSupportBadge(): void {
+    const dot = this.panel?.querySelector<HTMLElement>('#sd-ap-sup-dot');
+    if (!dot) return;
+    if (this.supportUnread > 0 && this.supportMode !== 'support') {
+      dot.textContent = this.supportUnread > 9 ? '9+' : String(this.supportUnread);
+      dot.style.display = '';
+    } else {
+      dot.style.display = 'none';
+    }
+  }
+
+  /** Экран ошибки поддержки с кнопкой повтора — вместо молчаливого пустого чата. */
+  private showSupportError(container: HTMLElement, message: string): void {
+    container.innerHTML = `
+      <div class="sd-sup-error">
+        <div style="font-size:1.8rem">⚠️</div>
+        <div>${esc(message)}</div>
+        <button id="sd-sup-retry">Повторить</button>
+      </div>`;
+    container.querySelector('#sd-sup-retry')?.addEventListener('click', () => {
+      this.renderSupportView(container);
+    });
   }
 
   private renderSupportView(container: HTMLElement): void {
@@ -1696,6 +1746,11 @@ export class AssistantModule {
       // Restore message history from server if not yet loaded
       if (!this.supportMessages.length) {
         supportChatService.getMyChat().then(chat => {
+          // undefined = запрос не прошёл (сеть/права). Чат не трогаем, показываем ошибку.
+          if (chat === undefined) {
+            this.showSupportError(container, supportChatService.lastError ?? 'Нет связи с сервером');
+            return;
+          }
           if (!chat || chat.id !== this.supportChatId) {
             // Chat no longer active on server — clear stale localStorage
             localStorage.removeItem('sd_sup_chat_id');
@@ -1746,7 +1801,8 @@ export class AssistantModule {
           this.renderSupportChat(container);
           this.startSupportPolling();
         } catch (e) {
-          container.innerHTML = `<div class="sd-sup-error">Не удалось создать чат: ${e instanceof Error ? e.message : 'ошибка'}</div>`;
+          console.error('[Support] createChat:', e);
+          this.showSupportError(container, 'Не удалось создать чат. ' + supportErrorText(e));
         }
       });
     });
@@ -1813,24 +1869,26 @@ export class AssistantModule {
         attachments: attachSnap,
         created_at: new Date().toISOString(),
       }];
+      this.supportPending.add(optId);
       this.renderSupportMessages();
       try {
         await supportChatService.sendMessage(this.supportChatId, text, attachSnap);
-        // Refresh from server to confirm message was stored
+        this.supportPending.delete(optId);
+        // Перечитываем весь диалог — подтверждение, что сообщение реально в базе
         const msgs = await supportChatService.getMessagesSince(this.supportChatId);
         if (msgs.length) {
           this.supportMessages = msgs;
           this.supportLastMsgTime = msgs[msgs.length - 1]?.created_at ?? null;
-          this.renderSupportMessages();
+          this.supportFailed.clear();
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[Support] Ошибка отправки:', msg);
-        // Mark optimistic message as failed
-        this.supportMessages = this.supportMessages.map(m =>
-          m.id === optId ? { ...m, content: m.content + '\n\n⚠️ Не отправлено: ' + msg } : m
-        );
         this.renderSupportMessages();
+      } catch (err) {
+        const msg = supportErrorText(err);
+        console.error('[Support] Ошибка отправки:', err);
+        this.supportPending.delete(optId);
+        this.supportFailed.set(optId, msg);
+        this.renderSupportMessages();
+        showToast('Сообщение не отправлено: ' + msg, 'error');
       }
     };
 
@@ -1885,6 +1943,10 @@ export class AssistantModule {
     });
   }
 
+  /** id оптимистичных сообщений: ещё отправляются / не отправились. */
+  private supportPending = new Set<string>();
+  private supportFailed  = new Map<string, string>();
+
   private renderSupportMessages(): void {
     const el = this.panel?.querySelector<HTMLElement>('#sd-sup-messages');
     if (!el) return;
@@ -1895,14 +1957,18 @@ export class AssistantModule {
     el.innerHTML = this.supportMessages.map(m => {
       const isUser = m.sender_role === 'user';
       const time = supportChatService.fmtTime(m.created_at);
+      const failed = this.supportFailed.get(m.id);
+      const pending = this.supportPending.has(m.id);
       const attachHtml = (m.attachments ?? []).map(a =>
         a.kind === 'image'
-          ? `<img src="${a.data}" alt="${a.name}" class="sd-sup-msg-img">`
-          : `<div class="sd-sup-msg-file">📎 ${a.name}</div>`
+          ? `<img src="${esc(a.data)}" alt="${esc(a.name)}" class="sd-sup-msg-img">`
+          : `<div class="sd-sup-msg-file">📎 ${esc(a.name)}</div>`
       ).join('');
-      return `<div class="sd-sup-msg ${isUser ? 'user' : 'admin'}">
-        <div class="sd-sup-bubble">${m.content ? m.content.replace(/\n/g, '<br>') : ''}${attachHtml}</div>
-        <div class="sd-sup-msg-time">${isUser ? '' : 'Поддержка · '}${time}</div>
+      const meta = failed ? `⚠️ ${esc(failed)}` : pending ? 'Отправка…' : `${isUser ? '' : 'Поддержка · '}${time}`;
+      const cls = `sd-sup-msg ${isUser ? 'user' : 'admin'}${failed ? ' failed' : ''}${pending ? ' pending' : ''}`;
+      return `<div class="${cls}">
+        <div class="sd-sup-bubble">${esc(m.content).replace(/\n/g, '<br>')}${attachHtml}</div>
+        <div class="sd-sup-msg-time">${meta}</div>
       </div>`;
     }).join('');
     el.scrollTop = el.scrollHeight;
@@ -1937,39 +2003,61 @@ export class AssistantModule {
     });
   }
 
+  /**
+   * Опрос новых сообщений. Работает и когда открыта вкладка Симы, и когда панель
+   * закрыта — тогда просто копит счётчик непрочитанных на вкладке «Поддержка».
+   * Статус чата (не закрыл ли оператор) проверяется реже, чем сообщения.
+   */
   private startSupportPolling(): void {
     this.stopSupportPolling();
     if (!this.supportChatId) return;
+
+    let tick = 0;
     this.supportPollTimer = setInterval(async () => {
-      if (!this.supportChatId || this.supportMode !== 'support') { this.stopSupportPolling(); return; }
-      try {
-        const newMsgs = await supportChatService.getMessagesSince(this.supportChatId, this.supportLastMsgTime);
-        if (newMsgs.length > 0) {
-          this.supportMessages = [...this.supportMessages, ...newMsgs];
-          this.supportLastMsgTime = newMsgs[newMsgs.length - 1].created_at;
+      if (!this.supportChatId) { this.stopSupportPolling(); return; }
+      tick++;
+
+      // Первая загрузка истории не считается «новыми» сообщениями
+      const isBaseline = this.supportLastMsgTime === null && this.supportMessages.length === 0;
+      const newMsgs = await supportChatService.getMessagesSince(this.supportChatId, this.supportLastMsgTime);
+      if (newMsgs.length > 0) {
+        this.supportMessages = [...this.supportMessages, ...newMsgs];
+        this.supportLastMsgTime = newMsgs[newMsgs.length - 1].created_at;
+        const fromAdmin = isBaseline ? 0 : newMsgs.filter(m => m.sender_role === 'admin').length;
+        if (this.supportMode === 'support' && this.isOpen) {
           this.renderSupportMessages();
+        } else if (fromAdmin > 0) {
+          this.supportUnread += fromAdmin;
+          this.updateSupportBadge();
+          if (!this.isOpen) showToast('Поддержка ответила на ваше обращение', 'success');
         }
-        // Check if chat was closed by admin
-        const chat = await supportChatService.getMyChat();
-        if (!chat && this.supportChatId) {
-          this.stopSupportPolling();
-          const supView = this.panel?.querySelector<HTMLElement>('#sd-ap-sup-view');
-          if (supView) {
-            supView.innerHTML = `<div class="sd-sup-closed-msg">
-              <div style="font-size:2rem">✅</div>
-              <div>Диалог завершён оператором</div>
-              <button class="sd-sup-reason-btn" id="sd-sup-new-chat">Написать снова</button>
-            </div>`;
-            supView.querySelector('#sd-sup-new-chat')?.addEventListener('click', () => {
-              this.supportChatId = null;
-              this.supportMessages = [];
-              this.supportLastMsgTime = null;
-              this.renderSupportReasonSelect(supView);
-            });
-          }
-          this.supportChatId = null;
-        }
-      } catch {}
+      }
+
+      // Проверка «оператор завершил диалог» — раз в 5 циклов (~15 c)
+      if (tick % 5 !== 0) return;
+      const chat = await supportChatService.getMyChat();
+      if (chat !== null) return;   // undefined = ошибка запроса, чат не трогаем
+
+      this.stopSupportPolling();
+      this.supportChatId = null;
+      localStorage.removeItem('sd_sup_chat_id');
+      localStorage.removeItem('sd_sup_reason');
+      const supView = this.panel?.querySelector<HTMLElement>('#sd-ap-sup-view');
+      if (supView && this.supportMode === 'support') {
+        supView.innerHTML = `<div class="sd-sup-closed-msg">
+          <div style="font-size:2rem">✅</div>
+          <div>Диалог завершён оператором</div>
+          <button class="sd-sup-reason-btn" id="sd-sup-new-chat">Написать снова</button>
+        </div>`;
+        supView.querySelector('#sd-sup-new-chat')?.addEventListener('click', () => {
+          this.supportMessages = [];
+          this.supportLastMsgTime = null;
+          this.renderSupportReasonSelect(supView);
+        });
+      } else {
+        this.supportMessages = [];
+        this.supportLastMsgTime = null;
+      }
     }, 3000);
   }
 
@@ -1985,33 +2073,14 @@ export class AssistantModule {
     this.stopVoice();
 
     const panel = this.panel;
-    const isSidebar = panel.classList.contains('sidebar');
+    this.lastPos = '';   // при следующем открытии пересчитать положение заново
+
+    const finish = () => panel.classList.remove('open', 'sidebar', 'closing', 'sd-ap-resizing');
 
     panel.classList.add('closing');
-    panel.addEventListener('animationend', () => {
-      panel.classList.remove('open', 'sidebar', 'closing');
-      panel.style.top = '';
-      panel.style.height = '';
-      panel.style.maxHeight = '';
-    }, { once: true });
-
-    // Fallback if animationend doesn't fire (display:none prevents it)
-    if (isSidebar) {
-      setTimeout(() => {
-        if (panel.classList.contains('closing')) {
-          panel.classList.remove('open', 'sidebar', 'closing');
-          panel.style.top = '';
-          panel.style.height = '';
-          panel.style.maxHeight = '';
-        }
-      }, 260);
-    } else {
-      setTimeout(() => {
-        if (panel.classList.contains('closing')) {
-          panel.classList.remove('open', 'closing');
-        }
-      }, 320);
-    }
+    panel.addEventListener('animationend', finish, { once: true });
+    // Подстраховка, если animationend не сработает
+    setTimeout(() => { if (panel.classList.contains('closing')) finish(); }, 300);
   }
 
   private addUserMessage(text: string, files: AttachedFile[] = []): void {

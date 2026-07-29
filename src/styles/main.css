@@ -5023,6 +5023,22 @@ select.adm-input { cursor: pointer; }
 .adm-live-attach-btn { background: var(--card-bg, transparent); border: 1px solid var(--border); color: var(--text-muted); }
 .adm-live-attach-btn:hover { border-color: #6366f1; color: #6366f1; }
 
+/* ── Баннер ошибки загрузки чатов поддержки ──────────────────────────────── */
+.adm-sup-error-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: rgba(239, 68, 68, 0.10);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.30);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.adm-sup-error-icon { font-size: 16px; }
+.adm-sup-error-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 200px; }
+.adm-sup-error-text b    { font-size: 13px; color: #ef4444; }
+.adm-sup-error-text span { font-size: 12px; color: var(--text2); }
+
 /* ── Support AI bar ─────────────────────────────────────────────────────── */
 .adm-sup-ai-bar {
   display: flex;

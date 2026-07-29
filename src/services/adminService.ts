@@ -407,6 +407,13 @@ class AdminService {
     });
   }
 
+  async setSubscriptionEnd(companyId: string, endDate: string): Promise<void> {
+    await dbFetch('/rpc/admin_set_subscription_end', {
+      method: 'POST',
+      body: JSON.stringify({ p_company_id: companyId, p_end_date: endDate }),
+    });
+  }
+
   async getSiteContent(): Promise<SiteContent[]> {
     try {
       const res = await dbFetch<SiteContent[]>('/rpc/get_site_content', { method: 'POST', body: '{}' });

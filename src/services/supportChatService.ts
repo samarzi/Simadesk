@@ -49,7 +49,37 @@ export const SUPPORT_REASONS: Record<string, string> = {
   other:          '💬 Другое',
 };
 
+/** Человекочитаемый текст ошибки RPC вместо «HTTP 400 (…): {"code":…}». */
+export function supportErrorText(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  // PostgREST кладёт текст RAISE EXCEPTION в поле message JSON-ответа
+  const m = raw.match(/"message"\s*:\s*"([^"]+)"/);
+  const msg = m ? m[1] : raw;
+  if (/does not exist|не существует/i.test(msg)) {
+    return 'Чат поддержки не настроен в базе — примените миграцию 20260730_support_chat_fix.sql';
+  }
+  if (/HTTP 401/.test(raw)) return 'Сессия истекла — войдите заново';
+  return msg.slice(0, 200);
+}
+
 class SupportChatService {
+  /** Последняя ошибка любого вызова — для отображения в UI. */
+  lastError: string | null = null;
+
+  private fail(scope: string, e: unknown): void {
+    this.lastError = supportErrorText(e);
+    console.error(`[Support] ${scope}:`, e);
+  }
+
+  /** Диагностика: права, количество чатов и сообщений в базе. */
+  async debugStatus(): Promise<Record<string, unknown> | null> {
+    try {
+      return await dbFetch<Record<string, unknown>>('/rpc/support_debug_status', {
+        method: 'POST', body: '{}',
+      });
+    } catch (e) { this.fail('debugStatus', e); return null; }
+  }
+
   async createChat(reason: string): Promise<string> {
     // Returns jsonb string (UUID) — PostgREST returns scalar jsonb as the raw value
     const res = await dbFetch<string>('/rpc/create_support_chat', {
@@ -61,13 +91,19 @@ class SupportChatService {
     return res!;
   }
 
-  async getMyChat(): Promise<SupportChat | null> {
+  /**
+   * Активный чат текущего пользователя.
+   * `undefined` — запрос не удался (сеть/права), `null` — чата действительно нет.
+   * Это различие критично: раньше любая ошибка выглядела как «оператор закрыл диалог».
+   */
+  async getMyChat(): Promise<SupportChat | null | undefined> {
     try {
       const res = await dbFetch<SupportChat | null>('/rpc/get_my_support_chat', {
         method: 'POST', body: '{}',
       });
+      this.lastError = null;
       return res ?? null;
-    } catch { return null; }
+    } catch (e) { this.fail('getMyChat', e); return undefined; }
   }
 
   async sendMessage(chatId: string, content: string, attachments: SupportAttachment[] = []): Promise<void> {
@@ -75,6 +111,7 @@ class SupportChatService {
       method: 'POST',
       body: JSON.stringify({ p_chat_id: chatId, p_content: content, p_attachments: attachments }),
     });
+    this.lastError = null;
   }
 
   async getMessagesSince(chatId: string, after: string | null = null): Promise<SupportMessage[]> {
@@ -83,8 +120,9 @@ class SupportChatService {
         method: 'POST',
         body: JSON.stringify({ p_chat_id: chatId, p_after: after }),
       });
+      this.lastError = null;
       return res ?? [];
-    } catch { return []; }
+    } catch (e) { this.fail('getMessagesSince', e); return []; }
   }
 
   async closeMyChat(chatId: string): Promise<void> {
@@ -95,14 +133,18 @@ class SupportChatService {
   }
 
   // Admin
+  /**
+   * Список чатов для админки.
+   * Бросает исключение — админка обязана показать причину, а не пустой список:
+   * молчаливый `catch → []` и был причиной «сообщения не приходят».
+   */
   async adminGetChats(status = 'open'): Promise<AdminSupportChat[]> {
-    try {
-      const res = await dbFetch<AdminSupportChat[]>('/rpc/admin_get_support_chats', {
-        method: 'POST',
-        body: JSON.stringify({ p_status: status }),
-      });
-      return res ?? [];
-    } catch { return []; }
+    const res = await dbFetch<AdminSupportChat[]>('/rpc/admin_get_support_chats', {
+      method: 'POST',
+      body: JSON.stringify({ p_status: status }),
+    });
+    this.lastError = null;
+    return res ?? [];
   }
 
   async adminGetChat(chatId: string): Promise<AdminSupportChat | null> {
@@ -111,8 +153,9 @@ class SupportChatService {
         method: 'POST',
         body: JSON.stringify({ p_chat_id: chatId }),
       });
+      this.lastError = null;
       return res ?? null;
-    } catch { return null; }
+    } catch (e) { this.fail('adminGetChat', e); return null; }
   }
 
   async adminSendMessage(chatId: string, content: string, attachments: SupportAttachment[] = []): Promise<void> {
