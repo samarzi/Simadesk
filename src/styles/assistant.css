@@ -1809,3 +1809,12 @@ body.sd-ai-cursor-mode #sd-assistant-panel,
 body.sd-ai-cursor-mode #sd-assistant-panel * {
   cursor: auto !important;
 }
+
+/* ── Resize: disable expensive GPU effects during drag for smooth resize ─── */
+.sd-assistant-panel.sd-ap-resizing {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: 0 2px 24px rgba(0,0,0,0.5) !important;
+  will-change: width, height;
+  transition: none !important;
+}

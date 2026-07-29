@@ -926,6 +926,7 @@ export class AssistantModule {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       document.body.style.userSelect = '';
+      panel.classList.remove('sd-ap-resizing');
       // Save size only on release to avoid jitter from frequent localStorage writes
       const w = parseInt(panel.style.width, 10);
       const h = parseInt(panel.style.height, 10);
@@ -937,6 +938,7 @@ export class AssistantModule {
       startX = e.clientX; startY = e.clientY;
       startW = panel.offsetWidth; startH = panel.offsetHeight;
       document.body.style.userSelect = 'none';
+      panel.classList.add('sd-ap-resizing');
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
       e.preventDefault();
@@ -1059,6 +1061,9 @@ export class AssistantModule {
     };
 
     const onClick = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      // Let assistant panel clicks through so the cursor button itself can deactivate
+      if (t.closest('#sd-assistant-panel')) return;
       e.preventDefault();
       e.stopPropagation();
       if (!hovered) return;
@@ -1763,12 +1768,23 @@ export class AssistantModule {
       const attachSnap = [...this.supAttachFiles];
       this.supAttachFiles = [];
       this.renderSupAttachChips(container);
+      // Show message immediately without waiting for server
+      this.supportMessages = [...this.supportMessages, {
+        id: `opt-${Date.now()}`,
+        sender_role: 'user',
+        content: text,
+        attachments: attachSnap,
+        created_at: new Date().toISOString(),
+      }];
+      this.renderSupportMessages();
       try {
         await supportChatService.sendMessage(this.supportChatId, text, attachSnap);
         const msgs = await supportChatService.getMessagesSince(this.supportChatId);
-        this.supportMessages = msgs;
-        this.supportLastMsgTime = msgs[msgs.length - 1]?.created_at ?? null;
-        this.renderSupportMessages();
+        if (msgs.length) {
+          this.supportMessages = msgs;
+          this.supportLastMsgTime = msgs[msgs.length - 1]?.created_at ?? null;
+          this.renderSupportMessages();
+        }
       } catch { showToast('Ошибка отправки сообщения', 'error'); }
     };
 
