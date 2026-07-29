@@ -58,6 +58,8 @@ export class DocsModule {
   private isFullscreen: boolean = false;
   private recent: Array<{id:string;title:string;type:DocType;updated_at:number;content?:string}> = [];
   private xlLastSel: { r1: number; c1: number; r2: number; c2: number; docId: string; sheetIdx: number } | null = null;
+  private xlUndoStack: Array<{data: CellData[][], docId: string, sheetIdx: number, r: number, c: number}> = [];
+  private xlRedoStack: Array<{data: CellData[][], docId: string, sheetIdx: number, r: number, c: number}> = [];
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -918,8 +920,6 @@ export class DocsModule {
     let editMode = false;
     let editTd: HTMLTableCellElement | null = null;
     let editOrigVal = '';
-    const undoStack: Array<{data: CellData[][], r: number, c: number}> = [];
-    const redoStack: Array<{data: CellData[][], r: number, c: number}> = [];
 
     const getEC = (): ExcelContent => this.parseExcelContent(doc.content);
     const getSheet = (): SheetData => {
@@ -968,11 +968,22 @@ export class DocsModule {
     const commit = () => saveGrid(grid());
 
     const pushUndo = () => {
-      undoStack.push({ data: JSON.parse(JSON.stringify(grid())), r: curR, c: curC });
-      if (undoStack.length > 100) undoStack.shift();
-      redoStack.length = 0;
+      this.xlUndoStack.push({ data: JSON.parse(JSON.stringify(grid())), docId: doc.id, sheetIdx: this.activeSheetIdx, r: curR, c: curC });
+      if (this.xlUndoStack.length > 100) this.xlUndoStack.shift();
+      this.xlRedoStack = [];
     };
-    const restoreGridSnap = (snap: {data: CellData[][], r: number, c: number}) => {
+    const restoreGridSnap = (snap: {data: CellData[][], docId: string, sheetIdx: number, r: number, c: number}) => {
+      if (snap.docId !== doc.id || snap.sheetIdx !== this.activeSheetIdx) {
+        // Different doc/sheet — just update content and re-render
+        const snapDoc = this.docs.find(d => d.id === snap.docId);
+        if (snapDoc) {
+          const ec = this.parseExcelContent(snapDoc.content);
+          ec.sheets[snap.sheetIdx] = { ...(ec.sheets[snap.sheetIdx] ?? { name: 'Sheet1' }), data: snap.data };
+          this.updateContent(snap.docId, JSON.stringify(ec));
+          if (snap.docId === this.activeId) this.render();
+        }
+        return;
+      }
       if (vd) snap.data.forEach((row, ri) => row.forEach((cell, ci) => { if (vd[ri]) vd[ri][ci] = { ...cell }; }));
       snap.data.forEach((row, ri) => {
         row.forEach((cell, ci) => {
@@ -989,14 +1000,14 @@ export class DocsModule {
       applySel(); syncFormulaBar();
     };
     const doUndo = () => {
-      if (!undoStack.length) return;
-      redoStack.push({ data: JSON.parse(JSON.stringify(grid())), r: curR, c: curC });
-      restoreGridSnap(undoStack.pop()!);
+      if (!this.xlUndoStack.length) return;
+      this.xlRedoStack.push({ data: JSON.parse(JSON.stringify(grid())), docId: doc.id, sheetIdx: this.activeSheetIdx, r: curR, c: curC });
+      restoreGridSnap(this.xlUndoStack.pop()!);
     };
     const doRedo = () => {
-      if (!redoStack.length) return;
-      undoStack.push({ data: JSON.parse(JSON.stringify(grid())), r: curR, c: curC });
-      restoreGridSnap(redoStack.pop()!);
+      if (!this.xlRedoStack.length) return;
+      this.xlUndoStack.push({ data: JSON.parse(JSON.stringify(grid())), docId: doc.id, sheetIdx: this.activeSheetIdx, r: curR, c: curC });
+      restoreGridSnap(this.xlRedoStack.pop()!);
     };
     const getMaxRows = () => vd ? vd.length : body.querySelectorAll<HTMLTableRowElement>('tr[data-row]').length;
     const getMaxCols = () => vd ? (vd[0]?.length ?? 0) : (body.querySelector<HTMLTableRowElement>('tr[data-row]')?.querySelectorAll('td').length ?? 0);
@@ -2090,6 +2101,18 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
 
   // ── AI action implementations ───────────────────────────────────────────────
 
+  /** Сохранить снимок листа в стек undo (вызывается перед AI-изменениями). */
+  private pushXlUndo(docId: string, sheetIdx: number, r = 0, c = 0): void {
+    const doc = this.docs.find(d => d.id === docId);
+    if (!doc) return;
+    const ec = this.parseExcelContent(doc.content);
+    const sheet = ec.sheets[sheetIdx] ?? ec.sheets[0];
+    if (!sheet) return;
+    this.xlUndoStack.push({ data: JSON.parse(JSON.stringify(sheet.data)), docId, sheetIdx, r, c });
+    if (this.xlUndoStack.length > 100) this.xlUndoStack.shift();
+    this.xlRedoStack = [];
+  }
+
   /** Результат AI-действия со снимком «до» для отката (kind='docs'). */
   private docsResult(docId: string, before: string, summary: string, label: string): AiActionResult {
     return { summary, undo: { kind: 'docs', payload: { docId, before }, label } };
@@ -2106,6 +2129,7 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     const s = this.aiSheet();
     if (!s) throw new Error('Сейчас открыт не Excel-документ');
     const { ec, sheet, doc } = s;
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
     const before = doc.content;
     if (!a?.find) throw new Error('Не указано, что заменять (find)');
     const repl = a.replaceWith ?? '';
@@ -2141,6 +2165,7 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     const s = this.aiSheet();
     if (!s) throw new Error('Сейчас открыт не Excel-документ');
     const { ec, sheet, doc } = s;
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
     const before = doc.content;
     const m = String(a?.cell ?? '').trim().match(/^([A-Za-z]+)(\d+)$/);
     if (!m) throw new Error('Некорректная ячейка (ожидается формат "B3")');
@@ -2159,6 +2184,7 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     const s = this.aiSheet();
     if (!s) throw new Error('Сейчас открыт не Excel-документ');
     const { ec, sheet, doc } = s;
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
     const before = doc.content;
     const idx = this.aiResolveCol(sheet, a?.column ?? '');
     if (idx < 0) throw new Error(`Колонка «${a?.column}» не найдена`);
@@ -2185,6 +2211,7 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     const { r1, c1, r2, c2, docId, sheetIdx } = this.xlLastSel;
     const doc = this.docs.find(d => d.id === docId);
     if (!doc) throw new Error('Документ не найден');
+    this.pushXlUndo(docId, sheetIdx);
     const before = doc.content;
     const ec = this.parseExcelContent(doc.content);
     const sheet = ec.sheets[sheetIdx] ?? ec.sheets[0];
@@ -2219,6 +2246,7 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     const { r1, c1, r2, c2, docId, sheetIdx } = this.xlLastSel;
     const doc = this.docs.find(d => d.id === docId);
     if (!doc) throw new Error('Документ не найден');
+    this.pushXlUndo(docId, sheetIdx);
     const before = doc.content;
     const ec = this.parseExcelContent(doc.content);
     const sheet = ec.sheets[sheetIdx] ?? ec.sheets[0];
@@ -2240,6 +2268,7 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     const { r1, c1, r2, c2, docId, sheetIdx } = this.xlLastSel;
     const doc = this.docs.find(d => d.id === docId);
     if (!doc) throw new Error('Документ не найден');
+    this.pushXlUndo(docId, sheetIdx);
     const before = doc.content;
     const ec = this.parseExcelContent(doc.content);
     const sheet = ec.sheets[sheetIdx] ?? ec.sheets[0];
@@ -2264,6 +2293,7 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     const { r1, c1, r2, c2, docId, sheetIdx } = this.xlLastSel;
     const doc = this.docs.find(d => d.id === docId);
     if (!doc) throw new Error('Документ не найден');
+    this.pushXlUndo(docId, sheetIdx);
     const before = doc.content;
     const ec = this.parseExcelContent(doc.content);
     const sheet = ec.sheets[sheetIdx] ?? ec.sheets[0];
@@ -2284,6 +2314,7 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     const s = this.aiSheet();
     if (!s) throw new Error('Сейчас открыт не Excel-документ');
     const { ec, sheet, doc } = s;
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
     const before = doc.content;
     const accent = (a?.accent && /^#[0-9a-fA-F]{3,8}$/.test(a.accent)) ? a.accent : '#2563eb';
     const headerStyle = `background:${accent};color:#ffffff;font-weight:bold;text-align:center;`;
@@ -2317,6 +2348,7 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     const s = this.aiSheet();
     if (!s) throw new Error('Сейчас открыт не Excel-документ');
     const { ec, sheet, doc } = s;
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
     const before = doc.content;
 
     let insertAt: number;
@@ -2363,6 +2395,7 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     const s = this.aiSheet();
     if (!s) throw new Error('Сейчас открыт не Excel-документ');
     const { ec, sheet, doc } = s;
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
     const before = doc.content;
 
     const ci = this.aiResolveCol(sheet, String(a?.column ?? ''));
@@ -2416,6 +2449,7 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     const s = this.aiSheet();
     if (!s) throw new Error('Сейчас открыт не Excel-документ');
     const { ec, sheet, doc } = s;
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
     const before = doc.content;
 
     // Compile value_filter regex (default: match non-empty)
