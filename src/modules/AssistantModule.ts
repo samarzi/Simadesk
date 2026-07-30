@@ -60,6 +60,18 @@ const SYSTEM_PROMPT = `Ты — Сима, профессиональный AI-м
 {"action":"navigate","page":"page_id","label":"Название"}
 Разделы: home, analytics, repricer, orders, products-hub, stock, producers, tasks, simastore, marketplaces, ozon, wb, yandex, settings, profile, reviews, chats, docs
 
+## АВТОМАТИЧЕСКОЕ РЕШЕНИЕ ПРОБЛЕМ ИНТЕРФЕЙСА
+Если пользователь сообщает о проблеме с интерфейсом SimaDesk, которую можно исправить одной кнопкой — предложи это:
+Доступные действия (добавь в конец ответа ОДИН JSON если подходит):
+{"action":"page_action","name":"toggle_theme_off","args":{},"plan":"Выключить светлую тему — переключить на тёмную"}
+{"action":"page_action","name":"toggle_theme_on","args":{},"plan":"Включить светлую тему"}
+{"action":"page_action","name":"reload_page","args":{},"plan":"Перезагрузить страницу для обновления данных"}
+
+Примеры когда предлагать:
+- "не могу выключить светлую тему" / "хочу тёмную тему" → toggle_theme_off (ТОЛЬКО если текущая тема светлая)
+- "данные не обновляются" / "страница зависла" → reload_page
+- Всегда сначала объясни ЧТО сделаешь, потом предложи карточку с кнопкой подтверждения.
+
 ## СОЗДАНИЕ ЗАДАЧ
 ПРАВИЛО: Если пользователь говорит "создай задачу [название]" — НЕМЕДЛЕННО ответь JSON без уточнений. Используй ровно то название что написал пользователь.
 {"action":"create_task","title":"Краткое название","description":"Что и почему нужно сделать","priority":"red|yellow|blue|none","due_date":"YYYY-MM-DD","due_time":"HH:MM"}
@@ -138,16 +150,72 @@ const SYSTEM_PROMPT = `Ты — Сима, профессиональный AI-м
 - Позитив: персонализированный ответ, благодарность. Не шаблонный текст
 - Методы получения отзывов: вкладыши, бонусные баллы, email-цепочки
 
-### КАК РАБОТАТЬ С SimaDesk:
-- **Главная (home)** — дашборд: ключевые метрики утром, выдели отклонения от нормы
-- **Аналитика (analytics)** — детальный анализ за период, сравнение, топ/аутсайдеры по марже
-- **Репрайсер (repricer)** — автоматические правила цен. ОБЯЗАТЕЛЬНО проверяй unit-экономику перед снижением
-- **Заказы (orders)** — фильтруй по статусу, группируй для сборки, следи за дедлайнами FBS
-- **Остатки (stock)** — метрика "дней до OOS", сортируй по критичности, настрой пороги алертов
-- **Отзывы (reviews)** — приоритет 1-2 звезды, отвечай по шаблону с персонализацией
-- **Задачи (tasks)** — ведение операционных задач: заказ поставщику, ответы, оптимизация карточек
-- **Производители (producers)** — база поставщиков, контакты, условия работы
-- **Витрина (simastore)** — собственный интернет-магазин, синхронизация с МП
+### КАК РАБОТАТЬ С SimaDesk — ПОЛНАЯ КАРТА:
+
+**Главная / Дашборд (home)**
+Ключевые метрики за день: выручка, новые заказы, остатки в зоне риска, просроченные задачи.
+Клик по любой карточке — переход в соответствующий раздел. Обновляй каждое утро.
+
+**Аналитика (analytics)**
+Детальный анализ за период (день/неделя/месяц/квартал). Метрики: выручка нетто/брутто, заказы, возвраты, маржа, средний чек, конверсия. Сравнение периодов, разбивка по маркетплейсам и SKU. ABC-анализ товаров по прибыли.
+
+**Репрайсер (repricer)**
+Автоматическое управление ценами по правилам. Стратегии: следить за конкурентами, держать позицию, целевая маржа. Настройка: выбрать SKU → "Добавить правило" → стратегия + границы мин/макс цены. ОБЯЗАТЕЛЬНО проверяй unit-экономику перед снижением цены.
+
+**Заказы (orders)**
+Все заказы со всех маркетплейсов в одном экране. Фильтры: статус, маркетплейс, дата, SKU. Статусы FBS выделены по дедлайнам — красный = срочно, просрочка = штраф 35%. Группировка для сборки на складе.
+
+**Товары / Products Hub (products-hub)**
+Карточки товаров: название, описание, характеристики, цены, фото. Массовое редактирование группы товаров. Статусы: активен/скрыт/архив/требует доработки. SEO-оптимизация описаний.
+
+**Остатки / Склад (stock)**
+Текущие остатки по FBO и FBS складам. Ключевая метрика: "Дней до OOS" — критично < 14 дней, 0 = срочный заказ. Сортировка по критичности. Настрой пороги уведомлений (шестерёнка в разделе).
+
+**Производители / Поставщики (producers)**
+База поставщиков и производителей. Хранит: контакты, условия, прайсы, историю заказов. Связан с разделом Остатки для планирования поставок.
+
+**Задачи (tasks)**
+Планировщик операционных задач команды. Приоритеты: 🔴 срочно, 🟡 важно, 🔵 инфо. Создание: кнопка "+" или скажи мне "создай задачу [название]". Фильтры по дате/исполнителю/статусу. Просроченные задачи выделяются красным.
+
+**Витрина / SimaStore (simastore)**
+Собственный интернет-магазин без маркетплейса. URL: /s/название. Товары синхронизируются из Products Hub. Подключение оплаты и доставки через настройки витрины.
+
+**Подключение маркетплейсов (marketplaces)**
+Подключение API аккаунтов WB, Ozon, Яндекс Маркет. Как получить ключ:
+- WB: ЛК → Профиль → Настройки → Токены API → создать с нужными правами
+- Ozon: ЛК → API → Ключи → Создать ключ (тип: Стандартный)
+- Яндекс Маркет: ЛК → Настройки → API → создать OAuth-токен
+После подключения первая синхронизация 15-30 минут.
+
+**Настройки (settings)**
+Профиль и безопасность, смена пароля. Подключение маркетплейсов. Настройки AI (Сима): здесь вводится OpenRouter API-ключ — без него я не работаю. Управление командой: добавить/удалить пользователей компании. Тарифы и подписка.
+
+**Профиль (profile)**
+Личные данные, фото профиля, контакты. История входов и устройств.
+
+**Отзывы (reviews)**
+Мониторинг отзывов со всех маркетплейсов. Фильтр по оценке (1-5★), маркетплейсу, наличию ответа. Приоритет: сначала 1★ и 2★ без ответа. Шаблоны ответов — редактируются в настройках раздела. Ozon: ответить нужно за 72ч иначе снижение рейтинга магазина.
+
+**Редактор / Документы (docs)**
+Встроенный Excel и Word редактор. Excel: .xlsx/.xls, формулы, форматирование, импорт/экспорт. Word: .docx, форматирование, таблицы. Я умею редактировать файлы командами: "замени значение в ячейке A1", "найди и замени текст в документе".
+
+**Поддержка SimaDesk (chats / support)**
+Кнопка «Поддержка» в этой панели → вкладка «Поддержка». Живые операторы + AI-помощник. История чата удаляется после завершения диалога.
+
+### ТИПИЧНЫЕ ВОПРОСЫ И ОТВЕТЫ
+
+"Как подключить Wildberries/Ozon/ЯМ?" → раздел Маркетплейсы → ввести API-ключ из ЛК МП
+"Как добавить задачу?" → раздел Задачи → "+" или скажи мне "создай задачу..."
+"Как переключить тему (светлая/тёмная)?" → Настройки → переключатель темы, или скажи мне "переключи на тёмную тему" и я это сделаю
+"Данные не обновляются?" → проверь подключение API в Маркетплейсах, синхронизация каждые 30 мин
+"Как настроить репрайсер?" → Репрайсер → выбрать товар → "Добавить правило"
+"Где посмотреть остатки?" → Остатки (Склад) → колонка "Дней до OOS"
+"Как ответить на отзыв?" → Отзывы → найти отзыв → "Ответить"
+"Как узнать выручку за месяц?" → Аналитика → период "Месяц" → карточка "Выручка нетто"
+"Сима не отвечает / ошибка AI?" → Настройки → Настройки AI → проверить OpenRouter API-ключ и баланс на openrouter.ai
+"Не могу войти в аккаунт?" → кнопка "Забыли пароль?" на форме входа
+"Как изменить тариф?" → Настройки → Подписка → или обратись в поддержку через вкладку «Поддержка»
+"Как добавить сотрудника?" → Настройки → Команда → "Пригласить пользователя"
 
 ## РАБОТА С ДАННЫМИ МАГАЗИНА
 Если в запросе есть [ТЕКУЩИЕ ДАННЫЕ МАГАЗИНА] — используй их для конкретного анализа.
@@ -1802,6 +1870,8 @@ export class AssistantModule {
           this.supportMessages = [];
           this.supportLastMsgTime = null;
           this.supportChatClosed = false;
+          this.supContextSent = false;
+          this.supAckShown = false;
           this.renderSupportChat(container);
           this.startSupportPolling();
         } catch (e) {
@@ -1861,12 +1931,6 @@ export class AssistantModule {
       const text = textarea.value.trim();
       if (!text && this.supAttachFiles.length === 0) return;
 
-      // Пауза активна — сообщение не теряем, оставляем в поле
-      if (this.cooldownLeft() > 0) {
-        showToast(`Подождите ${this.cooldownLeft()} с — оператор уже получил ваше обращение`, 'warning');
-        return;
-      }
-
       // Штраф считаем только пока ждём оператора: последнее сообщение — наше
       const pendingWait = this.spamGuard.register({
         text,
@@ -1876,13 +1940,22 @@ export class AssistantModule {
         now: Date.now(),
       });
 
+      // Контекст темы/раздела — однократно в первом сообщении сессии чата
+      let textToSend = text;
+      if (!this.supContextSent) {
+        this.supContextSent = true;
+        const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+        const section = (location.pathname.split('/').filter(Boolean)[0] || 'home');
+        textToSend = `[🤖 АВТОКОНТЕКСТ: тема=${isDark ? 'тёмная' : 'светлая'}, раздел=${section}]\n${text}`;
+      }
+
       textarea.value = '';
       textarea.style.height = '';
       const attachSnap = [...this.supAttachFiles];
       this.supAttachFiles = [];
       this.renderSupAttachChips(container);
       const optId = `opt-${Date.now()}`;
-      // Show message immediately without waiting for server
+      // Show message immediately without waiting for server (display original text, not context-enriched)
       this.supportMessages = [...this.supportMessages, {
         id: optId,
         sender_role: 'user',
@@ -1893,7 +1966,7 @@ export class AssistantModule {
       this.supportPending.add(optId);
       this.renderSupportMessages();
       try {
-        await supportChatService.sendMessage(this.supportChatId, text, attachSnap);
+        await supportChatService.sendMessage(this.supportChatId, textToSend, attachSnap);
         this.supportPending.delete(optId);
         // Перечитываем весь диалог — подтверждение, что сообщение реально в базе
         const msgs = await supportChatService.getMessagesSince(this.supportChatId);
@@ -1912,8 +1985,11 @@ export class AssistantModule {
         showToast('Сообщение не отправлено: ' + msg, 'error');
       }
 
-      // Пауза назначается уже после отправки: сообщение уходит, спам гасится
-      if (pendingWait > 0) this.startCooldown(pendingWait);
+      // Spam detected — show one-time ack banner (don't block sending)
+      if (pendingWait > 0 && !this.supAckShown) {
+        this.supAckShown = true;
+        this.showSupAck();
+      }
     };
 
     textarea?.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -1924,6 +2000,13 @@ export class AssistantModule {
       if (textarea?.value.trim()) this.signalTyping();
     });
     sendBtn?.addEventListener('click', doSend);
+
+    // Action buttons injected by admin AI (e.g. toggle_theme_off)
+    const messagesEl = container.querySelector<HTMLElement>('#sd-sup-messages');
+    messagesEl?.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLElement>('.sd-sup-action-btn');
+      if (btn?.dataset.action) this.executeSupportAction(btn.dataset.action);
+    });
 
     closeBtn?.addEventListener('click', () => this.confirmCloseSupport(container));
 
@@ -1993,48 +2076,34 @@ export class AssistantModule {
   // подробно описывать проблему: длинный текст и вложения не штрафуются.
 
   private spamGuard = new SupportSpamGuard();
-  private supportCooldownTimer: ReturnType<typeof setInterval> | null = null;
+  /** Показали ли уже баннер «сообщения дошли» в текущей серии ожидания. */
+  private supAckShown = false;
+  /** Уже ли инжектировали контекст темы/раздела в текущей сессии чата. */
+  private supContextSent = false;
 
   /** Оператор ответил — все штрафы снимаются. */
   private resetSpamGuard(): void {
     this.spamGuard.reset();
+    this.supAckShown = false;
     this.renderCooldown();
-  }
-
-  private startCooldown(seconds: number): void {
-    void seconds;
-    this.renderCooldown();
-    if (this.supportCooldownTimer) clearInterval(this.supportCooldownTimer);
-    this.supportCooldownTimer = setInterval(() => {
-      this.renderCooldown();
-      if (this.cooldownLeft() <= 0) {
-        clearInterval(this.supportCooldownTimer!);
-        this.supportCooldownTimer = null;
-      }
-    }, 500);
-  }
-
-  private cooldownLeft(): number {
-    return this.spamGuard.cooldownLeft(Date.now());
   }
 
   private renderCooldown(): void {
     const box = this.panel?.querySelector<HTMLElement>('#sd-sup-cooldown');
     const area = this.panel?.querySelector<HTMLElement>('.sd-sup-input-area');
     if (!box) return;
-    const left = this.cooldownLeft();
-    if (left <= 0) {
-      box.innerHTML = '';
-      area?.classList.remove('locked');
-      return;
-    }
-    area?.classList.add('locked');
+    // Never lock the input — just clear the cooldown box
+    area?.classList.remove('locked');
+    box.innerHTML = '';
+  }
+
+  private showSupAck(): void {
+    const box = this.panel?.querySelector<HTMLElement>('#sd-sup-cooldown');
+    if (!box) return;
     box.innerHTML = `
-      <div class="sd-sup-cooldown">
-        <span class="sd-sup-cooldown-icon">✅</span>
-        <span>Сообщение доставлено оператору — он уже видит вашу переписку.
-          Дождитесь ответа, не дублируйте вопрос.</span>
-        <span class="sd-sup-cooldown-timer">${left}&nbsp;с</span>
+      <div class="sd-sup-ack">
+        <span class="sd-sup-ack-icon">✅</span>
+        <span>Сообщения дошли — оператор уже в пути. Вы можете продолжать писать.</span>
       </div>`;
   }
 
@@ -2066,8 +2135,24 @@ export class AssistantModule {
       ).join('');
       const meta = failed ? `⚠️ ${esc(failed)}` : pending ? 'Отправка…' : `${isUser ? '' : 'Поддержка · '}${time}`;
       const cls = `sd-sup-msg ${isUser ? 'user' : 'admin'}${failed ? ' failed' : ''}${pending ? ' pending' : ''}`;
+
+      // Strip silent context tag from display
+      let displayContent = m.content.replace(/\[🤖 АВТОКОНТЕКСТ:[^\]]*\]\n?/g, '').trim();
+
+      // Parse support_action JSON from admin messages
+      let actionHtml = '';
+      if (!isUser) {
+        const actionMatch = displayContent.match(/\{"support_action":"([^"]+)","label":"([^"]+)"\}/);
+        if (actionMatch) {
+          displayContent = displayContent.replace(actionMatch[0], '').trim();
+          const aName = actionMatch[1];
+          const aLabel = actionMatch[2];
+          actionHtml = `<button class="sd-sup-action-btn" data-action="${esc(aName)}">${esc(aLabel)}</button>`;
+        }
+      }
+
       return `<div class="${cls}">
-        <div class="sd-sup-bubble">${esc(m.content).replace(/\n/g, '<br>')}${attachHtml}</div>
+        <div class="sd-sup-bubble">${esc(displayContent).replace(/\n/g, '<br>')}${attachHtml}${actionHtml}</div>
         <div class="sd-sup-msg-time">${meta}</div>
       </div>`;
     }).join('') + typingHtml;
@@ -2174,6 +2259,27 @@ export class AssistantModule {
   private stopSupportPolling(): void {
     if (this.supportPollTimer) { clearInterval(this.supportPollTimer); this.supportPollTimer = null; }
     this.supportPeerTyping = false;
+  }
+
+  private executeSupportAction(name: string): void {
+    const root = document.documentElement;
+    switch (name) {
+      case 'toggle_theme_off':
+        root.setAttribute('data-theme', 'dark');
+        localStorage.setItem('sd_theme', 'dark');
+        showToast('Переключено на тёмную тему', 'success');
+        break;
+      case 'toggle_theme_on':
+        root.setAttribute('data-theme', 'light');
+        localStorage.setItem('sd_theme', 'light');
+        showToast('Переключено на светлую тему', 'success');
+        break;
+      case 'reload_page':
+        location.reload();
+        break;
+      default:
+        showToast('Действие не поддерживается', 'warning');
+    }
   }
 
   closePanel(): void {

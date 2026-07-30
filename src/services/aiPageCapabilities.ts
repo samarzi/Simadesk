@@ -376,4 +376,32 @@ export function installGlobalAiActions(): void {
     },
   };
   aiPage.registerGlobal(createDoc);
+
+  // Тема и перезагрузка — для команды из чата Симы
+  aiPage.registerGlobal({
+    name: 'toggle_theme_off',
+    description: 'Переключить интерфейс на тёмную тему',
+    args: '{}',
+    run: async () => {
+      document.documentElement.setAttribute('data-theme', 'dark');
+      localStorage.setItem('sd_theme', 'dark');
+      return 'Тёмная тема включена';
+    },
+  });
+  aiPage.registerGlobal({
+    name: 'toggle_theme_on',
+    description: 'Переключить интерфейс на светлую тему',
+    args: '{}',
+    run: async () => {
+      document.documentElement.setAttribute('data-theme', 'light');
+      localStorage.setItem('sd_theme', 'light');
+      return 'Светлая тема включена';
+    },
+  });
+  aiPage.registerGlobal({
+    name: 'reload_page',
+    description: 'Перезагрузить страницу (обновить данные)',
+    args: '{}',
+    run: async () => { location.reload(); return 'Перезагрузка…'; },
+  });
 }

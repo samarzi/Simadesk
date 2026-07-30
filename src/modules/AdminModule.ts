@@ -88,6 +88,12 @@ export class AdminModule {
   private supNeedsAttention: Set<string> = new Set();  // chat IDs flagged for human
   private supAiProcessing: Set<string> = new Set();    // currently calling AI
   private supAiHandled: Map<string, string> = new Map(); // chatId → last AI reply time
+  /** 'ai' = AI режим (по умолчанию), 'manual' = ручное управление для активного чата */
+  private supAdminMode: 'ai' | 'manual' = 'ai';
+  /** ID чата для которого сейчас генерируется ответ AI */
+  private supAiRespondingFor: string | null = null;
+  /** Batch timers: chatId → setTimeout handle (ждём 30с перед запуском AI) */
+  private supBatchTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private apiSearch = '';
   private apiFilter: 'all' | 'active' | 'trial' | 'expired' = 'all';
   private inlineEdit: string | null = null; // company_id being edited inline
@@ -1196,13 +1202,17 @@ export class AdminModule {
       <div class="adm-live-messages" id="adm-live-messages">${msgs || '<div class="adm-live-empty" style="padding:30px">Сообщений пока нет</div>'}</div>
       <div id="adm-live-typing"></div>
       <div class="adm-live-attach-chips" id="adm-live-attach-chips"></div>
-      <div class="adm-live-input-area">
+      <div class="adm-live-mode-bar" id="adm-live-mode-bar">
+        <span class="adm-live-mode-label" id="adm-live-mode-label">${this.supAdminMode === 'ai' ? '🤖 AI Ассистент' : '✍️ Ручное управление'}</span>
+        <button class="adm-live-mode-toggle" id="adm-live-mode-toggle">${this.supAdminMode === 'ai' ? 'Взять управление' : 'Передать AI'}</button>
+      </div>
+      <div class="adm-live-input-area" id="adm-live-input-area">
         <button class="adm-live-attach-btn" id="adm-live-attach-btn" title="Прикрепить файл">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="16" height="16"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
         </button>
         <input type="file" id="adm-live-file-input" accept=".xlsx,.xls,.docx,.doc,.pdf,.jpg,.jpeg,.png,.webp,.gif,.txt,.csv" multiple style="display:none">
-        <textarea class="adm-live-textarea" id="adm-live-textarea" placeholder="Напишите ответ…" rows="1"></textarea>
-        <button class="adm-live-send-btn" id="adm-live-send-btn">
+        <textarea class="adm-live-textarea" id="adm-live-textarea" placeholder="${this.supAdminMode === 'ai' ? 'AI отвечает — нажмите «Взять управление»' : 'Напишите ответ…'}" rows="1" ${this.supAdminMode === 'ai' ? 'disabled' : ''}></textarea>
+        <button class="adm-live-send-btn" id="adm-live-send-btn" ${this.supAdminMode === 'ai' ? 'disabled' : ''}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
         </button>
       </div>
@@ -1300,6 +1310,23 @@ export class AdminModule {
     if (detail && this.activeLiveChat) this.bindLiveChatDetailEvents(detail);
   }
 
+  private applyAdminMode(detail: HTMLElement): void {
+    const textarea = detail.querySelector<HTMLTextAreaElement>('#adm-live-textarea');
+    const sendBtn  = detail.querySelector<HTMLButtonElement>('#adm-live-send-btn');
+    const label    = detail.querySelector<HTMLElement>('#adm-live-mode-label');
+    const toggle   = detail.querySelector<HTMLButtonElement>('#adm-live-mode-toggle');
+    const isAi     = this.supAdminMode === 'ai';
+    const responding = this.supAiRespondingFor === this.activeLiveChat?.id;
+    if (label) label.textContent = responding ? '🤖 AI отвечает…' : (isAi ? '🤖 AI Ассистент' : '✍️ Ручное управление');
+    if (toggle) toggle.textContent = isAi ? 'Взять управление' : 'Передать AI';
+    if (textarea) {
+      textarea.disabled = isAi;
+      textarea.placeholder = isAi ? 'AI отвечает — нажмите «Взять управление»' : 'Напишите ответ…';
+    }
+    if (sendBtn) sendBtn.disabled = isAi;
+    detail.querySelector('#adm-live-mode-bar')?.classList.toggle('responding', responding);
+  }
+
   private bindLiveChatDetailEvents(detail: HTMLElement): void {
     const textarea = detail.querySelector<HTMLTextAreaElement>('#adm-live-textarea');
     const sendBtn  = detail.querySelector('#adm-live-send-btn');
@@ -1307,8 +1334,23 @@ export class AdminModule {
     const attachBtn = detail.querySelector('#adm-live-attach-btn');
     const fileInput = detail.querySelector<HTMLInputElement>('#adm-live-file-input');
 
+    // Mode toggle
+    detail.querySelector('#adm-live-mode-toggle')?.addEventListener('click', () => {
+      if (!this.activeLiveChat) return;
+      this.supAdminMode = this.supAdminMode === 'ai' ? 'manual' : 'ai';
+      if (this.supAdminMode === 'manual') {
+        // Cancel pending batch timer for this chat
+        const timer = this.supBatchTimers.get(this.activeLiveChat.id);
+        if (timer) { clearTimeout(timer); this.supBatchTimers.delete(this.activeLiveChat.id); }
+      }
+      this.applyAdminMode(detail);
+    });
+
+    this.applyAdminMode(detail);
+
     const doSend = async () => {
       if (!this.activeLiveChat || !textarea) return;
+      if (this.supAdminMode === 'ai') return;
       const text = textarea.value.trim();
       if (!text && this.liveAttachFiles.length === 0) return;
       textarea.value = '';
@@ -1457,29 +1499,15 @@ export class AdminModule {
           });
         }
 
-        // AI auto-reply: check all open chats for unanswered user messages
+        // AI auto-reply: schedule batch timer instead of immediate trigger
         if (this.supAiEnabled) {
           for (const chat of chats) {
             if (this.supAiProcessing.has(chat.id)) continue;
-            // Only trigger if last message is from user
             if (chat.last_message_role !== 'user') continue;
-            // Don't re-trigger if AI already replied recently
             const lastAiTime = this.supAiHandled.get(chat.id);
             if (lastAiTime && chat.last_message_at && lastAiTime >= chat.last_message_at) continue;
-            // Fetch full chat to get message history
-            supportChatService.adminGetChat(chat.id).then(full => {
-              if (!full?.messages?.length) return;
-              const msgs = full.messages;
-              const lastMsg = msgs.at(-1);
-              if (!lastMsg || lastMsg.sender_role !== 'user') return;
-              // Check for dissatisfaction after AI reply
-              if (this.supAiHandled.has(chat.id) && this.DISSATISFACTION_PATTERNS.test(lastMsg.content)) {
-                this.supNeedsAttention.add(chat.id);
-                this.updateAttentionBadge(chat.id);
-                return;
-              }
-              this.runSupAiReply(chat.id, msgs);
-            }).catch(() => {});
+            // Start/extend batch timer (will fire after 30s of silence)
+            this.startSupBatchTimer(chat.id);
           }
         }
 
@@ -1488,6 +1516,8 @@ export class AdminModule {
           const res = await supportChatService.poll(this.activeLiveChat.id, this.liveChatLastMsgTime);
           const newMsgs = res?.messages ?? [];
           this.renderUserTyping(!!res?.peer_typing);
+          // If user is typing, extend the batch timer
+          if (res?.peer_typing) this.startSupBatchTimer(this.activeLiveChat.id);
           if (newMsgs.length > 0) {
             this.liveChatLastMsgTime = newMsgs.at(-1)!.created_at;
             if (!this.activeLiveChat.messages) this.activeLiveChat.messages = [];
@@ -1526,6 +1556,36 @@ export class AdminModule {
     this.renderUserTyping(false);
   }
 
+  /** Запускает/продлевает 30-секундный таймер ожидания перед AI-ответом.
+   *  Сбрасывается при каждом новом сообщении или пока пользователь печатает. */
+  private startSupBatchTimer(chatId: string): void {
+    // Clear existing timer
+    const existing = this.supBatchTimers.get(chatId);
+    if (existing) clearTimeout(existing);
+
+    const handle = setTimeout(async () => {
+      this.supBatchTimers.delete(chatId);
+      // Don't auto-reply if admin is in manual mode for this chat
+      if (this.supAdminMode === 'manual' && this.activeLiveChat?.id === chatId) return;
+      if (this.supAiProcessing.has(chatId)) return;
+      try {
+        const full = await supportChatService.adminGetChat(chatId);
+        if (!full?.messages?.length) return;
+        const msgs = full.messages;
+        const lastMsg = msgs.at(-1);
+        if (!lastMsg || lastMsg.sender_role !== 'user') return;
+        if (this.supAiHandled.has(chatId) && this.DISSATISFACTION_PATTERNS.test(lastMsg.content)) {
+          this.supNeedsAttention.add(chatId);
+          this.updateAttentionBadge(chatId);
+          return;
+        }
+        this.runSupAiReply(chatId, msgs);
+      } catch {}
+    }, 30_000);
+
+    this.supBatchTimers.set(chatId, handle);
+  }
+
   /** «Пользователь печатает…» под лентой в админской переписке. */
   private renderUserTyping(typing: boolean): void {
     const host = this.el.querySelector<HTMLElement>('#adm-live-typing');
@@ -1541,21 +1601,44 @@ export class AdminModule {
 
   // ── Support AI auto-reply ────────────────────────────────────────────────────
 
-  private readonly SIMADESK_KNOWLEDGE = `SimaDesk — система управления маркетплейсами. Разделы:
-• Обзор (Дашборд) — сводка: выручка, заказы, остатки, задачи дня
-• Товары — управление карточками товаров WB/Ozon/Яндекс, цены, SEO, массовое редактирование
-• Остатки (Склад) — текущие остатки по складам, планирование поставок, риски обнуления
-• Заказы — все заказы с маркетплейсов в одном месте, статусы, фильтры
-• Аналитика — графики продаж, выручки, прибыли; сравнение периодов; ABC-анализ
-• Репрайсер — автоматическое изменение цен по правилам (конкуренты, маржа, акции)
-• Отзывы — мониторинг и быстрые ответы на отзывы покупателей
-• Реклама — управление рекламными кампаниями и ставками
-• Задачи — планировщик задач команды
-• Настройки — подключение магазинов WB/Ozon/Яндекс, API-ключи, тарифы
-• Редактор (Docs) — встроенный Excel/Word редактор для работы с файлами
-• Сима (ИИ-помощник) — AI-менеджер маркетплейсов, открывается кнопкой Сима
+  private readonly SIMADESK_KNOWLEDGE = `SimaDesk — платформа управления маркетплейсами (WB, Ozon, Яндекс Маркет).
 
-Навигация: левое боковое меню, иконки разделов. Горячие клавиши: Alt+1…9.`;
+РАЗДЕЛЫ И ЧТО ГДЕ НАХОДИТСЯ:
+• Главная (home) — дашборд: выручка дня, новые заказы, остатки в зоне риска, просроченные задачи
+• Аналитика (analytics) — графики выручки/прибыли/заказов, сравнение периодов, ABC-анализ товаров
+• Репрайсер (repricer) — автоправила цен: следить за конкурентами, целевая маржа, мин/макс цена
+• Заказы (orders) — все заказы со всех МП: статусы, фильтры, дедлайны FBS (красный = срочно)
+• Товары / Products Hub (products-hub) — карточки товаров, цены, описания, SEO, фото, массовое редактирование
+• Остатки / Склад (stock) — остатки FBO/FBS, метрика «Дней до OOS», настройка порогов алертов
+• Производители (producers) — база поставщиков, контакты, условия, прайсы
+• Задачи (tasks) — планировщик операционных задач: создать → кнопка «+» или попросить Симу
+• Витрина / SimaStore (simastore) — собственный магазин, URL /s/slug, синхронизация товаров
+• Настройки (settings) — подключение МП, API-ключи, смена пароля, тема, тарифы, команда
+• Редактор (docs) — встроенный Excel и Word, импорт/экспорт .xlsx/.docx
+• Сима (AI-помощник) — открывается кнопкой «Сима» в правом нижнем углу
+
+КАК ПОДКЛЮЧИТЬ МАРКЕТПЛЕЙС:
+• WB: Настройки → Маркетплейсы → Wildberries → API-ключ из ЛК WB (Профиль → Настройки → Токены)
+• Ozon: Настройки → Маркетплейсы → Ozon → Client ID + API Key из ЛК Ozon
+• Яндекс: Настройки → Маркетплейсы → Яндекс Маркет → OAuth-токен
+
+ЧАСТО ЗАДАВАЕМЫЕ ВОПРОСЫ:
+Q: Как переключить тему? → Настройки → переключатель темы. Или Сима сделает это кнопкой.
+Q: Данные не обновляются? → Проверь API-ключ в Настройки → Маркетплейсы. Синхронизация каждые 30 мин.
+Q: Где посмотреть остатки? → Раздел «Остатки (Склад)» → колонка «Дней до OOS»
+Q: Не работает AI Сима? → Настройки → AI → проверить OpenRouter API-ключ и баланс на openrouter.ai
+Q: Как добавить сотрудника? → Настройки → Команда → «Пригласить пользователя»
+Q: Как изменить тариф? → Настройки → Подписка
+
+АВТОДЕЙСТВИЯ (только если проблема актуальна по контексту [🤖 АВТОКОНТЕКСТ:...]):
+Если пользователь сообщает о проблеме интерфейса и её можно решить кнопкой — добавь в конец ответа ОДИН JSON:
+{"support_action":"toggle_theme_off","label":"🌙 Переключить на тёмную тему"} — если жалуется на светлую тему и тема=светлая
+{"support_action":"toggle_theme_on","label":"☀️ Переключить на светлую тему"} — если хочет светлую тему и тема=тёмная
+{"support_action":"reload_page","label":"🔄 Перезагрузить страницу"} — если данные не обновляются
+ВАЖНО: предлагай кнопку ТОЛЬКО если контекст [🤖 АВТОКОНТЕКСТ:...] подтверждает актуальность проблемы.
+Кнопка будет показана пользователю — при нажатии действие выполнится автоматически в его браузере.
+
+Навигация: левое меню, иконки разделов. Горячие клавиши: Alt+1…9.`;
 
   private readonly DISSATISFACTION_PATTERNS = /не (то|так|правильно|понял|понимаю|помогло)|нет[,.]?\s*(не|это)|это не|не об этом|другой вопрос|вы не поняли|всё равно не|по-прежнему|так и не|не решил|не работает|не помогает/i;
 
@@ -1576,6 +1659,10 @@ export class AdminModule {
     if (!apiKey) return;
 
     this.supAiProcessing.add(chatId);
+    this.supAiRespondingFor = chatId;
+    // Update UI if this is the active detail
+    const detail = this.el.querySelector<HTMLElement>('#adm-live-detail');
+    if (detail && this.activeLiveChat?.id === chatId) this.applyAdminMode(detail);
     // Пока модель думает, пользователь видит «Поддержка печатает…».
     // Отметка живёт 6 с, поэтому продлеваем её каждые 3 с.
     void supportChatService.setTyping(chatId);
@@ -1634,6 +1721,11 @@ ${this.SIMADESK_KNOWLEDGE}
       clearInterval(typingKeepAlive);
       void supportChatService.clearTyping(chatId);
       this.supAiProcessing.delete(chatId);
+      if (this.supAiRespondingFor === chatId) {
+        this.supAiRespondingFor = null;
+        const detail = this.el.querySelector<HTMLElement>('#adm-live-detail');
+        if (detail && this.activeLiveChat?.id === chatId) this.applyAdminMode(detail);
+      }
     }
   }
 

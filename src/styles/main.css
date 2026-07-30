@@ -5148,3 +5148,46 @@ html.light .sd-ai-usage-cost  { color: #16a34a; }
   font-size: 12px;
   color: var(--text-muted);
 }
+
+/* ── Бар режима AI/Ручной в детальном виде чата (Task 2) ────────────────── */
+.adm-live-mode-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-subtle, rgba(0,0,0,0.03));
+  flex-shrink: 0;
+}
+.adm-live-mode-bar.responding .adm-live-mode-label {
+  animation: adm-mode-pulse 1.2s ease-in-out infinite;
+}
+@keyframes adm-mode-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+.adm-live-mode-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.adm-live-mode-toggle {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid #6366f1;
+  background: rgba(99, 102, 241, 0.1);
+  color: #6366f1;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.adm-live-mode-toggle:hover { background: rgba(99, 102, 241, 0.2); }
+.adm-live-textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.adm-live-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
