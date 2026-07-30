@@ -263,7 +263,7 @@ export class SettingsModule {
 
   clearCache(): void {
     if (!confirm('Очистить локальный кэш? Данные будут перезагружены с сервера.')) return;
-    const keep = ['server_session', 'active_company_id', 'last_page'];
+    const keep = ['server_session', 'active_company_id', 'last_page', 'docs_v1', 'docs_recent_v1'];
     const keys = Object.keys(localStorage).filter(k => !keep.includes(k));
     keys.forEach(k => localStorage.removeItem(k));
     showToast('Кэш очищен', 'success');

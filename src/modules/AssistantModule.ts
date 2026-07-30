@@ -42,6 +42,20 @@ interface TaskAction {
   tasks?: Array<{ title: string; description?: string; priority?: string; due_date?: string }>;
 }
 
+// ── Chat sessions ─────────────────────────────────────────────────────────────
+
+interface ChatSession {
+  id: string;
+  name: string;
+  history: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+const SESSION_MAX = 10;
+const SESSIONS_KEY = 'sd_sima_sessions_v2';
+const ACTIVE_SID_KEY = 'sd_sima_active_v2';
+
 // ── Человеческие названия действий для журнала ──────────────────────────────────
 const ACTION_LABELS: Record<string, string> = {
   excel_replace: 'Замена в таблице',
@@ -554,6 +568,11 @@ export class AssistantModule {
   private aiCursorOverlay: HTMLDivElement | null = null;
   private aiCursorCleanup: (() => void) | null = null;
 
+  // ── Chat sessions ─────────────────────────────────────────────────────────
+  private sessions: ChatSession[] = [];
+  private activeSessionId = '';
+  private sessionMenuOpen = false;
+
   // ── Support chat state ─────────────────────────────────────────────────────
   private supportMode: 'ai' | 'support' = 'ai';
   private supportChatId: string | null = localStorage.getItem('sd_sup_chat_id');
@@ -642,14 +661,24 @@ export class AssistantModule {
       tab.addEventListener('click', () => this.switchSupportMode(tab.dataset.mode as 'ai' | 'support'));
     });
 
-    // Close panel on click outside (panel or toggle button)
+    // Close panel on click outside (panel or toggle button).
+    // Always re-query the button by id to avoid stale references after DOM re-renders.
     document.addEventListener('click', (e) => {
       if (!this.isOpen) return;
       const target = e.target as Node;
-      if (!panel.contains(target) && !this.btn?.contains(target)) {
+      const btnEl = document.getElementById('nav-assistant');
+      if (!panel.contains(target) && !btnEl?.contains(target)) {
         this.closePanel();
       }
     }, { capture: false });
+    // Sessions
+    this.initSessions();
+    panel.querySelector('#sd-ap-sessions-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleSessionMenu();
+    });
+    panel.querySelector('#sd-ap-sessions-new')?.addEventListener('click', () => this.newSession());
+
     panel.querySelector('.sd-ap-tts-btn')?.addEventListener('click', () => this.toggleTts());
     panel.querySelector('.sd-ap-clear-btn')?.addEventListener('click', () => this.clearChat());
     panel.querySelector('.sd-ap-key-save')?.addEventListener('click', () => this.saveKeyFromPanel());
@@ -738,11 +767,14 @@ export class AssistantModule {
       });
     });
 
-    this.addAssistantMessage(
-      'Привет! Я Сима — ваш персональный менеджер маркетплейсов. ' +
-      'Помогу разобраться в SimaDesk и улучшить показатели. ' +
-      'Открывайте разделы голосом или задавайте вопросы о маркетплейсах.'
-    );
+    // Only show welcome if this session has no prior history
+    if (this.history.length === 0) {
+      this.addAssistantMessage(
+        'Привет! Я Сима — ваш персональный менеджер маркетплейсов. ' +
+        'Помогу разобраться в SimaDesk и улучшить показатели. ' +
+        'Открывайте разделы голосом или задавайте вопросы о маркетплейсах.'
+      );
+    }
 
     // Кнопки-подсказки под текущую страницу + обновление при смене раздела.
     this.renderPageActions();
@@ -801,6 +833,11 @@ export class AssistantModule {
         </div>
         <div class="sd-ap-status" id="sd-ap-status">Готова</div>
         <div class="sd-ap-header-actions">
+          <button class="sd-ap-btn sd-ap-sessions-btn" id="sd-ap-sessions-btn" title="Сохранённые чаты">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+          </button>
           <button class="sd-ap-btn sd-ap-tts-btn" title="Озвучка текста">
             <svg class="tts-icon-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
@@ -822,6 +859,13 @@ export class AssistantModule {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
         </div>
+      </div>
+      <div class="sd-ap-sessions-menu" id="sd-ap-sessions-menu" style="display:none">
+        <div class="sd-ap-sessions-hdr">
+          <span class="sd-ap-sessions-title" id="sd-ap-sessions-title">Чаты</span>
+          <button class="sd-ap-sessions-new" id="sd-ap-sessions-new">+ Новый чат</button>
+        </div>
+        <div class="sd-ap-sessions-list" id="sd-ap-sessions-list"></div>
       </div>
       <div class="sd-ap-mode-tabs" id="sd-ap-mode-tabs">
         <button class="sd-ap-mode-tab active" data-mode="ai">Сима</button>
@@ -940,8 +984,184 @@ export class AssistantModule {
     this.messagesEl.innerHTML = '';
     this.history = [];
     this.stopMsgTts();
+    this.saveSession();
     this.updateChatLayout();
     this.addAssistantMessage('Чат очищен. Чем могу помочь?');
+  }
+
+  // ── Chat sessions ─────────────────────────────────────────────────────────────
+
+  private initSessions(): void {
+    try {
+      const raw = localStorage.getItem(SESSIONS_KEY);
+      this.sessions = raw ? JSON.parse(raw) : [];
+    } catch { this.sessions = []; }
+
+    if (this.sessions.length === 0) {
+      this.sessions = [this.createSessionObj('Главный чат')];
+    }
+
+    const savedId = localStorage.getItem(ACTIVE_SID_KEY) ?? '';
+    const found = this.sessions.find(s => s.id === savedId);
+    const active = found ?? this.sessions[0];
+    this.activeSessionId = active.id;
+    this.history = [...(active.history ?? [])];
+    this.replaySessionToDOM();
+    this.renderSessionMenuItems();
+  }
+
+  private saveSession(): void {
+    const idx = this.sessions.findIndex(s => s.id === this.activeSessionId);
+    if (idx < 0) return;
+    this.sessions[idx].history = [...this.history];
+    this.sessions[idx].updatedAt = Date.now();
+    try {
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify(this.sessions));
+      localStorage.setItem(ACTIVE_SID_KEY, this.activeSessionId);
+    } catch { /* quota exceeded — ignore */ }
+  }
+
+  private autoNameSession(): void {
+    const idx = this.sessions.findIndex(s => s.id === this.activeSessionId);
+    if (idx < 0) return;
+    if (this.sessions[idx].name !== '…') return; // already named
+    const firstUser = this.history.find(m => m.role === 'user');
+    if (!firstUser) return;
+    const clean = firstUser.content.replace(/\[🤖 АВТОКОНТЕКСТ:[^\]]*\]\n?/g, '').trim();
+    this.sessions[idx].name = clean.slice(0, 35) + (clean.length > 35 ? '…' : '');
+    this.renderSessionMenuItems();
+    this.saveSession();
+  }
+
+  private createSessionObj(name = '…'): ChatSession {
+    return {
+      id: `s_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      name,
+      history: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+  }
+
+  toggleSessionMenu(): void {
+    const menu = this.panel?.querySelector<HTMLElement>('#sd-ap-sessions-menu');
+    if (!menu) return;
+    this.sessionMenuOpen = !this.sessionMenuOpen;
+    menu.style.display = this.sessionMenuOpen ? 'flex' : 'none';
+    const btn = this.panel?.querySelector<HTMLElement>('#sd-ap-sessions-btn');
+    btn?.classList.toggle('active', this.sessionMenuOpen);
+  }
+
+  private renderSessionMenuItems(): void {
+    const list = this.panel?.querySelector<HTMLElement>('#sd-ap-sessions-list');
+    const title = this.panel?.querySelector<HTMLElement>('#sd-ap-sessions-title');
+    if (!list) return;
+    if (title) title.textContent = `Чаты (${this.sessions.length}/${SESSION_MAX})`;
+
+    list.innerHTML = this.sessions.map(s => {
+      const isActive = s.id === this.activeSessionId;
+      const msgCount = s.history.filter(m => m.role !== 'system').length;
+      const dateStr = new Date(s.updatedAt).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+      return `<div class="sd-ap-session-item${isActive ? ' active' : ''}" data-sid="${s.id}">
+        <div class="sd-ap-session-info">
+          <div class="sd-ap-session-name">${s.name.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>
+          <div class="sd-ap-session-meta">${msgCount} сообщ. · ${dateStr}</div>
+        </div>
+        <button class="sd-ap-session-del" data-del="${s.id}" title="Удалить чат">×</button>
+      </div>`;
+    }).join('');
+
+    list.querySelectorAll<HTMLElement>('.sd-ap-session-item').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('.sd-ap-session-del')) return;
+        this.switchSession(el.dataset.sid!);
+      });
+    });
+    list.querySelectorAll<HTMLElement>('.sd-ap-session-del').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.deleteSession(btn.dataset.del!);
+      });
+    });
+  }
+
+  private replaySessionToDOM(): void {
+    if (!this.messagesEl) return;
+    this.messagesEl.innerHTML = '';
+    if (this.history.length === 0) return;
+    for (const msg of this.history) {
+      if (msg.role === 'system') continue;
+      if (msg.role === 'user') {
+        const clean = msg.content.replace(/\[🤖 АВТОКОНТЕКСТ:[^\]]*\]\n?/g, '').trim();
+        if (!clean) continue;
+        const el = document.createElement('div');
+        el.className = 'sd-ap-msg user';
+        const safe = clean.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        el.innerHTML = `<div class="sd-ap-msg-avatar">Я</div><div class="sd-ap-msg-bubble">${safe}<div class="sd-ap-msg-footer"></div></div>`;
+        this.messagesEl.appendChild(el);
+      } else {
+        const el = document.createElement('div');
+        el.className = 'sd-ap-msg assistant';
+        el.innerHTML = `<div class="sd-ap-msg-avatar">С</div><div class="sd-ap-msg-bubble">${renderMarkdown(msg.content)}<div class="sd-ap-msg-footer"></div></div>`;
+        this.messagesEl.appendChild(el);
+      }
+    }
+    this.scrollToBottom();
+  }
+
+  private switchSession(id: string): void {
+    if (id === this.activeSessionId) {
+      this.toggleSessionMenu();
+      return;
+    }
+    this.saveSession();
+    const target = this.sessions.find(s => s.id === id);
+    if (!target) return;
+    this.activeSessionId = target.id;
+    this.history = [...(target.history ?? [])];
+    this.supContextSent = false;
+    this.supAckShown = false;
+    this.replaySessionToDOM();
+    this.renderSessionMenuItems();
+    this.toggleSessionMenu();
+  }
+
+  newSession(): void {
+    if (this.sessions.length >= SESSION_MAX) {
+      showToast(`Максимум ${SESSION_MAX} чатов. Удалите один, чтобы создать новый.`, 'warning');
+      return;
+    }
+    this.saveSession();
+    const s = this.createSessionObj();
+    this.sessions.unshift(s);
+    this.activeSessionId = s.id;
+    this.history = [];
+    this.supContextSent = false;
+    this.supAckShown = false;
+    if (this.messagesEl) this.messagesEl.innerHTML = '';
+    this.addAssistantMessage('Новый чат начат. Чем могу помочь?');
+    this.saveSession();
+    this.renderSessionMenuItems();
+    if (this.sessionMenuOpen) this.toggleSessionMenu();
+  }
+
+  private deleteSession(id: string): void {
+    if (this.sessions.length <= 1) {
+      showToast('Нельзя удалить единственный чат', 'warning');
+      return;
+    }
+    const wasCurrent = id === this.activeSessionId;
+    this.sessions = this.sessions.filter(s => s.id !== id);
+    if (wasCurrent) {
+      const next = this.sessions[0];
+      this.activeSessionId = next.id;
+      this.history = [...(next.history ?? [])];
+      this.supContextSent = false;
+      this.supAckShown = false;
+      this.replaySessionToDOM();
+    }
+    this.saveSession();
+    this.renderSessionMenuItems();
   }
 
   // ── Morning brief ─────────────────────────────────────────────────────────────
@@ -2515,6 +2735,8 @@ export class AssistantModule {
         ).join('\n\n')
       : '';
     this.history.push({ role: 'user', content: text + fileCtx });
+    this.saveSession();
+    this.autoNameSession();
 
     // Fast client-side nav matching for common commands
     if (IS_NAV_COMMAND.test(text)) {
@@ -2522,6 +2744,7 @@ export class AssistantModule {
       if (nav) {
         this.addAssistantMessage(`Открываю «${nav.label}»…`, nav);
         this.history.push({ role: 'assistant', content: `Открываю «${nav.label}».` });
+        this.saveSession();
         setTimeout(() => this.navigateTo(nav.page), 300);
         return;
       }
@@ -2538,6 +2761,7 @@ export class AssistantModule {
         const result = await changeLog.undoLast();
         this.removeTypingIndicator(typing);
         this.history.push({ role: 'assistant', content: result });
+        this.saveSession();
         const ttsBtn = this.addAssistantMessage(result);
         if (this.ttsEnabled && ttsBtn) this.startMsgTts(result, ttsBtn);
       } catch {
@@ -2560,6 +2784,7 @@ export class AssistantModule {
       this.setInputEnabled(false);
       await this.createTaskFromAI({ action: 'create_task', title });
       this.history.push({ role: 'assistant', content: `Задача создана: ${title}` });
+      this.saveSession();
       this.isLoading = false;
       this.setInputEnabled(true);
       return;
@@ -2577,6 +2802,7 @@ export class AssistantModule {
         const result = await aiPage.run('mark_task_done', { title });
         this.removeTypingIndicator(typing);
         this.history.push({ role: 'assistant', content: result.summary });
+        this.saveSession();
         const ttsBtn = this.addAssistantMessage(result.summary);
         if (this.ttsEnabled && ttsBtn) this.startMsgTts(result.summary, ttsBtn);
       } catch (e: unknown) {
@@ -2717,6 +2943,7 @@ export class AssistantModule {
     } finally {
       this.isLoading = false;
       this.setInputEnabled(true);
+      this.saveSession();
       this.renderQuotaBar();
     }
   }
@@ -2867,6 +3094,21 @@ export class AssistantModule {
 
     planCardEl?.remove();
 
+    // Show detailed work report card
+    if (this.messagesEl) {
+      const reportEl = document.createElement('div');
+      reportEl.className = 'sd-ap-msg assistant sd-ap-work-report';
+      const safe = resultMsg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+      reportEl.innerHTML = `
+        <div class="sd-ap-msg-avatar">📋</div>
+        <div class="sd-ap-msg-bubble sd-ap-report-bubble">
+          <div class="sd-ap-report-title">Отчёт об изменениях · ${ACTION_LABELS[name] ?? name}</div>
+          <div class="sd-ap-report-body">${safe}</div>
+        </div>`;
+      this.messagesEl.appendChild(reportEl);
+      this.scrollToBottom();
+    }
+
     let follow = '';
     try {
       follow = await this.callAi([
@@ -2878,6 +3120,7 @@ export class AssistantModule {
     follow = follow.replace(/\{[\s\S]*?"action"[\s\S]*?\}/g, '').trim() || resultMsg;
 
     this.history.push({ role: 'assistant', content: follow });
+    this.saveSession();
     const ttsBtn = this.addAssistantMessage(follow);
     if (this.ttsEnabled && ttsBtn) this.startMsgTts(follow, ttsBtn);
     this.setStatus('Готова');

@@ -1596,6 +1596,118 @@ html.light .sd-sup-msg.user .sd-sup-bubble {
 .sd-sup-msg.failed .sd-sup-bubble { border-color: rgba(248, 113, 113, 0.5); }
 .sd-sup-msg.pending { opacity: 0.6; }
 
+/* ═══ СЕССИИ ЧАТОВ ════════════════════════════════════════════════════════════ */
+
+.sd-ap-sessions-btn.active { color: var(--ap-accent); }
+
+.sd-ap-sessions-menu {
+  position: absolute;
+  top: 54px;
+  left: 0; right: 0;
+  z-index: 20;
+  background: var(--ap-surface);
+  border-bottom: 1px solid var(--ap-border);
+  flex-direction: column;
+  max-height: 280px;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.22);
+}
+.sd-ap-sessions-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 7px;
+  border-bottom: 1px solid var(--ap-border);
+  flex-shrink: 0;
+}
+.sd-ap-sessions-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ap-txt-2);
+  letter-spacing: 0.02em;
+}
+.sd-ap-sessions-new {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ap-accent);
+  background: rgba(124,58,237,0.1);
+  border: 1px solid rgba(124,58,237,0.25);
+  border-radius: 8px;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: background 0.14s;
+}
+.sd-ap-sessions-new:hover { background: rgba(124,58,237,0.2); }
+
+.sd-ap-sessions-list {
+  overflow-y: auto;
+  flex: 1;
+}
+.sd-ap-session-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--ap-border);
+  transition: background 0.12s;
+}
+.sd-ap-session-item:hover { background: var(--ap-surface-2); }
+.sd-ap-session-item.active { background: rgba(124,58,237,0.09); }
+.sd-ap-session-item.active .sd-ap-session-name { color: var(--ap-accent); }
+.sd-ap-session-info { flex: 1; min-width: 0; }
+.sd-ap-session-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ap-txt);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sd-ap-session-meta {
+  font-size: 10.5px;
+  color: var(--ap-txt-3);
+  margin-top: 1px;
+}
+.sd-ap-session-del {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--ap-txt-3);
+  font-size: 16px;
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s, color 0.12s;
+  line-height: 1;
+}
+.sd-ap-session-del:hover { background: rgba(239,68,68,0.12); color: #ef4444; }
+
+/* ═══ ОТЧЁТ О РАБОТЕ ══════════════════════════════════════════════════════════ */
+
+.sd-ap-work-report .sd-ap-msg-avatar { background: rgba(124,58,237,0.12); color: var(--ap-accent); font-size: 14px; }
+
+.sd-ap-report-bubble {
+  background: rgba(124,58,237,0.07);
+  border: 1px solid rgba(124,58,237,0.22);
+}
+.sd-ap-report-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ap-accent);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.sd-ap-report-body {
+  font-size: 12px;
+  color: var(--ap-txt);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ═══ AI-КУРСОР ═══════════════════════════════════════════════════════════════ */
 
 .sd-ai-cursor-mode,

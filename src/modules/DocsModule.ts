@@ -64,10 +64,11 @@ export class DocsModule {
   constructor(root: HTMLElement) {
     this.root = root;
     this.load();
+    window.addEventListener('beforeunload', () => this.flushSave());
   }
 
   show(): void { this.root.style.display = ''; this.render(); }
-  hide(): void { this.flushSave(); this.root.style.display = 'none'; }
+  hide(): void { this.flushSave(); this.root.style.display = 'none'; document.getElementById('dx-fill-handle')?.remove(); }
 
   /** Создать новый документ из ассистента (кросс-страничное глобальное действие). */
   aiCreateDoc(type: DocType, title?: string): string {
@@ -542,6 +543,7 @@ export class DocsModule {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   private render(): void {
+    document.getElementById('dx-fill-handle')?.remove();
     const active = this.docs.find(d => d.id === this.activeId) ?? null;
     this.root.innerHTML = `
       <div class="docs-shell${this.isFullscreen ? ' docs-fullscreen' : ''}">
@@ -1065,7 +1067,268 @@ export class DocsModule {
     const clearSel = () => {
       body.querySelectorAll('td.dx-selected').forEach(td => td.classList.remove('dx-selected'));
       this.root.querySelectorAll('th.dx-hdr-selected').forEach(th => th.classList.remove('dx-hdr-selected'));
+      document.getElementById('dx-fill-handle')?.remove();
     };
+
+    // ── AutoFill: серийное заполнение ──────────────────────────────────────────
+    // Определяет паттерн из массива значений и возвращает следующее значение
+    const AF_DAYS_RU   = ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота'];
+    const AF_DAYS_SH   = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+    const AF_MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    const AF_MONTHS_SH = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+    const AF_Q         = ['Q1','Q2','Q3','Q4'];
+
+    const afCycleNext = (val: string, lists: string[][]): string | null => {
+      const low = val.trim().toLowerCase();
+      for (const list of lists) {
+        const idx = list.findIndex(x => x.toLowerCase() === low);
+        if (idx !== -1) return list[(idx + 1) % list.length];
+      }
+      return null;
+    };
+
+    const afNextValue = (vals: string[], step: number): string => {
+      if (vals.length === 0) return '';
+
+      // Цикличные списки (дни, месяцы, кварталы)
+      const cycleLists = [AF_DAYS_RU, AF_DAYS_SH, AF_MONTHS_RU, AF_MONTHS_SH, AF_Q];
+      if (vals.length === 1) {
+        const cycleNext = afCycleNext(vals[0], cycleLists);
+        if (cycleNext !== null) return cycleNext;
+      } else {
+        // Проверяем, что все значения из одного цикличного списка
+        for (const list of cycleLists) {
+          const indices = vals.map(v => list.findIndex(x => x.toLowerCase() === v.trim().toLowerCase()));
+          if (indices.every(i => i !== -1)) {
+            const lastIdx = indices[indices.length - 1];
+            return list[(lastIdx + 1) % list.length];
+          }
+        }
+      }
+
+      // Числа: арифметическая прогрессия
+      const nums = vals.map(v => parseFloat(v.replace(',', '.')));
+      if (nums.every(n => !isNaN(n))) {
+        if (nums.length === 1) return String(nums[0] + step);
+        const diff = nums[nums.length - 1] - nums[nums.length - 2];
+        const next = nums[nums.length - 1] + diff;
+        // Сохраняем кол-во десятичных знаков
+        const decimals = Math.max(...vals.map(v => (v.split('.')[1] ?? '').length));
+        return decimals > 0 ? next.toFixed(decimals) : String(next);
+      }
+
+      // Текст + число в конце: "Квартал 1" → "Квартал 2"
+      const textNumRe = /^(.*?)(\d+)(\D*)$/;
+      const firstMatch = vals[0].match(textNumRe);
+      if (firstMatch) {
+        const prefix = firstMatch[1], suffix = firstMatch[3];
+        const tailNums = vals.map(v => { const m = v.match(textNumRe); return m ? parseInt(m[2]) : NaN; });
+        if (tailNums.every(n => !isNaN(n))) {
+          if (tailNums.length === 1) return `${prefix}${tailNums[0] + step}${suffix}`;
+          const diff = tailNums[tailNums.length - 1] - tailNums[tailNums.length - 2];
+          return `${prefix}${tailNums[tailNums.length - 1] + diff}${suffix}`;
+        }
+      }
+
+      // Даты ISO / dd.mm.yyyy
+      const parseDate = (s: string): Date | null => {
+        const iso = /^\d{4}-\d{2}-\d{2}$/;
+        const dmy = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/;
+        if (iso.test(s)) { const d = new Date(s); return isNaN(d.getTime()) ? null : d; }
+        const m = s.match(dmy);
+        if (m) { const d = new Date(+m[3], +m[2]-1, +m[1]); return isNaN(d.getTime()) ? null : d; }
+        return null;
+      };
+      const formatDate = (d: Date, fmt: string): string => {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(fmt)) return d.toISOString().slice(0,10);
+        const dd = String(d.getDate()).padStart(2,'0'), mm = String(d.getMonth()+1).padStart(2,'0');
+        return `${dd}.${mm}.${d.getFullYear()}`;
+      };
+      const dates = vals.map(v => parseDate(v));
+      if (dates.every(d => d !== null)) {
+        const dts = dates as Date[];
+        if (dts.length === 1) {
+          const nd = new Date(dts[0]); nd.setDate(nd.getDate() + step); return formatDate(nd, vals[0]);
+        }
+        const diffMs = dts[dts.length-1].getTime() - dts[dts.length-2].getTime();
+        const nd = new Date(dts[dts.length-1].getTime() + diffMs); return formatDate(nd, vals[0]);
+      }
+
+      // Процент: "10%" → "11%"
+      const pctRe = /^(-?\d+(?:[.,]\d+)?)%$/;
+      const pcts = vals.map(v => { const m = v.match(pctRe); return m ? parseFloat(m[1].replace(',','.')) : NaN; });
+      if (pcts.every(n => !isNaN(n))) {
+        if (pcts.length === 1) return `${pcts[0] + step}%`;
+        const diff = pcts[pcts.length-1] - pcts[pcts.length-2];
+        return `${pcts[pcts.length-1] + diff}%`;
+      }
+
+      // Просто повторяем последнее значение
+      return vals[vals.length - 1];
+    };
+
+    // Выполнить автозаполнение: src — исходный диапазон, target — куда заполнять, direction: 'right'|'down'|'left'|'up'
+    const doAutoFill = (
+      srcR1: number, srcC1: number, srcR2: number, srcC2: number,
+      tgtR1: number, tgtC1: number, tgtR2: number, tgtC2: number,
+      direction: 'right' | 'down' | 'left' | 'up',
+    ) => {
+      pushUndo();
+      const rows = grid();
+      if (direction === 'down' || direction === 'up') {
+        // Заполняем по каждому столбцу
+        for (let c = srcC1; c <= srcC2; c++) {
+          const srcVals: string[] = [];
+          for (let r = srcR1; r <= srcR2; r++) srcVals.push(rows[r]?.[c]?.v ?? '');
+          if (direction === 'down') {
+            const history = [...srcVals];
+            for (let r = tgtR1; r <= tgtR2; r++) {
+              const nextVal = afNextValue(history.slice(-Math.max(srcVals.length, 2)), 1);
+              if (rows[r]) rows[r][c] = { ...rows[r][c], v: nextVal };
+              const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`);
+              if (td) { delete td.dataset.formula; td.innerText = nextVal; }
+              history.push(nextVal);
+            }
+          } else {
+            // up — считаем обратную прогрессию
+            const history = [...srcVals].reverse();
+            for (let r = tgtR2; r >= tgtR1; r--) {
+              const nextVal = afNextValue(history.slice(-Math.max(srcVals.length, 2)), -1);
+              if (rows[r]) rows[r][c] = { ...rows[r][c], v: nextVal };
+              const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`);
+              if (td) { delete td.dataset.formula; td.innerText = nextVal; }
+              history.push(nextVal);
+            }
+          }
+        }
+      } else {
+        // Заполняем по каждой строке
+        for (let r = srcR1; r <= srcR2; r++) {
+          const srcVals: string[] = [];
+          for (let c = srcC1; c <= srcC2; c++) srcVals.push(rows[r]?.[c]?.v ?? '');
+          if (direction === 'right') {
+            const history = [...srcVals];
+            for (let c = tgtC1; c <= tgtC2; c++) {
+              const nextVal = afNextValue(history.slice(-Math.max(srcVals.length, 2)), 1);
+              if (rows[r]) rows[r][c] = { ...rows[r][c], v: nextVal };
+              const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`);
+              if (td) { delete td.dataset.formula; td.innerText = nextVal; }
+              history.push(nextVal);
+            }
+          } else {
+            // left
+            const history = [...srcVals].reverse();
+            for (let c = tgtC2; c >= tgtC1; c--) {
+              const nextVal = afNextValue(history.slice(-Math.max(srcVals.length, 2)), -1);
+              if (rows[r]) rows[r][c] = { ...rows[r][c], v: nextVal };
+              const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`);
+              if (td) { delete td.dataset.formula; td.innerText = nextVal; }
+              history.push(nextVal);
+            }
+          }
+        }
+      }
+      saveGrid(rows);
+      selStart = { r: Math.min(srcR1, tgtR1), c: Math.min(srcC1, tgtC1) };
+      selEnd   = { r: Math.max(srcR2, tgtR2), c: Math.max(srcC2, tgtC2) };
+      applySel();
+    };
+
+    // Показывает/перемещает маркер заполнения (синяя точка в правом нижнем углу)
+    const updateFillHandle = () => {
+      if (!selStart || !selEnd) return;
+      const r2 = Math.max(selStart.r, selEnd.r);
+      const c2 = Math.max(selStart.c, selEnd.c);
+      const lastTd = body.querySelector<HTMLTableCellElement>(`td[data-r="${r2}"][data-c="${c2}"]`);
+      if (!lastTd) { document.getElementById('dx-fill-handle')?.remove(); return; }
+      let handle = document.getElementById('dx-fill-handle');
+      if (!handle) {
+        handle = document.createElement('div');
+        handle.id = 'dx-fill-handle';
+        document.body.appendChild(handle);
+      }
+      const rect = lastTd.getBoundingClientRect();
+      handle.style.left = `${rect.right + window.scrollX - 4}px`;
+      handle.style.top  = `${rect.bottom + window.scrollY - 4}px`;
+
+      // AutoFill drag
+      handle.onmousedown = (e: MouseEvent) => {
+        e.preventDefault(); e.stopPropagation();
+        if (!selStart || !selEnd) return;
+        const srcR1 = Math.min(selStart.r, selEnd.r), srcR2 = Math.max(selStart.r, selEnd.r);
+        const srcC1 = Math.min(selStart.c, selEnd.c), srcC2 = Math.max(selStart.c, selEnd.c);
+
+        let afPreviewEls: HTMLElement[] = [];
+        const clearPreview = () => { afPreviewEls.forEach(el => el.classList.remove('dx-autofill-preview')); afPreviewEls = []; };
+
+        const onMove = (me: MouseEvent) => {
+          clearPreview();
+          const target = document.elementFromPoint(me.clientX, me.clientY)?.closest('td') as HTMLTableCellElement | null;
+          if (!target) return;
+          const tr = +(target.dataset.r ?? '-1'), tc = +(target.dataset.c ?? '-1');
+          if (tr < 0 || tc < 0) return;
+
+          // Определяем направление
+          let direction: 'right'|'down'|'left'|'up';
+          const dr = tr - srcR2, dc = tc - srcC2;
+          const ul_r = srcR1 - tr, ul_c = srcC1 - tc;
+          if (Math.abs(dr) >= Math.abs(dc) && tr >= srcR2)        direction = 'down';
+          else if (Math.abs(ul_r) >= Math.abs(ul_c) && tr <= srcR1) direction = 'up';
+          else if (dc >= 0)                                          direction = 'right';
+          else                                                       direction = 'left';
+
+          // Подсветить превью
+          if (direction === 'down') {
+            for (let r = srcR2+1; r <= tr; r++) for (let c = srcC1; c <= srcC2; c++) {
+              const el = body.querySelector<HTMLElement>(`td[data-r="${r}"][data-c="${c}"]`);
+              if (el) { el.classList.add('dx-autofill-preview'); afPreviewEls.push(el); }
+            }
+          } else if (direction === 'up') {
+            for (let r = tr; r < srcR1; r++) for (let c = srcC1; c <= srcC2; c++) {
+              const el = body.querySelector<HTMLElement>(`td[data-r="${r}"][data-c="${c}"]`);
+              if (el) { el.classList.add('dx-autofill-preview'); afPreviewEls.push(el); }
+            }
+          } else if (direction === 'right') {
+            for (let r = srcR1; r <= srcR2; r++) for (let c = srcC2+1; c <= tc; c++) {
+              const el = body.querySelector<HTMLElement>(`td[data-r="${r}"][data-c="${c}"]`);
+              if (el) { el.classList.add('dx-autofill-preview'); afPreviewEls.push(el); }
+            }
+          } else {
+            for (let r = srcR1; r <= srcR2; r++) for (let c = tc; c < srcC1; c++) {
+              const el = body.querySelector<HTMLElement>(`td[data-r="${r}"][data-c="${c}"]`);
+              if (el) { el.classList.add('dx-autofill-preview'); afPreviewEls.push(el); }
+            }
+          }
+        };
+
+        const onUp = (ue: MouseEvent) => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          clearPreview();
+          const target = document.elementFromPoint(ue.clientX, ue.clientY)?.closest('td') as HTMLTableCellElement | null;
+          if (!target) return;
+          const tr = +(target.dataset.r ?? '-1'), tc = +(target.dataset.c ?? '-1');
+          if (tr < 0 || tc < 0) return;
+
+          const dr = tr - srcR2, dc = tc - srcC2;
+          const ul_r = srcR1 - tr, ul_c = srcC1 - tc;
+          let direction: 'right'|'down'|'left'|'up';
+          if (Math.abs(dr) >= Math.abs(dc) && tr >= srcR2)        direction = 'down';
+          else if (Math.abs(ul_r) >= Math.abs(ul_c) && tr <= srcR1) direction = 'up';
+          else if (dc >= 0)                                          direction = 'right';
+          else                                                       direction = 'left';
+
+          if (direction === 'down'  && tr > srcR2)  doAutoFill(srcR1,srcC1,srcR2,srcC2, srcR2+1,srcC1,tr,srcC2,  direction);
+          else if (direction === 'up'   && tr < srcR1)  doAutoFill(srcR1,srcC1,srcR2,srcC2, tr,srcC1,srcR1-1,srcC2,direction);
+          else if (direction === 'right'&& tc > srcC2)  doAutoFill(srcR1,srcC1,srcR2,srcC2, srcR1,srcC2+1,srcR2,tc,  direction);
+          else if (direction === 'left' && tc < srcC1)  doAutoFill(srcR1,srcC1,srcR2,srcC2, srcR1,tc,srcR2,srcC1-1,direction);
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      };
+    };
+
     const applySel = () => {
       clearSel();
       if (!selStart || !selEnd) return;
@@ -1082,6 +1345,7 @@ export class DocsModule {
       if (isFullRow) for (let r = r1; r <= r2; r++) this.root.querySelector(`th.dx-rowhdr[data-row-hdr="${r}"]`)?.classList.add('dx-hdr-selected');
       if (isFullCol) for (let c = c1; c <= c2; c++) this.root.querySelector(`th.dx-colhdr[data-col="${c}"]`)?.classList.add('dx-hdr-selected');
       updateStats(r1, c1, r2, c2);
+      updateFillHandle();
       // Publish selection context for Sima
       this.xlLastSel = { r1, c1, r2, c2, docId: doc.id, sheetIdx: this.activeSheetIdx };
       const totalCells = (r2 - r1 + 1) * (c2 - c1 + 1);
