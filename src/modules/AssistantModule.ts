@@ -9,6 +9,7 @@ import { supportChatService, supportErrorText, SupportMessage, SupportAttachment
 import { selectionCtx } from '@/services/selectionContext';
 import { reportAiUsage } from '@/services/aiUsage';
 import { SupportSpamGuard } from '@/services/supportSpamGuard';
+import { hasQuota, getQuotaInfo, recordDailyTokens, getDailyLimit, FREE_DAILY_TOKENS } from '@/services/aiTokenQuota';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -534,6 +535,8 @@ export class AssistantModule {
   private fileInputEl: HTMLInputElement | null = null;
   private aiKey = '';
   private aiModel = '';
+  /** Является ли текущий пользователь платформенным администратором (нет лимитов). */
+  private isAdminUser = false;
   private ttsEnabled = localStorage.getItem('sd_tts_enabled') !== 'false';
   private ttsRate = parseFloat(localStorage.getItem('sd_tts_rate') || '1.1');
   // Edge TTS voice ID — default to Svetlana Neural; migrate legacy Web Speech API names
@@ -591,6 +594,14 @@ export class AssistantModule {
         if (keySetup) keySetup.style.display = 'none';
       }
     } catch { /* key stays empty; shown as "not configured" error on first use */ }
+
+    // Check admin status for token quota bypass and cost display
+    try {
+      const { adminService } = await import('@/services/adminService');
+      const role = await adminService.checkAdmin();
+      this.isAdminUser = role.is_admin;
+      (window as any).__sdAdminUser = role.is_admin;
+    } catch { this.isAdminUser = false; }
 
     // Listen for config updates from admin panel (updateConfig() is called directly, but
     // the event fires for other potential listeners — read from session cache as fallback)
@@ -877,6 +888,7 @@ export class AssistantModule {
       <div class="sd-ap-page-actions" id="sd-ap-page-actions"></div>
       <div class="sd-ap-messages" id="sd-ap-messages"></div>
       </div>
+      <div class="sd-ap-quota-bar" id="sd-ap-quota-bar"></div>
       <div class="sd-ap-ctx-chip" id="sd-ap-ctx-chip" style="display:none">
         <span class="sd-ap-ctx-icon" id="sd-ap-ctx-icon">📋</span>
         <span class="sd-ap-ctx-label" id="sd-ap-ctx-label"></span>
@@ -1689,6 +1701,7 @@ export class AssistantModule {
     this.btn?.classList.add('active');
     this.textareaEl?.focus();
     this.scrollToBottom();
+    this.renderQuotaBar();
     setTimeout(() => this.maybeShowMorningBrief(), 800);
     if (!this.voiceOnboarded) {
       setTimeout(() => this.showVoiceOnboarding(), 600);
@@ -2445,6 +2458,34 @@ export class AssistantModule {
     this.textareaEl.style.height = Math.min(this.textareaEl.scrollHeight, 100) + 'px';
   }
 
+  /** Обновить полосу использования токенов под лентой сообщений. */
+  renderQuotaBar(): void {
+    if (this.isAdminUser) return; // у администратора нет лимитов — не показываем
+    const bar = this.panel?.querySelector<HTMLElement>('#sd-ap-quota-bar');
+    if (!bar) return;
+    const q = getQuotaInfo();
+    const usedK  = Math.round(q.used / 1000);
+    const limitK = Math.round(q.limit / 1000);
+    const freeLimitK = Math.round(FREE_DAILY_TOKENS / 1000);
+    const warn = q.pct >= 80;
+    const critical = q.pct >= 95;
+    const isFree = getDailyLimit() === FREE_DAILY_TOKENS;
+    bar.innerHTML = `
+      <div class="sd-ap-quota${warn ? ' warn' : ''}${critical ? ' crit' : ''}">
+        <div class="sd-ap-quota-row">
+          <span class="sd-ap-quota-lbl">AI токены сегодня</span>
+          <span class="sd-ap-quota-nums">${usedK}К / ${limitK}К</span>
+        </div>
+        <div class="sd-ap-quota-track">
+          <div class="sd-ap-quota-fill" style="width:${q.pct}%"></div>
+        </div>
+        ${isFree && q.pct >= 50 ? `<div class="sd-ap-quota-hint">Нужно больше? <a class="sd-ap-quota-link" data-nav="billing">Пакеты AI</a> (от 290 ₽/мес · ${freeLimitK}К → ${freeLimitK * 5}К–${freeLimitK * 20}К токенов/день)</div>` : ''}
+      </div>`;
+    bar.querySelector<HTMLElement>('.sd-ap-quota-link')?.addEventListener('click', () => {
+      (window as any).app?.navigateTo?.('billing');
+    });
+  }
+
   // ── Send ─────────────────────────────────────────────────────────────────────
 
   private handleSend(): void {
@@ -2563,6 +2604,20 @@ export class AssistantModule {
       return;
     }
 
+    // Daily token quota check
+    if (!this.isAdminUser && !hasQuota()) {
+      const q = getQuotaInfo();
+      const limitK = Math.round(q.limit / 1000);
+      this.addAssistantMessage(
+        `Ежедневный лимит токенов исчерпан (${limitK}К токенов). ` +
+        `Лимит обновится завтра в 00:00. ` +
+        (q.boostPackage
+          ? `Ваш пакет ${q.boostPackage.label} уже активен.`
+          : `Увеличьте лимит — перейдите в **Тариф и оплата → Пакеты AI**.`)
+      );
+      return;
+    }
+
     this.isLoading = true;
     this.setStatus('Думаю…', 'thinking');
     const typing = this.addTypingIndicator();
@@ -2662,6 +2717,7 @@ export class AssistantModule {
     } finally {
       this.isLoading = false;
       this.setInputEnabled(true);
+      this.renderQuotaBar();
     }
   }
 
@@ -2705,7 +2761,8 @@ export class AssistantModule {
       throw new Error(`API ${res.status}: ${errText}`);
     }
     const data = await res.json();
-    reportAiUsage('Сима', data);
+    const usage = reportAiUsage('Сима', data);
+    if (usage && !this.isAdminUser) recordDailyTokens(usage.total);
     return data?.choices?.[0]?.message?.content ?? '';
   }
 

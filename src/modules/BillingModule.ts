@@ -3,6 +3,7 @@ import { adminService } from '@/services/adminService';
 import { companyService } from '@/services/companyService';
 import { showToast } from '@/utils/toast';
 import { hasAnyStoreConnected } from './NavigationModule';
+import { AI_BOOST_PACKAGES, getActiveBoostPackage, setActiveBoostPackage, getQuotaInfo, FREE_DAILY_TOKENS } from '@/services/aiTokenQuota';
 
 export class BillingModule {
   private el: HTMLElement;
@@ -114,6 +115,7 @@ export class BillingModule {
       ${this.renderStatus()}
       ${this.renderRevenueTable()}
       ${this.renderPromoBlock()}
+      ${this.renderAiBoostPackages()}
     `;
   }
 
@@ -432,6 +434,52 @@ export class BillingModule {
       </div>`;
   }
 
+  private renderAiBoostPackages(): string {
+    const q = getQuotaInfo();
+    const active = getActiveBoostPackage();
+    const freeDayK = Math.round(FREE_DAILY_TOKENS / 1000);
+    const usedPct = q.pct;
+    const warn = usedPct >= 70;
+
+    const cards = AI_BOOST_PACKAGES.map(pkg => {
+      const isActive = active?.key === pkg.key;
+      const dayK = Math.round(pkg.tokensPerDay / 1000);
+      return `
+        <div class="bill-ai-pkg${isActive ? ' active' : ''}" data-pkg="${pkg.key}">
+          <div class="bill-ai-pkg-badge">${pkg.badge}</div>
+          <div class="bill-ai-pkg-name">${pkg.label}</div>
+          <div class="bill-ai-pkg-tokens">${dayK.toLocaleString('ru')}К токенов/день</div>
+          <div class="bill-ai-pkg-price">${pkg.priceRub.toLocaleString('ru')} ₽/мес</div>
+          <button class="bill-ai-pkg-btn${isActive ? ' active' : ''}" data-pkg-key="${pkg.key}">
+            ${isActive ? '✓ Активен' : 'Подключить'}
+          </button>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="bill-section">
+        <div class="bill-section-title">Пакеты AI-токенов (Сима)</div>
+        <div class="bill-section-sub">
+          Ежедневный лимит обновляется каждые сутки в 00:00.
+          ${warn ? `<span style="color:#f59e0b">Использовано ${usedPct}% дневного лимита</span>` : ''}
+        </div>
+        <div class="bill-ai-quota-row">
+          <span class="bill-ai-quota-lbl">Сегодня: ${Math.round(q.used/1000)}К / ${Math.round(q.limit/1000)}К токенов</span>
+          <div class="bill-ai-quota-track">
+            <div class="bill-ai-quota-fill" style="width:${usedPct}%"></div>
+          </div>
+        </div>
+        <div class="bill-ai-free-note">
+          🎁 Бесплатно: <b>${freeDayK}К токенов/день</b> (≈40–50 ответов Симы) — включено в любой тариф
+        </div>
+        <div class="bill-ai-pkgs">${cards}</div>
+        ${active ? `<div class="bill-ai-deactivate"><button class="bill-link-btn" id="bill-ai-deactivate">Отключить пакет</button></div>` : ''}
+        <div class="bill-ai-note">
+          💡 Пакет AI-токенов — отдельная услуга к основному тарифу SimaDesk. После выбора пакета обратитесь в поддержку для оформления оплаты.
+        </div>
+      </div>`;
+  }
+
   private renderSkeleton(): string {
     return `
       <div class="bill-section">
@@ -502,6 +550,31 @@ export class BillingModule {
       if (e.key === 'Enter') this.checkPromo();
     });
     document.getElementById('bill-promo-check')?.addEventListener('click', () => this.checkPromo());
+
+    // AI boost package buttons
+    this.el.querySelectorAll<HTMLButtonElement>('.bill-ai-pkg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.pkgKey;
+        if (!key) return;
+        const current = getActiveBoostPackage();
+        if (current?.key === key) return;
+        setActiveBoostPackage(key);
+        const pkg = AI_BOOST_PACKAGES.find(p => p.key === key);
+        showToast(
+          `Пакет ${pkg?.label ?? key} выбран! Для оплаты обратитесь в поддержку через Сима → Поддержка.`,
+          'success',
+        );
+        this.render();
+        this.bindEvents();
+      });
+    });
+
+    document.getElementById('bill-ai-deactivate')?.addEventListener('click', () => {
+      setActiveBoostPackage(null);
+      showToast('Пакет AI-токенов отключён — применён бесплатный лимит', 'info');
+      this.render();
+      this.bindEvents();
+    });
   }
 
   async checkPromo(): Promise<void> {

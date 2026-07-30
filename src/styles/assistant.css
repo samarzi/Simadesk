@@ -1456,6 +1456,52 @@ html.light .sd-sup-msg.user .sd-sup-bubble {
 }
 .sd-sup-error button:hover { background: var(--ap-surface-3); }
 
+/* ── Полоса квоты токенов под лентой Симы ───────────────────────────────── */
+.sd-ap-quota-bar { padding: 0 var(--ap-pad); }
+.sd-ap-quota {
+  padding: 6px 10px;
+  border-radius: var(--ap-radius-sm);
+  background: var(--ap-surface-2);
+  border: 1px solid var(--ap-line);
+  margin-bottom: 4px;
+}
+.sd-ap-quota.warn  { border-color: rgba(245,158,11,0.4); }
+.sd-ap-quota.crit  { border-color: rgba(239,68,68,0.4); }
+.sd-ap-quota-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10.5px;
+  color: var(--ap-txt-2);
+  margin-bottom: 4px;
+}
+.sd-ap-quota-nums { font-variant-numeric: tabular-nums; font-weight: 600; }
+.sd-ap-quota-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ap-line);
+  overflow: hidden;
+}
+.sd-ap-quota-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--ap-accent);
+  transition: width 0.4s ease;
+}
+.sd-ap-quota.warn  .sd-ap-quota-fill { background: #f59e0b; }
+.sd-ap-quota.crit  .sd-ap-quota-fill { background: #ef4444; }
+.sd-ap-quota-hint {
+  font-size: 10px;
+  color: var(--ap-txt-2);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.sd-ap-quota-link {
+  color: var(--ap-accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 .sd-sup-closed-msg {
   display: flex;
   flex-direction: column;

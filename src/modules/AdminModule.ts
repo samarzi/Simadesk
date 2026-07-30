@@ -1153,6 +1153,7 @@ export class AdminModule {
         ${aiModels.map(m => `<option value="${m.id}"${this.supAiModel === m.id ? ' selected' : ''}>${m.label}</option>`).join('')}
       </select>
       <span class="adm-sup-ai-hint">${this.supAiEnabled ? '🟢 Включено' : '⚫ Выключено'} · Нужна помощь: <b>${this.supNeedsAttention.size}</b></span>
+      <span class="adm-sup-or-balance" id="adm-sup-or-balance" title="Баланс OpenRouter">⚡ …</span>
     </div>
     <div class="adm-live-layout">
       <div class="adm-live-sidebar">
@@ -1237,6 +1238,9 @@ export class AdminModule {
       showToast(lines.join(' · '), st.is_admin ? 'success' : 'error');
       console.info('[Support] diagnostics', st);
     });
+
+    // Fetch OpenRouter balance
+    this.fetchOrBalance();
 
     // AI toggle
     const aiTrack = this.el.querySelector<HTMLElement>('#sup-ai-toggle-track');
@@ -1735,6 +1739,26 @@ ${this.SIMADESK_KNOWLEDGE}
     if (!row.querySelector('.adm-live-attention')) {
       row.querySelector('.adm-live-chat-row-head')?.insertAdjacentHTML('afterbegin', '<span class="adm-live-attention" title="Нужен оператор">🔴</span>');
     }
+  }
+
+  private async fetchOrBalance(): Promise<void> {
+    const el = this.el.querySelector<HTMLElement>('#adm-sup-or-balance');
+    if (!el) return;
+    const apiKey = sessionStorage.getItem('sd_ai_key') || '';
+    if (!apiKey) { el.textContent = '⚡ Нет ключа'; return; }
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/credits', {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
+      if (!res.ok) { el.textContent = '⚡ —'; return; }
+      const data = await res.json();
+      const credits: number = data?.data?.total_credits ?? data?.credits ?? 0;
+      const used: number = data?.data?.usage ?? data?.usage ?? 0;
+      const balance = credits - used;
+      el.textContent = `⚡ $${balance.toFixed(2)}`;
+      el.title = `Баланс OpenRouter: $${balance.toFixed(4)} (лимит $${credits.toFixed(2)}, использовано $${used.toFixed(4)})`;
+      el.style.color = balance < 1 ? '#ef4444' : balance < 5 ? '#f59e0b' : '#22c55e';
+    } catch { el.textContent = '⚡ —'; }
   }
 
   // ── SETTINGS ──────────────────────────────────────────────────────────────────

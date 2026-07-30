@@ -99,6 +99,13 @@ function ensureHost(): HTMLElement {
   return host;
 }
 
+/** Является ли текущий сеанс административным (стоимость показываем только им). */
+function isAdminSession(): boolean {
+  // adminService кэширует результат в памяти; читаем синхронно через быстрый флаг
+  // который AssistantModule устанавливает после async checkAdmin()
+  return (window as any).__sdAdminUser === true;
+}
+
 function showUsageCard(label: string, usage: AiUsage): void {
   if (typeof document === 'undefined' || !document.body) return;
 
@@ -106,8 +113,13 @@ function showUsageCard(label: string, usage: AiUsage): void {
   const card = document.createElement('div');
   card.className = 'sd-ai-usage';
 
-  const costLine = usage.cost !== undefined
+  // Стоимость показываем только администраторам
+  const showCost = isAdminSession();
+  const costLine = showCost && usage.cost !== undefined
     ? `<span class="sd-ai-usage-cost">$${usage.cost.toFixed(4)}</span>`
+    : '';
+  const sumCost = showCost && totals.cost > 0
+    ? ` · $${totals.cost.toFixed(3)}`
     : '';
 
   card.innerHTML = `
@@ -120,7 +132,7 @@ function showUsageCard(label: string, usage: AiUsage): void {
       <span class="sd-ai-usage-io" title="Ответ">↓ ${nf.format(usage.completion)}</span>
       ${costLine}
     </div>
-    <div class="sd-ai-usage-sum">За сессию: ${nf.format(totals.total)} · запросов: ${nf.format(totals.calls)}</div>`;
+    <div class="sd-ai-usage-sum">За сессию: ${nf.format(totals.total)} · запросов: ${nf.format(totals.calls)}${sumCost}</div>`;
 
   host.appendChild(card);
 

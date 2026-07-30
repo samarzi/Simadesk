@@ -4749,6 +4749,116 @@ select.adm-input { cursor: pointer; }
 .bill-rev-hint { font-size: 12px; color: var(--text3); line-height: 1.5; }
 .bill-rev-empty { font-size: 13px; color: var(--text3); }
 
+/* ── AI Boost Packages (Billing) ─────────────────────────────────────────── */
+.bill-ai-quota-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 0 4px;
+  font-size: 12px;
+  color: var(--text3);
+}
+.bill-ai-quota-lbl { white-space: nowrap; }
+.bill-ai-quota-track {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+.bill-ai-quota-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: #6366f1;
+  transition: width 0.4s;
+}
+.bill-ai-free-note {
+  font-size: 12.5px;
+  color: var(--text2);
+  background: rgba(34,197,94,0.08);
+  border: 1px solid rgba(34,197,94,0.25);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.bill-ai-pkgs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+@media (max-width: 500px) { .bill-ai-pkgs { grid-template-columns: 1fr; } }
+.bill-ai-pkg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  text-align: center;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.bill-ai-pkg.active {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+}
+.bill-ai-pkg-badge {
+  font-size: 20px;
+  font-weight: 800;
+  color: #6366f1;
+}
+.bill-ai-pkg-name { font-size: 13px; font-weight: 700; color: var(--text); }
+.bill-ai-pkg-tokens { font-size: 11.5px; color: var(--text2); }
+.bill-ai-pkg-price { font-size: 13px; font-weight: 700; color: var(--text); }
+.bill-ai-pkg-btn {
+  margin-top: 4px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1.5px solid #6366f1;
+  background: transparent;
+  color: #6366f1;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.bill-ai-pkg-btn:hover { background: rgba(99,102,241,0.1); }
+.bill-ai-pkg-btn.active {
+  background: #6366f1;
+  color: #fff;
+  cursor: default;
+}
+.bill-ai-deactivate { text-align: center; }
+.bill-ai-note {
+  font-size: 11.5px;
+  color: var(--text3);
+  background: var(--bg2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  line-height: 1.5;
+}
+.bill-link-btn {
+  background: none;
+  border: none;
+  color: var(--text3);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+/* ── OpenRouter balance badge (Admin support tab) ────────────────────────── */
+.adm-sup-or-balance {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  cursor: default;
+  user-select: none;
+}
+
 /* SkuAudit animations */
 @keyframes slideUp {
   from {
