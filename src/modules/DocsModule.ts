@@ -36,10 +36,11 @@ interface DocItem {
   updated_at: number;
 }
 
-const STORAGE_KEY = 'docs_v1';
-const RECENT_KEY  = 'docs_recent_v1';
-const MAX_DOCS    = 20;
-const MAX_RECENT  = 10;
+const STORAGE_KEY  = 'docs_v1';
+const RECENT_KEY   = 'docs_recent_v1';
+const ACTIVE_KEY   = 'docs_active_v1';
+const MAX_DOCS     = 20;
+const MAX_RECENT   = 10;
 const XL_ROWS = 50;
 const XL_COLS = 26;
 const MAX_IMPORT_ROWS = 5000;  // hard cap on rows parsed from xlsx
@@ -91,12 +92,26 @@ export class DocsModule {
     catch { this.docs = []; }
     try { const raw = localStorage.getItem(RECENT_KEY); this.recent = raw ? JSON.parse(raw) : []; }
     catch { this.recent = []; }
-    if (!this.activeId && this.docs.length) this.activeId = this.docs[0].id;
+    const savedActive = localStorage.getItem(ACTIVE_KEY);
+    if (savedActive && this.docs.some(d => d.id === savedActive)) {
+      this.activeId = savedActive;
+    } else if (!this.activeId && this.docs.length) {
+      this.activeId = this.docs[0].id;
+    }
   }
 
   private save(): void {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(this.docs)); }
-    catch (e) { debug.warn('[DocsModule] save failed', e); }
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.docs));
+      if (this.activeId) localStorage.setItem(ACTIVE_KEY, this.activeId);
+    } catch (e) {
+      debug.warn('[DocsModule] save failed', e);
+      // Quota exceeded — try saving with recent content stripped
+      try {
+        const slim = this.docs.map(d => ({ ...d, content: d.content.length > 50000 ? d.content.slice(0, 50000) : d.content }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
+      } catch { /* ignore */ }
+    }
   }
 
   private saveRecent(): void {
@@ -2760,7 +2775,7 @@ export class DocsModule {
       const id=el.dataset.id!;
       el.addEventListener('click',e=>{
         if((e.target as HTMLElement).dataset.close) return;
-        this.flushSave(); this.activeId=id; this.activeSheetIdx=0; this.render();
+        this.flushSave(); this.activeId=id; localStorage.setItem(ACTIVE_KEY, id); this.activeSheetIdx=0; this.render();
       });
     });
     this.root.querySelectorAll<HTMLElement>('.docs-tab-close').forEach(el=>{

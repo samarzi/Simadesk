@@ -736,6 +736,25 @@ export class AssistantModule {
       }
     } catch { /* ignore */ }
 
+    try {
+      const reviews: any[] = (window as any).reviewsModule?.reviews ?? [];
+      const unanswered = reviews.filter((r: any) => !r.reply && r.stars <= 2);
+      if (unanswered.length > 0) {
+        alerts.push(`⭐ Негативных отзывов без ответа: ${unanswered.length}`);
+      }
+    } catch { /* ignore */ }
+
+    try {
+      const orders: any[] = (window as any).allOrdersModule?.orders ?? [];
+      const urgentFbs = orders.filter((o: any) =>
+        o.status === 'awaiting_packaging' && o.shipment_date &&
+        new Date(o.shipment_date).getTime() - Date.now() < 4 * 3600 * 1000
+      );
+      if (urgentFbs.length > 0) {
+        alerts.push(`📦 FBS заказов с дедлайном <4ч: ${urgentFbs.length}`);
+      }
+    } catch { /* ignore */ }
+
     if (!alerts.length) return;
 
     const alertKey = alerts.join('|');
@@ -744,7 +763,6 @@ export class AssistantModule {
 
     // Показываем тост только если панель закрыта
     if (!this.isOpen) {
-      const { showToast } = require('@/utils/toast') as typeof import('@/utils/toast');
       showToast(`Сима: ${alerts[0]}`, 'warning');
     }
 
@@ -789,16 +807,27 @@ export class AssistantModule {
       tab.addEventListener('click', () => this.switchSupportMode(tab.dataset.mode as 'ai' | 'support'));
     });
 
-    // Close panel on click outside (panel or toggle button).
-    // Always re-query the button by id to avoid stale references after DOM re-renders.
+    // Close panel on click outside only when clicking nav/dock area — not on page content.
+    // This lets user click tables, text, etc. while Sima is open.
     document.addEventListener('click', (e) => {
       if (!this.isOpen) return;
-      const target = e.target as Node;
+      const target = e.target as HTMLElement;
       const btnEl = document.getElementById('nav-assistant');
-      if (!panel.contains(target) && !btnEl?.contains(target)) {
+      if (panel.contains(target) || btnEl?.contains(target)) return;
+      // Only close if clicking the dock/nav bar or empty background, not page content
+      const isNavArea = !!target.closest('.dock-bar, .sd-nav, nav, [data-nav], .nav-btn');
+      const isModalOrOverlay = !!target.closest('.modal, .overlay, .dialog, [role="dialog"]');
+      if (isNavArea || isModalOrOverlay) {
         this.closePanel();
       }
     }, { capture: false });
+
+    // Also close on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.isOpen && !this.isListening) {
+        this.closePanel();
+      }
+    });
     // Sessions
     this.initSessions();
     panel.querySelector('#sd-ap-sessions-btn')?.addEventListener('click', (e) => {
@@ -1141,12 +1170,20 @@ export class AssistantModule {
   private saveSession(): void {
     const idx = this.sessions.findIndex(s => s.id === this.activeSessionId);
     if (idx < 0) return;
-    this.sessions[idx].history = [...this.history];
+    // Keep at most 40 messages per session to avoid localStorage overflow
+    const trimmed = this.history.length > 40 ? this.history.slice(-40) : [...this.history];
+    this.sessions[idx].history = trimmed;
     this.sessions[idx].updatedAt = Date.now();
     try {
       localStorage.setItem(SESSIONS_KEY, JSON.stringify(this.sessions));
       localStorage.setItem(ACTIVE_SID_KEY, this.activeSessionId);
-    } catch { /* quota exceeded — ignore */ }
+    } catch {
+      // Quota exceeded — try saving only active session
+      try {
+        const minimal = { ...this.sessions[idx], history: trimmed.slice(-10) };
+        localStorage.setItem(SESSIONS_KEY, JSON.stringify([minimal]));
+      } catch { /* ignore */ }
+    }
   }
 
   private autoNameSession(): void {
@@ -3084,6 +3121,22 @@ export class AssistantModule {
     const typing = this.addTypingIndicator();
     this.setInputEnabled(false);
 
+    // Streaming bubble — появится как только придёт первый чанк
+    let streamBubble: HTMLElement | null = null;
+
+    const onChunk = (partial: string) => {
+      if (!streamBubble) {
+        this.removeTypingIndicator(typing);
+        const el = document.createElement('div');
+        el.className = 'sd-ap-msg assistant streaming';
+        el.innerHTML = `<div class="sd-ap-msg-avatar">С</div><div class="sd-ap-msg-bubble"><div class="sd-ap-stream-text"></div><div class="sd-ap-msg-footer"></div></div>`;
+        this.messagesEl?.appendChild(el);
+        streamBubble = el.querySelector('.sd-ap-stream-text');
+      }
+      if (streamBubble) streamBubble.innerHTML = renderMarkdown(partial);
+      this.scrollToBottom();
+    };
+
     try {
       const storeCtx = getStoreContext();
       const pageFrag = aiPage.promptFragment();
@@ -3096,7 +3149,16 @@ export class AssistantModule {
       ];
 
       const images = files.filter(f => f.kind === 'image');
-      const reply: string = await this.callAi(messages, images.length ? images : undefined);
+      // Use streaming only for plain conversational replies (not when images attached, as some models don't stream well with vision)
+      const useStreaming = !images.length;
+      const reply: string = await this.callAi(messages, images.length ? images : undefined, useStreaming ? onChunk : undefined);
+
+      // Remove streaming bubble — final reply will be added below via normal path
+      const sb = streamBubble as HTMLElement | null;
+      if (sb) {
+        sb.closest('.sd-ap-msg')?.remove();
+        streamBubble = null;
+      }
 
       this.removeTypingIndicator(typing);
       this.history.push({ role: 'assistant', content: reply });
@@ -3190,10 +3252,11 @@ export class AssistantModule {
     }
   }
 
-  /** Один запрос к OpenRouter, возвращает текст ответа модели. */
+  /** Один запрос к OpenRouter со стримингом. Возвращает текст ответа модели. */
   private async callAi(
     messages: ChatMessage[],
     attachedImages?: AttachedFile[],
+    onChunk?: (partial: string) => void,
   ): Promise<string> {
     // If images attached, inject them into the last user message as multimodal content
     let apiMessages: any[] = messages;
@@ -3210,6 +3273,8 @@ export class AssistantModule {
       });
     }
 
+    const useStream = !!onChunk;
+
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -3223,15 +3288,53 @@ export class AssistantModule {
         messages: apiMessages,
         max_tokens: 1500,
         temperature: 0.7,
+        stream: useStream,
       }),
     });
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
       throw new Error(`API ${res.status}: ${errText}`);
     }
+
+    // ── Streaming path ──────────────────────────────────────────────────────────
+    if (useStream && res.body) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let full = '';
+      let usage: { total: number } | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        for (const line of chunk.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data: ')) continue;
+          const payload = trimmed.slice(6);
+          if (payload === '[DONE]') break;
+          try {
+            const parsed = JSON.parse(payload);
+            const delta = parsed?.choices?.[0]?.delta?.content;
+            if (delta) {
+              full += delta;
+              onChunk!(full);
+            }
+            if (parsed?.usage) {
+              const u = parsed.usage;
+              usage = { total: (u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0) };
+            }
+          } catch { /* ignore malformed SSE line */ }
+        }
+      }
+
+      if (usage && !this.isAdminUser) recordDailyTokens(usage.total);
+      return full;
+    }
+
+    // ── Non-streaming fallback ──────────────────────────────────────────────────
     const data = await res.json();
-    const usage = reportAiUsage('Сима', data);
-    if (usage && !this.isAdminUser) recordDailyTokens(usage.total);
+    const usage2 = reportAiUsage('Сима', data);
+    if (usage2 && !this.isAdminUser) recordDailyTokens(usage2.total);
     return data?.choices?.[0]?.message?.content ?? '';
   }
 

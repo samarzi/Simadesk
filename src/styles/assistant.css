@@ -1780,6 +1780,21 @@ html.light .sd-sup-msg.user .sd-sup-bubble {
   .sd-ap-msg-bubble { max-width: calc(100% - 36px); }
 }
 
+/* ═══ STREAMING RESPONSE ════════════════════════════════════════════════════════ */
+
+.sd-ap-msg.streaming .sd-ap-stream-text::after {
+  content: '▋';
+  display: inline-block;
+  animation: stream-cursor 0.6s step-end infinite;
+  color: var(--ap-accent);
+  margin-left: 1px;
+}
+
+@keyframes stream-cursor {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sd-assistant-panel,
   .sd-assistant-panel * {

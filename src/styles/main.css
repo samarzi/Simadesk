@@ -299,15 +299,23 @@ html, body {
 .docs-fs-expand-btn:hover { color: var(--accent); border-color: var(--accent); }
 .docs-excel th { position: relative; }
 .dx-col-resize {
-  position: absolute; top: 0; right: 0; width: 6px; height: 100%;
+  position: absolute; top: 0; right: -3px; width: 8px; height: 100%;
   cursor: col-resize; user-select: none; z-index: 5;
 }
-.dx-col-resize:hover, .dx-col-resize.active { background: var(--accent); }
+.dx-col-resize::after {
+  content: ''; position: absolute; top: 20%; right: 3px; width: 2px; height: 60%;
+  background: rgba(128,128,180,0.3); border-radius: 2px; transition: background .1s;
+}
+.dx-col-resize:hover::after, .dx-col-resize.active::after { background: var(--accent); }
 .dx-row-resize {
-  position: absolute; left: 0; bottom: 0; height: 6px; width: 100%;
+  position: absolute; left: 0; bottom: -3px; height: 8px; width: 100%;
   cursor: row-resize; user-select: none; z-index: 5;
 }
-.dx-row-resize:hover, .dx-row-resize.active { background: var(--accent); }
+.dx-row-resize::after {
+  content: ''; position: absolute; left: 20%; bottom: 3px; height: 2px; width: 60%;
+  background: rgba(128,128,180,0.3); border-radius: 2px; transition: background .1s;
+}
+.dx-row-resize:hover::after, .dx-row-resize.active::after { background: var(--accent); }
 .docs-excel .dx-rowhdr { position: sticky; left: 0; }
 .docs-topbar {
   display: flex; align-items: center; gap: 12px;
@@ -629,18 +637,22 @@ html:not(.light) .docs-excel .dx-rowhdr { background: #222530; color: #56607a; }
 .docs-excel .dx-corner:hover { background: color-mix(in srgb, var(--accent) 10%, #f0f2f5); }
 html:not(.light) .docs-excel .dx-corner:hover { background: color-mix(in srgb, var(--accent) 10%, #222530); }
 
-/* Data cells — white background always (matches real Excel behaviour) */
+/* Cell background/text CSS variables — swap for dark theme */
+.docs-excel-wrap { --xl-cell: #ffffff; --xl-cell-txt: #111111; --xl-cell-hover: #f5f7ff; }
+html:not(.light) .docs-excel-wrap { --xl-cell: #1c1f28; --xl-cell-txt: #d4d8e8; --xl-cell-hover: #22263000; }
+
+/* Data cells */
 .docs-excel td {
   padding: 3px 7px; outline: none; cursor: default; vertical-align: middle;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 0;
-  background: #ffffff; color: #111111;
+  background: var(--xl-cell); color: var(--xl-cell-txt);
   user-select: none; position: relative;
 }
 /* Wrap text */
 .docs-excel td.dx-wrap {
   white-space: normal; overflow: visible; text-overflow: clip; height: auto;
 }
-/* Active cell cursor — subtle corner marks instead of full border */
+/* Active cell cursor — green corner mark like real Excel */
 .docs-excel td.dx-cur::before {
   content: ''; position: absolute; right: -1px; bottom: -1px;
   width: 6px; height: 6px; background: var(--accent);
@@ -650,19 +662,19 @@ html:not(.light) .docs-excel .dx-corner:hover { background: color-mix(in srgb, v
 .docs-excel td.dx-editing {
   white-space: pre-wrap; overflow: visible; cursor: text; user-select: text;
   box-shadow: inset 0 0 0 2px var(--accent), 0 4px 14px rgba(0,0,0,.18);
-  background: #ffffff !important; outline: none;
+  background: var(--xl-cell) !important; outline: none;
 }
 /* Selection */
 .docs-excel td.dx-selected {
-  background: color-mix(in srgb, var(--accent) 22%, #ffffff) !important;
+  background: color-mix(in srgb, var(--accent) 22%, var(--xl-cell)) !important;
 }
-/* Active cell within selection — stays white, cursor shows as corner mark */
+/* Active cell within selection */
 .docs-excel td.dx-cur.dx-selected {
-  background: #ffffff !important;
+  background: var(--xl-cell) !important;
 }
 /* AutoFill preview */
 .docs-excel td.dx-autofill-preview {
-  background: color-mix(in srgb, var(--accent) 10%, #ffffff) !important;
+  background: color-mix(in srgb, var(--accent) 10%, var(--xl-cell)) !important;
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 /* Fill handle */
@@ -676,9 +688,9 @@ html:not(.light) .docs-excel .dx-corner:hover { background: color-mix(in srgb, v
   box-shadow: inset 0 0 0 2px #f59e0b;
 }
 /* Row heights — 24px default. Inline style overrides imported heights. */
-.docs-excel tbody tr { height: 24px; background: #ffffff; cursor: default; }
+.docs-excel tbody tr { height: 24px; background: var(--xl-cell); cursor: default; }
 .docs-excel tbody tr:hover > td:not(.dx-selected):not(.dx-cur) {
-  background: color-mix(in srgb, var(--accent) 5%, #ffffff);
+  background: color-mix(in srgb, var(--accent) 6%, var(--xl-cell));
 }
 /* Selected header highlight */
 .docs-excel th.dx-hdr-selected {
@@ -5420,8 +5432,13 @@ html.light .sd-ai-usage-cost  { color: #16a34a; }
 /* Active column/row header highlight */
 .docs-excel th.dx-colhdr.dx-hdr-cur,
 .docs-excel th.dx-rowhdr.dx-hdr-cur {
-  background: #c7d8f5 !important;
-  color: #1a3a6b !important;
+  background: color-mix(in srgb, var(--accent) 28%, #f0f2f5) !important;
+  color: var(--accent) !important;
+}
+html:not(.light) .docs-excel th.dx-colhdr.dx-hdr-cur,
+html:not(.light) .docs-excel th.dx-rowhdr.dx-hdr-cur {
+  background: color-mix(in srgb, var(--accent) 28%, #222530) !important;
+  color: var(--accent) !important;
 }
 
 /* Freeze first data row */
@@ -5433,19 +5450,22 @@ html.light .sd-ai-usage-cost  { color: #16a34a; }
   box-shadow: 0 2px 6px rgba(0,0,0,.10);
 }
 .docs-excel-wrap.dx-freeze-row .docs-excel tbody tr[data-row="0"] td {
-  background: #eef3fb !important;
+  background: color-mix(in srgb, var(--accent) 8%, var(--xl-cell)) !important;
   font-weight: 600;
 }
 .docs-excel-wrap.dx-freeze-row .docs-excel tbody tr[data-row="0"] th {
-  background: #dde8f5 !important;
+  background: color-mix(in srgb, var(--accent) 12%, #f0f2f5) !important;
+}
+html:not(.light) .docs-excel-wrap.dx-freeze-row .docs-excel tbody tr[data-row="0"] th {
+  background: color-mix(in srgb, var(--accent) 12%, #222530) !important;
 }
 
 /* Freeze first data column */
 .docs-excel-wrap.dx-freeze-col .docs-excel tbody td[data-c="0"] {
   position: sticky;
-  left: 40px; /* = row header min-width */
+  left: 40px;
   z-index: 2;
-  background: #f5f8fd !important;
+  background: color-mix(in srgb, var(--accent) 5%, var(--xl-cell)) !important;
   box-shadow: 2px 0 6px rgba(0,0,0,.08);
 }
 .docs-excel-wrap.dx-freeze-col .docs-excel thead th.dx-colhdr[data-col="0"] {
