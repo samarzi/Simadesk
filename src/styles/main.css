@@ -483,70 +483,89 @@ html.light .docs-word-editor { box-shadow: 0 4px 16px rgba(0,0,0,.15); }
   background: transparent; color: var(--text); font-family: inherit; font-size: 12px;
   cursor: pointer; outline: none;
 }
+/* ── Excel toolbar ─────────────────────────────────────────────────────────── */
 .docs-excel-toolbar {
-  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
-  padding: 6px 10px; border-bottom: 1px solid var(--border);
-  background: var(--hover); flex-shrink: 0;
+  display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+  padding: 5px 8px; border-bottom: 1px solid var(--border);
+  background: var(--bg2, var(--bg)); flex-shrink: 0;
 }
-.dx-group { display: inline-flex; align-items: center; gap: 2px; }
-.dx-sep { width: 1px; height: 22px; background: var(--border); margin: 0 4px; }
+.dx-group { display: inline-flex; align-items: center; gap: 1px; }
+.dx-sep { width: 1px; height: 20px; background: var(--border); margin: 0 5px; flex-shrink: 0; }
 .dx-btn {
-  min-width: 28px; height: 28px; padding: 0 8px; border: 1px solid transparent;
-  background: transparent; color: var(--text); border-radius: 6px; cursor: pointer;
+  min-width: 26px; height: 26px; padding: 0 6px; border: 1px solid transparent;
+  background: transparent; color: var(--text); border-radius: 5px; cursor: pointer;
   font-family: inherit; font-size: 12px; white-space: nowrap;
-  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-  position: relative;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  position: relative; transition: background .1s, border-color .1s;
 }
-.dx-btn:hover { background: rgba(255,255,255,.08); border-color: var(--border); }
-html.light .dx-btn:hover { background: rgba(0,0,0,.06); }
-.dx-btn.dx-danger:hover { color: #ff6b6b; border-color: #ff6b6b; }
+.dx-btn:hover { background: var(--hover); border-color: var(--border); }
+.dx-btn.dx-active {
+  background: color-mix(in srgb, var(--accent) 18%, var(--hover, transparent));
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--accent);
+}
+.dx-btn.dx-active:hover { background: color-mix(in srgb, var(--accent) 28%, var(--hover, transparent)); }
+.dx-btn.dx-danger:hover { color: #ff6b6b; border-color: rgba(255,107,107,.4); }
 .dx-lbl { font-size: 11px; }
-.dx-color {
-  padding: 0 6px; position: relative;
-}
+.dx-color { padding: 0 6px; position: relative; }
 .dx-color span { pointer-events: none; }
-.dx-color-bg span { background: yellow; padding: 0 3px; border-radius: 2px; color: #000; }
+.dx-color-bg span { padding: 0 3px; border-radius: 2px; }
 .dx-color input[type="color"] {
   position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
 }
+/* ── Excel status bar ──────────────────────────────────────────────────────── */
 .docs-excel-status {
-  margin-left: auto; color: var(--muted); font-size: 11px; padding: 0 8px;
-  font-family: 'DM Sans', monospace; font-weight: 600;
+  margin-left: auto; color: var(--muted); font-size: 11px; padding: 0 6px;
+  font-family: 'DM Sans', monospace; font-weight: 500; white-space: nowrap;
+  max-width: 340px; overflow: hidden; text-overflow: ellipsis;
 }
+/* ── Formula bar ───────────────────────────────────────────────────────────── */
 .docs-formula-bar {
-  display: flex; align-items: center; gap: 6px;
-  padding: 4px 10px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 0;
+  padding: 3px 0; border-bottom: 1px solid var(--border);
   background: var(--bg2, var(--bg)); flex-shrink: 0;
 }
 .dx-cell-ref {
-  min-width: 72px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--hover); color: var(--text); font-family: 'DM Sans', monospace;
+  min-width: 80px; max-width: 80px; padding: 3px 8px;
+  border-right: 1px solid var(--border);
+  color: var(--text); font-family: 'DM Sans', monospace;
   font-weight: 600; font-size: 12px; text-align: center;
+  cursor: text; outline: none; white-space: nowrap; overflow: hidden;
+  user-select: text;
 }
-.dx-fx-btn {
-  width: 28px; height: 24px; border-radius: 6px;
+.dx-cell-ref:focus { color: var(--accent); }
+.dx-cell-ref-sep { width: 1px; height: 100%; background: var(--border); }
+.dx-fx-icon {
+  width: 36px; height: 100%; border-right: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center;
-  color: var(--muted); font-style: italic; font-weight: 600; font-size: 13px;
-  cursor: pointer; user-select: none;
+  color: var(--muted); font-style: italic; font-weight: 700; font-size: 12px;
+  cursor: pointer; user-select: none; flex-shrink: 0;
+  letter-spacing: -.5px;
 }
-.dx-fx-btn:hover { background: var(--hover); color: var(--text); }
+.dx-fx-icon:hover { background: var(--hover); color: var(--text); }
 .dx-formula-inp {
-  flex: 1; height: 26px; padding: 0 10px;
-  border: 1px solid var(--border); border-radius: 6px;
+  flex: 1; height: 28px; padding: 0 10px;
+  border: none; outline: none;
   background: transparent; color: var(--text);
-  font-family: 'DM Sans', monospace; font-size: 13px; outline: none;
+  font-family: 'DM Sans', monospace; font-size: 13px;
 }
-.dx-formula-inp:focus { border-color: var(--accent); }
+.dx-formula-inp:focus { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+/* ── Dropdowns in toolbar ──────────────────────────────────────────────────── */
 .dx-sel {
-  height: 28px; padding: 0 8px; border: 1px solid var(--border);
-  background: transparent; color: var(--text); border-radius: 6px;
+  height: 26px; padding: 0 6px; border: 1px solid var(--border);
+  background: transparent; color: var(--text); border-radius: 5px;
   font-family: inherit; font-size: 12px; cursor: pointer; outline: none;
+  transition: border-color .1s;
 }
-.dx-sel-sm { min-width: 90px; }
+.dx-sel:hover { border-color: var(--accent); }
+.dx-sel-font { min-width: 100px; }
+.dx-sel-size { min-width: 52px; }
+.dx-sel-border { min-width: 106px; }
+/* ── Column / row headers hover actions ────────────────────────────────────── */
 .dx-hdr-actions {
   position: absolute; display: none; z-index: 10;
-  background: var(--bg2, var(--bg)); border: 1px solid var(--border); border-radius: 6px;
-  padding: 2px; gap: 2px; box-shadow: 0 2px 8px rgba(0,0,0,.3);
+  background: var(--card, var(--bg)); border: 1px solid var(--border); border-radius: 6px;
+  padding: 2px; gap: 2px; box-shadow: 0 4px 12px rgba(0,0,0,.25);
 }
 .docs-excel th:hover .dx-hdr-actions { display: flex; }
 .dx-hdr-actions { top: 100%; left: 50%; transform: translateX(-50%); flex-direction: row; }
@@ -554,58 +573,150 @@ html.light .dx-btn:hover { background: rgba(0,0,0,.06); }
 .dx-hdr-btn {
   width: 20px; height: 20px; padding: 0; border: 0; background: transparent;
   color: var(--text); border-radius: 4px; cursor: pointer;
-  font-size: 14px; font-weight: 600; line-height: 1;
+  font-size: 13px; font-weight: 700; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;
 }
 .dx-hdr-btn:hover { background: var(--accent); color: #000; }
 .dx-hdr-btn.dx-danger:hover { background: #ff6b6b; color: #fff; }
 .docs-excel th.dx-colhdr, .docs-excel th.dx-rowhdr { overflow: visible; }
+/* ── Grid wrapper ──────────────────────────────────────────────────────────── */
 .docs-excel-wrap {
-  flex: 1; overflow: auto; background: #fff;
+  flex: 1; overflow: auto;
+  background: var(--xl-bg, #f8f9fa);
   scrollbar-width: thin;
-  scrollbar-color: rgba(160,160,175,0.35) transparent;
+  scrollbar-color: rgba(140,140,160,0.3) transparent;
 }
-.docs-excel-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
+html:not(.light) .docs-excel-wrap { --xl-bg: #1a1c20; }
+.docs-excel-wrap::-webkit-scrollbar { width: 8px; height: 8px; }
 .docs-excel-wrap::-webkit-scrollbar-track { background: transparent; }
-.docs-excel-wrap::-webkit-scrollbar-thumb { background: rgba(160,160,175,0.35); border-radius: 3px; }
-.docs-excel-wrap::-webkit-scrollbar-thumb:hover { background: rgba(160,160,175,0.6); }
-.docs-excel-wrap::-webkit-scrollbar-corner { background: #f0f0f0; }
-.docs-excel { border-collapse: collapse; font-size: 13px; width: max-content; }
-.docs-excel th, .docs-excel td {
-  border: 1px solid #c0c0c0; padding: 0; min-width: 100px; height: 28px;
-  color: var(--text);
-}
-.docs-excel thead th {
-  position: sticky; top: 0; z-index: 2;
-  background: #f0f0f0; color: #555; font-weight: 600;
-  text-align: center; padding: 4px 8px; height: 26px;
-}
-.docs-excel .dx-corner, .docs-excel .dx-rowhdr {
-  position: sticky; left: 0; z-index: 3; min-width: 42px; text-align: center;
-  background: #f0f0f0; color: #555; font-weight: 600; padding: 0 6px;
-}
-.docs-excel .dx-corner { z-index: 4; }
-.docs-excel td { padding: 4px 8px; outline: none; cursor: default; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 0; background: #ffffff; color: #111111; user-select: none; }
-.docs-excel td.dx-editing { white-space: pre-wrap; overflow: visible; cursor: text; user-select: text; box-shadow: inset 0 0 0 2px var(--accent), 0 2px 8px rgba(0,0,0,.15); outline: none; }
-.docs-excel td.dx-selected { background: color-mix(in srgb, var(--accent) 35%, #ffffff) !important; }
-.docs-excel td.dx-selected.dx-editing { background: #ffffff !important; }
-.docs-excel td.dx-autofill-preview { background: color-mix(in srgb, var(--accent) 18%, #ffffff) !important; outline: 1px dashed var(--accent); }
-#dx-fill-handle {
-  position: fixed; width: 7px; height: 7px; background: var(--accent);
-  border: 1px solid #fff; border-radius: 1px; cursor: crosshair; z-index: 9999;
-  transform: translate(-1px, -1px); pointer-events: all;
-}
+.docs-excel-wrap::-webkit-scrollbar-thumb { background: rgba(140,140,160,0.3); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box; }
+.docs-excel-wrap::-webkit-scrollbar-thumb:hover { background: rgba(140,140,160,0.55); background-clip: padding-box; }
+.docs-excel-wrap::-webkit-scrollbar-corner { background: transparent; }
 .docs-excel-wrap:focus { outline: none; }
 .docs-excel-wrap { cursor: default; }
-.docs-excel td.dx-find-hit {
-  box-shadow: inset 0 0 0 2px #ffb800, inset 0 0 0 4px rgba(255,184,0,.25);
+/* ── Grid table ────────────────────────────────────────────────────────────── */
+.docs-excel {
+  border-collapse: collapse; font-size: 13px; width: max-content;
+  font-family: 'DM Sans', -apple-system, sans-serif;
 }
-/* Override global tbody tr:hover so it doesn't bleed into the excel grid */
-/* Default row height — matches Excel default (20pt ≈ 22px). Inline style overrides for imported heights. */
-.docs-excel tbody tr { height: 22px; background: #fff; cursor: default; }
-.docs-excel tbody tr:hover { background: #fff; }
-/* Selected row/column header highlight */
-.docs-excel th.dx-hdr-selected { background: color-mix(in srgb, var(--accent) 25%, var(--bg2, var(--bg))) !important; color: var(--text) !important; }
+/* Light mode grid lines */
+.docs-excel th, .docs-excel td {
+  border: 1px solid #d0d4da; padding: 0; min-width: 80px; height: 24px;
+}
+html:not(.light) .docs-excel th,
+html:not(.light) .docs-excel td { border-color: #2e3138; }
+
+/* Column header row */
+.docs-excel thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: #f0f2f5; color: #5a6172; font-weight: 600;
+  text-align: center; padding: 3px 6px; height: 24px;
+  font-size: 11px; letter-spacing: .02em; user-select: none;
+  border-bottom: 2px solid #c8cdd6;
+}
+html:not(.light) .docs-excel thead th {
+  background: #222530; color: #7a82a0; border-bottom-color: #343a46;
+}
+/* Row number column */
+.docs-excel .dx-corner, .docs-excel .dx-rowhdr {
+  position: sticky; left: 0; z-index: 3; min-width: 40px; text-align: right;
+  background: #f0f2f5; color: #7a8499; font-weight: 500; padding: 0 8px 0 4px;
+  font-size: 11px; user-select: none;
+}
+html:not(.light) .docs-excel .dx-corner,
+html:not(.light) .docs-excel .dx-rowhdr { background: #222530; color: #56607a; }
+.docs-excel .dx-corner { z-index: 4; cursor: pointer; }
+.docs-excel .dx-corner:hover { background: color-mix(in srgb, var(--accent) 10%, #f0f2f5); }
+html:not(.light) .docs-excel .dx-corner:hover { background: color-mix(in srgb, var(--accent) 10%, #222530); }
+
+/* Data cells */
+.docs-excel td {
+  padding: 3px 7px; outline: none; cursor: default; vertical-align: middle;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 0;
+  background: var(--xl-cell-bg, #ffffff);
+  color: var(--xl-cell-fg, #1a1d23);
+  user-select: none; position: relative;
+}
+html:not(.light) .docs-excel-wrap {
+  --xl-cell-bg: #1c1f25;
+  --xl-cell-fg: #d8dce8;
+}
+/* Wrap text */
+.docs-excel td.dx-wrap {
+  white-space: normal; overflow: visible; text-overflow: clip; height: auto;
+}
+/* Active cell cursor (Excel-style green frame) */
+.docs-excel td.dx-cur {
+  box-shadow: inset 0 0 0 2px var(--accent);
+  z-index: 1;
+}
+/* Editing */
+.docs-excel td.dx-editing {
+  white-space: pre-wrap; overflow: visible; cursor: text; user-select: text;
+  box-shadow: inset 0 0 0 2px var(--accent), 0 4px 14px rgba(0,0,0,.18);
+  background: var(--xl-cell-bg, #ffffff) !important;
+  outline: none;
+}
+/* Selection */
+.docs-excel td.dx-selected {
+  background: color-mix(in srgb, var(--accent) 18%, var(--xl-cell-bg, #fff)) !important;
+}
+/* Active cell within selection — keep it white / dark, not filled */
+.docs-excel td.dx-cur.dx-selected {
+  background: var(--xl-cell-bg, #ffffff) !important;
+}
+/* AutoFill preview */
+.docs-excel td.dx-autofill-preview {
+  background: color-mix(in srgb, var(--accent) 10%, var(--xl-cell-bg, #fff)) !important;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+/* Fill handle */
+#dx-fill-handle {
+  position: fixed; width: 7px; height: 7px; background: var(--accent);
+  border: 1.5px solid #fff; border-radius: 1px; cursor: crosshair; z-index: 9999;
+  transform: translate(-1px, -1px); pointer-events: all;
+}
+/* Find highlight */
+.docs-excel td.dx-find-hit {
+  box-shadow: inset 0 0 0 2px #f59e0b;
+}
+/* Row heights — 24px default. Inline style overrides imported heights. */
+.docs-excel tbody tr { height: 24px; background: var(--xl-cell-bg, #fff); cursor: default; }
+.docs-excel tbody tr:hover > td:not(.dx-selected):not(.dx-cur) {
+  background: color-mix(in srgb, var(--accent) 4%, var(--xl-cell-bg, #fff));
+}
+/* Selected header highlight */
+.docs-excel th.dx-hdr-selected {
+  background: color-mix(in srgb, var(--accent) 22%, #f0f2f5) !important;
+  color: var(--accent) !important;
+}
+html:not(.light) .docs-excel th.dx-hdr-selected {
+  background: color-mix(in srgb, var(--accent) 22%, #222530) !important;
+}
+
+/* ── Context menu ──────────────────────────────────────────────────────────── */
+.dx-ctx-menu {
+  position: fixed; z-index: 99998; min-width: 200px;
+  background: var(--card, #fff); border: 1px solid var(--border);
+  border-radius: 10px; padding: 5px 0;
+  box-shadow: 0 8px 32px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.12);
+  font-size: 13px; color: var(--text);
+  animation: dx-ctx-in .1s ease;
+}
+@keyframes dx-ctx-in {
+  from { opacity: 0; transform: scale(.96) translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+.dx-ctx-item {
+  padding: 7px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px;
+  transition: background .08s;
+}
+.dx-ctx-item:hover { background: var(--hover); }
+.dx-ctx-item.dx-ctx-danger { color: #ef4444; }
+.dx-ctx-item.dx-ctx-danger:hover { background: rgba(239,68,68,.08); }
+.dx-ctx-item.dx-ctx-disabled { opacity: .4; cursor: default; pointer-events: none; }
+.dx-ctx-sep { height: 1px; background: var(--border); margin: 4px 0; }
+.dx-ctx-icon { width: 16px; text-align: center; opacity: .65; font-size: 12px; flex-shrink: 0; }
 
 .dx-modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 99999;
@@ -636,36 +747,37 @@ html.light .dx-btn:hover { background: rgba(0,0,0,.06); }
 .dx-modal-primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
 .dx-modal-primary:hover { opacity: .85; background: var(--accent); }
 
-/* Sheet tabs (multi-sheet Excel) */
+/* ── Sheet tabs ────────────────────────────────────────────────────────────── */
 .dx-sheet-tabs {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 4px 8px 0;
+  display: flex; align-items: center; gap: 0;
+  padding: 0 10px 0 8px;
   border-top: 1px solid var(--border);
-  background: var(--bg);
-  overflow-x: auto;
-  flex-shrink: 0;
+  background: var(--bg2, var(--bg));
+  overflow-x: auto; flex-shrink: 0;
+  scrollbar-width: none;
 }
+.dx-sheet-tabs::-webkit-scrollbar { display: none; }
 .dx-sheet-tab {
-  padding: 4px 14px;
-  font-size: 12px;
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: 4px 4px 0 0;
-  cursor: pointer;
-  color: var(--muted);
-  white-space: nowrap;
-  user-select: none;
-  transition: background .12s, color .12s;
+  padding: 6px 16px 5px;
+  font-size: 12px; font-weight: 500;
+  border: 1px solid transparent; border-bottom: none;
+  border-radius: 6px 6px 0 0; margin-bottom: -1px;
+  cursor: pointer; color: var(--muted);
+  white-space: nowrap; user-select: none;
+  transition: color .12s, background .12s;
+  position: relative;
 }
-.dx-sheet-tab:hover { background: var(--hover); color: var(--text); }
+.dx-sheet-tab::after {
+  content: ''; position: absolute; bottom: 0; left: 8px; right: 8px;
+  height: 2px; border-radius: 2px 2px 0 0; background: transparent;
+  transition: background .12s;
+}
+.dx-sheet-tab:hover { color: var(--text); background: var(--hover); }
 .dx-sheet-tab.active {
-  background: var(--card);
-  color: var(--text);
-  border-color: var(--border);
-  font-weight: 600;
+  color: var(--text); background: var(--bg);
+  border-color: var(--border); font-weight: 600;
 }
+.dx-sheet-tab.active::after { background: var(--accent); }
 
 /* ── Find & Replace panel ─────────────────────────────────────────────────── */
 /* Find & Replace modal portal */

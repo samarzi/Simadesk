@@ -246,15 +246,18 @@ export class DocsModule {
         if (font.bold)      parts.push('font-weight:bold');
         if (font.italic)    parts.push('font-style:italic');
         if (font.underline) parts.push('text-decoration:underline');
+        if (font.strike)    parts.push('text-decoration:line-through');
         const sz = font.sz;
-        if (sz && sz !== 11) parts.push(`font-size:${Math.round(sz * 1.33)}px`);
+        // Always import font size (including default 11pt)
+        if (sz) parts.push(`font-size:${Math.round(sz * 1.333)}px`);
         const fname = font.name;
-        if (fname && fname !== 'Calibri') parts.push(`font-family:"${fname}",sans-serif`);
-        // Font color — skip near-black (invisible on dark bg)
+        // Always import font family (including Calibri)
+        if (fname) parts.push(`font-family:"${fname}",sans-serif`);
+        // Skip only near-white colors (invisible on white cell background)
         const hex = toHex(font.color?.rgb);
         if (hex) {
           const lum = 0.299 * parseInt(hex.slice(0,2),16) + 0.587 * parseInt(hex.slice(2,4),16) + 0.114 * parseInt(hex.slice(4,6),16);
-          if (lum >= 60) parts.push(`color:#${hex}`);
+          if (lum < 220) parts.push(`color:#${hex}`);
         }
       }
 
@@ -495,6 +498,102 @@ export class DocsModule {
     return null;
   }
 
+  // ── CSS → SheetJS style object (for xlsx export) ──────────────────────────
+  private cssToXlsxStyle(css: string): any {
+    if (!css) return null;
+    const props: Record<string, string> = {};
+    css.split(';').forEach(p => {
+      const colon = p.indexOf(':');
+      if (colon < 0) return;
+      const k = p.slice(0, colon).trim().toLowerCase();
+      const v = p.slice(colon + 1).trim();
+      if (k) props[k] = v;
+    });
+
+    const parseColor = (val: string): string | null => {
+      const hex6 = val.match(/^#([0-9a-f]{6})$/i);
+      if (hex6) return hex6[1].toUpperCase();
+      const rgb = val.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+      if (rgb) return [rgb[1], rgb[2], rgb[3]]
+        .map(n => parseInt(n).toString(16).padStart(2, '0')).join('').toUpperCase();
+      return null;
+    };
+
+    const style: any = {};
+    const font: any = {};
+    let fill: any = null;
+    const alignment: any = {};
+    const border: any = {};
+
+    for (const [prop, rawVal] of Object.entries(props)) {
+      const val = rawVal.trim();
+      switch (prop) {
+        case 'background-color':
+        case 'background': {
+          const rgb = parseColor(val.split(/\s+/)[0]);
+          if (rgb) fill = { patternType: 'solid', fgColor: { rgb } };
+          break;
+        }
+        case 'color': {
+          const rgb = parseColor(val);
+          if (rgb) font.color = { rgb };
+          break;
+        }
+        case 'font-weight':
+          if (val === 'bold' || parseInt(val) >= 700) font.bold = true;
+          break;
+        case 'font-style':
+          if (val === 'italic') font.italic = true;
+          break;
+        case 'text-decoration':
+          if (val.includes('underline')) font.underline = true;
+          if (val.includes('line-through')) font.strike = true;
+          break;
+        case 'font-size': {
+          const px = parseFloat(val);
+          if (!isNaN(px)) font.sz = Math.max(6, Math.round(px / 1.333));
+          break;
+        }
+        case 'font-family': {
+          const name = val.split(',')[0].trim().replace(/['"]/g, '');
+          if (name) font.name = name;
+          break;
+        }
+        case 'text-align':
+          if (['left','center','right','justify'].includes(val)) alignment.horizontal = val;
+          break;
+        case 'vertical-align':
+          if (val === 'middle') alignment.vertical = 'center';
+          else if (val === 'top' || val === 'bottom') alignment.vertical = val;
+          break;
+        case 'border': {
+          if (val && val !== 'none' && !val.startsWith('0')) {
+            const cm = val.match(/#([0-9a-f]{6})/i);
+            const clr = cm ? cm[1].toUpperCase() : '000000';
+            const brd = { style: 'thin', color: { rgb: clr } };
+            border.top = border.bottom = border.left = border.right = brd;
+          }
+          break;
+        }
+        case 'border-top': case 'border-bottom': case 'border-left': case 'border-right': {
+          if (val && val !== 'none' && !val.startsWith('0')) {
+            const cm = val.match(/#([0-9a-f]{6})/i);
+            const clr = cm ? cm[1].toUpperCase() : '000000';
+            const side = prop.replace('border-', '') as 'top'|'bottom'|'left'|'right';
+            border[side] = { style: 'thin', color: { rgb: clr } };
+          }
+          break;
+        }
+      }
+    }
+
+    if (Object.keys(font).length) style.font = font;
+    if (fill) style.fill = fill;
+    if (Object.keys(alignment).length) style.alignment = alignment;
+    if (Object.keys(border).length) style.border = border;
+    return Object.keys(style).length ? style : null;
+  }
+
   // ── Export ─────────────────────────────────────────────────────────────────
   private exportDoc(doc: DocItem, format: string): void {
     if (doc.type === 'excel') {
@@ -502,11 +601,34 @@ export class DocsModule {
       if (format === 'xlsx') {
         const wb = XLSX.utils.book_new();
         ec.sheets.forEach(sh => {
-          const values = this.trimEmpty(sh.data).map(r => r.map(c => c.v));
+          const trimmed = this.trimEmpty(sh.data);
+          const values = trimmed.map(r => r.map(c => c.v));
           const ws = XLSX.utils.aoa_to_sheet(values);
+
+          // Apply cell styles
+          trimmed.forEach((row, r) => {
+            row.forEach((cell, c) => {
+              if (!cell.s) return;
+              const addr = XLSX.utils.encode_cell({ r, c });
+              if (!ws[addr]) return;
+              const xlStyle = this.cssToXlsxStyle(cell.s);
+              if (xlStyle) ws[addr].s = xlStyle;
+            });
+          });
+
+          // Column widths
+          if (sh.colWidths?.some(w => w != null)) {
+            ws['!cols'] = (sh.colWidths ?? []).map(w => w ? { wpx: w } : {});
+          }
+
+          // Row heights
+          if (sh.rowHeights?.some(h => h != null)) {
+            ws['!rows'] = (sh.rowHeights ?? []).slice(0, trimmed.length).map(h => h ? { hpx: h } : {});
+          }
+
           XLSX.utils.book_append_sheet(wb, ws, sh.name);
         });
-        XLSX.writeFile(wb, `${doc.title}.xlsx`);
+        XLSX.writeFile(wb, `${doc.title}.xlsx`, { cellStyles: true });
       } else if (format === 'csv') {
         const sh = ec.sheets[this.activeSheetIdx] ?? ec.sheets[0];
         const values = this.trimEmpty(sh.data).map(r => r.map(c => c.v));
@@ -767,16 +889,16 @@ export class DocsModule {
     return `${sheet.truncated ? `<div class="dx-truncated-warn">⚠ Файл содержит больше ${MAX_IMPORT_ROWS.toLocaleString('ru-RU')} строк — загружены первые ${MAX_IMPORT_ROWS.toLocaleString('ru-RU')}</div>` : ''}
     <div class="docs-excel-toolbar">
       <div class="dx-group">
-        <button class="dx-btn" data-xf-cmd="undo" title="Отменить (Ctrl+Z)">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>
+        <button class="dx-btn" data-xa="undo" title="Отменить (Ctrl+Z)">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>
         </button>
-        <button class="dx-btn" data-xf-cmd="redo" title="Повторить (Ctrl+Y)">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0115-6.7l3 2.7"/></svg>
+        <button class="dx-btn" data-xa="redo" title="Повторить (Ctrl+Y)">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0115-6.7l3 2.7"/></svg>
         </button>
       </div>
       <div class="dx-sep"></div>
       <div class="dx-group">
-        <select class="dx-sel" data-xf-font title="Шрифт">
+        <select class="dx-sel dx-sel-font" data-xf-font title="Шрифт">
           <option value="">Шрифт</option>
           <option value="'DM Sans',sans-serif">DM Sans</option><option value="Arial,sans-serif">Arial</option>
           <option value="Helvetica,sans-serif">Helvetica</option><option value="'Times New Roman',serif">Times New Roman</option>
@@ -784,78 +906,93 @@ export class DocsModule {
           <option value="Calibri,sans-serif">Calibri</option><option value="Cambria,serif">Cambria</option>
           <option value="Verdana,sans-serif">Verdana</option><option value="Tahoma,sans-serif">Tahoma</option>
         </select>
-        <select class="dx-sel dx-sel-sm" data-xf-size title="Размер шрифта">
-          <option value="">Размер</option>
+        <select class="dx-sel dx-sel-size" data-xf-size title="Размер шрифта">
+          <option value="">Пт</option>
           <option value="10px">10</option><option value="11px">11</option><option value="12px">12</option>
           <option value="13px">13</option><option value="14px">14</option><option value="16px">16</option>
           <option value="18px">18</option><option value="20px">20</option><option value="24px">24</option>
+          <option value="28px">28</option><option value="36px">36</option>
         </select>
       </div>
       <div class="dx-sep"></div>
       <div class="dx-group">
-        <button class="dx-btn" data-xf="bold" title="Жирный (Ctrl/⌘+B)"><b>B</b></button>
-        <button class="dx-btn" data-xf="italic" title="Курсив (Ctrl/⌘+I)"><i>I</i></button>
-        <button class="dx-btn" data-xf="underline" title="Подчёркнутый (Ctrl/⌘+U)"><u>U</u></button>
-        <button class="dx-btn" data-xf="strike" title="Зачёркнутый"><s>S</s></button>
-        <label class="dx-btn dx-color" title="Цвет текста"><span>A</span><input type="color" data-xf-color></label>
-        <label class="dx-btn dx-color dx-color-bg" title="Заливка ячейки"><span>▉</span><input type="color" data-xf-bg></label>
+        <button class="dx-btn" data-xf="bold" title="Жирный (Ctrl/⌘+B)"><b style="font-size:13px">B</b></button>
+        <button class="dx-btn" data-xf="italic" title="Курсив (Ctrl/⌘+I)"><i style="font-size:13px;font-style:italic">I</i></button>
+        <button class="dx-btn" data-xf="underline" title="Подчёркнутый (Ctrl/⌘+U)"><u style="font-size:13px">U</u></button>
+        <button class="dx-btn" data-xf="strike" title="Зачёркнутый"><s style="font-size:13px">S</s></button>
+        <label class="dx-btn dx-color" title="Цвет текста (A)">
+          <span style="display:flex;flex-direction:column;align-items:center;gap:1px">
+            <span style="font-weight:700;font-size:12px;line-height:1">A</span>
+            <span id="dx-color-bar" style="width:12px;height:3px;background:#111;border-radius:1px"></span>
+          </span>
+          <input type="color" data-xf-color value="#111111">
+        </label>
+        <label class="dx-btn dx-color dx-color-bg" title="Заливка ячейки">
+          <span style="display:flex;flex-direction:column;align-items:center;gap:1px">
+            <svg viewBox="0 0 14 14" width="12" height="12" fill="currentColor"><path d="M2 10.5L7 2l5 8.5H2zM1 11.5h12"/></svg>
+            <span id="dx-bg-bar" style="width:12px;height:3px;background:#ffff00;border-radius:1px"></span>
+          </span>
+          <input type="color" data-xf-bg value="#ffff00">
+        </label>
       </div>
       <div class="dx-sep"></div>
       <div class="dx-group">
         <button class="dx-btn" data-xa-align="left" title="По левому краю">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6"><line x1="1" y1="4" x2="15" y2="4"/><line x1="1" y1="8" x2="11" y2="8"/><line x1="1" y1="12" x2="15" y2="12"/></svg>
         </button>
         <button class="dx-btn" data-xa-align="center" title="По центру">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="10" x2="6" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="18" y1="18" x2="6" y2="18"/></svg>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6"><line x1="1" y1="4" x2="15" y2="4"/><line x1="3" y1="8" x2="13" y2="8"/><line x1="1" y1="12" x2="15" y2="12"/></svg>
         </button>
         <button class="dx-btn" data-xa-align="right" title="По правому краю">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="21" y1="10" x2="7" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="7" y2="18"/></svg>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6"><line x1="1" y1="4" x2="15" y2="4"/><line x1="5" y1="8" x2="15" y2="8"/><line x1="1" y1="12" x2="15" y2="12"/></svg>
+        </button>
+        <button class="dx-btn" data-xa="wrap" title="Перенос текста">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6"><line x1="1" y1="4" x2="15" y2="4"/><path d="M1 8h10a2 2 0 010 4H6"/><polyline points="8,10 6,12 8,14"/></svg>
         </button>
       </div>
       <div class="dx-sep"></div>
       <div class="dx-group">
-        <select class="dx-sel dx-sel-sm" data-xf-border title="Границы">
-          <option value="">Границы</option><option value="all">Все</option><option value="outer">По периметру</option>
+        <select class="dx-sel dx-sel-border" data-xf-border title="Границы">
+          <option value="">⊞ Границы</option><option value="all">Все ячейки</option><option value="outer">По периметру</option>
+          <option value="thick">Толстые (периметр)</option>
           <option value="top">Сверху</option><option value="bottom">Снизу</option>
           <option value="left">Слева</option><option value="right">Справа</option><option value="none">Убрать</option>
         </select>
       </div>
       <div class="dx-sep"></div>
       <div class="dx-group">
-        <button class="dx-btn" data-xf-num="general" title="Общий">Общий</button>
-        <button class="dx-btn" data-xf-num="number" title="Числовой">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9h16M4 15h16M10 3L8 21M16 3l-2 18"/></svg>
-        </button>
-        <button class="dx-btn" data-xf-num="currency" title="Денежный (₽)">₽</button>
-        <button class="dx-btn" data-xf-num="percent" title="Процент (%)">%</button>
+        <button class="dx-btn" data-xf-num="general" title="Общий формат" style="font-size:11px">Общий</button>
+        <button class="dx-btn" data-xf-num="number" title="Числовой" style="font-size:11px;font-family:monospace">123</button>
+        <button class="dx-btn" data-xf-num="currency" title="Денежный (₽)" style="font-size:13px">₽</button>
+        <button class="dx-btn" data-xf-num="percent" title="Процент (%)" style="font-size:13px">%</button>
         <button class="dx-btn" data-xf-num="date" title="Дата">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="3" width="14" height="12" rx="2"/><line x1="5" y1="1" x2="5" y2="5"/><line x1="11" y1="1" x2="11" y2="5"/><line x1="1" y1="7" x2="15" y2="7"/></svg>
         </button>
       </div>
       <div class="dx-sep"></div>
       <div class="dx-group">
-        <button class="dx-btn" data-xa="sort-asc" title="Сортировать А→Я">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h13M3 12h9M3 18h5M17 8l4-4 4 4M21 4v16"/></svg>
+        <button class="dx-btn" data-xa="sort-asc" title="Сортировать А→Я (по активной колонке)">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><line x1="2" y1="4" x2="10" y2="4"/><line x1="2" y1="8" x2="8" y2="8"/><line x1="2" y1="12" x2="6" y2="12"/><polyline points="13,2 13,14"/><polyline points="10,11 13,14 16,11"/></svg>
         </button>
-        <button class="dx-btn" data-xa="sort-desc" title="Сортировать Я→А">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h5M3 12h9M3 18h13M17 16l4 4 4-4M21 4v16"/></svg>
+        <button class="dx-btn" data-xa="sort-desc" title="Сортировать Я→А (по активной колонке)">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><line x1="2" y1="4" x2="6" y2="4"/><line x1="2" y1="8" x2="8" y2="8"/><line x1="2" y1="12" x2="10" y2="12"/><polyline points="13,2 13,14"/><polyline points="10,5 13,2 16,5"/></svg>
         </button>
       </div>
       <div class="dx-sep"></div>
       <div class="dx-group">
         <button class="dx-btn" data-xa="find" title="Найти / Заменить (Ctrl/⌘+F)">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="15" y2="15"/></svg>
         </button>
-        <button class="dx-btn dx-danger" data-xa="clear" title="Очистить таблицу">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+        <button class="dx-btn dx-danger" data-xa="clear" title="Очистить текущий лист">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 4h12M6 4V2.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5V4M13 4l-.8 9a1 1 0 01-1 .9H4.8a1 1 0 01-1-.9L3 4"/></svg>
         </button>
       </div>
       <div class="docs-excel-status" id="docs-xl-status">A1</div>
     </div>
     <div class="docs-formula-bar">
-      <div class="dx-cell-ref" id="docs-cell-ref">A1</div>
-      <div class="dx-fx-btn" title="Функции">fx</div>
-      <input class="dx-formula-inp" id="docs-formula-inp" type="text" placeholder="Введите значение или формулу (=SUM(A1:A5))">
+      <div class="dx-cell-ref" id="docs-cell-ref" contenteditable="false" spellcheck="false" title="Адрес ячейки (кликни для перехода)">A1</div>
+      <div class="dx-fx-icon" title="Вставить функцию">fx</div>
+      <input class="dx-formula-inp" id="docs-formula-inp" type="text" placeholder="Значение или формула  (=СУММ(A1:A5), =B2*C2 ...)">
     </div>
     <div class="docs-excel-wrap" id="docs-excel-wrap" tabindex="0">
       <table class="docs-excel">
@@ -931,6 +1068,18 @@ export class DocsModule {
 
     // Snapshot currently visible DOM cells back into xlVirtData
     const vd = this.xlVirtData;
+
+    // Read only formatting styles from a cell — exclude layout props (width/height)
+    // that come from column/row resizing and must NOT be stored in cell.s
+    const LAYOUT_PROPS = new Set(['width','min-width','max-width','height','min-height','max-height']);
+    const cellStyle = (td: HTMLTableCellElement): string | undefined => {
+      const filtered = td.style.cssText
+        .split(';')
+        .filter(p => { const prop = p.split(':')[0].trim().toLowerCase(); return prop && !LAYOUT_PROPS.has(prop); })
+        .join(';').trim();
+      return filtered || undefined;
+    };
+
     const syncDomToData = () => {
       if (!vd) return;
       body.querySelectorAll<HTMLTableRowElement>('tr[data-row]').forEach(tr => {
@@ -940,7 +1089,7 @@ export class DocsModule {
           const c = +(td.dataset.c!);
           if (isNaN(c) || c < 0 || c >= vd[r].length) return;
           const v = td.dataset.formula ?? td.innerText;
-          const s = td.style.cssText.trim() || undefined;
+          const s = cellStyle(td);
           vd[r][c] = s ? { v, s } : { v };
         });
       });
@@ -949,11 +1098,11 @@ export class DocsModule {
     const grid = (): CellData[][] => {
       if (vd) { syncDomToData(); return vd; }
       const rows: CellData[][] = [];
-      body.querySelectorAll<HTMLTableRowElement>('tr').forEach(tr => {
+      body.querySelectorAll<HTMLTableRowElement>('tr[data-row]').forEach(tr => {
         const row: CellData[] = [];
-        tr.querySelectorAll<HTMLTableCellElement>('td').forEach(td => {
+        tr.querySelectorAll<HTMLTableCellElement>('td[data-r]').forEach(td => {
           const v = td.dataset.formula ?? td.innerText;
-          const s = td.style.cssText.trim() || undefined;
+          const s = cellStyle(td);
           row.push(s ? { v, s } : { v });
         });
         rows.push(row);
@@ -1342,6 +1491,8 @@ export class DocsModule {
       for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) {
         body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`)?.classList.add('dx-selected');
       }
+      // Active cell cursor
+      body.querySelector<HTMLTableCellElement>(`td[data-r="${curR}"][data-c="${curC}"]`)?.classList.add('dx-cur');
       if (isFullRow) for (let r = r1; r <= r2; r++) this.root.querySelector(`th.dx-rowhdr[data-row-hdr="${r}"]`)?.classList.add('dx-hdr-selected');
       if (isFullCol) for (let c = c1; c <= c2; c++) this.root.querySelector(`th.dx-colhdr[data-col="${c}"]`)?.classList.add('dx-hdr-selected');
       updateStats(r1, c1, r2, c2);
@@ -1392,11 +1543,87 @@ export class DocsModule {
 
     const formulaBar = this.root.querySelector<HTMLInputElement>('#docs-formula-inp');
     const cellRef = this.root.querySelector<HTMLElement>('#docs-cell-ref');
+
+    // ── Toolbar state sync ────────────────────────────────────────────────────
+    const updateToolbarState = () => {
+      const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${curR}"][data-c="${curC}"]`);
+      if (!td) return;
+      const cs = td.style;
+      // Bold / Italic / Underline / Strike
+      this.root.querySelector('[data-xf="bold"]')?.classList.toggle('dx-active', cs.fontWeight === 'bold');
+      this.root.querySelector('[data-xf="italic"]')?.classList.toggle('dx-active', cs.fontStyle === 'italic');
+      this.root.querySelector('[data-xf="underline"]')?.classList.toggle('dx-active', cs.textDecoration.includes('underline'));
+      this.root.querySelector('[data-xf="strike"]')?.classList.toggle('dx-active', cs.textDecoration.includes('line-through'));
+      // Wrap text
+      this.root.querySelector('[data-xa="wrap"]')?.classList.toggle('dx-active', cs.whiteSpace === 'normal');
+      // Alignment
+      const align = cs.textAlign || '';
+      this.root.querySelectorAll('[data-xa-align]').forEach(btn => {
+        (btn as HTMLElement).classList.toggle('dx-active', (btn as HTMLElement).dataset.xaAlign === align);
+      });
+      // Color bar indicators
+      const colorBar = this.root.querySelector<HTMLElement>('#dx-color-bar');
+      if (colorBar) colorBar.style.background = cs.color || '#111111';
+      const bgBar = this.root.querySelector<HTMLElement>('#dx-bg-bar');
+      if (bgBar) bgBar.style.background = cs.background || '#ffff00';
+      // Font selector (try to match current family)
+      const fontSel = this.root.querySelector<HTMLSelectElement>('[data-xf-font]');
+      if (fontSel && cs.fontFamily) {
+        const match = Array.from(fontSel.options).find(o => o.value && cs.fontFamily.includes(o.value.split(',')[0].replace(/'/g, '')));
+        fontSel.value = match?.value ?? '';
+      }
+      // Size selector
+      const sizeSel = this.root.querySelector<HTMLSelectElement>('[data-xf-size]');
+      if (sizeSel && cs.fontSize) {
+        const match = Array.from(sizeSel.options).find(o => o.value === cs.fontSize);
+        sizeSel.value = match?.value ?? '';
+      }
+    };
+
     const syncFormulaBar = () => {
       const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${curR}"][data-c="${curC}"]`);
-      if (cellRef) cellRef.textContent = `${this.colLetter(curC)}${curR+1}`;
+      if (cellRef && document.activeElement !== cellRef) cellRef.textContent = `${this.colLetter(curC)}${curR+1}`;
       if (formulaBar) formulaBar.value = td?.dataset.formula ?? td?.innerText ?? '';
+      updateToolbarState();
     };
+
+    // ── Name Box navigation ───────────────────────────────────────────────────
+    if (cellRef) {
+      cellRef.addEventListener('click', () => {
+        cellRef.contentEditable = 'true';
+        cellRef.focus();
+        const range = document.createRange();
+        range.selectNodeContents(cellRef);
+        window.getSelection()?.removeAllRanges();
+        window.getSelection()?.addRange(range);
+      });
+      cellRef.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          cellRef.contentEditable = 'false';
+          cellRef.textContent = `${this.colLetter(curC)}${curR + 1}`;
+          wrap?.focus();
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          const text = (cellRef.textContent ?? '').trim().toUpperCase();
+          cellRef.contentEditable = 'false';
+          const m = text.match(/^([A-Z]+)(\d+)$/);
+          if (m) {
+            const newC = this.letterToCol(m[1]);
+            const newR = parseInt(m[2]) - 1;
+            if (newC >= 0 && newR >= 0) navigateTo(newR, newC);
+          } else {
+            cellRef.textContent = `${this.colLetter(curC)}${curR + 1}`;
+          }
+          wrap?.focus();
+        }
+      });
+      cellRef.addEventListener('blur', () => {
+        cellRef.contentEditable = 'false';
+        cellRef.textContent = `${this.colLetter(curC)}${curR + 1}`;
+      });
+    }
 
     formulaBar?.addEventListener('focus', () => { exitEdit(false); });
     formulaBar?.addEventListener('keydown', (e) => {
@@ -1591,9 +1818,22 @@ export class DocsModule {
         const onMove=(ev: MouseEvent)=>{
           const w=Math.max(40,startW+(ev.clientX-startX));
           th.style.minWidth=th.style.width=w+'px';
+          // Set width on TDs only for live visual feedback — NOT stored in cell.s (filtered by cellStyle())
           this.root.querySelectorAll<HTMLElement>(`td[data-c="${colIdx}"]`).forEach(td=>{td.style.minWidth=td.style.width=w+'px';});
         };
-        const onUp=()=>{handle.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);};
+        const onUp=()=>{
+          handle.classList.remove('active');
+          document.removeEventListener('mousemove',onMove);
+          document.removeEventListener('mouseup',onUp);
+          // Persist column width in the data model
+          const w = th.offsetWidth;
+          const ec = getEC(); const sh = getSheet();
+          const cws: (number|null)[] = sh.colWidths ? [...sh.colWidths] : Array.from({length: sh.data[0]?.length ?? 0}, () => null);
+          while (cws.length <= colIdx) cws.push(null);
+          cws[colIdx] = w;
+          ec.sheets[this.activeSheetIdx] = { ...sh, colWidths: cws };
+          this.updateContent(doc.id, JSON.stringify(ec));
+        };
         document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp);
       });
     });
@@ -1630,10 +1870,7 @@ export class DocsModule {
       });
     });
 
-    this.root.querySelectorAll<HTMLButtonElement>('[data-xf-cmd]').forEach(btn => {
-      btn.addEventListener('mousedown',e=>e.preventDefault());
-      btn.addEventListener('click',()=>{document.execCommand(btn.dataset.xfCmd!);commit();});
-    });
+    // (data-xf-cmd handlers removed — undo/redo now handled via data-xa below)
 
     this.root.querySelector<HTMLSelectElement>('[data-xf-font]')?.addEventListener('change',e=>{
       const sel=e.target as HTMLSelectElement;
@@ -1656,14 +1893,17 @@ export class DocsModule {
     });
     this.root.querySelector<HTMLSelectElement>('[data-xf-border]')?.addEventListener('change',e=>{
       const sel=e.target as HTMLSelectElement; if(!sel.value) return;
-      const bd='2px solid #333';
+      const thin='1px solid #333', thick='2.5px solid #111';
       selectedCells().forEach(c=>{
-        if(sel.value==='all'||sel.value==='outer') c.style.border=bd;
-        else if(sel.value==='top') c.style.borderTop=bd;
-        else if(sel.value==='bottom') c.style.borderBottom=bd;
-        else if(sel.value==='left') c.style.borderLeft=bd;
-        else if(sel.value==='right') c.style.borderRight=bd;
-        else if(sel.value==='none') c.style.border='';
+        const v=sel.value;
+        if(v==='all') c.style.border=thin;
+        else if(v==='outer') c.style.border=thin;
+        else if(v==='thick') c.style.border=thick;
+        else if(v==='top') c.style.borderTop=thin;
+        else if(v==='bottom') c.style.borderBottom=thin;
+        else if(v==='left') c.style.borderLeft=thin;
+        else if(v==='right') c.style.borderRight=thin;
+        else if(v==='none') c.style.border='';
       });
       sel.value=''; commit();
     });
@@ -1684,13 +1924,26 @@ export class DocsModule {
 
     // Toolbar actions
     this.root.querySelectorAll<HTMLButtonElement>('.dx-btn[data-xa]').forEach(btn=>{
+      btn.addEventListener('mousedown', e => e.preventDefault());
       btn.addEventListener('click',()=>{
         const act=btn.dataset.xa!, rows=grid();
+        if(act==='undo'){doUndo();return;}
+        if(act==='redo'){doRedo();return;}
         if(act==='clear'){
           if(confirm('Очистить текущий лист?')){saveGrid(rows.map(r=>r.map(()=>({v:''} as CellData))));this.render();}
           return;
         }
         if(act==='find'){(this as any)._openFindPanel?.();return;}
+        if(act==='wrap'){
+          const cells=selectedCells(); if(!cells.length) return;
+          const first=cells[0];
+          const isWrapped = first.style.whiteSpace==='normal';
+          cells.forEach(c=>{
+            if(isWrapped){ c.style.whiteSpace=''; c.style.overflow=''; }
+            else{ c.style.whiteSpace='normal'; c.style.overflow='visible'; }
+          });
+          commit(); updateToolbarState(); return;
+        }
         if(act==='sort-asc'||act==='sort-desc'){
           const c=curC, dir=act==='sort-asc'?1:-1;
           const header=rows[0], rest=rows.slice(1);
@@ -1703,6 +1956,79 @@ export class DocsModule {
           saveGrid([header,...rest]); this.render(); return;
         }
       });
+    });
+
+    // ── Right-click context menu ──────────────────────────────────────────────
+    body.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const td = (e.target as HTMLElement).closest('td') as HTMLTableCellElement | null;
+      if (!td) return;
+      const r = +(td.getAttribute('data-r') ?? '0');
+      const c = +(td.getAttribute('data-c') ?? '0');
+      // Focus that cell if not already selected
+      if (curR !== r || curC !== c) { curR = r; curC = c; selStart = {r,c}; selEnd = {r,c}; applySel(); syncFormulaBar(); }
+      document.querySelector('.dx-ctx-menu')?.remove();
+      const hasSel = selStart && selEnd && (selStart.r !== selEnd.r || selStart.c !== selEnd.c);
+      const menu = document.createElement('div');
+      menu.className = 'dx-ctx-menu';
+      menu.style.cssText = `left:${Math.min(e.clientX, window.innerWidth - 220)}px;top:${Math.min(e.clientY, window.innerHeight - 280)}px`;
+      const items: Array<{ label?: string; icon?: string; action?: string; danger?: boolean; sep?: boolean; disabled?: boolean }> = [
+        { icon: '↑', label: 'Вставить строку выше', action: 'ins-row-above' },
+        { icon: '↓', label: 'Вставить строку ниже', action: 'ins-row-below' },
+        { icon: '←', label: 'Вставить столбец слева', action: 'ins-col-left' },
+        { icon: '→', label: 'Вставить столбец справа', action: 'ins-col-right' },
+        { sep: true },
+        { icon: '✕', label: 'Удалить строку', action: 'del-row', danger: true },
+        { icon: '✕', label: 'Удалить столбец', action: 'del-col', danger: true },
+        { sep: true },
+        { icon: '⌫', label: hasSel ? 'Очистить выделенные' : 'Очистить ячейку', action: 'clear-cells' },
+        { icon: '◻', label: 'Убрать форматирование', action: 'clear-fmt' },
+        { sep: true },
+        { icon: '⤢', label: 'Выделить всю строку', action: 'sel-row' },
+        { icon: '⤡', label: 'Выделить весь столбец', action: 'sel-col' },
+      ];
+      menu.innerHTML = items.map(it => {
+        if (it.sep) return '<div class="dx-ctx-sep"></div>';
+        return `<div class="dx-ctx-item${it.danger ? ' dx-ctx-danger' : ''}${it.disabled ? ' dx-ctx-disabled' : ''}" data-ctx="${it.action}">
+          <span class="dx-ctx-icon">${it.icon ?? ''}</span>${it.label}
+        </div>`;
+      }).join('');
+      document.body.appendChild(menu);
+      menu.addEventListener('click', (ev) => {
+        const tgt = (ev.target as HTMLElement).closest('[data-ctx]') as HTMLElement | null;
+        if (!tgt) return;
+        menu.remove();
+        const act = tgt.dataset.ctx!;
+        const rowsNow = grid();
+        const totalCols2 = rowsNow[0]?.length ?? 0;
+        if (act === 'ins-row-above') { pushUndo(); rowsNow.splice(r, 0, Array.from({length: totalCols2}, ()=>({v:''}as CellData))); saveGrid(rowsNow); this.render(); }
+        else if (act === 'ins-row-below') { pushUndo(); rowsNow.splice(r + 1, 0, Array.from({length: totalCols2}, ()=>({v:''}as CellData))); saveGrid(rowsNow); this.render(); }
+        else if (act === 'ins-col-left') { pushUndo(); rowsNow.forEach(row => row.splice(c, 0, {v:''})); saveGrid(rowsNow); this.render(); }
+        else if (act === 'ins-col-right') { pushUndo(); rowsNow.forEach(row => row.splice(c + 1, 0, {v:''})); saveGrid(rowsNow); this.render(); }
+        else if (act === 'del-row') { pushUndo(); if (rowsNow.length > 1) { rowsNow.splice(r, 1); saveGrid(rowsNow); this.render(); } }
+        else if (act === 'del-col') { pushUndo(); if (totalCols2 > 1) { rowsNow.forEach(row => row.splice(c, 1)); saveGrid(rowsNow); this.render(); } }
+        else if (act === 'clear-cells') {
+          const r1 = selStart ? Math.min(selStart.r, selEnd!.r) : r;
+          const r2 = selStart ? Math.max(selStart.r, selEnd!.r) : r;
+          const c1 = selStart ? Math.min(selStart.c, selEnd!.c) : c;
+          const c2 = selStart ? Math.max(selStart.c, selEnd!.c) : c;
+          pushUndo();
+          body.querySelectorAll<HTMLTableCellElement>('td.dx-selected').forEach(td2 => { td2.innerText = ''; delete td2.dataset.formula; });
+          if (!hasSel) { const td2 = body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`); if(td2){td2.innerText='';delete td2.dataset.formula;} }
+          void r1; void r2; void c1; void c2;
+          saveGrid(grid());
+        }
+        else if (act === 'clear-fmt') {
+          pushUndo();
+          selectedCells().forEach(td2 => { td2.style.cssText = ''; });
+          if (!hasSel) { const td2 = body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`); if(td2) td2.style.cssText=''; }
+          saveGrid(grid());
+        }
+        else if (act === 'sel-row') { const totalC = (vd??grid())[0]?.length??0; selStart={r,c:0}; selEnd={r,c:totalC-1}; applySel(); }
+        else if (act === 'sel-col') { const totalR = (vd??grid()).length; selStart={r:0,c}; selEnd={r:totalR-1,c}; applySel(); }
+      });
+      const closeMenu = () => { document.querySelector('.dx-ctx-menu')?.remove(); document.removeEventListener('click', closeMenu, true); };
+      setTimeout(() => document.addEventListener('click', closeMenu, true), 0);
     });
 
     // Col add/del
@@ -1730,7 +2056,19 @@ export class DocsModule {
           const startY=e.clientY, startH=tr.offsetHeight;
           handle.classList.add('active');
           const onMove=(ev: MouseEvent)=>{tr.style.height=Math.max(22,startH+(ev.clientY-startY))+'px';};
-          const onUp=()=>{handle.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);};
+          const onUp=()=>{
+            handle.classList.remove('active');
+            document.removeEventListener('mousemove',onMove);
+            document.removeEventListener('mouseup',onUp);
+            // Persist row height in the data model
+            const h = Math.max(22, parseInt(tr.style.height) || tr.offsetHeight);
+            const ec = getEC(); const sh = getSheet();
+            const rhs: (number|null)[] = sh.rowHeights ? [...sh.rowHeights] : Array.from({length: sh.data.length}, () => null);
+            while (rhs.length <= rowIdx) rhs.push(null);
+            rhs[rowIdx] = h;
+            ec.sheets[this.activeSheetIdx] = { ...sh, rowHeights: rhs };
+            this.updateContent(doc.id, JSON.stringify(ec));
+          };
           document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp);
         });
       });
@@ -2204,10 +2542,29 @@ export class DocsModule {
     const fsFocus = this.isFullscreen
       ? '[РЕЖИМ: Полный экран редактора. Пользователь работает с документом. Фокусируйся только на нём — давай советы, подсказки и действия именно по этому файлу. Ты можешь отвечать на вопросы об API (остатки, заказы, аналитика WB/Ozon) если пользователь явно спросит, но сам не переключайся на другие разделы.]\n\n'
       : '';
-    const allDocsInfo = this.docs.length > 1
+    const allDocsInfo = this.docs.length > 0
       ? `\n\n📂 Все открытые документы (${this.docs.length}):\n` +
-        this.docs.map((d, i) => `  ${i+1}. id="${d.id}" «${d.title}» [${d.type}]`).join('\n') +
-        '\n\nДля операций по нескольким документам используй действия multi_replace/multi_count с параметром docIds.'
+        this.docs.map((d, i) => {
+          let extra = '';
+          if (d.type === 'excel') {
+            try {
+              const ec = this.parseExcelContent(d.content);
+              const sheets = ec.sheets.map(sh => {
+                const cols = sh.data[0]?.length ?? 0;
+                const dataRows = sh.data.slice(1).filter(r => r.some(c => (c.v||'').trim())).length;
+                const hdrs = (sh.data[0] ?? []).map((c, ci) => `${this.colLetter(ci)}="${(c.v||'').trim()||'(пусто)'}"`).slice(0, 8).join(', ');
+                return `    Лист «${sh.name}»: ${dataRows} стр × ${cols} кол. | Заголовки: ${hdrs}`;
+              }).join('\n');
+              extra = '\n' + sheets;
+            } catch { extra = ''; }
+          } else {
+            const len = d.content.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().length;
+            extra = ` (~${len} симв.)`;
+          }
+          const active = d.id === this.activeId ? ' ← АКТИВНЫЙ' : '';
+          return `  ${i+1}. id="${d.id}" «${d.title}» [${d.type}]${active}${extra}`;
+        }).join('\n') +
+        '\n\nДля операций по нескольким документам: multi_replace/multi_count/docs_delete/docs_rename/docs_clear_content с параметром docIds.'
       : '';
     const doc = this.aiDoc();
     if (!doc) return fsFocus + 'Нет открытого документа. Пользователь может создать Word или Excel.' + allDocsInfo;
@@ -2369,6 +2726,93 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
           description: 'Убрать форматирование (стили) у выделенных ячеек, оставить только значения.',
           args: '{}',
           run: () => this.aiClearStyleSelection(),
+        },
+        // ── Управление документами ──────────────────────────────────────────
+        {
+          name: 'docs_create',
+          description: 'Создать новый документ Excel или Word. type — "excel" или "word". title — название документа (необязательно). Использовать когда просят «создай новую таблицу», «открой новый Word».',
+          args: '{ type: "excel"|"word", title?: string }',
+          run: (a) => this.aiDocsCreate(a),
+        },
+        {
+          name: 'docs_delete',
+          description: 'Удалить один или несколько документов. docIds — массив id или "all" для всех. names — массив названий (если id неизвестны). Использовать когда просят «удали этот файл», «закрой все документы», «удали Таблицу 1 и Таблицу 2». ВНИМАНИЕ: действие необратимо — не требует подтверждения, выполняет сразу.',
+          args: '{ docIds?: string[]|"all", names?: string[] }',
+          run: (a) => this.aiDocsDelete(a),
+        },
+        {
+          name: 'docs_rename',
+          description: 'Переименовать один или несколько документов. renames — массив объектов с id или name (текущее) и newName (новое). Использовать когда просят «переименуй», «назови иначе», «смени заголовок файла».',
+          args: '{ renames: Array<{ id?: string, name?: string, newName: string }> }',
+          run: (a) => this.aiDocsRename(a),
+        },
+        {
+          name: 'docs_switch',
+          description: 'Переключиться на другой открытый документ. Использовать когда просят «перейди к файлу X», «открой Таблицу 2», «переключись на документ».',
+          args: '{ id?: string, name?: string }',
+          run: (a) => this.aiDocsSwitch(a),
+        },
+        {
+          name: 'docs_clear_content',
+          description: 'Очистить всё содержимое документов (все ячейки Excel или весь текст Word). docIds — массив id или "all" для всех. Использовать когда просят «очисти всё», «сотри всё во всех файлах», «обнули таблицы».',
+          args: '{ docIds: string[]|"all" }',
+          run: (a) => this.aiDocsClearContent(a),
+        },
+        // ── Управление диапазонами ──────────────────────────────────────────
+        {
+          name: 'excel_set_range',
+          description: 'Записать значения сразу в диапазон ячеек. range — диапазон вида "A1:C3". values — двумерный массив строк (строки × столбцы). Использовать когда нужно заполнить прямоугольный блок ячеек.',
+          args: '{ range: "A1:C3", values: string[][] }',
+          run: (a) => this.aiExcelSetRange(a),
+        },
+        {
+          name: 'excel_delete_rows',
+          description: 'Удалить строки по номерам (1-based) или по условию. rows — конкретные номера строк. column+value_filter — удалить строки, где колонка соответствует регулярному выражению. skipHeader — пропускать строку 1 (по умолчанию true). Использовать когда просят «удали строки 3 и 5», «удали пустые строки», «удали строки где цена 0».',
+          args: '{ rows?: number[], column?: string, value_filter?: string, skipHeader?: boolean }',
+          run: (a) => this.aiExcelDeleteRows(a),
+        },
+        {
+          name: 'excel_insert_rows',
+          description: 'Вставить пустые строки в таблицу. at — номер строки (1-based), перед которой вставить. count — количество строк (по умолчанию 1). Использовать когда просят «вставь строку после заголовка», «добавь 3 пустые строки».',
+          args: '{ at: number, count?: number }',
+          run: (a) => this.aiExcelInsertRows(a),
+        },
+        {
+          name: 'excel_sort_sheet',
+          description: 'Отсортировать строки таблицы по колонке. column — буква или имя заголовка. order — "asc" (по возрастанию) или "desc" (по убыванию). hasHeader — есть ли строка-заголовок (по умолчанию true). numeric — сортировать как числа (по умолчанию auto-detect). Использовать когда просят «отсортируй по цене», «упорядочи по убыванию».',
+          args: '{ column: "A"|"Цена", order?: "asc"|"desc", hasHeader?: boolean, numeric?: boolean }',
+          run: (a) => this.aiExcelSortSheet(a),
+        },
+        {
+          name: 'excel_formula_column',
+          description: 'Заполнить колонку формулами по шаблону. column — буква или имя. formula — шаблон формулы, где {r} — номер строки (напр. "=B{r}*C{r}" или "=СУММ(A{r}:E{r})"). fromRow — начать с этой строки 1-based (по умолчанию 2 = после заголовка). toRow — до этой строки (по умолчанию последняя строка с данными+1). Использовать когда просят «добавь формулу умножения», «посчитай сумму по строкам».',
+          args: '{ column: "D"|"Итого", formula: "=B{r}*C{r}", fromRow?: number, toRow?: number }',
+          run: (a) => this.aiExcelFormulaColumn(a),
+        },
+        // ── Управление листами ──────────────────────────────────────────────
+        {
+          name: 'excel_add_sheet',
+          description: 'Добавить новый лист в текущую Excel-таблицу. name — название листа (необязательно). Использовать когда просят «добавь новый лист», «создай вкладку».',
+          args: '{ name?: string }',
+          run: (a) => this.aiExcelAddSheet(a),
+        },
+        {
+          name: 'excel_rename_sheet',
+          description: 'Переименовать лист. from — текущее название (по умолчанию активный лист). to — новое название. Использовать когда просят «переименуй лист», «назови вкладку».',
+          args: '{ from?: string, to: string }',
+          run: (a) => this.aiExcelRenameSheet(a),
+        },
+        {
+          name: 'excel_delete_sheet',
+          description: 'Удалить лист из таблицы. name — название листа (по умолчанию активный). Нельзя удалить последний лист. Использовать когда просят «удали этот лист», «убери вкладку».',
+          args: '{ name?: string }',
+          run: (a) => this.aiExcelDeleteSheet(a),
+        },
+        {
+          name: 'excel_copy_sheet',
+          description: 'Скопировать лист внутри той же таблицы. from — название исходного листа (по умолчанию активный). newName — название копии. Использовать когда просят «скопируй лист», «продублируй вкладку».',
+          args: '{ from?: string, newName?: string }',
+          run: (a) => this.aiExcelCopySheet(a),
         },
       ],
     };
@@ -2947,6 +3391,343 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
       this.updateContent(docId, before ?? '');
     }
     if (this.root.style.display !== 'none') this.render();
+  }
+
+  // ── Docs management AI actions ──────────────────────────────────────────────
+
+  private aiDocsCreate(a: { type: 'excel' | 'word'; title?: string }): AiActionResult {
+    const type = a?.type === 'word' ? 'word' : 'excel';
+    const now = Date.now();
+    const n = this.docs.filter(d => d.type === type).length + 1;
+    const defaultTitle = type === 'word' ? `Документ ${n}` : `Таблица ${n}`;
+    const title = (a?.title ?? '').trim() || defaultTitle;
+    const doc: DocItem = {
+      id: this.newId(), type,
+      title,
+      content: type === 'word' ? '' : this.emptyExcel(),
+      updated_at: now,
+    };
+    this.addDoc(doc);
+    return { summary: `Создан ${type === 'word' ? 'Word-документ' : 'Excel-файл'} «${title}» (id="${doc.id}").` };
+  }
+
+  private aiDocsDelete(a: { docIds?: string[] | 'all'; names?: string[] }): AiActionResult {
+    let targets: DocItem[] = [];
+    if (a?.docIds === 'all') {
+      targets = [...this.docs];
+    } else if (Array.isArray(a?.docIds) && a.docIds.length > 0) {
+      targets = this.docs.filter(d => (a.docIds as string[]).includes(d.id));
+    } else if (Array.isArray(a?.names) && a.names.length > 0) {
+      const lows = a.names.map(n => n.trim().toLowerCase());
+      targets = this.docs.filter(d => lows.some(l => d.title.trim().toLowerCase().includes(l)));
+    }
+    if (!targets.length) throw new Error('Документы не найдены. Проверь id или названия через describe().');
+    const names = targets.map(d => `«${d.title}»`).join(', ');
+    for (const doc of targets) {
+      this.touchRecent(doc);
+      const idx = this.docs.indexOf(doc);
+      if (idx >= 0) this.docs.splice(idx, 1);
+    }
+    if (targets.some(d => d.id === this.activeId)) {
+      this.activeId = this.docs[0]?.id ?? null;
+      this.activeSheetIdx = 0;
+    }
+    this.save();
+    this.render();
+    return { summary: `Удалено документов: ${targets.length} — ${names}.` };
+  }
+
+  private aiDocsRename(a: { renames: Array<{ id?: string; name?: string; newName: string }> }): AiActionResult {
+    if (!Array.isArray(a?.renames) || !a.renames.length) throw new Error('Не указаны документы для переименования (renames).');
+    const done: string[] = [];
+    const notFound: string[] = [];
+    for (const r of a.renames) {
+      const newName = (r.newName ?? '').trim();
+      if (!newName) continue;
+      let doc: DocItem | undefined;
+      if (r.id) {
+        doc = this.docs.find(d => d.id === r.id);
+      } else if (r.name) {
+        const low = r.name.trim().toLowerCase();
+        doc = this.docs.find(d => d.title.trim().toLowerCase().includes(low));
+      }
+      if (!doc) { notFound.push(r.name ?? r.id ?? '?'); continue; }
+      const old = doc.title;
+      doc.title = newName;
+      doc.updated_at = Date.now();
+      done.push(`«${old}» → «${newName}»`);
+    }
+    if (done.length > 0) {
+      this.save();
+      this.render();
+    }
+    const notFoundStr = notFound.length ? ` Не найдены: ${notFound.join(', ')}.` : '';
+    if (!done.length) throw new Error(`Ни один документ не переименован.${notFoundStr}`);
+    return { summary: `Переименовано: ${done.join(', ')}.${notFoundStr}` };
+  }
+
+  private aiDocsSwitch(a: { id?: string; name?: string }): AiActionResult {
+    let doc: DocItem | undefined;
+    if (a?.id) {
+      doc = this.docs.find(d => d.id === a.id);
+    } else if (a?.name) {
+      const low = a.name.trim().toLowerCase();
+      doc = this.docs.find(d => d.title.trim().toLowerCase().includes(low));
+    }
+    if (!doc) throw new Error('Документ не найден. Проверь id или название через describe().');
+    this.activeId = doc.id;
+    this.activeSheetIdx = 0;
+    this.render();
+    return { summary: `Переключено на документ «${doc.title}».` };
+  }
+
+  private aiDocsClearContent(a: { docIds: string[] | 'all' }): AiActionResult {
+    const targets = a?.docIds === 'all' ? [...this.docs] : this.docs.filter(d => (a.docIds as string[]).includes(d.id));
+    if (!targets.length) throw new Error('Документы не найдены. Проверь id через describe().');
+    const snapshots = targets.map(d => ({ docId: d.id, before: d.content }));
+    for (const doc of targets) {
+      if (doc.type === 'word') {
+        this.updateContent(doc.id, '');
+      } else {
+        const ec = this.parseExcelContent(doc.content);
+        for (const sh of ec.sheets) {
+          sh.data = sh.data.map(row => row.map(() => ({ v: '' } as CellData)));
+        }
+        this.updateContent(doc.id, JSON.stringify(ec));
+      }
+    }
+    this.render();
+    return {
+      summary: `Очищено документов: ${targets.length} — ${targets.map(d => `«${d.title}»`).join(', ')}.`,
+      undo: { kind: 'docs_multi', payload: { snapshots }, label: 'Отменить очистку' },
+    };
+  }
+
+  // ── Range / rows AI actions ─────────────────────────────────────────────────
+
+  private aiExcelSetRange(a: { range: string; values: string[][] }): AiActionResult {
+    const s = this.aiSheet();
+    if (!s) throw new Error('Сейчас открыт не Excel-документ');
+    const { ec, sheet, doc } = s;
+    if (!a?.range) throw new Error('Не указан диапазон (range)');
+    const m = String(a.range).trim().match(/^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$/);
+    if (!m) throw new Error('Некорректный диапазон — ожидается формат "A1:C3"');
+    const before = doc.content;
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
+    const c1 = this.letterToCol(m[1]), r1 = +m[2] - 1;
+    const c2 = this.letterToCol(m[3]), r2 = +m[4] - 1;
+    const vals = a.values ?? [];
+    let filled = 0;
+    for (let r = r1; r <= r2; r++) {
+      while (sheet.data.length <= r) sheet.data.push([]);
+      const row = sheet.data[r];
+      for (let c = c1; c <= c2; c++) {
+        while (row.length <= c) row.push({ v: '' });
+        const vr = r - r1, vc = c - c1;
+        const val = vals[vr]?.[vc] ?? '';
+        row[c] = { ...row[c], v: String(val) };
+        filled++;
+      }
+    }
+    this.aiPersist(doc, ec);
+    return this.docsResult(doc.id, before, `Диапазон ${a.range}: заполнено ${filled} ячеек.`, 'Отменить заполнение диапазона');
+  }
+
+  private aiExcelDeleteRows(a: { rows?: number[]; column?: string; value_filter?: string; skipHeader?: boolean }): AiActionResult {
+    const s = this.aiSheet();
+    if (!s) throw new Error('Сейчас открыт не Excel-документ');
+    const { ec, sheet, doc } = s;
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
+    const before = doc.content;
+    const skip = a?.skipHeader !== false;
+
+    let toDelete: Set<number>;
+
+    if (Array.isArray(a?.rows) && a.rows.length > 0) {
+      toDelete = new Set(a.rows.map(r => r - 1));
+    } else if (a?.column) {
+      const colIdx = this.aiResolveCol(sheet, a.column);
+      if (colIdx < 0) throw new Error(`Колонка «${a.column}» не найдена`);
+      const re = a.value_filter ? new RegExp(a.value_filter, 'i') : /./;
+      toDelete = new Set<number>();
+      sheet.data.forEach((row, ri) => {
+        if (skip && ri === 0) return;
+        const v = (row[colIdx]?.v ?? '').trim();
+        if (re.test(v)) toDelete.add(ri);
+      });
+    } else {
+      // Delete empty rows by default
+      toDelete = new Set<number>();
+      sheet.data.forEach((row, ri) => {
+        if (skip && ri === 0) return;
+        if (row.every(c => !(c.v ?? '').trim())) toDelete.add(ri);
+      });
+    }
+
+    const countBefore = sheet.data.length;
+    sheet.data = sheet.data.filter((_, ri) => !toDelete.has(ri));
+    const deleted = countBefore - sheet.data.length;
+    this.aiPersist(doc, ec);
+    return this.docsResult(doc.id, before, `Удалено строк: ${deleted}.`, 'Отменить удаление строк');
+  }
+
+  private aiExcelInsertRows(a: { at: number; count?: number }): AiActionResult {
+    const s = this.aiSheet();
+    if (!s) throw new Error('Сейчас открыт не Excel-документ');
+    const { ec, sheet, doc } = s;
+    const at = Math.max(0, (a?.at ?? 1) - 1);
+    const count = Math.max(1, Math.min(a?.count ?? 1, 100));
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
+    const before = doc.content;
+    const cols = sheet.data[0]?.length ?? XL_COLS;
+    const empty = () => Array.from({ length: cols }, () => ({ v: '' } as CellData));
+    const newRows = Array.from({ length: count }, empty);
+    sheet.data.splice(at, 0, ...newRows);
+    this.aiPersist(doc, ec);
+    return this.docsResult(doc.id, before, `Вставлено ${count} пустых строк перед строкой ${a.at}.`, 'Отменить вставку строк');
+  }
+
+  private aiExcelSortSheet(a: { column: string; order?: string; hasHeader?: boolean; numeric?: boolean }): AiActionResult {
+    const s = this.aiSheet();
+    if (!s) throw new Error('Сейчас открыт не Excel-документ');
+    const { ec, sheet, doc } = s;
+    if (!a?.column) throw new Error('Не указана колонка для сортировки (column)');
+    const colIdx = this.aiResolveCol(sheet, a.column);
+    if (colIdx < 0) throw new Error(`Колонка «${a.column}» не найдена`);
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
+    const before = doc.content;
+    const hasHeader = a.hasHeader !== false;
+    const desc = (a.order ?? 'asc') === 'desc';
+    const header = hasHeader ? sheet.data[0] : null;
+    let dataRows = hasHeader ? sheet.data.slice(1) : [...sheet.data];
+
+    const toNum = (v: string) => parseFloat(v.replace(/[^\d.,\-]/g, '').replace(',', '.'));
+    const autoNumeric = a.numeric ?? dataRows.some(r => !isNaN(toNum((r[colIdx]?.v ?? '').trim())));
+
+    dataRows.sort((ra, rb) => {
+      const va = (ra[colIdx]?.v ?? '').trim();
+      const vb = (rb[colIdx]?.v ?? '').trim();
+      let cmp: number;
+      if (autoNumeric) {
+        const na = toNum(va), nb = toNum(vb);
+        cmp = (isNaN(na) ? 0 : na) - (isNaN(nb) ? 0 : nb);
+      } else {
+        cmp = va.localeCompare(vb, 'ru');
+      }
+      return desc ? -cmp : cmp;
+    });
+
+    sheet.data = header ? [header, ...dataRows] : dataRows;
+    this.aiPersist(doc, ec);
+    return this.docsResult(doc.id, before, `Таблица отсортирована по «${a.column}» ${desc ? 'по убыванию' : 'по возрастанию'} (${dataRows.length} строк).`, 'Отменить сортировку');
+  }
+
+  private aiExcelFormulaColumn(a: { column: string; formula: string; fromRow?: number; toRow?: number }): AiActionResult {
+    const s = this.aiSheet();
+    if (!s) throw new Error('Сейчас открыт не Excel-документ');
+    const { ec, sheet, doc } = s;
+    if (!a?.column) throw new Error('Не указана колонка (column)');
+    if (!a?.formula) throw new Error('Не указан шаблон формулы (formula)');
+    const colIdx = this.aiResolveCol(sheet, a.column);
+    if (colIdx < 0) throw new Error(`Колонка «${a.column}» не найдена`);
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
+    const before = doc.content;
+    const dataRows = sheet.data.slice(1).filter(r => r.some(c => (c.v||'').trim())).length;
+    const fromRow = (a.fromRow ?? 2) - 1;
+    const toRow = (a.toRow ?? dataRows + 1) - 1;
+    let filled = 0;
+    for (let r = fromRow; r <= toRow && r < sheet.data.length; r++) {
+      const row = sheet.data[r];
+      while (row.length <= colIdx) row.push({ v: '' });
+      const formula = a.formula.replace(/\{r\}/g, String(r + 1));
+      row[colIdx] = { ...row[colIdx], v: formula };
+      filled++;
+    }
+    this.aiPersist(doc, ec);
+    return this.docsResult(doc.id, before, `Формула «${a.formula}» заполнена в ${filled} ячеек колонки «${a.column}».`, 'Отменить формулы');
+  }
+
+  // ── Sheet management AI actions ─────────────────────────────────────────────
+
+  private aiExcelAddSheet(a: { name?: string }): AiActionResult {
+    const doc = this.aiDoc();
+    if (!doc || doc.type !== 'excel') throw new Error('Сейчас открыт не Excel-документ');
+    const ec = this.parseExcelContent(doc.content);
+    const n = ec.sheets.length + 1;
+    const name = (a?.name ?? '').trim() || `Лист ${n}`;
+    if (ec.sheets.some(sh => sh.name === name)) throw new Error(`Лист «${name}» уже существует`);
+    ec.sheets.push({
+      name,
+      data: Array.from({ length: XL_ROWS }, () => Array.from({ length: XL_COLS }, () => ({ v: '' } as CellData))),
+    });
+    this.activeSheetIdx = ec.sheets.length - 1;
+    this.updateContent(doc.id, JSON.stringify(ec));
+    this.render();
+    return { summary: `Добавлен лист «${name}» (всего листов: ${ec.sheets.length}).` };
+  }
+
+  private aiExcelRenameSheet(a: { from?: string; to: string }): AiActionResult {
+    const doc = this.aiDoc();
+    if (!doc || doc.type !== 'excel') throw new Error('Сейчас открыт не Excel-документ');
+    if (!(a?.to ?? '').trim()) throw new Error('Не указано новое название листа (to)');
+    const ec = this.parseExcelContent(doc.content);
+    let sh: SheetData | undefined;
+    if (a?.from) {
+      sh = ec.sheets.find(s => s.name === a.from);
+      if (!sh) throw new Error(`Лист «${a.from}» не найден`);
+    } else {
+      sh = ec.sheets[this.activeSheetIdx] ?? ec.sheets[0];
+    }
+    const old = sh.name;
+    sh.name = a.to.trim();
+    this.updateContent(doc.id, JSON.stringify(ec));
+    this.render();
+    return { summary: `Лист «${old}» переименован в «${sh.name}».` };
+  }
+
+  private aiExcelDeleteSheet(a: { name?: string }): AiActionResult {
+    const doc = this.aiDoc();
+    if (!doc || doc.type !== 'excel') throw new Error('Сейчас открыт не Excel-документ');
+    const ec = this.parseExcelContent(doc.content);
+    if (ec.sheets.length <= 1) throw new Error('Нельзя удалить последний лист');
+    let idx: number;
+    if (a?.name) {
+      idx = ec.sheets.findIndex(s => s.name === a.name);
+      if (idx < 0) throw new Error(`Лист «${a.name}» не найден`);
+    } else {
+      idx = this.activeSheetIdx;
+    }
+    const name = ec.sheets[idx].name;
+    ec.sheets.splice(idx, 1);
+    if (this.activeSheetIdx >= ec.sheets.length) this.activeSheetIdx = ec.sheets.length - 1;
+    this.updateContent(doc.id, JSON.stringify(ec));
+    this.render();
+    return { summary: `Лист «${name}» удалён. Осталось листов: ${ec.sheets.length}.` };
+  }
+
+  private aiExcelCopySheet(a: { from?: string; newName?: string }): AiActionResult {
+    const doc = this.aiDoc();
+    if (!doc || doc.type !== 'excel') throw new Error('Сейчас открыт не Excel-документ');
+    const ec = this.parseExcelContent(doc.content);
+    let src: SheetData;
+    if (a?.from) {
+      const found = ec.sheets.find(s => s.name === a.from);
+      if (!found) throw new Error(`Лист «${a.from}» не найден`);
+      src = found;
+    } else {
+      src = ec.sheets[this.activeSheetIdx] ?? ec.sheets[0];
+    }
+    const baseName = (a?.newName ?? '').trim() || `${src.name} (копия)`;
+    let name = baseName;
+    let attempt = 2;
+    while (ec.sheets.some(s => s.name === name)) name = `${baseName} ${attempt++}`;
+    const copy: SheetData = JSON.parse(JSON.stringify(src));
+    copy.name = name;
+    ec.sheets.push(copy);
+    this.activeSheetIdx = ec.sheets.length - 1;
+    this.updateContent(doc.id, JSON.stringify(ec));
+    this.render();
+    return { summary: `Лист «${src.name}» скопирован как «${name}».` };
   }
 
   private escRe(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
