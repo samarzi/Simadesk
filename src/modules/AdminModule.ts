@@ -1835,6 +1835,34 @@ ${this.SIMADESK_KNOWLEDGE}
           </div>
         </div>
 
+        <div class="adm-card" id="adm-reviewer-card">
+          <div class="adm-card-title">🔑 Вход разработчиков / проверяющих</div>
+          <div class="adm-card-desc">Email/password-аккаунты для входа без Telegram и Яндекс. Смена без знания старого пароля.</div>
+          <div id="adm-reviewer-accounts" style="margin-top:10px;font-size:12px;color:var(--text3)">
+            <button class="adm-btn-primary" id="load-reviewer-accounts-btn" style="font-size:12px;padding:6px 14px">Загрузить аккаунты</button>
+          </div>
+          <div id="adm-reviewer-form" style="display:none;margin-top:12px">
+            <div class="adm-form">
+              <div class="adm-form-row">
+                <label class="adm-label">Аккаунт</label>
+                <select class="adm-input" id="reviewer-account-select"></select>
+              </div>
+              <div class="adm-form-row">
+                <label class="adm-label">Новый email <span style="color:var(--text3);font-weight:400">(необязательно)</span></label>
+                <input class="adm-input" id="reviewer-new-email" type="email" placeholder="Оставьте пустым — не менять">
+              </div>
+              <div class="adm-form-row">
+                <label class="adm-label">Новый пароль <span style="color:var(--text3);font-weight:400">(необязательно)</span></label>
+                <input class="adm-input" id="reviewer-new-password" type="text" placeholder="Оставьте пустым — не менять" autocomplete="new-password">
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <button class="adm-btn-primary" id="reviewer-save-btn">Сохранить</button>
+                <span id="reviewer-save-status" style="font-size:11px;color:var(--text3)"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="adm-card">
           <div class="adm-card-title">Быстрые ссылки</div>
           <div class="adm-links" style="margin-top:10px">
@@ -1977,6 +2005,10 @@ ${this.SIMADESK_KNOWLEDGE}
 
     // AI config
     document.getElementById('save-ai-config-btn')?.addEventListener('click', () => this.handleSaveAiConfig());
+
+    // Reviewer accounts
+    document.getElementById('load-reviewer-accounts-btn')?.addEventListener('click', () => this.loadReviewerAccounts());
+    document.getElementById('reviewer-save-btn')?.addEventListener('click', () => this.handleReviewerSave());
 
     // Inline tab links (e.g. "Редактор сайта" link in settings)
     this.el.querySelectorAll<HTMLElement>('.adm-inline-link[data-tab]').forEach(btn => {
@@ -2389,6 +2421,104 @@ ${this.SIMADESK_KNOWLEDGE}
       setTimeout(() => { if (status) status.textContent = ''; }, 3000);
     } catch (err: unknown) {
       if (status) { status.textContent = `Ошибка: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? 'неизвестно'}`; status.style.color = '#ef4444'; }
+    }
+  }
+
+  // ── REVIEWER ACCOUNTS ─────────────────────────────────────────────────────────
+  private async loadReviewerAccounts(): Promise<void> {
+    const btn = document.getElementById('load-reviewer-accounts-btn');
+    if (btn) { btn.textContent = 'Загрузка…'; (btn as HTMLButtonElement).disabled = true; }
+
+    try {
+      const apiUrl = (import.meta.env.VITE_API_URL as string);
+      const token = localStorage.getItem('access_token') ?? '';
+      const res = await fetch(`${apiUrl}/functions/v1/admin-update-reviewer`, {
+        headers: { 'Authorization': `Bearer ${token}`, 'apikey': (import.meta.env.VITE_API_KEY as string) },
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? 'Ошибка');
+      const { users } = await res.json() as { users: Array<{ id: string; email: string; created_at: string }> };
+
+      const select = document.getElementById('reviewer-account-select') as HTMLSelectElement;
+      if (select) {
+        select.innerHTML = users.map(u =>
+          `<option value="${u.id}">${u.email}</option>`,
+        ).join('');
+      }
+
+      const accountsDiv = document.getElementById('adm-reviewer-accounts');
+      if (accountsDiv) accountsDiv.style.display = 'none';
+      const form = document.getElementById('adm-reviewer-form');
+      if (form) form.style.display = 'block';
+    } catch (err) {
+      if (btn) { btn.textContent = `Ошибка: ${(err as Error).message}`; (btn as HTMLButtonElement).disabled = false; }
+    }
+  }
+
+  private async handleReviewerSave(): Promise<void> {
+    const select  = document.getElementById('reviewer-account-select') as HTMLSelectElement;
+    const emailEl = document.getElementById('reviewer-new-email') as HTMLInputElement;
+    const passEl  = document.getElementById('reviewer-new-password') as HTMLInputElement;
+    const statusEl = document.getElementById('reviewer-save-status');
+    const btn     = document.getElementById('reviewer-save-btn') as HTMLButtonElement;
+
+    const userId   = select?.value;
+    const newEmail = emailEl?.value.trim();
+    const newPass  = passEl?.value;
+
+    if (!userId) return;
+    if (!newEmail && !newPass) {
+      if (statusEl) { statusEl.textContent = '⚠ Введите новый email или пароль'; statusEl.style.color = '#f59e0b'; }
+      return;
+    }
+
+    // Защита от случайного нажатия — диалог подтверждения
+    const emailHint = select.options[select.selectedIndex]?.text ?? userId;
+    const changes: string[] = [];
+    if (newEmail) changes.push(`email → ${newEmail}`);
+    if (newPass)  changes.push(`пароль → ${newPass}`);
+    const confirmed = window.confirm(
+      `Изменить данные аккаунта «${emailHint}»?\n\n${changes.join('\n')}\n\nЭто действие вступит в силу немедленно.`,
+    );
+    if (!confirmed) return;
+
+    btn.disabled = true;
+    if (statusEl) { statusEl.textContent = 'Сохраняю…'; statusEl.style.color = 'var(--text3)'; }
+
+    try {
+      const apiUrl = (import.meta.env.VITE_API_URL as string);
+      const token  = localStorage.getItem('access_token') ?? '';
+      const body: Record<string, string> = { user_id: userId };
+      if (newEmail) body.email = newEmail;
+      if (newPass)  body.password = newPass;
+
+      const res = await fetch(`${apiUrl}/functions/v1/admin-update-reviewer`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'apikey': (import.meta.env.VITE_API_KEY as string),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? 'Ошибка сервера');
+      }
+
+      emailEl.value = '';
+      passEl.value  = '';
+      if (statusEl) { statusEl.textContent = '✓ Сохранено'; statusEl.style.color = '#22c55e'; }
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+      // Обновить список аккаунтов в select если email изменился
+      if (newEmail) {
+        const opt = select.options[select.selectedIndex];
+        if (opt) opt.text = newEmail;
+      }
+    } catch (err) {
+      if (statusEl) { statusEl.textContent = `Ошибка: ${(err as Error).message}`; statusEl.style.color = '#ef4444'; }
+    } finally {
+      btn.disabled = false;
     }
   }
 

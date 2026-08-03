@@ -42,6 +42,26 @@ interface TaskAction {
   tasks?: Array<{ title: string; description?: string; priority?: string; due_date?: string }>;
 }
 
+interface ChainStep {
+  action: 'page_action' | 'create_task' | 'navigate';
+  // page_action
+  name?: string;
+  args?: any;
+  // create_task
+  title?: string;
+  description?: string;
+  priority?: string;
+  // navigate
+  page?: string;
+  label?: string;
+}
+
+interface ChainAction {
+  action: 'chain';
+  plan: string;
+  steps: ChainStep[];
+}
+
 // ── Chat sessions ─────────────────────────────────────────────────────────────
 
 interface ChatSession {
@@ -68,7 +88,7 @@ const ACTION_LABELS: Record<string, string> = {
 
 // ── System prompt ──────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `Ты — Сима, профессиональный AI-менеджер маркетплейсов в системе SimaDesk (2026). Ты работаешь как старший операционный менеджер с 7+ лет опыта на Wildberries, Ozon и Яндекс Маркет. Ты одновременно являешься НАВИГАТОРОМ (помогаешь разобраться в SimaDesk) и МЕНЕДЖЕРОМ (анализируешь данные, выявляешь риски, создаёшь задачи).
+const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-ассистент в системе SimaDesk (2026). Ты можешь делать ВСЁ: отвечать на любые вопросы, выполнять команды в системе, анализировать данные, управлять задачами, ценами, заказами, отзывами — и любую другую работу. Ты работаешь как старший операционный менеджер с 7+ лет опыта на Wildberries, Ozon и Яндекс Маркет, но не ограничен этой темой.
 
 ## НАВИГАЦИЯ
 Если пользователь говорит "открой/перейди/покажи/запусти [раздел]" — ответь СТРОГО JSON без пояснений:
@@ -237,27 +257,44 @@ const SYSTEM_PROMPT = `Ты — Сима, профессиональный AI-м
 Всегда ищи: аномалии, отклонения от норм, товары в зоне риска.
 Приоритизируй: критичные риски (OOS, штрафы) > важные (падение метрик) > оптимизация.
 
+## ГЛОБАЛЬНЫЕ КОМАНДЫ (доступны всегда, с любой страницы)
+Следующие действия можно вызвать через {"action":"page_action","name":"...","args":{}} или как шаг в chain:
+
+| name | что делает |
+|------|-----------|
+| create_oos_tasks | Создать задачи по всем OOS-товарам |
+| run_risk_audit | Полный аудит рисков + создание задач |
+| bulk_price_change | Изменить цены всех товаров (args: mp, delta, percent) |
+| generate_report | Создать Excel-отчёт (args: type: analytics/stock/orders/full) |
+| reply_all_unanswered | Ответить на все отзывы без ответа (args: template, stars_max) |
+| sync_marketplace | Синхронизировать данные с МП (args: mp опционально) |
+| navigate_to | Перейти в любой раздел (args: page) |
+| create_task_global | Создать задачу из любого места |
+| create_doc | Создать Excel или Word документ (args: type, title) |
+| toggle_theme_off | Включить тёмную тему |
+| toggle_theme_on | Включить светлую тему |
+| reload_page | Перезагрузить страницу |
+
+## ЦЕПОЧКИ ДЕЙСТВИЙ (CHAIN ACTIONS)
+Для выполнения нескольких шагов последовательно — ответь ОДНИМ JSON без пояснений:
+{"action":"chain","plan":"Что делаем: краткое описание всех шагов","steps":[
+  {"action":"page_action","name":"имя_действия","args":{}},
+  {"action":"create_task","title":"...","priority":"red"},
+  {"action":"navigate","page":"tasks","label":"Задачи"}
+]}
+Допустимые шаги: page_action, create_task, navigate.
+Примеры когда использовать chain:
+- "создай задачи по всем OOS и открой раздел задач" → chain[create_oos_tasks + navigate:tasks]
+- "синхронизируй данные и перейди в аналитику" → chain[sync_marketplace + navigate:analytics]
+- "проверь все риски и создай задачи" → chain[run_risk_audit + navigate:tasks]
+
 ## СТИЛЬ ОТВЕТА
 - Конкретно и по делу: вывод → причина → действие
 - Цифры и метрики, не общие слова
 - Максимум 3-5 пунктов действий, не длинные списки
 - Если нужно создать задачу — предложи через suggest_task или создай через create_task
 - Отвечай по-русски, профессионально, но без лишнего официоза
-
-## ОГРАНИЧЕНИЯ ТЕМАТИКИ
-Ты отвечаешь ТОЛЬКО на вопросы по темам:
-- Маркетплейсы: WB, Ozon, Яндекс Маркет, Авито и работа на них
-- SimaDesk: функции, разделы, как пользоваться сервисом
-- Аналитика продаж, юнит-экономика, ценообразование, маржа
-- Логистика: FBO, FBS, склады, остатки, поставки
-- Реклама на маркетплейсах (ДРР, CTR, кампании)
-- Работа с поставщиками и закупки
-- Онлайн-торговля, бизнес-процессы в e-commerce
-- Отзывы, репутация, рейтинги на МП
-
-Если вопрос НЕ связан с этими темами (история, политика, наука, знаменитости, математика общего плана, программирование не связанное с МП, и т.п.) — ответь СТРОГО и коротко:
-"Я ассистент SimaDesk — помогаю с маркетплейсами и работой сервиса. Задай вопрос о торговле на WB, Ozon, Яндекс Маркет или о функциях SimaDesk."
-Не объясняй почему не отвечаешь. Просто верни эту фразу и больше ничего.
+- На вопросы не связанные с маркетплейсами — отвечай кратко и по делу, ты умный универсальный ассистент
 
 ## ПЕРЕКЛЮЧЕНИЕ НА ПОДДЕРЖКУ
 Если пользователь говорит что хочет написать в поддержку, поговорить с оператором, жалуется что ты не помогаешь или что-то не работает в сервисе — ответь строго JSON:
@@ -267,7 +304,7 @@ const SYSTEM_PROMPT = `Ты — Сима, профессиональный AI-м
 После каждого обычного ответа (не JSON-команд навигации, создания задач или page_action) добавляй в самый конец ответа JSON с 2–3 короткими кнопками для продолжения диалога:
 {"suggestions":["текст кнопки 1","текст кнопки 2"]}
 Кнопки: 3–5 слов, конкретные, без emoji. НЕ добавляй ничего после JSON.
-Если ответ — это JSON навигации, создания задачи или page_action — suggestions НЕ нужны.`;
+Если ответ — это JSON навигации, создания задачи, page_action или chain — suggestions НЕ нужны.`;
 
 // ── Nav command patterns (client-side fast matching, no API needed) ────────────
 
@@ -308,14 +345,14 @@ const IS_NAV_COMMAND = /^(?:открой|открыть|перейди|пока�
 // ── Hint suggestions shown at panel open ──────────────────────────────────────
 
 const HINTS = [
-  'Открой аналитику',
   'Что проверить сегодня?',
-  'Как улучшить позиции?',
-  'Открой репрайсер',
-  'Что такое ДРР?',
+  'Аудит рисков',
+  'Задачи по OOS',
+  'Открой аналитику',
+  'Синхронизируй все',
+  'Отчёт в Excel',
   'Открой заказы',
-  'Как работать с отзывами?',
-  'Открой остатки',
+  'Как улучшить позиции?',
 ];
 
 // ── Store context collector ───────────────────────────────────────────────────
@@ -410,9 +447,41 @@ function getStoreContext(): string {
     }
   } catch { /* ignore */ }
 
-  return sections.length > 0
-    ? '\n\n[ТЕКУЩИЕ ДАННЫЕ МАГАЗИНА]\n' + sections.join('\n\n')
-    : '';
+  try {
+    const pm = (window as any).productsHubModule;
+    if (pm) {
+      const items: any[] = (pm as any).items ?? [];
+      if (items.length > 0) {
+        const byMp: Record<string, number> = {};
+        items.forEach((i: any) => { const m = i.mp ?? 'неизвестно'; byMp[m] = (byMp[m] || 0) + 1; });
+        sections.push(`ТОВАРЫ: Всего артикулов: ${items.length} | По МП: ${Object.entries(byMp).map(([m, n]) => `${m}: ${n}`).join(', ')}`);
+      }
+    }
+  } catch { /* ignore */ }
+
+  try {
+    const wbm = (window as any).wbModule;
+    if (wbm?.connected) {
+      sections.push(`WB: подключён${wbm.shopName ? ` (${wbm.shopName})` : ''}`);
+    }
+  } catch { /* ignore */ }
+
+  try {
+    const oz = (window as any).ozonModule;
+    if (oz?.connected) {
+      sections.push(`OZON: подключён${oz.shopName ? ` (${oz.shopName})` : ''}`);
+    }
+  } catch { /* ignore */ }
+
+  // Текущая страница и время
+  const currentPage = (window as any).__sdCurrentPage ?? '';
+  const now = new Date();
+  const timeStr = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const dateStr = now.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  const meta = `КОНТЕКСТ: ${dateStr}, ${timeStr}${currentPage ? ` | Открытый раздел: ${currentPage}` : ''}`;
+
+  return '\n\n[ТЕКУЩИЕ ДАННЫЕ МАГАЗИНА]\n' + meta + (sections.length > 0 ? '\n\n' + sections.join('\n\n') : '');
 }
 
 // ── TTS ───────────────────────────────────────────────────────────────────────
@@ -628,6 +697,65 @@ export class AssistantModule {
       this.aiKey   = sessionStorage.getItem('sd_ai_key') || this.aiKey;
       this.aiModel = localStorage.getItem('sd_ai_model') || this.aiModel;
     });
+
+    // Запуск фонового мониторинга
+    this.startBackgroundMonitor();
+  }
+
+  // ── Фоновый мониторинг ────────────────────────────────────────────────────────
+
+  private bgMonitorTimer: ReturnType<typeof setInterval> | null = null;
+  private lastAlertKey = '';
+
+  private startBackgroundMonitor(): void {
+    if (this.bgMonitorTimer) return;
+    // Проверка каждые 5 минут
+    this.bgMonitorTimer = setInterval(() => this.runBackgroundCheck(), 5 * 60 * 1000);
+    // Первая проверка через 30 секунд после старта
+    setTimeout(() => this.runBackgroundCheck(), 30_000);
+  }
+
+  private runBackgroundCheck(): void {
+    const alerts: string[] = [];
+
+    try {
+      const items: any[] = (window as any).stockModule?.items ?? [];
+      const newOos = items.filter((i: any) => (i.stockTotal ?? 0) === 0);
+      if (newOos.length > 0) {
+        alerts.push(`🔴 OOS: ${newOos.length} товаров без остатков`);
+      }
+    } catch { /* ignore */ }
+
+    try {
+      const tasks: any[] = (window as any).taskManagerModule?.tasks ?? [];
+      const overdue = tasks.filter((t: any) =>
+        t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()
+      );
+      if (overdue.length > 0) {
+        alerts.push(`🟡 Просрочено задач: ${overdue.length}`);
+      }
+    } catch { /* ignore */ }
+
+    if (!alerts.length) return;
+
+    const alertKey = alerts.join('|');
+    if (alertKey === this.lastAlertKey) return; // не дублируем одно и то же
+    this.lastAlertKey = alertKey;
+
+    // Показываем тост только если панель закрыта
+    if (!this.isOpen) {
+      const { showToast } = require('@/utils/toast') as typeof import('@/utils/toast');
+      showToast(`Сима: ${alerts[0]}`, 'warning');
+    }
+
+    // Добавляем бейдж на кнопку Симы
+    const btn = document.getElementById('nav-assistant');
+    if (btn && !btn.querySelector('.sima-alert-dot')) {
+      const dot = document.createElement('span');
+      dot.className = 'sima-alert-dot';
+      dot.title = alerts.join('\n');
+      btn.appendChild(dot);
+    }
   }
 
   /** Called by admin panel to update config without page reload */
@@ -888,18 +1016,18 @@ export class AssistantModule {
         </div>
         <div class="sd-ap-qa-body">
           <div class="sd-ap-qa-grid">
-            <button class="sd-ap-qa-btn" data-action="analytics30">Аналитика 30 дней</button>
-            <button class="sd-ap-qa-btn" data-action="stockRisk">Риски остатков</button>
-            <button class="sd-ap-qa-btn" data-action="ordersCheck">Проверить заказы</button>
-            <button class="sd-ap-qa-btn" data-action="dailyCheck">Дневной чеклист</button>
-            <button class="sd-ap-qa-btn" data-action="priceAnalysis">Анализ цен</button>
-            <button class="sd-ap-qa-btn" data-action="howTo">Как пользоваться</button>
-            <button class="sd-ap-qa-btn" data-action="reviewsCheck">Проверить отзывы</button>
-            <button class="sd-ap-qa-btn" data-action="unitEconomy">Unit-экономика</button>
-            <button class="sd-ap-qa-btn" data-action="seoAdvice">SEO карточек</button>
-            <button class="sd-ap-qa-btn" data-action="adStrategy">Реклама</button>
-            <button class="sd-ap-qa-btn" data-action="risks">Найти риски</button>
-            <button class="sd-ap-qa-btn" data-action="growthPlan">План роста</button>
+            <button class="sd-ap-qa-btn" data-action="fullAudit">🔍 Полный аудит</button>
+            <button class="sd-ap-qa-btn" data-action="oosAutoTasks">🔴 Задачи по OOS</button>
+            <button class="sd-ap-qa-btn" data-action="syncAll">🔄 Синхронизировать</button>
+            <button class="sd-ap-qa-btn" data-action="dailyCheck">📋 Дневной чеклист</button>
+            <button class="sd-ap-qa-btn" data-action="analytics30">📊 Аналитика 30 дней</button>
+            <button class="sd-ap-qa-btn" data-action="stockRisk">📦 Риски остатков</button>
+            <button class="sd-ap-qa-btn" data-action="ordersCheck">🛒 Проверить заказы</button>
+            <button class="sd-ap-qa-btn" data-action="reviewsCheck">💬 Проверить отзывы</button>
+            <button class="sd-ap-qa-btn" data-action="generateReport">📄 Отчёт в Excel</button>
+            <button class="sd-ap-qa-btn" data-action="unitEconomy">🧮 Unit-экономика</button>
+            <button class="sd-ap-qa-btn" data-action="priceAnalysis">💸 Репрайсер</button>
+            <button class="sd-ap-qa-btn" data-action="growthPlan">🚀 План роста</button>
           </div>
         </div>
       </div>
@@ -1583,6 +1711,36 @@ export class AssistantModule {
     const analyticsModule = (window as any).analyticsModule;
 
     switch (action) {
+      case 'fullAudit': {
+        await this.sendMessage('Аудит рисков');
+        break;
+      }
+      case 'oosAutoTasks': {
+        await this.sendMessage('Создай задачи по OOS');
+        break;
+      }
+      case 'syncAll': {
+        await this.sendMessage('Синхронизируй все');
+        break;
+      }
+      case 'generateReport': {
+        this.isLoading = true;
+        this.setInputEnabled(false);
+        const typing = this.addTypingIndicator();
+        try {
+          const result = await aiPage.run('generate_report', { type: 'full' });
+          this.removeTypingIndicator(typing);
+          const ttsBtn = this.addAssistantMessage(result.summary);
+          if (this.ttsEnabled && ttsBtn) this.startMsgTts(result.summary, ttsBtn);
+        } catch (e: unknown) {
+          this.removeTypingIndicator(typing);
+          this.addAssistantMessage(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          this.isLoading = false;
+          this.setInputEnabled(true);
+        }
+        break;
+      }
       case 'analytics30': {
         let context = 'Раздел аналитики открыт.';
         if (analyticsModule) {
@@ -1922,6 +2080,11 @@ export class AssistantModule {
     this.textareaEl?.focus();
     this.scrollToBottom();
     this.renderQuotaBar();
+
+    // Убираем алерт-бейдж при открытии панели
+    document.getElementById('nav-assistant')?.querySelector('.sima-alert-dot')?.remove();
+    this.lastAlertKey = ''; // сброс — чтобы при следующей проверке снова показать если актуально
+
     setTimeout(() => this.maybeShowMorningBrief(), 800);
     if (!this.voiceOnboarded) {
       setTimeout(() => this.showVoiceOnboarding(), 600);
@@ -2822,6 +2985,78 @@ export class AssistantModule {
       return;
     }
 
+    // Fast: аудит рисков
+    const auditRe = /^(?:аудит|проверь все|найди все проблемы|полный аудит|аудит рисков)/i;
+    if (auditRe.test(text.trim())) {
+      this.isLoading = true;
+      this.setInputEnabled(false);
+      const typing = this.addTypingIndicator();
+      try {
+        const result = await aiPage.run('run_risk_audit', { create_tasks: true });
+        this.removeTypingIndicator(typing);
+        this.history.push({ role: 'assistant', content: result.summary });
+        this.saveSession();
+        const ttsBtn = this.addAssistantMessage(result.summary);
+        if (this.ttsEnabled && ttsBtn) this.startMsgTts(result.summary, ttsBtn);
+      } catch (e: unknown) {
+        this.removeTypingIndicator(typing);
+        this.addAssistantMessage(`Ошибка аудита: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        this.isLoading = false;
+        this.setInputEnabled(true);
+      }
+      return;
+    }
+
+    // Fast: создать задачи по OOS
+    const oosTaskRe = /^(?:создай задачи по oos|задачи по.*oos|oos.*задач)/i;
+    if (oosTaskRe.test(text.trim())) {
+      this.isLoading = true;
+      this.setInputEnabled(false);
+      const typing = this.addTypingIndicator();
+      try {
+        const result = await aiPage.run('create_oos_tasks', {});
+        this.removeTypingIndicator(typing);
+        this.history.push({ role: 'assistant', content: result.summary });
+        this.saveSession();
+        const ttsBtn = this.addAssistantMessage(result.summary);
+        if (this.ttsEnabled && ttsBtn) this.startMsgTts(result.summary, ttsBtn);
+      } catch (e: unknown) {
+        this.removeTypingIndicator(typing);
+        this.addAssistantMessage(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        this.isLoading = false;
+        this.setInputEnabled(true);
+      }
+      return;
+    }
+
+    // Fast: синхронизировать данные
+    const syncRe = /^(?:синхронизируй|обнови данные|загрузи данные|sync)(?:\s+(все|wb|ozon|яндекс))?/i;
+    const syncMatch = text.trim().match(syncRe);
+    if (syncMatch) {
+      this.isLoading = true;
+      this.setInputEnabled(false);
+      const typing = this.addTypingIndicator();
+      const mpArg = syncMatch[1]?.toLowerCase();
+      const mp = mpArg === 'wb' ? 'wb' : mpArg === 'ozon' ? 'ozon' : mpArg === 'яндекс' ? 'yandex' : undefined;
+      try {
+        const result = await aiPage.run('sync_marketplace', mp ? { mp } : {});
+        this.removeTypingIndicator(typing);
+        this.history.push({ role: 'assistant', content: result.summary });
+        this.saveSession();
+        const ttsBtn = this.addAssistantMessage(result.summary);
+        if (this.ttsEnabled && ttsBtn) this.startMsgTts(result.summary, ttsBtn);
+      } catch (e: unknown) {
+        this.removeTypingIndicator(typing);
+        this.addAssistantMessage(`Ошибка синхронизации: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        this.isLoading = false;
+        this.setInputEnabled(true);
+      }
+      return;
+    }
+
     // LLM call
     if (!this.aiKey) {
       this.addAssistantMessage(
@@ -2877,6 +3112,13 @@ export class AssistantModule {
         if (textPart) this.addAssistantMessage(textPart);
         this.addActionPlanCard(pageActPlan.name, pageActPlan.args, pageActPlan.plan, text);
         this.setStatus('Готова');
+        return;
+      }
+
+      // Цепочка действий — выполняем шаги последовательно
+      const chainAct = this.parseChainAction(replyNorm);
+      if (chainAct) {
+        await this.executeChain(chainAct, text);
         return;
       }
 
@@ -3151,6 +3393,122 @@ export class AssistantModule {
       start = text.lastIndexOf('{', start - 1);
     }
     return null;
+  }
+
+  /** Извлечь цепочку действий {"action":"chain",...} */
+  private parseChainAction(reply: string): ChainAction | null {
+    const found = this.extractBalancedJson(reply, '"chain"');
+    if (!found) return null;
+    const p = found.value;
+    if (p && p.action === 'chain' && Array.isArray(p.steps)) {
+      return p as ChainAction;
+    }
+    return null;
+  }
+
+  /** Выполнить цепочку шагов последовательно с прогрессом. */
+  private async executeChain(chain: ChainAction, requestText: string): Promise<void> {
+    this.setStatus('Выполняю цепочку…', 'thinking');
+    aiGlow(true);
+
+    // Показываем карточку плана
+    const planEl = document.createElement('div');
+    planEl.className = 'sd-ap-msg assistant';
+    planEl.innerHTML = `
+      <div class="sd-ap-msg-avatar">С</div>
+      <div class="sd-ap-msg-bubble">
+        <div class="sd-ap-plan-card">
+          <div class="sd-ap-plan-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+            </svg>
+            Выполняю: ${chain.plan || `${chain.steps.length} шагов`}
+          </div>
+          <div class="sd-ap-chain-steps" id="chain-steps-${Date.now()}"></div>
+        </div>
+      </div>`;
+    this.messagesEl?.appendChild(planEl);
+    this.scrollToBottom();
+
+    const stepsEl = planEl.querySelector<HTMLElement>('[id^="chain-steps-"]');
+    const results: string[] = [];
+
+    for (let i = 0; i < chain.steps.length; i++) {
+      const step = chain.steps[i];
+      const stepName = step.action === 'navigate'
+        ? `Перейти: ${step.label ?? step.page}`
+        : step.action === 'create_task'
+        ? `Создать задачу: ${step.title}`
+        : step.name ?? step.action;
+
+      // Показываем шаг как «в процессе»
+      if (stepsEl) {
+        stepsEl.innerHTML = chain.steps.map((s, idx) => {
+          const sName = s.action === 'navigate'
+            ? `Перейти: ${s.label ?? s.page}`
+            : s.action === 'create_task'
+            ? `Создать задачу: ${s.title}`
+            : s.name ?? s.action;
+          const cls = idx < i ? 'chain-done' : idx === i ? 'chain-active' : 'chain-pending';
+          const icon = idx < i ? '✓' : idx === i ? '⟳' : '·';
+          return `<div class="sd-ap-chain-step ${cls}">${icon} ${sName}</div>`;
+        }).join('');
+      }
+
+      try {
+        if (step.action === 'navigate' && step.page) {
+          this.navigateTo(step.page);
+          results.push(`✓ Перешёл в «${step.label ?? step.page}»`);
+
+        } else if (step.action === 'create_task' && step.title) {
+          await this.createTaskFromAI({
+            action: 'create_task',
+            title: step.title,
+            description: step.description,
+            priority: step.priority as any,
+          });
+          results.push(`✓ Задача: ${step.title}`);
+
+        } else if (step.action === 'page_action' && step.name) {
+          const res = await aiPage.run(step.name, step.args ?? {});
+          changeLog.logAction({
+            category: 'ai',
+            action: ACTION_LABELS[step.name] ?? step.name,
+            details: res.summary,
+            requestText,
+            undo: res.undo,
+          });
+          results.push(`✓ ${res.summary}`);
+        }
+      } catch (e: unknown) {
+        results.push(`✗ ${stepName}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+
+      // Пауза между шагами
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    // Финальное состояние шагов — все done
+    if (stepsEl) {
+      stepsEl.innerHTML = chain.steps.map((s) => {
+        const sName = s.action === 'navigate'
+          ? `Перейти: ${s.label ?? s.page}`
+          : s.action === 'create_task'
+          ? `Создать задачу: ${s.title}`
+          : s.name ?? s.action;
+        return `<div class="sd-ap-chain-step chain-done">✓ ${sName}</div>`;
+      }).join('');
+    }
+
+    aiGlow(false);
+    this.setStatus('Готова');
+
+    const summary = `Выполнено ${results.length} шагов:\n${results.join('\n')}`;
+    this.history.push({ role: 'assistant', content: summary });
+    this.saveSession();
+
+    const ttsBtn = this.addAssistantMessage(summary);
+    if (this.ttsEnabled && ttsBtn) this.startMsgTts(summary, ttsBtn);
   }
 
   private parseFollowUpSuggestions(reply: string): { text: string; suggestions: string[] } {

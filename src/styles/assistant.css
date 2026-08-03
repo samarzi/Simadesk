@@ -113,6 +113,24 @@
   50%       { opacity: 1;   transform: scale(1.1); }
 }
 
+/* Алерт-бейдж фонового мониторинга */
+.sima-alert-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  background: #f87171;
+  border-radius: 50%;
+  border: 1.5px solid var(--dock-bg, #1a1a2e);
+  animation: sima-alert-blink 2s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes sima-alert-blink {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
 @keyframes ai-listen-pulse {
   0%, 100% { opacity: 0.4; transform: scale(1); }
   50%       { opacity: 0.9; transform: scale(1.08); }
@@ -993,6 +1011,41 @@ html.light .sd-ap-msg-bubble pre { background: rgba(20, 10, 40, 0.05); }
 .sd-ap-plan-cancel { background: transparent; border-color: var(--ap-line); color: var(--ap-txt-2); }
 .sd-ap-plan-cancel:hover:not(:disabled) { background: var(--ap-surface-3); }
 .sd-ap-plan-run:disabled, .sd-ap-plan-cancel:disabled { opacity: 0.5; cursor: default; }
+
+/* Chain action steps */
+.sd-ap-chain-steps {
+  padding: 8px 11px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.sd-ap-chain-step {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+.sd-ap-chain-step.chain-done {
+  color: #6ee7b7;
+  background: rgba(110, 231, 183, 0.08);
+}
+.sd-ap-chain-step.chain-active {
+  color: var(--ap-accent);
+  background: var(--ap-accent-soft);
+  font-weight: 600;
+  animation: chain-pulse 1s infinite;
+}
+.sd-ap-chain-step.chain-pending {
+  color: var(--ap-txt-3);
+  opacity: 0.6;
+}
+@keyframes chain-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
 
 /* Калькулятор unit-экономики */
 .sd-ap-unit-card  { max-width: 100% !important; }

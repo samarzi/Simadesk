@@ -168,6 +168,50 @@ const GENERIC_SUGGESTIONS: AiSuggestion[] = [
   { label: '➕ Новый Excel', prompt: 'Создай новый документ Excel' },
 ];
 
+// дополнительные разделы подсказок
+Object.assign(SUGGESTIONS, {
+  marketplaces: [
+    { label: '🔄 Синхронизировать все МП', prompt: 'Синхронизируй данные со всех подключённых маркетплейсов' },
+    { label: '🔑 Как подключить WB', prompt: 'Как получить и вставить API-ключ Wildberries?' },
+    { label: '🔑 Как подключить Ozon', prompt: 'Как получить и вставить API-ключ Ozon?' },
+  ],
+  ozon: [
+    { label: '📦 Заказы Ozon', prompt: 'Покажи статус заказов на Ozon' },
+    { label: '📊 Аналитика Ozon', prompt: 'Дай аналитику по продажам на Ozon за последние 30 дней' },
+    { label: '🔄 Обновить данные', prompt: 'Обнови данные синхронизации с Ozon' },
+  ],
+  wb: [
+    { label: '📦 Заказы WB', prompt: 'Покажи статус заказов на Wildberries' },
+    { label: '📊 Аналитика WB', prompt: 'Дай аналитику по продажам на Wildberries за последние 30 дней' },
+    { label: '⭐ Штрафные баллы', prompt: 'Как проверить и снизить штрафные баллы на WB?' },
+  ],
+  yandex: [
+    { label: '📦 Заказы ЯМ', prompt: 'Покажи статус заказов на Яндекс Маркет' },
+    { label: '📊 Аналитика ЯМ', prompt: 'Дай аналитику по продажам на Яндекс Маркет' },
+    { label: '🔄 Обновить данные', prompt: 'Обнови данные синхронизации с Яндекс Маркет' },
+  ],
+  settings: [
+    { label: '🌙 Тёмная тема', prompt: 'Переключи на тёмную тему' },
+    { label: '☀️ Светлая тема', prompt: 'Переключи на светлую тему' },
+    { label: '🔑 Настроить AI', prompt: 'Как настроить API-ключ для Симы?' },
+    { label: '👥 Добавить сотрудника', prompt: 'Как добавить нового сотрудника в команду?' },
+  ],
+  profile: [
+    { label: '🔒 Сменить пароль', prompt: 'Как сменить пароль?' },
+    { label: '📸 Фото профиля', prompt: 'Как изменить фото профиля?' },
+  ],
+  simastore: [
+    { label: '🛒 Как настроить витрину', prompt: 'Расскажи как настроить и запустить собственную витрину SimaStore' },
+    { label: '🔗 Получить ссылку', prompt: 'Как получить ссылку на мою витрину?' },
+    { label: '📦 Товары на витрине', prompt: 'Как добавить товары на витрину из Products Hub?' },
+  ],
+  producers: [
+    { label: '➕ Добавить поставщика', prompt: 'Как добавить нового поставщика/производителя?' },
+    { label: '📋 Список поставщиков', prompt: 'Покажи список всех поставщиков и их условия' },
+    { label: '📦 Планирование поставки', prompt: 'Помоги спланировать поставку с учётом текущих остатков' },
+  ],
+});
+
 // ── Сборка капабилити для страницы ───────────────────────────────────────────────
 
 const DESCRIBERS: Record<string, () => string> = {
@@ -181,6 +225,97 @@ const DESCRIBERS: Record<string, () => string> = {
   'products-hub': describeProducts,
   reviews: describeReviews,
 };
+
+// ── Actions: главная / дашборд ────────────────────────────────────────────────
+
+const HOME_ACTIONS: AiAction[] = [
+  {
+    name: 'navigate_to_section',
+    description: 'Перейти в любой раздел SimaDesk. Используй когда пользователь хочет открыть конкретный раздел.',
+    args: '{ page: "home"|"analytics"|"repricer"|"orders"|"products-hub"|"stock"|"producers"|"tasks"|"simastore"|"marketplaces"|"ozon"|"wb"|"yandex"|"settings"|"profile"|"reviews"|"chats"|"docs"|"billing" }',
+    run: async (a: { page: string }) => {
+      w().app?.navigateTo?.(a.page);
+      return `Перехожу в раздел «${a.page}»`;
+    },
+  },
+  {
+    name: 'create_daily_brief',
+    description: 'Создать задачи по результатам утреннего анализа: OOS, просрочки, отзывы без ответа.',
+    args: '{}',
+    run: async () => {
+      const { taskDb } = await import('@/services/taskDb');
+      const created: string[] = [];
+
+      // OOS задачи
+      const stockItems: any[] = w().stockModule?.items ?? [];
+      const oos = stockItems.filter((i: any) => (i.stockTotal ?? 0) === 0).slice(0, 5);
+      for (const item of oos) {
+        await taskDb.createTask({
+          title: `OOS: пополнить «${String(item.name || item.offerId).slice(0, 50)}»`,
+          description: `Товар закончился на складе (${item.mp ?? 'МП'}). Срочно заказать у поставщика.`,
+          status: 'todo', priority: 'red', scheduled_date: null,
+          due_date: null, due_time: null, end_time: null, all_day: true,
+          tags: 'Сима,OOS', sort_order: 9999, parent_id: null, assignee_id: null,
+        });
+        created.push(`OOS: ${String(item.name || item.offerId).slice(0, 30)}`);
+      }
+
+      // Задачи по отзывам
+      const reviews: any[] = w().reviewsModule?.reviews ?? [];
+      const unanswered = reviews.filter((r: any) => !r.answered && !r.answer && (r.stars ?? 5) <= 2).slice(0, 3);
+      if (unanswered.length > 0) {
+        await taskDb.createTask({
+          title: `Ответить на ${unanswered.length} негативных отзыва`,
+          description: `Отзывы без ответа (1-2★): ${unanswered.map((r: any) => `"${String(r.text ?? '').slice(0, 30)}"`).join(', ')}`,
+          status: 'todo', priority: 'yellow', scheduled_date: null,
+          due_date: null, due_time: null, end_time: null, all_day: true,
+          tags: 'Сима,Отзывы', sort_order: 9999, parent_id: null, assignee_id: null,
+        });
+        created.push(`Ответить на ${unanswered.length} отзыва`);
+      }
+
+      w().taskManagerModule?.load?.();
+
+      if (!created.length) return 'Критичных проблем не обнаружено — задачи не созданы. Магазин работает штатно.';
+      return `Создано ${created.length} задач:\n${created.map(t => `• ${t}`).join('\n')}`;
+    },
+  },
+];
+
+// ── Actions: маркетплейсы ─────────────────────────────────────────────────────
+
+const MARKETPLACES_ACTIONS: AiAction[] = [
+  {
+    name: 'sync_marketplace',
+    description: 'Запустить синхронизацию данных с маркетплейса. Используй когда говорят «обнови данные», «синхронизируй», «загрузи заказы». Если mp не указан — синхронизирует все.',
+    args: '{ mp?: "wb"|"ozon"|"yandex" }',
+    run: async (a: { mp?: string }) => {
+      const app = w().app;
+      const mps = a.mp ? [a.mp] : ['wb', 'ozon', 'yandex'];
+      const synced: string[] = [];
+      for (const mp of mps) {
+        try {
+          if (mp === 'wb' && w().wbModule?.syncOrders) {
+            await w().wbModule.syncOrders();
+            synced.push('Wildberries');
+          } else if (mp === 'ozon' && w().ozonModule?.syncOrders) {
+            await w().ozonModule.syncOrders();
+            synced.push('Ozon');
+          } else if (mp === 'yandex' && w().yandexModule?.syncOrders) {
+            await w().yandexModule.syncOrders();
+            synced.push('Яндекс Маркет');
+          } else {
+            app?.navigateTo?.(mp === 'wb' ? 'wb' : mp === 'ozon' ? 'ozon' : 'yandex');
+            synced.push(mp.toUpperCase());
+          }
+        } catch (e) {
+          synced.push(`${mp} (ошибка)`);
+        }
+      }
+      return `Синхронизация запущена: ${synced.join(', ')}. Данные обновятся в течение 1-2 минут.`;
+    },
+  },
+];
 
 // ── Actions: задачи ──────────────────────────────────────────────────────────────
 
@@ -305,6 +440,108 @@ const PRODUCTS_HUB_ACTIONS: AiAction[] = [
   },
 ];
 
+// ── Actions: аналитика ────────────────────────────────────────────────────────
+
+const ANALYTICS_ACTIONS: AiAction[] = [
+  {
+    name: 'export_analytics_report',
+    description: 'Создать Excel-отчёт с текущей аналитикой. Используй когда говорят «экспортируй отчёт», «создай отчёт», «выгрузи аналитику в Excel».',
+    args: '{ title?: string }',
+    run: async (a: { title?: string }) => {
+      const am = w().analyticsModule;
+      const kpi = am?.kpi;
+      w().app?.navigateTo?.('docs');
+      await new Promise(r => setTimeout(r, 1200));
+      const dm = w().docsModule;
+      if (!dm?.aiCreateDoc) return 'Открываю Редактор для создания отчёта. Нажмите «Новый Excel» и скопируйте данные из Аналитики.';
+
+      const title = a.title ?? `Отчёт аналитики ${new Date().toLocaleDateString('ru-RU')}`;
+      const docId = await dm.aiCreateDoc('excel', title);
+
+      if (kpi && dm.aiExcelCommand) {
+        const rows = [
+          ['Метрика', 'Значение'],
+          ['Выручка нетто', kpi.revenue ?? 0],
+          ['Выручка брутто', kpi.revenue_gross ?? 0],
+          ['Заказов выполнено', kpi.orders_delivered ?? 0],
+          ['В обработке', kpi.orders_processing ?? 0],
+          ['Возвраты', kpi.orders_returned ?? 0],
+          ['Отмены', kpi.orders_cancelled ?? 0],
+          ['Маржа %', kpi.margin_pct ?? 0],
+          ['Средний чек', kpi.avg_check ?? 0],
+          ['Комиссии МП', kpi.commission ?? 0],
+          ['Логистика', kpi.logistics ?? 0],
+        ];
+        for (let i = 0; i < rows.length; i++) {
+          await dm.aiExcelCommand?.(docId, 'set_cell', { row: i, col: 0, value: rows[i][0] });
+          await dm.aiExcelCommand?.(docId, 'set_cell', { row: i, col: 1, value: rows[i][1] });
+        }
+      }
+
+      return `Отчёт «${title}» создан в Редакторе. Данные аналитики внесены в таблицу.`;
+    },
+  },
+];
+
+// ── Actions: заказы ───────────────────────────────────────────────────────────
+
+const ORDERS_ACTIONS: AiAction[] = [
+  {
+    name: 'create_urgent_orders_task',
+    description: 'Создать задачу по срочным заказам (с просрочкой или близко к дедлайну). Используй когда говорят «создай задачу по срочным заказам» или «отметь просроченные».',
+    args: '{}',
+    run: async () => {
+      const orders: any[] = w().allOrdersModule?.orders ?? [];
+      const urgent = orders.filter((o: any) => {
+        const s = (o.status ?? '').toLowerCase();
+        return s.includes('pending') || s.includes('new') || s.includes('awaiting');
+      }).slice(0, 10);
+      if (!urgent.length) return 'Срочных заказов не обнаружено — все в норме.';
+      const { taskDb } = await import('@/services/taskDb');
+      await taskDb.createTask({
+        title: `Обработать ${urgent.length} срочных заказов`,
+        description: `Заказы требующие обработки: ${urgent.slice(0, 5).map((o: any) => o.article ?? o.offer_id ?? o.nm_id ?? '—').join(', ')}`,
+        status: 'todo', priority: 'red', scheduled_date: null,
+        due_date: null, due_time: null, end_time: null, all_day: true,
+        tags: 'Сима,Заказы', sort_order: 9999, parent_id: null, assignee_id: null,
+      });
+      w().taskManagerModule?.load?.();
+      return `Создана задача: ${urgent.length} срочных заказов ждут обработки.`;
+    },
+  },
+];
+
+// ── Actions: производители ────────────────────────────────────────────────────
+
+const PRODUCERS_ACTIONS: AiAction[] = [
+  {
+    name: 'create_reorder_tasks',
+    description: 'Создать задачи на заказ товаров у поставщиков для всех OOS и критически низких позиций. Используй когда говорят «создай заявки поставщикам», «нужно заказать товары».',
+    args: '{ threshold?: number }',
+    run: async (a: { threshold?: number }) => {
+      const minStock = a.threshold ?? 10;
+      const items: any[] = w().stockModule?.items ?? [];
+      const critical = items.filter((i: any) => (i.stockTotal ?? 0) < minStock);
+      if (!critical.length) return `Все товары имеют остаток ≥ ${minStock} единиц. Срочных заказов не требуется.`;
+
+      const { taskDb } = await import('@/services/taskDb');
+      let created = 0;
+      for (const item of critical.slice(0, 10)) {
+        await taskDb.createTask({
+          title: `Заказ поставщику: «${String(item.name || item.offerId).slice(0, 40)}»`,
+          description: `Остаток: ${item.stockTotal ?? 0} ед. (${item.mp ?? 'МП'}). Необходимо пополнить запас.`,
+          status: 'todo', priority: item.stockTotal === 0 ? 'red' : 'yellow',
+          scheduled_date: null, due_date: null, due_time: null, end_time: null,
+          all_day: true, tags: 'Сима,Поставка', sort_order: 9999, parent_id: null, assignee_id: null,
+        });
+        created++;
+      }
+      w().taskManagerModule?.load?.();
+      return `Создано ${created} задач на пополнение запасов (остаток < ${minStock} ед.).`;
+    },
+  },
+];
+
 export function capabilityForPage(page: string): AiPageCapability | null {
   // Редактор ведёт себя богаче — берём капабилити прямо у модуля.
   if (page === 'docs') {
@@ -318,11 +555,22 @@ export function capabilityForPage(page: string): AiPageCapability | null {
   const describe = DESCRIBERS[page] ?? (() => describeGeneric(page));
   const suggestions = SUGGESTIONS[page] ?? GENERIC_SUGGESTIONS;
   const PAGE_ACTIONS: Record<string, AiAction[]> = {
-    'products-hub': PRODUCTS_HUB_ACTIONS,
-    'tasks': TASKS_ACTIONS,
-    'reviews': REVIEWS_ACTIONS,
-    'repricer': REPRICER_ACTIONS,
-    'stock': STOCK_ACTIONS,
+    'home':          HOME_ACTIONS,
+    'products-hub':  PRODUCTS_HUB_ACTIONS,
+    'tasks':         TASKS_ACTIONS,
+    'reviews':       REVIEWS_ACTIONS,
+    'repricer':      REPRICER_ACTIONS,
+    'stock':         STOCK_ACTIONS,
+    'analytics':     ANALYTICS_ACTIONS,
+    'orders':        ORDERS_ACTIONS,
+    'orders-ozon':   ORDERS_ACTIONS,
+    'orders-wb':     ORDERS_ACTIONS,
+    'orders-yandex': ORDERS_ACTIONS,
+    'marketplaces':  MARKETPLACES_ACTIONS,
+    'ozon':          MARKETPLACES_ACTIONS,
+    'wb':            MARKETPLACES_ACTIONS,
+    'yandex':        MARKETPLACES_ACTIONS,
+    'producers':     PRODUCERS_ACTIONS,
   };
   const actions = PAGE_ACTIONS[page] ?? [];
 
@@ -403,5 +651,204 @@ export function installGlobalAiActions(): void {
     description: 'Перезагрузить страницу (обновить данные)',
     args: '{}',
     run: async () => { location.reload(); return 'Перезагрузка…'; },
+  });
+
+  // ── Навигация из любого места ───────────────────────────────────────────────
+  aiPage.registerGlobal({
+    name: 'navigate_to',
+    description: 'Перейти в любой раздел SimaDesk из любого места. Используй когда нужно открыть раздел как часть цепочки действий.',
+    args: '{ page: string }',
+    run: async (a: { page: string }) => {
+      w().app?.navigateTo?.(a.page);
+      await new Promise(r => setTimeout(r, 600));
+      return `Открыт раздел «${a.page}»`;
+    },
+  });
+
+  // ── Создание задач из любого места ─────────────────────────────────────────
+  aiPage.registerGlobal({
+    name: 'create_task_global',
+    description: 'Создать задачу из любого раздела системы без перехода в Задачи.',
+    args: '{ title: string, description?: string, priority?: "red"|"yellow"|"blue"|"none", due_date?: string }',
+    run: async (a: any) => {
+      const { taskDb } = await import('@/services/taskDb');
+      const task = await taskDb.createTask({
+        title: a.title || 'Задача от Симы',
+        description: a.description || '',
+        status: 'todo',
+        priority: a.priority || 'none',
+        scheduled_date: null,
+        due_date: a.due_date || null,
+        due_time: null,
+        end_time: null,
+        all_day: true,
+        tags: 'Сима',
+        sort_order: 9999,
+        parent_id: null,
+        assignee_id: null,
+      });
+      w().taskManagerModule?.load?.();
+      return `Задача создана: «${task.title}»`;
+    },
+  });
+
+  // ── OOS — создать задачи по всем закончившимся товарам ──────────────────────
+  aiPage.registerGlobal({
+    name: 'create_oos_tasks',
+    description: 'Создать задачи для ВСЕХ товаров с нулевым остатком (OOS). Используй когда говорят «создай задачи по OOS», «все закончившиеся товары в задачи».',
+    args: '{}',
+    run: async () => {
+      const items: any[] = w().stockModule?.items ?? [];
+      const oos = items.filter((i: any) => (i.stockTotal ?? 0) === 0);
+      if (!oos.length) return 'OOS товаров не обнаружено — все в наличии!';
+      const { taskDb } = await import('@/services/taskDb');
+      let n = 0;
+      for (const item of oos.slice(0, 20)) {
+        await taskDb.createTask({
+          title: `OOS: пополнить «${String(item.name || item.offerId).slice(0, 50)}»`,
+          description: `Товар закончился на складе. МП: ${item.mp ?? '—'}. Срочно заказать у поставщика.`,
+          status: 'todo', priority: 'red', scheduled_date: null,
+          due_date: null, due_time: null, end_time: null, all_day: true,
+          tags: 'Сима,OOS', sort_order: 9999, parent_id: null, assignee_id: null,
+        });
+        n++;
+      }
+      w().taskManagerModule?.load?.();
+      return `Создано ${n} задач по OOS-товарам. ${oos.length > 20 ? `(Показаны первые 20 из ${oos.length})` : ''}`;
+    },
+  });
+
+  // ── Массовое изменение цен ──────────────────────────────────────────────────
+  aiPage.registerGlobal({
+    name: 'bulk_price_change',
+    description: 'Изменить цены ВСЕХ товаров на маркетплейсе на процент или сумму. Используй когда говорят «подними все цены на 10%», «скидка 500р на все товары», «снизь все цены на WB на 5%».',
+    args: '{ mp: "wb"|"ozon"|"yandex", delta: number, percent?: boolean }',
+    run: async (a: { mp: string; delta: number; percent?: boolean }) => {
+      const pm = w().productsHubModule;
+      if (!pm?.aiApplyPriceDelta) {
+        w().app?.navigateTo?.('products-hub');
+        await new Promise(r => setTimeout(r, 800));
+        if (!w().productsHubModule?.aiApplyPriceDelta) {
+          return `Массовое изменение цен: ${a.percent ? `${a.delta}%` : `${a.delta}₽`} на ${a.mp.toUpperCase()}. Откройте Products Hub и выделите все товары, затем используйте «Изменить цену».`;
+        }
+      }
+      const result = await w().productsHubModule.aiApplyPriceDelta({
+        mp: a.mp,
+        delta: a.delta,
+        percent: a.percent ?? false,
+      });
+      return typeof result === 'string' ? result : `Цены изменены на ${a.mp.toUpperCase()}: ${a.percent ? `${a.delta}%` : `${a.delta}₽`}`;
+    },
+  });
+
+  // ── Генерация Excel-отчёта ──────────────────────────────────────────────────
+  aiPage.registerGlobal({
+    name: 'generate_report',
+    description: 'Создать Excel-отчёт с данными магазина (аналитика, остатки, заказы). Используй когда говорят «создай отчёт», «экспортируй данные», «сделай сводку в Excel».',
+    args: '{ type?: "analytics"|"stock"|"orders"|"full", title?: string }',
+    run: async (a: { type?: string; title?: string }) => {
+      w().app?.navigateTo?.('docs');
+      await waitFor(() => !!w().docsModule?.aiCreateDoc, 2000);
+      const dm = w().docsModule;
+      if (!dm?.aiCreateDoc) return 'Редактор документов недоступен. Перейдите в раздел «Редактор» и создайте отчёт вручную.';
+
+      const type = a.type ?? 'full';
+      const title = a.title ?? `Отчёт SimaDesk ${new Date().toLocaleDateString('ru-RU')}`;
+      await dm.aiCreateDoc('excel', title);
+      await new Promise(r => setTimeout(r, 400));
+
+      const lines: string[] = [`Отчёт создан: «${title}»`];
+
+      if ((type === 'analytics' || type === 'full') && w().analyticsModule?.kpi) {
+        const kpi = w().analyticsModule.kpi;
+        lines.push(`Аналитика: выручка ${kpi.revenue?.toFixed(0)}₽, заказов ${(kpi.orders_delivered ?? 0) + (kpi.orders_processing ?? 0)}, маржа ${kpi.margin_pct?.toFixed(1)}%`);
+      }
+      if ((type === 'stock' || type === 'full') && w().stockModule?.items?.length) {
+        const items = w().stockModule.items;
+        const oos = items.filter((i: any) => (i.stockTotal ?? 0) === 0).length;
+        lines.push(`Остатки: ${items.length} SKU, OOS: ${oos}`);
+      }
+
+      return lines.join('\n');
+    },
+  });
+
+  // ── Полный аудит рисков ─────────────────────────────────────────────────────
+  aiPage.registerGlobal({
+    name: 'run_risk_audit',
+    description: 'Выполнить полный автоматический аудит рисков магазина и создать задачи по найденным проблемам. Используй когда говорят «аудит рисков», «проверь всё», «найди все проблемы».',
+    args: '{ create_tasks?: boolean }',
+    run: async (a: { create_tasks?: boolean }) => {
+      const risks: Array<{ text: string; priority: 'red'|'yellow' }> = [];
+
+      // Остатки
+      const items: any[] = w().stockModule?.items ?? [];
+      const oos = items.filter((i: any) => (i.stockTotal ?? 0) === 0);
+      const low = items.filter((i: any) => (i.stockTotal ?? 0) > 0 && (i.stockTotal ?? 0) < 10);
+      if (oos.length) risks.push({ text: `OOS: ${oos.length} товаров без остатков`, priority: 'red' });
+      if (low.length) risks.push({ text: `Критично мало (<10 ед): ${low.length} товаров`, priority: 'yellow' });
+
+      // Задачи
+      const tasks: any[] = w().taskManagerModule?.tasks ?? [];
+      const overdue = tasks.filter((t: any) => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date());
+      if (overdue.length) risks.push({ text: `Просроченных задач: ${overdue.length}`, priority: 'red' });
+
+      // Отзывы
+      const reviews: any[] = w().reviewsModule?.reviews ?? [];
+      const badUnans = reviews.filter((r: any) => !r.answered && !r.answer && (r.stars ?? 5) <= 2);
+      if (badUnans.length) risks.push({ text: `Негативных отзывов без ответа: ${badUnans.length}`, priority: 'yellow' });
+
+      if (!risks.length) return 'Аудит завершён — критичных рисков не обнаружено! Магазин работает штатно.';
+
+      if (a.create_tasks !== false) {
+        const { taskDb } = await import('@/services/taskDb');
+        for (const risk of risks) {
+          await taskDb.createTask({
+            title: `[Аудит] ${risk.text}`,
+            description: `Обнаружено автоматическим аудитом Симы ${new Date().toLocaleDateString('ru-RU')}`,
+            status: 'todo', priority: risk.priority, scheduled_date: null,
+            due_date: null, due_time: null, end_time: null, all_day: true,
+            tags: 'Сима,Аудит', sort_order: 9999, parent_id: null, assignee_id: null,
+          });
+        }
+        w().taskManagerModule?.load?.();
+      }
+
+      return `Аудит завершён. Найдено ${risks.length} проблем:\n${risks.map(r => `${r.priority === 'red' ? '🔴' : '🟡'} ${r.text}`).join('\n')}${a.create_tasks !== false ? '\n\nЗадачи созданы в разделе Задачи.' : ''}`;
+    },
+  });
+
+  // ── Ответить на все отзывы без ответа ──────────────────────────────────────
+  aiPage.registerGlobal({
+    name: 'reply_all_unanswered',
+    description: 'Ответить на все отзывы без ответа стандартным текстом. Используй когда говорят «ответь на все отзывы», «обработай все без ответа». Принимает шаблон ответа.',
+    args: '{ template?: string, stars_max?: number }',
+    run: async (a: { template?: string; stars_max?: number }) => {
+      const rm = w().reviewsModule;
+      if (!rm) {
+        w().app?.navigateTo?.('reviews');
+        return 'Перехожу в раздел Отзывы. После загрузки повторите команду.';
+      }
+      const reviews: any[] = rm.reviews ?? rm.items ?? [];
+      const maxStars = a.stars_max ?? 3;
+      const unanswered = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= maxStars);
+      if (!unanswered.length) return `Отзывов без ответа (≤${maxStars}★) не найдено.`;
+
+      const defaultTemplate = 'Спасибо за ваш отзыв! Мы приняли ваш комментарий к сведению и работаем над улучшением качества. Если у вас остались вопросы — свяжитесь с нами, мы обязательно поможем!';
+      const template = a.template ?? defaultTemplate;
+
+      let replied = 0;
+      for (const review of unanswered.slice(0, 10)) {
+        try {
+          if (typeof rm.aiReplyReview === 'function') {
+            await rm.aiReplyReview(review.id, template);
+            replied++;
+          }
+        } catch { /* continue */ }
+      }
+
+      if (!replied) return `Найдено ${unanswered.length} отзывов без ответа. Перейдите в раздел «Отзывы» и ответьте вручную — или убедитесь что маркетплейс подключён.`;
+      return `Ответил на ${replied} отзыв(а) из ${unanswered.length}. Текст: «${template.slice(0, 60)}…»`;
+    },
   });
 }

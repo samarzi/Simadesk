@@ -218,65 +218,96 @@
 
         log(`[DBG] Зона найдена! Скроллим...`);
         zd.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        await sleep(600);
+        await sleep(800);
 
-        const parent = zd.closest('.nd4-ea5') || zd.closest('.sc8131-a') ||
-                       zd.closest('[class*="ea5"]') || zd.closest('[class*="method"]') ||
-                       zd.parentElement;
-        const searchRoot = parent || li;
+        // Шлём hover по всей цепочке от zd вверх — карандаш скрыт до наведения
+        for (let el = zd; el && el !== li.parentElement; el = el.parentElement) {
+          el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+          el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+        }
+        await sleep(700);
 
-        // 1. Точный title
+        // 0. Быстрый путь: closest по ряду зоны (nd4-e3a — реальный класс из DOM)
+        {
+          const zoneRow = zd.closest('[class*="nd4-e3a"]');
+          if (zoneRow) {
+            const eb = zoneRow.querySelector('button[title="Редактировать метод"]');
+            if (eb) { log('[DBG] ✅ Карандаш через closest nd4-e3a'); eb.scrollIntoView({ block: 'center' }); eb.click(); return true; }
+          }
+        }
+
+        // Ищем ближайший предок с кнопками (не опираемся на классы Ozon — они меняются)
+        let searchRoot = null;
+        for (let el = zd.parentElement; el && el !== li; el = el.parentElement) {
+          if (el.tagName === 'LI' || el.querySelectorAll('button').length > 0) {
+            searchRoot = el;
+            break;
+          }
+        }
+        if (!searchRoot) searchRoot = li;
+        log(`[DBG] searchRoot: ${searchRoot.tagName}${searchRoot.className ? '.' + searchRoot.className.trim().split(/\s+/).join('.') : ''}, кнопок: ${searchRoot.querySelectorAll('button').length}`);
+
+        const tryClick = (btn) => {
+          if (!btn) return false;
+          btn.scrollIntoView({ block: 'center' });
+          btn.click();
+          return true;
+        };
+
+        // 1. Точный title в найденном searchRoot
         let editBtn = searchRoot.querySelector('button[title="Редактировать метод"]');
-        if (editBtn) {
-          log(`[DBG] ✅ Карандаш найден сразу`);
-          editBtn.scrollIntoView({ block: 'center' });
-          await sleep(200);
-          editBtn.click();
-          return true;
-        }
+        if (editBtn) { log(`[DBG] ✅ Карандаш по title (searchRoot)`); return tryClick(editBtn); }
 
-        // 2. Mouseover — карандаш часто скрыт до наведения
-        zd.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-        zd.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-        searchRoot.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-        await sleep(600);
-
-        editBtn = searchRoot.querySelector('button[title="Редактировать метод"]');
-        if (editBtn) {
-          log(`[DBG] ✅ Карандаш найден после mouseover`);
-          editBtn.scrollIntoView({ block: 'center' });
-          await sleep(200);
-          editBtn.click();
-          return true;
-        }
-
-        // 3. Кнопка с «Редактировать» в title или тексте
+        // 2. Редактировать по тексту/title в searchRoot
         for (const btn of searchRoot.querySelectorAll('button')) {
           const t = (btn.getAttribute('title') || btn.textContent || '').toLowerCase();
           if (t.includes('редактировать') || t.includes('edit')) {
-            log(`[DBG] ✅ Редактировать найден по тексту`);
-            btn.scrollIntoView({ block: 'center' });
-            await sleep(200);
-            btn.click();
-            return true;
+            log(`[DBG] ✅ Редактировать по тексту (searchRoot)`);
+            return tryClick(btn);
           }
         }
 
-        // 4. SVG карандаш (path '4.989')
-        for (const btn of searchRoot.querySelectorAll('button')) {
+        // 3. Если searchRoot не li — пробуем весь li (ищем кнопку, ближайшую к zd по DOM)
+        if (searchRoot !== li) {
+          editBtn = li.querySelector('button[title="Редактировать метод"]');
+          if (editBtn) { log(`[DBG] ✅ Карандаш по title (li)`); return tryClick(editBtn); }
+        }
+
+        // 4. Все кнопки "Редактировать" в li — берём ту, что DOM-позиционно ближе к zd
+        const allEdit = [...li.querySelectorAll('button')].filter(b => {
+          const t = (b.getAttribute('title') || b.textContent || '').toLowerCase();
+          return t.includes('редактировать') || t.includes('edit');
+        });
+        if (allEdit.length > 0) {
+          // Берём первую — после expandHiddenMethods зоны раскрыты в порядке отображения
+          // и первая "Редактировать" соответствует первой видимой зоне (уже проскроллили к нужной)
+          // Более надёжно: найти кнопку, ближайшую к zd по DOM-позиции
+          const zdPos = zd.compareDocumentPosition.bind(zd);
+          let closest = allEdit[0];
+          for (const btn of allEdit) {
+            const rel = zdPos(btn);
+            const closestRel = zdPos(closest);
+            // Предпочитаем кнопку ПОСЛЕ zd в DOM и максимально близкую
+            if ((rel & Node.DOCUMENT_POSITION_FOLLOWING) && !(closestRel & Node.DOCUMENT_POSITION_FOLLOWING)) {
+              closest = btn;
+            }
+          }
+          log(`[DBG] ✅ Редактировать ближайшая к зоне (из ${allEdit.length})`);
+          return tryClick(closest);
+        }
+
+        // 5. SVG карандаш (path '4.989') во всём li
+        for (const btn of li.querySelectorAll('button')) {
           const svg = btn.querySelector('svg');
           if (svg && svg.innerHTML.includes('4.989')) {
             log(`[DBG] ✅ SVG карандаш найден`);
-            btn.scrollIntoView({ block: 'center' });
-            await sleep(200);
-            btn.click();
-            return true;
+            return tryClick(btn);
           }
         }
 
-        // Диагностика: что вообще есть в searchRoot
-        const allBtns = [...searchRoot.querySelectorAll('button')];
-        log(`[DBG] ❌ Карандаш не найден. Кнопок в parent: ${allBtns.length}, titles: ${JSON.stringify(allBtns.map(b => b.getAttribute('title') || b.textContent.trim().slice(0,20)).filter(Boolean))}`);
+        // Диагностика: что вообще есть
+        const allBtns = [...li.querySelectorAll('button')];
+        log(`[DBG] ❌ Карандаш не найден. Кнопок в li: ${allBtns.length}, titles: ${JSON.stringify(allBtns.map(b => b.getAttribute('title') || b.textContent.trim().slice(0,20)).filter(Boolean))}`);
       }
     }
     log(`[DBG] ❌ Зона «${zoneTitle}» не найдена среди div[title]`);
@@ -923,8 +954,16 @@
     const allReports = [];
     const totalZones = citiesEntries.filter(([, zc]) => zc.length > 0).length;
     let zoneNum = 0;
-    for (const [pageZoneTitle, zoneCities] of citiesEntries) {
+    for (const [pageZoneTitle, zoneCitiesRaw] of citiesEntries) {
       checkStop();
+      // Дедупликация: убираем дубли из Excel (регистронезависимо, ё→е)
+      const seenCities = new Set();
+      const zoneCities = zoneCitiesRaw.filter(c => {
+        const k = normCity(c);
+        if (seenCities.has(k)) return false;
+        seenCities.add(k);
+        return true;
+      });
       if (!zoneCities.length) continue;
       zoneNum++;
 
