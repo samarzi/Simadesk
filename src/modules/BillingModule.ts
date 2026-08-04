@@ -3,7 +3,7 @@ import { adminService } from '@/services/adminService';
 import { companyService } from '@/services/companyService';
 import { showToast } from '@/utils/toast';
 import { hasAnyStoreConnected } from './NavigationModule';
-import { AI_BOOST_PACKAGES, getActiveBoostPackage, setActiveBoostPackage, getQuotaInfo, FREE_DAILY_TOKENS } from '@/services/aiTokenQuota';
+import { AI_BOOST_PACKAGES, getAiBoostPackages, getActiveBoostPackage, setActiveBoostPackage, setAiBoostPriceOverrides, getQuotaInfo, FREE_DAILY_TOKENS } from '@/services/aiTokenQuota';
 
 export class BillingModule {
   private el: HTMLElement;
@@ -24,6 +24,11 @@ export class BillingModule {
     this.loading = true;
     this.render();
     await this.checkReturnFromPayment();
+
+    // Load AI boost price overrides from Supabase (best-effort, non-blocking)
+    adminService.getAiBoostPrices().then(prices => {
+      if (Object.keys(prices).length) setAiBoostPriceOverrides(prices);
+    }).catch(() => {});
 
     const company = companyService.getActive();
     const [adminInfo, trial, sub, rev, hasStore] = await Promise.all([
@@ -54,17 +59,25 @@ export class BillingModule {
     window.history.replaceState({}, '', url.toString());
 
     const paymentId = localStorage.getItem('yk_payment_id');
+    const planKey = localStorage.getItem('yk_plan_key');
     if (!paymentId) return;
     localStorage.removeItem('yk_payment_id');
     localStorage.removeItem('yk_plan_key');
 
+    const isAiBoost = planKey?.startsWith('ai_') ?? false;
     showToast('Проверяем статус платежа…', 'info');
     // Poll up to 5 times
     for (let i = 0; i < 5; i++) {
       await new Promise(r => setTimeout(r, 1500));
       const status = await billingService.checkPayment(paymentId);
       if (status?.status === 'succeeded' || status?.paid) {
-        showToast('Оплата прошла успешно! Подписка активирована.', 'success');
+        if (isAiBoost && planKey) {
+          setActiveBoostPackage(planKey);
+          const pkg = AI_BOOST_PACKAGES.find(p => p.key === planKey);
+          showToast(`✅ Пакет AI-токенов «${pkg?.label ?? planKey}» активирован!`, 'success');
+        } else {
+          showToast('Оплата прошла успешно! Подписка активирована.', 'success');
+        }
         return;
       }
       if (status?.status === 'canceled') {
@@ -441,7 +454,7 @@ export class BillingModule {
     const usedPct = q.pct;
     const warn = usedPct >= 70;
 
-    const cards = AI_BOOST_PACKAGES.map(pkg => {
+    const cards = getAiBoostPackages().map(pkg => {
       const isActive = active?.key === pkg.key;
       const dayK = Math.round(pkg.tokensPerDay / 1000);
       return `
@@ -475,7 +488,7 @@ export class BillingModule {
         <div class="bill-ai-pkgs">${cards}</div>
         ${active ? `<div class="bill-ai-deactivate"><button class="bill-link-btn" id="bill-ai-deactivate">Отключить пакет</button></div>` : ''}
         <div class="bill-ai-note">
-          💡 Пакет AI-токенов — отдельная услуга к основному тарифу SimaDesk. После выбора пакета обратитесь в поддержку для оформления оплаты.
+          💡 Пакет AI-токенов — дополнительная услуга к основному тарифу. Оплата через ЮKassa, активация сразу после оплаты.
         </div>
       </div>`;
   }
@@ -551,21 +564,36 @@ export class BillingModule {
     });
     document.getElementById('bill-promo-check')?.addEventListener('click', () => this.checkPromo());
 
-    // AI boost package buttons
+    // AI boost package buttons — real YooKassa payment
     this.el.querySelectorAll<HTMLButtonElement>('.bill-ai-pkg-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const key = btn.dataset.pkgKey;
         if (!key) return;
         const current = getActiveBoostPackage();
         if (current?.key === key) return;
-        setActiveBoostPackage(key);
-        const pkg = AI_BOOST_PACKAGES.find(p => p.key === key);
-        showToast(
-          `Пакет ${pkg?.label ?? key} выбран! Для оплаты обратитесь в поддержку через Сима → Поддержка.`,
-          'success',
-        );
-        this.render();
-        this.bindEvents();
+        const company = companyService.getActive();
+        if (!company) { showToast('Нет активной компании', 'error'); return; }
+        const pkg = getAiBoostPackages().find(p => p.key === key);
+        if (!pkg) return;
+        btn.disabled = true;
+        btn.textContent = 'Создаём платёж…';
+        const res = await billingService.createPayment(company.id, pkg.key, pkg.priceRub);
+        if ('error' in res) {
+          showToast(res.error, 'error');
+          btn.disabled = false;
+          btn.textContent = 'Подключить';
+          return;
+        }
+        const confirmUrl = res.confirmation_url;
+        if (!confirmUrl?.startsWith('https://')) {
+          showToast('Некорректный URL оплаты', 'error');
+          btn.disabled = false;
+          btn.textContent = 'Подключить';
+          return;
+        }
+        localStorage.setItem('yk_payment_id', res.payment_id);
+        localStorage.setItem('yk_plan_key', pkg.key);
+        window.location.href = confirmUrl;
       });
     });
 

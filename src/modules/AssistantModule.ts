@@ -620,6 +620,7 @@ export class AssistantModule {
   private aiModel = '';
   /** Является ли текущий пользователь платформенным администратором (нет лимитов). */
   private isAdminUser = false;
+  private aiEnabled = localStorage.getItem('sd_sima_ai_enabled') !== 'false';
   private ttsEnabled = localStorage.getItem('sd_tts_enabled') !== 'false';
   private ttsRate = parseFloat(localStorage.getItem('sd_tts_rate') || '1.1');
   // Edge TTS voice ID — default to Svetlana Neural; migrate legacy Web Speech API names
@@ -837,6 +838,8 @@ export class AssistantModule {
     panel.querySelector('#sd-ap-sessions-new')?.addEventListener('click', () => this.newSession());
 
     panel.querySelector('.sd-ap-tts-btn')?.addEventListener('click', () => this.toggleTts());
+    panel.querySelector('#sd-ap-ai-toggle')?.addEventListener('click', () => this.toggleAi());
+    this.updateAiToggleBtn();
     panel.querySelector('.sd-ap-clear-btn')?.addEventListener('click', () => this.clearChat());
     panel.querySelector('.sd-ap-key-save')?.addEventListener('click', () => this.saveKeyFromPanel());
     // Quick actions accordion toggle
@@ -993,6 +996,14 @@ export class AssistantModule {
           <button class="sd-ap-btn sd-ap-sessions-btn" id="sd-ap-sessions-btn" title="Сохранённые чаты">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+          </button>
+          <button class="sd-ap-btn sd-ap-ai-toggle" id="sd-ap-ai-toggle" title="AI-режим вкл/выкл">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M12 2a4 4 0 0 1 4 4v1h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-1v1a4 4 0 0 1-4 4 4 4 0 0 1-4-4v-1H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1V6a4 4 0 0 1 4-4z"/>
+              <circle cx="9.5" cy="10" r="1" fill="currentColor" stroke="none"/>
+              <circle cx="14.5" cy="10" r="1" fill="currentColor" stroke="none"/>
+              <path d="M9 14.5s1 1.5 3 1.5 3-1.5 3-1.5"/>
             </svg>
           </button>
           <button class="sd-ap-btn sd-ap-tts-btn" title="Озвучка текста">
@@ -2019,6 +2030,22 @@ export class AssistantModule {
     if (!btn) return;
     btn.classList.toggle('tts-active', this.ttsEnabled);
     btn.title = this.ttsEnabled ? 'Озвучка включена (нажмите чтобы выключить)' : 'Озвучка выключена (нажмите чтобы включить)';
+  }
+
+  private toggleAi(): void {
+    this.aiEnabled = !this.aiEnabled;
+    localStorage.setItem('sd_sima_ai_enabled', this.aiEnabled ? 'true' : 'false');
+    this.updateAiToggleBtn();
+    showToast(this.aiEnabled ? '🤖 AI включён' : '⚙️ Механический режим — AI выключен', 'info');
+  }
+
+  private updateAiToggleBtn(): void {
+    const btn = this.panel?.querySelector<HTMLElement>('#sd-ap-ai-toggle');
+    if (!btn) return;
+    btn.classList.toggle('ai-off', !this.aiEnabled);
+    btn.title = this.aiEnabled
+      ? 'AI включён (нажми чтобы выключить)'
+      : 'AI выключен — механический режим (нажми чтобы включить)';
   }
 
   // ── Voice onboarding ──────────────────────────────────────────────────────────
@@ -3094,6 +3121,15 @@ export class AssistantModule {
       return;
     }
 
+    // Mechanical mode — AI disabled
+    if (!this.aiEnabled) {
+      this.addAssistantMessage(
+        '🤖 **AI выключен.** Команда не распознана — перефразируй или включи AI (кнопка 🤖 вверху панели).'
+      );
+      this.setStatus('Готова');
+      return;
+    }
+
     // LLM call
     if (!this.aiKey) {
       this.addAssistantMessage(
@@ -3301,7 +3337,7 @@ export class AssistantModule {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let full = '';
-      let usage: { total: number } | null = null;
+      let lastChunkWithUsage: any = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -3319,15 +3355,13 @@ export class AssistantModule {
               full += delta;
               onChunk!(full);
             }
-            if (parsed?.usage) {
-              const u = parsed.usage;
-              usage = { total: (u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0) };
-            }
+            if (parsed?.usage) lastChunkWithUsage = parsed;
           } catch { /* ignore malformed SSE line */ }
         }
       }
 
-      if (usage && !this.isAdminUser) recordDailyTokens(usage.total);
+      const streamUsage = reportAiUsage('Сима', lastChunkWithUsage);
+      if (streamUsage && !this.isAdminUser) recordDailyTokens(streamUsage.total);
       return full;
     }
 

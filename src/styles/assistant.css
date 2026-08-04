@@ -1802,3 +1802,12 @@ html.light .sd-sup-msg.user .sd-sup-bubble {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ═══ AI TOGGLE BUTTON ══════════════════════════════════════════════════════════ */
+
+#sd-ap-ai-toggle { color: var(--ap-accent); }
+#sd-ap-ai-toggle.ai-off {
+  color: var(--ap-txt-3);
+  opacity: 0.55;
+}
+#sd-ap-ai-toggle.ai-off svg { filter: grayscale(1); }

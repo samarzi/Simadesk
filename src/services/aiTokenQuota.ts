@@ -20,7 +20,7 @@ export interface AiBoostPackage {
 /** Базовый ежедневный лимит (FREE). */
 export const FREE_DAILY_TOKENS = 50_000;
 
-/** Пакеты увеличения дневного лимита. Покупаются ежемесячно. */
+/** Базовые (дефолтные) пакеты — цены могут быть переопределены через platform_settings. */
 export const AI_BOOST_PACKAGES: AiBoostPackage[] = [
   {
     key: 'ai_x5',
@@ -47,6 +47,24 @@ export const AI_BOOST_PACKAGES: AiBoostPackage[] = [
     badge: '×20',
   },
 ];
+
+// ── Динамические цены (загружаются из Supabase platform_settings) ─────────────
+
+let _priceOverrides: Record<string, number> | null = null;
+
+/** Применить цены из platform_settings (вызывается при загрузке BillingModule). */
+export function setAiBoostPriceOverrides(prices: Record<string, number>): void {
+  _priceOverrides = prices;
+}
+
+/** Возвращает пакеты с актуальными ценами (с учётом переопределений). */
+export function getAiBoostPackages(): AiBoostPackage[] {
+  if (!_priceOverrides) return AI_BOOST_PACKAGES;
+  return AI_BOOST_PACKAGES.map(pkg => ({
+    ...pkg,
+    priceRub: _priceOverrides![pkg.key] ?? pkg.priceRub,
+  }));
+}
 
 // ── Хранение в localStorage ────────────────────────────────────────────────────
 

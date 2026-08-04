@@ -383,6 +383,28 @@ class AdminService {
     });
   }
 
+  /** Load AI boost package price overrides from platform_settings. */
+  async getAiBoostPrices(): Promise<Record<string, number>> {
+    try {
+      const res = await dbFetch<Array<{ value: Record<string, number> }>>(
+        'platform_settings?key=eq.ai_boost_prices&select=value',
+      );
+      return res?.[0]?.value ?? {};
+    } catch { return {}; }
+  }
+
+  /** Overwrite AI boost prices (platform admin only). */
+  async updateAiBoostPrices(prices: Record<string, number>): Promise<void> {
+    await dbFetch(
+      'platform_settings',
+      {
+        method: 'POST',
+        body: JSON.stringify({ key: 'ai_boost_prices', value: prices, updated_at: new Date().toISOString() }),
+      },
+      { 'Prefer': 'resolution=merge-duplicates' },
+    );
+  }
+
   async deleteUser(userId: string): Promise<void> {
     await dbFetch('/rpc/admin_delete_user', {
       method: 'POST',

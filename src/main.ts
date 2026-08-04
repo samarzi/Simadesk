@@ -4,6 +4,7 @@ import './styles/auth.css';
 import './styles/products-hub.css';
 import './styles/storefront.css';
 import './styles/assistant.css';
+import './styles/admin.css';
 
 // Apply saved theme immediately (before DOMContentLoaded to avoid flash)
 if (localStorage.getItem('simadesk_theme') === 'light') {

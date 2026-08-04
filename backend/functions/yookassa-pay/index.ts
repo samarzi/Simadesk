@@ -53,7 +53,10 @@ async function createPayment(req: Request): Promise<Response> {
   if (authErr || !user) return json({ error: 'Не авторизован' }, 401);
 
   const amountStr = (price_rub).toFixed(2);
-  const description = `SimaDesk — тариф ${plan_key} · ${price_rub.toLocaleString('ru')} ₽/мес`;
+  const isAiBoost = plan_key.startsWith('ai_');
+  const description = isAiBoost
+    ? `SimaDesk — пакет AI-токенов ${plan_key} · ${price_rub.toLocaleString('ru')} ₽/мес`
+    : `SimaDesk — тариф ${plan_key} · ${price_rub.toLocaleString('ru')} ₽/мес`;
 
   const ykRes = await fetch('https://api.yookassa.ru/v3/payments', {
     method: 'POST',
@@ -120,6 +123,10 @@ async function handleWebhook(req: Request): Promise<Response> {
 
   const { company_id, plan_key, price_rub } = payment.metadata ?? {};
   if (!company_id || !plan_key) return json({ ok: true });
+
+  // AI boost packages (ai_x5 / ai_x10 / ai_x20) are activated client-side on payment return.
+  // The webhook just acknowledges — no subscription row needed.
+  if (plan_key.startsWith('ai_')) return json({ ok: true });
 
   // Cross-check the charged amount against the authoritative payment amount.
   const paidRub = Number(payment.amount?.value) || 0;
