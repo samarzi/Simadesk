@@ -4,7 +4,8 @@ export type AppPage =
   | 'ozon' | 'yandex' | 'wb'
   | 'orders-ozon' | 'orders-yandex' | 'orders-wb'
   | 'repricer' | 'stock' | 'producers' | 'products-hub'
-  | 'sku-audit' | 'reviews' | 'chats' | 'logs' | 'automation' | 'tasks' | 'simastore' | 'docs' | 'notifications' | 'admin' | 'billing';
+  | 'sku-audit' | 'reviews' | 'chats' | 'logs' | 'automation' | 'tasks' | 'simastore' | 'docs' | 'notifications' | 'admin' | 'billing'
+  | 'supply' | 'advertising' | 'returns' | 'mp-analytics' | 'content' | 'adv-analytics' | 'stocks-update' | 'product-creator';
 
 export interface Box {
   id: string;

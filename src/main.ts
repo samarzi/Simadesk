@@ -46,6 +46,14 @@ import { NotificationsModule } from './modules/NotificationsModule';
 import { AdminModule } from './modules/AdminModule';
 import { BillingModule } from './modules/BillingModule';
 import { assistantModule } from './modules/AssistantModule';
+import { SupplyManagementModule } from './modules/SupplyManagementModule';
+import { AdvertisingModule } from './modules/AdvertisingModule';
+import { MarketplaceAnalyticsModule } from './modules/MarketplaceAnalyticsModule';
+import { ContentManagementModule } from './modules/ContentManagementModule';
+import { ReturnsManagementModule } from './modules/ReturnsManagementModule';
+import { AdvancedAnalyticsModule } from './modules/AdvancedAnalyticsModule';
+import { StocksUpdateModule } from './modules/StocksUpdateModule';
+import { ProductCreatorModule } from './modules/ProductCreatorModule';
 import { orderSyncService } from './services/orderSyncService';
 import { companyService } from './services/companyService';
 import { renderPublicStorefront } from './pages/storefrontPage';
@@ -144,6 +152,14 @@ init('producers-section',      (el) => new ProducersModule(el),       'producers
   init('notifications-section',  (el) => new NotificationsModule(el),   'notificationsModule');
   init('admin-section',          (el) => new AdminModule(el),           'adminModule');
   init('billing-section',        (el) => new BillingModule(el),         'billingModule');
+  init('supply-section',         (_el) => new SupplyManagementModule('supply-section'), 'supplyModule');
+  init('advertising-section',    (_el) => new AdvertisingModule('advertising-section'), 'advertisingModule');
+  init('mp-analytics-section',   (_el) => new MarketplaceAnalyticsModule('mp-analytics-section'), 'mpAnalyticsModule');
+  init('content-section',        (_el) => new ContentManagementModule('content-section'), 'contentModule');
+  init('returns-section',        (_el) => new ReturnsManagementModule('returns-section'), 'returnsModule');
+  init('adv-analytics-section',  (_el) => new AdvancedAnalyticsModule('adv-analytics-section'), 'advAnalyticsModule');
+  init('stocks-update-section',  (el) => new StocksUpdateModule(el),     'stocksUpdateModule');
+  init('product-creator-section',(el) => new ProductCreatorModule(el),   'productCreatorModule');
   // SimaStore — передаём companyId при инициализации
   const _simaStoreEl = document.getElementById('simastore-section');
   if (_simaStoreEl) {

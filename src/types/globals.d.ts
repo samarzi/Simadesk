@@ -34,6 +34,14 @@ import type { BillingModule } from '../modules/BillingModule';
 import type { CompanyModule } from '../modules/CompanyModule';
 import type { SeoModule } from '../modules/SeoModule';
 import type { AssistantModule } from '../modules/AssistantModule';
+import type { SupplyManagementModule } from '../modules/SupplyManagementModule';
+import type { AdvertisingModule } from '../modules/AdvertisingModule';
+import type { MarketplaceAnalyticsModule } from '../modules/MarketplaceAnalyticsModule';
+import type { ContentManagementModule } from '../modules/ContentManagementModule';
+import type { ReturnsManagementModule } from '../modules/ReturnsManagementModule';
+import type { AdvancedAnalyticsModule } from '../modules/AdvancedAnalyticsModule';
+import type { StocksUpdateModule } from '../modules/StocksUpdateModule';
+import type { ProductCreatorModule } from '../modules/ProductCreatorModule';
 
 /** Module-level show/hide interface (every nav-routed module implements this). */
 interface ShowHideModule {
@@ -87,6 +95,14 @@ declare global {
     notificationsModule: NotificationsModule & ShowHideModule;
     adminModule: AdminModule & ShowHideModule;
     billingModule: BillingModule & ShowHideModule;
+    supplyModule: SupplyManagementModule & ShowHideModule;
+    advertisingModule: AdvertisingModule & ShowHideModule;
+    returnsModule: ReturnsManagementModule & ShowHideModule;
+    mpAnalyticsModule: MarketplaceAnalyticsModule & ShowHideModule;
+    contentModule: ContentManagementModule & ShowHideModule;
+    advAnalyticsModule: AdvancedAnalyticsModule & ShowHideModule;
+    stocksUpdateModule: StocksUpdateModule & ShowHideModule;
+    productCreatorModule: ProductCreatorModule & ShowHideModule;
 
     // ── Helpers injected by modules ────────────────────────────────────────
     /** Expands the dock to show sub-items for the given page (injected by dock init). */

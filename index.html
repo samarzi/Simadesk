@@ -278,6 +278,34 @@
         <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div>
         <span class="dock-label">Анализ</span>
       </div>
+      <div class="dock-item" id="nav-supply" onclick="window.app.navigateTo('supply')">
+        <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22V12M12 12L5 8M12 12l7-4M3 7l9-5 9 5v10l-9 5-9-5z"/></svg></div>
+        <span class="dock-label">Поставки</span>
+      </div>
+      <div class="dock-item" id="nav-advertising" onclick="window.app.navigateTo('advertising')">
+        <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+        <span class="dock-label">Реклама</span>
+      </div>
+      <div class="dock-item" id="nav-returns" onclick="window.app.navigateTo('returns')">
+        <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg></div>
+        <span class="dock-label">Возвраты</span>
+      </div>
+      <div class="dock-item" id="nav-mp-analytics" onclick="window.app.navigateTo('mp-analytics')">
+        <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></div>
+        <span class="dock-label">МП Аналитика</span>
+      </div>
+      <div class="dock-item" id="nav-content" onclick="window.app.navigateTo('content')">
+        <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></div>
+        <span class="dock-label">Контент</span>
+      </div>
+      <div class="dock-item" id="nav-stocks-update" onclick="window.app.navigateTo('stocks-update')">
+        <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg></div>
+        <span class="dock-label">Остатки</span>
+      </div>
+      <div class="dock-item" id="nav-product-creator" onclick="window.app.navigateTo('product-creator')">
+        <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></div>
+        <span class="dock-label">Создать товар</span>
+      </div>
       <div class="dock-item" id="nav-automation" onclick="window.app.navigateTo('automation')">
         <div class="dock-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
         <span class="dock-label">Скрипты</span>
@@ -391,6 +419,16 @@
 
     <!-- LOGS -->
     <div id="logs-section" style="display:none;flex:1;flex-direction:column;overflow:hidden"></div>
+
+    <!-- NEW MODULES -->
+    <div id="supply-section" style="display:none;flex:1;overflow:auto"></div>
+    <div id="advertising-section" style="display:none;flex:1;overflow:auto"></div>
+    <div id="returns-section" style="display:none;flex:1;overflow:auto"></div>
+    <div id="mp-analytics-section" style="display:none;flex:1;overflow:auto"></div>
+    <div id="content-section" style="display:none;flex:1;overflow:auto"></div>
+    <div id="adv-analytics-section" style="display:none;flex:1;overflow:auto"></div>
+    <div id="stocks-update-section" style="display:none;flex:1;overflow:auto"></div>
+    <div id="product-creator-section" style="display:none;flex:1;overflow:auto"></div>
   </div>
 </div>
 
