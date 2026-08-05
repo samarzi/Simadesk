@@ -1492,3 +1492,284 @@ html.light .ph-sel-divider { background: rgba(0,0,0,.15); }
   white-space: nowrap;
 }
 .ph-bulk-photo-btn:hover { background: var(--bg3); color: var(--text1); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   cmp-* — Edit & Photo tab components
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Marketplace badge ───────────────────────────────────────────── */
+.cmp-mp-badge {
+  display: inline-flex; align-items: center;
+  font-size: 10px; font-weight: 700; letter-spacing: .03em;
+  padding: 2px 7px; border-radius: 5px;
+  text-transform: uppercase; flex-shrink: 0;
+}
+.cmp-mp-badge--wb     { background: rgba(146,67,203,.18); color: #b97de8; }
+.cmp-mp-badge--ozon   { background: rgba(0,91,255,.15);   color: #5c9eff; }
+.cmp-mp-badge--yandex { background: rgba(255,204,0,.18);  color: #d4a800; }
+html.light .cmp-mp-badge--wb     { background: rgba(146,67,203,.12); color: #7b2fa8; }
+html.light .cmp-mp-badge--ozon   { background: rgba(0,91,255,.1);   color: #0040cc; }
+html.light .cmp-mp-badge--yandex { background: rgba(255,176,0,.15); color: #8a6800; }
+
+/* ── Buttons ─────────────────────────────────────────────────────── */
+.cmp-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 500;
+  padding: 5px 14px; border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg2); color: var(--text2);
+  cursor: pointer; transition: background .15s, color .15s;
+  white-space: nowrap;
+}
+.cmp-btn:hover:not(:disabled) { background: var(--bg3); color: var(--text1); }
+.cmp-btn:disabled { opacity: .5; cursor: not-allowed; }
+.cmp-btn-primary {
+  background: var(--accent); color: #fff;
+  border-color: var(--accent);
+}
+.cmp-btn-primary:hover:not(:disabled) { filter: brightness(1.1); background: var(--accent); color: #fff; }
+.cmp-btn-sm { font-size: 11px; padding: 3px 10px; }
+
+/* ── Small spinner ───────────────────────────────────────────────── */
+.cmp-spinner-sm {
+  display: inline-block;
+  width: 12px; height: 12px;
+  border: 2px solid rgba(255,255,255,.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+  vertical-align: middle;
+}
+.cmp-btn:not(.cmp-btn-primary) .cmp-spinner-sm {
+  border-color: rgba(0,0,0,.2);
+  border-top-color: var(--text2);
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Tab card wrapper ─────────────────────────────────────────────── */
+.cmp-tab-card {
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+/* ── Edit section (one per MP store) ────────────────────────────── */
+.cmp-edit-section {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg1);
+}
+.cmp-edit-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.cmp-edit-store {
+  font-size: 12px; font-weight: 600; color: var(--text1);
+}
+.cmp-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px 12px;
+  padding: 10px 12px;
+}
+.cmp-edit-field {
+  display: flex; flex-direction: column; gap: 3px;
+  min-width: 0;
+}
+.cmp-edit-field--wide {
+  grid-column: 1 / -1;
+}
+.cmp-edit-label {
+  font-size: 10px; font-weight: 600;
+  color: var(--text3); text-transform: uppercase; letter-spacing: .04em;
+}
+.cmp-edit-input {
+  width: 100%; box-sizing: border-box;
+  font-size: 12px; color: var(--text1);
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px;
+  outline: none; transition: border-color .15s, background .15s;
+  font-family: inherit;
+}
+.cmp-edit-input:focus { border-color: var(--accent); background: var(--bg1); }
+.cmp-edit-input--locked { opacity: .6; cursor: not-allowed; }
+textarea.cmp-edit-input { resize: vertical; min-height: 70px; }
+.cmp-edit-ro {
+  font-size: 12px; color: var(--text2);
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px;
+  opacity: .7;
+}
+.cmp-lock-tag {
+  display: inline-flex; align-items: center;
+  opacity: .65; vertical-align: middle; margin-left: 2px;
+}
+.cmp-edit-chars {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  padding: 4px 0;
+}
+.cmp-char-item {
+  font-size: 11px; color: var(--text2);
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 4px; padding: 2px 7px;
+}
+.cmp-edit-ok {
+  font-size: 11px; font-weight: 600; color: #44dd88;
+  padding: 3px 12px;
+}
+.cmp-edit-error {
+  font-size: 11px; color: #ff6b6b;
+  padding: 3px 12px;
+}
+.cmp-edit-pending { color: var(--text3); }
+.cmp-edit-foot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg2);
+}
+
+/* ── Sync bar ─────────────────────────────────────────────────────── */
+.cmp-sync-bar {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 4px 0;
+}
+.cmp-sync-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px;
+}
+.cmp-sync-name {
+  flex: 1; color: var(--text2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmp-sync-date {
+  font-size: 11px; color: var(--text3); flex-shrink: 0;
+}
+.cmp-sync-date.err { color: #ff6b6b; }
+
+/* ── Photo section ───────────────────────────────────────────────── */
+.cmp-photo-section {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg1);
+}
+.cmp-photo-hdr {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 12px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.cmp-photo-store {
+  font-size: 12px; font-weight: 600; color: var(--text1);
+}
+.cmp-photo-sync {
+  font-size: 11px; color: var(--text3);
+}
+.cmp-photo-err {
+  font-size: 11px; color: #ff6b6b;
+  margin-left: auto;
+}
+.cmp-photo-grid {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  padding: 10px 12px;
+}
+.cmp-photo-none {
+  font-size: 12px; color: var(--text3);
+  padding: 4px 0;
+}
+.cmp-photo-cell {
+  position: relative;
+  width: 80px; height: 80px;
+  border-radius: 7px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  cursor: grab;
+  transition: box-shadow .15s;
+}
+.cmp-photo-cell:hover { box-shadow: 0 0 0 2px var(--accent); }
+.cmp-photo-cell.drag-over { box-shadow: 0 0 0 2px #44dd88; }
+.cmp-photo-wrap {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.cmp-photo-wrap img {
+  width: 100%; height: 100%;
+  object-fit: cover; display: block;
+}
+.cmp-photo-num {
+  position: absolute;
+  top: 2px; left: 4px;
+  font-size: 9px; font-weight: 700;
+  color: rgba(255,255,255,.9);
+  text-shadow: 0 1px 3px rgba(0,0,0,.6);
+  line-height: 1; pointer-events: none;
+}
+.cmp-photo-ctrl {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 4px;
+  background: rgba(0,0,0,.45);
+  opacity: 0; transition: opacity .15s;
+}
+.cmp-photo-cell:hover .cmp-photo-ctrl { opacity: 1; }
+.cmp-drag-handle {
+  font-size: 13px; cursor: grab; color: rgba(255,255,255,.75);
+  line-height: 1; user-select: none;
+}
+.cmp-pbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px;
+  font-size: 10px; border-radius: 4px;
+  border: none; cursor: pointer;
+  background: transparent; color: rgba(255,255,255,.75);
+  transition: background .12s, color .12s;
+}
+.cmp-pbtn:hover { background: rgba(255,255,255,.18); color: #fff; }
+.cmp-pbtn--del:hover { background: rgba(255,80,80,.5); color: #fff; }
+.cmp-photo-acts {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg2);
+}
+.cmp-photo-add {
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.cmp-photo-add-tabs {
+  display: flex; gap: 4px;
+}
+.cmp-photo-add-tab {
+  font-size: 11px; font-weight: 500;
+  padding: 3px 10px; border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg2); color: var(--text3);
+  cursor: pointer; transition: background .13s, color .13s;
+}
+.cmp-photo-add-tab.active, .cmp-photo-add-tab:hover {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.cmp-photo-add-url {
+  display: flex; gap: 6px; align-items: center;
+}
+.cmp-photo-add-url .cmp-edit-input { flex: 1; }
+.cmp-photo-add-file {
+  display: flex; align-items: center; gap: 8px;
+}
+.cmp-photo-file-hint {
+  font-size: 10px; color: var(--text3);
+}
+
+/* ── Store filter chip row ───────────────────────────────────────── */
+.ph-filter-stores {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  padding-top: 2px;
+}

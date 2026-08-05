@@ -218,9 +218,12 @@ function renderCard(g: ProductGroup, showStock = false, variantBtns = ''): strin
     `<span class="ssp-src-badge ${v.source}">${MP_LABEL[v.source]?.split(' ')[0]??v.source}</span>`
   ).join('');
 
+  const MP_SHORT: Record<string, string> = { wb: 'WB', ozon: 'Ozon', yandex: 'Яндекс' };
   const stockBadge = showStock
     ? g.totalStock > 0
-      ? `<div class="ssp-stock">${g.totalStock} шт.</div>`
+      ? `<div class="ssp-stock">${g.variants.map(v =>
+          `<span class="ssp-stock-mp">${MP_SHORT[v.source] ?? v.source}: ${v.stock ?? 0} шт.</span>`
+        ).join('')}</div>`
       : `<div class="ssp-stock out">нет в наличии</div>`
     : '';
 
@@ -533,27 +536,29 @@ export async function renderPublicStorefront(slug: string): Promise<void> {
       ${contactBtns ? `<div class="ss-contacts">${contactBtns}</div>` : ''}
     </header>
 
-    ${banners.length ? `<div class="ssc-root" id="ssc-root"></div>` : ''}
+    <div class="ss-body">
+      ${banners.length ? `<div class="ssc-root" id="ssc-root"></div>` : ''}
 
-    <div class="ss-wrap">
-      <div class="ss-toolbar">
-        <div class="ss-search-wrap">
-          <svg class="ss-search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input class="ss-search" id="ssp-search" type="search" placeholder="Поиск товаров…">
+      <div class="ss-wrap">
+        <div class="ss-toolbar">
+          <div class="ss-search-wrap">
+            <svg class="ss-search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input class="ss-search" id="ssp-search" type="search" placeholder="Поиск товаров…">
+          </div>
+          <div class="ss-tabs">
+            <button class="ss-tab active" data-src="all">Все <span class="ss-tab-cnt">${groups.length}</span></button>
+            ${hasSrc('wb')     ? `<button class="ss-tab" data-src="wb">WB</button>`       : ''}
+            ${hasSrc('ozon')   ? `<button class="ss-tab" data-src="ozon">Ozon</button>`   : ''}
+            ${hasSrc('yandex') ? `<button class="ss-tab" data-src="yandex">Яндекс</button>` : ''}
+          </div>
         </div>
-        <div class="ss-tabs">
-          <button class="ss-tab active" data-src="all">Все <span class="ss-tab-cnt">${groups.length}</span></button>
-          ${hasSrc('wb')     ? `<button class="ss-tab" data-src="wb">WB</button>`       : ''}
-          ${hasSrc('ozon')   ? `<button class="ss-tab" data-src="ozon">Ozon</button>`   : ''}
-          ${hasSrc('yandex') ? `<button class="ss-tab" data-src="yandex">Яндекс</button>` : ''}
-        </div>
+
+        ${renderFilters(groups, filters, s)}
+
+        <div id="ssp-content">${renderGroupSections(groups, storefrontGroups, showStock, variantMap)}</div>
+
+        <footer class="ss-footer">Powered by <a href="/" target="_blank">SimaDesk</a></footer>
       </div>
-
-      ${renderFilters(groups, filters, s)}
-
-      <div id="ssp-content">${renderGroupSections(groups, storefrontGroups, showStock, variantMap)}</div>
-
-      <footer class="ss-footer">Powered by <a href="/" target="_blank">SimaDesk</a></footer>
     </div>`;
 
   if (banners.length) {

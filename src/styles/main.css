@@ -491,12 +491,35 @@ html.light .docs-word-editor { box-shadow: 0 4px 16px rgba(0,0,0,.15); }
   background: transparent; color: var(--text); font-family: inherit; font-size: 12px;
   cursor: pointer; outline: none;
 }
-/* ── Excel toolbar ─────────────────────────────────────────────────────────── */
+/* ── Excel toolbar — always light theme for readability ────────────────────── */
 .docs-excel-toolbar {
   display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
   padding: 5px 8px; border-bottom: 1px solid var(--border);
   background: var(--bg2, var(--bg)); flex-shrink: 0;
 }
+html:not(.light) .docs-excel-toolbar {
+  background: #f0f2f5;
+  border-bottom-color: #d0d4da;
+}
+html:not(.light) .docs-excel-toolbar .dx-btn {
+  color: #333;
+}
+html:not(.light) .docs-excel-toolbar .dx-btn:hover { background: rgba(0,0,0,.07); border-color: #ccc; }
+html:not(.light) .docs-excel-toolbar .dx-sep { background: #d0d4da; }
+html:not(.light) .docs-excel-toolbar .dx-sel {
+  background: #fff; color: #333; border-color: #ccc;
+}
+html:not(.light) .docs-excel-toolbar .dx-active {
+  background: color-mix(in srgb, var(--accent) 18%, #eee);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+html:not(.light) .docs-formula-bar {
+  background: #fff; border-bottom-color: #d0d4da;
+}
+html:not(.light) .dx-cell-ref { color: #333; }
+html:not(.light) .dx-formula-inp { color: #333; }
+html:not(.light) .dx-fx-icon { color: #666; }
+html:not(.light) .docs-excel-status { color: #666; }
 .dx-group { display: inline-flex; align-items: center; gap: 1px; }
 .dx-sep { width: 1px; height: 20px; background: var(--border); margin: 0 5px; flex-shrink: 0; }
 .dx-btn {
@@ -594,7 +617,8 @@ html.light .docs-word-editor { box-shadow: 0 4px 16px rgba(0,0,0,.15); }
   scrollbar-width: thin;
   scrollbar-color: rgba(140,140,160,0.3) transparent;
 }
-html:not(.light) .docs-excel-wrap { --xl-bg: #1a1c20; }
+/* Excel editor always uses light/white theme — dark theme makes it unreadable */
+html:not(.light) .docs-excel-wrap { --xl-bg: #f8f9fa; }
 .docs-excel-wrap::-webkit-scrollbar { width: 8px; height: 8px; }
 .docs-excel-wrap::-webkit-scrollbar-track { background: transparent; }
 .docs-excel-wrap::-webkit-scrollbar-thumb { background: rgba(140,140,160,0.3); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box; }
@@ -612,7 +636,7 @@ html:not(.light) .docs-excel-wrap { --xl-bg: #1a1c20; }
   border: 1px solid #d0d4da; padding: 0; min-width: 80px; height: 24px;
 }
 html:not(.light) .docs-excel th,
-html:not(.light) .docs-excel td { border-color: #2e3138; }
+html:not(.light) .docs-excel td { border-color: #d0d4da; }
 
 /* Column header row */
 .docs-excel thead th {
@@ -623,7 +647,7 @@ html:not(.light) .docs-excel td { border-color: #2e3138; }
   border-bottom: 2px solid #c8cdd6;
 }
 html:not(.light) .docs-excel thead th {
-  background: #222530; color: #7a82a0; border-bottom-color: #343a46;
+  background: #f0f2f5; color: #5a6172; border-bottom-color: #c8cdd6;
 }
 /* Row number column */
 .docs-excel .dx-corner, .docs-excel .dx-rowhdr {
@@ -632,14 +656,14 @@ html:not(.light) .docs-excel thead th {
   font-size: 11px; user-select: none;
 }
 html:not(.light) .docs-excel .dx-corner,
-html:not(.light) .docs-excel .dx-rowhdr { background: #222530; color: #56607a; }
+html:not(.light) .docs-excel .dx-rowhdr { background: #f0f2f5; color: #7a8499; }
 .docs-excel .dx-corner { z-index: 4; cursor: pointer; }
 .docs-excel .dx-corner:hover { background: color-mix(in srgb, var(--accent) 10%, #f0f2f5); }
-html:not(.light) .docs-excel .dx-corner:hover { background: color-mix(in srgb, var(--accent) 10%, #222530); }
+html:not(.light) .docs-excel .dx-corner:hover { background: color-mix(in srgb, var(--accent) 10%, #f0f2f5); }
 
 /* Cell background/text CSS variables — swap for dark theme */
 .docs-excel-wrap { --xl-cell: #ffffff; --xl-cell-txt: #111111; --xl-cell-hover: #f5f7ff; }
-html:not(.light) .docs-excel-wrap { --xl-cell: #1c1f28; --xl-cell-txt: #d4d8e8; --xl-cell-hover: #22263000; }
+html:not(.light) .docs-excel-wrap { --xl-cell: #ffffff; --xl-cell-txt: #111111; --xl-cell-hover: #f5f7ff; }
 
 /* Data cells */
 .docs-excel td {
@@ -698,7 +722,7 @@ html:not(.light) .docs-excel-wrap { --xl-cell: #1c1f28; --xl-cell-txt: #d4d8e8; 
   color: var(--accent) !important;
 }
 html:not(.light) .docs-excel th.dx-hdr-selected {
-  background: color-mix(in srgb, var(--accent) 22%, #222530) !important;
+  background: color-mix(in srgb, var(--accent) 22%, #f0f2f5) !important;
 }
 
 /* ── Context menu ──────────────────────────────────────────────────────────── */

@@ -1,6 +1,6 @@
 /**
  * DocsModule — единый редактор документов (Word + Excel).
- * До 20 документов в localStorage (FIFO при переполнении).
+ * Документы хранятся в Supabase (docs_documents), localStorage используется как кеш.
  * Excel: многолистовость, цвета ячеек, ширины/высоты из xlsx.
  */
 
@@ -8,6 +8,9 @@ import * as XLSX from 'xlsx';
 import { aiPage, type AiPageCapability, type AiActionResult } from '@/services/aiPageContext';
 import { debug } from '@/utils/debug';
 import { selectionCtx } from '@/services/selectionContext';
+import { dbFetch } from '@/services/dbClient';
+import { companyService } from '@/services/companyService';
+import { showToast } from '@/utils/toast';
 
 type DocType = 'word' | 'excel';
 
@@ -71,6 +74,8 @@ export class DocsModule {
     this.root = root;
     this.load();
     window.addEventListener('beforeunload', () => this.flushSave());
+    // Load from DB in background — merges any docs not in localStorage
+    this.syncFromDb();
   }
 
   show(): void { this.root.style.display = ''; this.render(); }
@@ -109,12 +114,59 @@ export class DocsModule {
       if (this.activeId) localStorage.setItem(ACTIVE_KEY, this.activeId);
     } catch (e) {
       debug.warn('[DocsModule] save failed', e);
-      // Quota exceeded — try saving with recent content stripped
       try {
         const slim = this.docs.map(d => ({ ...d, content: d.content.length > 50000 ? d.content.slice(0, 50000) : d.content }));
         localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
       } catch { /* ignore */ }
     }
+  }
+
+  /** Sync all docs from Supabase, merge with local cache (DB wins on conflict). */
+  private async syncFromDb(): Promise<void> {
+    const companyId = companyService.getActiveId();
+    if (!companyId) return;
+    try {
+      const rows = await dbFetch<DocItem[]>(`docs_documents?company_id=eq.${companyId}&select=id,type,title,content,updated_at&order=updated_at.desc`);
+      if (!Array.isArray(rows) || !rows.length) return;
+      let changed = false;
+      for (const row of rows) {
+        const local = this.docs.find(d => d.id === row.id);
+        if (!local) {
+          this.docs.push(row);
+          changed = true;
+        } else if (row.updated_at > local.updated_at) {
+          Object.assign(local, row);
+          changed = true;
+        }
+      }
+      if (changed) {
+        this.docs.sort((a, b) => b.updated_at - a.updated_at);
+        if (!this.activeId && this.docs.length) this.activeId = this.docs[0].id;
+        this.save();
+        this.render();
+      }
+    } catch (e) {
+      debug.warn('[DocsModule] syncFromDb failed', e);
+    }
+  }
+
+  /** Upsert a single doc to Supabase. Fire-and-forget. */
+  private saveDocToDb(doc: DocItem): void {
+    const companyId = companyService.getActiveId();
+    if (!companyId) return;
+    dbFetch<unknown>(`docs_documents`, {
+      method: 'POST',
+      body: JSON.stringify({ id: doc.id, company_id: companyId, type: doc.type, title: doc.title, content: doc.content, updated_at: doc.updated_at }),
+      headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    }).catch(e => debug.warn('[DocsModule] saveDocToDb failed', e));
+  }
+
+  /** Delete a doc from Supabase. Fire-and-forget. */
+  private deleteDocFromDb(id: string): void {
+    const companyId = companyService.getActiveId();
+    if (!companyId) return;
+    dbFetch<unknown>(`docs_documents?id=eq.${id}&company_id=eq.${companyId}`, { method: 'DELETE' })
+      .catch(e => debug.warn('[DocsModule] deleteDocFromDb failed', e));
   }
 
   private saveRecent(): void {
@@ -131,7 +183,14 @@ export class DocsModule {
 
   private scheduleSave(): void {
     if (this.saveTimer) clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => { this.save(); this.saveTimer = null; }, 500);
+    this.saveTimer = setTimeout(() => {
+      this.save();
+      this.saveTimer = null;
+      if (this.activeId) {
+        const doc = this.docs.find(d => d.id === this.activeId);
+        if (doc) this.saveDocToDb(doc);
+      }
+    }, 800);
   }
 
   private flushSave(): void {
@@ -149,6 +208,7 @@ export class DocsModule {
     this.activeSheetIdx = 0;
     this.touchRecent(doc);
     this.save();
+    this.saveDocToDb(doc);
     this.render();
   }
 
@@ -168,11 +228,12 @@ export class DocsModule {
     const idx = this.docs.findIndex(d => d.id === id);
     if (idx === -1) return;
     const doc = this.docs[idx];
-    if (!skipConfirm && !confirm(`Закрыть «${doc.title}»?\nДокумент будет удалён из редактора.`)) return;
+    if (!skipConfirm && !confirm(`Закрыть «${doc.title}»?\nДокумент будет закрыт.`)) return;
     this.touchRecent(doc);
     this.docs.splice(idx, 1);
     if (this.activeId === id) { this.activeId = this.docs[0]?.id ?? null; this.activeSheetIdx = 0; }
     this.save();
+    this.deleteDocFromDb(id);
     this.render();
   }
 
@@ -462,7 +523,7 @@ export class DocsModule {
           const result = await mammoth.convertToHtml({ arrayBuffer: buf }, opts);
           this.addDoc({ id: this.newId(), type: 'word', title: bare, content: result.value, updated_at: now });
         } catch (err) {
-          alert('Не удалось прочитать .docx: ' + (err as Error).message);
+          showToast('Не удалось прочитать .docx: ' + (err as Error).message, 'error');
         }
         return;
       }
@@ -473,15 +534,15 @@ export class DocsModule {
           const text = await this.docxToText(buf);
           this.addDoc({ id: this.newId(), type: 'word', title: bare, content: this.esc(text).replace(/\n/g, '<br>'), updated_at: now });
         } catch {
-          alert('Формат .doc не поддерживается. Пересохрани как .docx или .html.');
+          showToast('Формат .doc не поддерживается. Пересохрани как .docx или .html.', 'error');
         }
         return;
       }
 
-      alert(`Неизвестный формат: .${ext}\nПоддерживаются: xlsx, xls, csv, html, txt, docx`);
+      showToast(`Неизвестный формат: .${ext}. Поддерживаются: xlsx, xls, csv, html, txt, docx`, 'error');
     } catch (e) {
       debug.warn('[DocsModule] import failed', e);
-      alert('Ошибка при импорте: ' + (e as Error).message);
+      showToast('Ошибка при импорте: ' + (e as Error).message, 'error');
     }
   }
 

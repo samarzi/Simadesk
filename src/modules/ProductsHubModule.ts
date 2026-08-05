@@ -98,6 +98,7 @@ interface HubProduct {
 interface Filters {
   q: string;
   mp: '' | Mp;
+  store_id: string;       // '' = all stores
   no_cost: boolean;
   no_mp: boolean;
   no_repricer: boolean;
@@ -209,7 +210,7 @@ export class ProductsHubModule {
   private filtered: HubProduct[] = [];
   private selectedArticle: string | null = null;
   private activeTab: Tab = 'overview';
-  private filters: Filters = { q: '', mp: '', no_cost: false, no_mp: false, no_repricer: false, status: '', stock: 'any', price_min: null, price_max: null };
+  private filters: Filters = { q: '', mp: '', store_id: '', no_cost: false, no_mp: false, no_repricer: false, status: '', stock: 'any', price_min: null, price_max: null };
   private sortBy: 'article' | 'profit' | 'sales' | 'stock' | 'margin' = 'article';
   private filtersOpen = false;
   private loading = false;
@@ -1020,7 +1021,7 @@ export class ProductsHubModule {
   // ─── Filtering ──────────────────────────────────────────────────
 
   private applyFilters(): void {
-    const { q, mp, no_cost, no_mp, no_repricer, status, stock, price_min, price_max } = this.filters;
+    const { q, mp, store_id, no_cost, no_mp, no_repricer, status, stock, price_min, price_max } = this.filters;
     this.filtered = this.items.filter(p => {
       // Hidden filter
       if (!this.showHidden && this.hiddenArticles.has(p.article)) return false;
@@ -1029,6 +1030,7 @@ export class ProductsHubModule {
       if (this.showOnlySelected && !this.selectedArticles.has(p.article)) return false;
       if (q && !p.article.toLowerCase().includes(q) && !p.name.toLowerCase().includes(q)) return false;
       if (mp && !p.mp_entries.some(e => e.mp === mp)) return false;
+      if (store_id && !p.mp_entries.some(e => e.store_id === store_id)) return false;
       if (no_cost     && p.has_cost)     return false;
       if (no_mp       && p.has_mp)       return false;
       if (no_repricer && p.has_repricer) return false;
@@ -1865,6 +1867,17 @@ export class ProductsHubModule {
     const f = this.filters;
     const s = this.sortBy;
     const activeCount = this.countActiveFilters();
+
+    // Collect unique stores from all products (respect active MP filter)
+    const storeMap = new Map<string, { name: string; mp: Mp }>();
+    for (const p of this.items) {
+      for (const e of p.mp_entries) {
+        if (f.mp && e.mp !== f.mp) continue;
+        if (!storeMap.has(e.store_id)) storeMap.set(e.store_id, { name: e.store_name, mp: e.mp });
+      }
+    }
+    const stores = [...storeMap.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
+
     return `
     <div class="ph-fp-inner">
       <div class="ph-fp-groups">
@@ -1878,6 +1891,14 @@ export class ProductsHubModule {
             ${this.chip('ЯМ', f.mp === 'yandex', 'mp', 'yandex')}
           </div>
         </div>
+
+        ${stores.length > 1 ? `<div class="ph-fp-group">
+          <div class="ph-fp-label">Магазин</div>
+          <div class="ph-fp-chips">
+            ${this.chip('Все', f.store_id === '', 'store', '')}
+            ${stores.map(([sid, st]) => this.chip(st.name, f.store_id === sid, 'store', sid)).join('')}
+          </div>
+        </div>` : ''}
 
         <div class="ph-fp-group">
           <div class="ph-fp-label">Статус</div>
@@ -1947,7 +1968,8 @@ export class ProductsHubModule {
       if (chip) {
         const f = chip.dataset.f!;
         const val = chip.dataset.val ?? '';
-        if (f === 'mp')     this.filters.mp     = val as any;
+        if (f === 'mp')     { this.filters.mp = val as any; this.filters.store_id = ''; }
+        if (f === 'store')  this.filters.store_id = val;
         if (f === 'status') this.filters.status  = val;
         if (f === 'stock')  this.filters.stock   = val as any;
         if (f === 'sort')   this.sortBy          = val as any;
@@ -1961,7 +1983,7 @@ export class ProductsHubModule {
         return;
       }
       if ((e.target as HTMLElement).id === 'ph-f-reset') {
-        this.filters = { q: '', mp: '', no_cost: false, no_mp: false, no_repricer: false, status: '', stock: 'any', price_min: null, price_max: null };
+        this.filters = { q: '', mp: '', store_id: '', no_cost: false, no_mp: false, no_repricer: false, status: '', stock: 'any', price_min: null, price_max: null };
         this.sortBy = 'article';
         // clear search input too
         const si = this.el.querySelector<HTMLInputElement>('#ph-search');
@@ -2010,7 +2032,7 @@ export class ProductsHubModule {
 
   private countActiveFilters(): number {
     const f = this.filters;
-    return [f.mp, f.status, f.stock !== 'any', f.price_min != null, f.price_max != null,
+    return [f.mp, f.store_id, f.status, f.stock !== 'any', f.price_min != null, f.price_max != null,
       f.no_cost, f.no_mp, f.no_repricer].filter(Boolean).length;
   }
 
