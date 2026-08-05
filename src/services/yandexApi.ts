@@ -48,7 +48,7 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
 /** Универсальный HTTP-запрос к Яндекс Маркету с экспоненциальным retry. */
 async function yandexFetch<T>(
   path: string,
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   apiKey: string,
   body?: unknown,
   signal?: AbortSignal,
@@ -1414,4 +1414,127 @@ export async function getYandexPromos(
   }
   const data = await res.json();
   return data?.result?.promos ?? data?.promos ?? [];
+}
+
+// ── Advertising: промо-офферы ───────────────────────────────────────────────
+
+/**
+ * POST /v2/businesses/{businessId}/promos/offers — офферы участвующие в акции.
+ */
+export async function getYandexPromoOffers(
+  apiKey: string,
+  businessId: number,
+  promoId: string,
+  signal?: AbortSignal,
+): Promise<any[]> {
+  try {
+    const resp = await yandexFetch<any>(
+      `/v2/businesses/${businessId}/promos/offers`,
+      'POST', apiKey,
+      { promoId, limit: 200, offset: 0 },
+      signal,
+    );
+    return resp?.result?.offers ?? resp?.offers ?? [];
+  } catch { return []; }
+}
+
+/**
+ * POST /v2/businesses/{businessId}/promos/offers/update — добавить офферы в акцию.
+ */
+export async function updateYandexPromoOffers(
+  apiKey: string,
+  businessId: number,
+  promoId: string,
+  offers: Array<{ offerId: string; promoPrice: number }>,
+): Promise<void> {
+  await yandexFetch(
+    `/v2/businesses/${businessId}/promos/offers/update`,
+    'POST', apiKey, { promoId, offers },
+  );
+}
+
+/**
+ * POST /v2/businesses/{businessId}/promos/offers/delete — убрать офферы из акции.
+ */
+export async function removeYandexPromoOffers(
+  apiKey: string,
+  businessId: number,
+  promoId: string,
+  offerIds: string[],
+): Promise<void> {
+  await yandexFetch(
+    `/v2/businesses/${businessId}/promos/offers/delete`,
+    'POST', apiKey, { promoId, deleteAllOffers: false, offerIds },
+  );
+}
+
+// ── Advertising: буст-ставки ───────────────────────────────────────────────
+
+/**
+ * GET /v2/campaigns/{campaignId}/bids — текущие ставки буст-продвижения.
+ */
+export async function getYandexCampaignBids(
+  apiKey: string,
+  campaignId: number,
+  signal?: AbortSignal,
+): Promise<any[]> {
+  try {
+    const resp = await yandexFetch<any>(
+      `/v2/campaigns/${campaignId}/bids`,
+      'GET', apiKey, undefined, signal,
+    );
+    return resp?.result?.items ?? resp?.items ?? resp?.bids ?? [];
+  } catch { return []; }
+}
+
+/**
+ * PUT /v2/campaigns/{campaignId}/bids — установить ставки буст-продвижения.
+ */
+export async function updateYandexCampaignBids(
+  apiKey: string,
+  campaignId: number,
+  bids: Array<{ offerId: string; bid: number }>,
+): Promise<void> {
+  await yandexFetch(
+    `/v2/campaigns/${campaignId}/bids`,
+    'PUT', apiKey, { bids },
+  );
+}
+
+/**
+ * GET /v2/campaigns/{campaignId}/bids/recommended — рекомендованные ставки.
+ */
+export async function getYandexRecommendedBids(
+  apiKey: string,
+  campaignId: number,
+  signal?: AbortSignal,
+): Promise<any[]> {
+  try {
+    const resp = await yandexFetch<any>(
+      `/v2/campaigns/${campaignId}/bids/recommended`,
+      'GET', apiKey, undefined, signal,
+    );
+    return resp?.result?.items ?? resp?.items ?? [];
+  } catch { return []; }
+}
+
+/**
+ * POST /stats/skus — статистика показов/кликов по SKU через Performance API.
+ */
+export async function getYandexSkuPerfStats(
+  apiKey: string,
+  campaignId: number,
+  dateFrom: string,
+  dateTo: string,
+  signal?: AbortSignal,
+): Promise<any[]> {
+  try {
+    const resp = await yandexFetch<any>(
+      '/stats/skus',
+      'POST', apiKey,
+      { campaignIds: [campaignId], dateFrom, dateTo },
+      signal,
+    );
+    return resp?.result?.items ?? resp?.items ?? [];
+  } catch { return []; }
 }

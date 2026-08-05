@@ -1430,6 +1430,46 @@ export const ozonApi = {
     return resp?.result ?? resp?.actions ?? [];
   },
 
+  /**
+   * POST /v1/actions/products — товары в акции и потенциальные участники.
+   */
+  async getPromoProducts(
+    creds: Creds,
+    actionId: number,
+  ): Promise<{ activated: any[]; available: any[] }> {
+    const resp = await ozonPost<any>('/v1/actions/products', {
+      action_id: actionId,
+      limit: 100,
+      offset: 0,
+    }, creds);
+    return {
+      activated: resp?.result?.activated_products ?? [],
+      available: resp?.result?.products ?? [],
+    };
+  },
+
+  /**
+   * POST /v1/actions/products/activate — добавить товары в акцию.
+   */
+  async activatePromoProducts(
+    creds: Creds,
+    actionId: number,
+    products: Array<{ id: number; price: number }>,
+  ): Promise<void> {
+    await ozonPost('/v1/actions/products/activate', { action_id: actionId, products }, creds);
+  },
+
+  /**
+   * POST /v1/actions/products/deactivate — убрать товары из акции.
+   */
+  async deactivatePromoProducts(
+    creds: Creds,
+    actionId: number,
+    productIds: number[],
+  ): Promise<void> {
+    await ozonPost('/v1/actions/products/deactivate', { action_id: actionId, product_ids: productIds }, creds);
+  },
+
   // ── Returns (Возвраты) ─────────────────────────────────────────────────────
 
   /**
@@ -1631,3 +1671,88 @@ export async function fetchAllOzonProducts(
     };
   });
 }
+
+// ── Ozon Performance Advertising API (performance.ozon.ru) ─────────────────
+// Proxied via /ozon-perf/ → performance.ozon.ru (separate domain from Seller API)
+
+const PERF_PROXY = '/ozon-perf';
+
+async function ozonPerfFetch<T>(
+  method: string,
+  endpoint: string,
+  clientId: string,
+  apiKey: string,
+  body?: unknown,
+): Promise<T> {
+  const res = await fetch(`${PERF_PROXY}${endpoint}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'Client-Id': clientId,
+      'Api-Key': apiKey,
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.ok) {
+    const ct = res.headers.get('content-type') ?? '';
+    if (res.status === 204 || !ct.includes('application/json')) return undefined as T;
+    return res.json() as Promise<T>;
+  }
+  const text = await res.text();
+  throw new Error(`Ozon Performance ${res.status} (${endpoint}): ${text.slice(0, 200)}`);
+}
+
+export const ozonPerfApi = {
+  /**
+   * GET /api/1/campaign — список Performance-кампаний.
+   */
+  async getCampaigns(clientId: string, apiKey: string): Promise<any[]> {
+    try {
+      const resp = await ozonPerfFetch<any>('GET', '/api/1/campaign', clientId, apiKey);
+      return resp?.list ?? resp?.items ?? [];
+    } catch { return []; }
+  },
+
+  /**
+   * POST /api/1/statistics/campaign — статистика кампаний за период.
+   */
+  async getStats(
+    clientId: string,
+    apiKey: string,
+    params: { campaigns: string[]; dateFrom: string; dateTo: string },
+  ): Promise<any[]> {
+    try {
+      const resp = await ozonPerfFetch<any>('POST', '/api/1/statistics/campaign', clientId, apiKey, params);
+      return resp?.rows ?? resp?.list ?? resp?.statistics ?? [];
+    } catch { return []; }
+  },
+
+  /**
+   * PATCH /api/1/campaign/{id} — пауза/запуск кампании.
+   */
+  async toggleCampaign(clientId: string, apiKey: string, campaignId: string, activate: boolean): Promise<void> {
+    await ozonPerfFetch('PATCH', `/api/1/campaign/${campaignId}`, clientId, apiKey, {
+      state: activate ? 'ACTIVATE' : 'DEACTIVATE',
+    });
+  },
+
+  /**
+   * GET /api/1/campaign/{id}/objects — объявления внутри кампании (SKU + ставки).
+   */
+  async getCampaignObjects(clientId: string, apiKey: string, campaignId: string): Promise<any[]> {
+    try {
+      const resp = await ozonPerfFetch<any>('GET', `/api/1/campaign/${campaignId}/objects`, clientId, apiKey);
+      return resp?.list ?? resp?.objects ?? [];
+    } catch { return []; }
+  },
+
+  /**
+   * GET /api/1/budget — баланс Performance-кабинета.
+   */
+  async getBalance(clientId: string, apiKey: string): Promise<number> {
+    try {
+      const resp = await ozonPerfFetch<any>('GET', '/api/1/budget', clientId, apiKey);
+      return resp?.money ?? resp?.balance ?? 0;
+    } catch { return 0; }
+  },
+};

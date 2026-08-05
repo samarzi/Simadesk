@@ -1242,6 +1242,85 @@ export async function updateWbCampaignBids(
   );
 }
 
+/**
+ * Баланс рекламного кабинета WB.
+ * GET /adv/v2/budget
+ */
+export async function getWbAdBalance(apiKey: string, signal?: AbortSignal): Promise<number> {
+  try {
+    const resp = await wbFetch<any>('/wb-adv/adv/v2/budget', 'GET', apiKey, undefined, signal, 3);
+    return resp?.balance ?? 0;
+  } catch { return 0; }
+}
+
+/**
+ * Детали кампании: список товаров и их текущие ставки.
+ * GET /adv/v1/promotion/{id}
+ */
+export async function getWbCampaignDetails(
+  apiKey: string,
+  campaignId: number,
+  signal?: AbortSignal,
+): Promise<any | null> {
+  try {
+    return await wbFetch<any>(
+      `/wb-adv/adv/v1/promotion/${campaignId}`,
+      'GET', apiKey, undefined, signal, 3,
+    );
+  } catch { return null; }
+}
+
+/**
+ * Расширенная статистика v2 — breakdown по дням и nmId в одном запросе.
+ * POST /adv/v2/fullstats
+ */
+export async function getWbFullStats(
+  apiKey: string,
+  campaigns: Array<{ id: number; interval?: { begin: string; end: string } }>,
+  signal?: AbortSignal,
+): Promise<any[]> {
+  try {
+    const resp = await wbFetch<any>('/wb-adv/adv/v2/fullstats', 'POST', apiKey, campaigns, signal, 5);
+    return Array.isArray(resp) ? resp : [];
+  } catch { return []; }
+}
+
+/**
+ * Статистика по ключевым словам кампании.
+ * GET /adv/v1/stat/words?id={id}
+ */
+export async function getWbKeywordStats(
+  apiKey: string,
+  campaignId: number,
+  signal?: AbortSignal,
+): Promise<any[]> {
+  try {
+    const resp = await wbFetch<any>(
+      `/wb-adv/adv/v1/stat/words?id=${campaignId}`,
+      'GET', apiKey, undefined, signal, 3,
+    );
+    if (Array.isArray(resp?.keywords)) return resp.keywords;
+    if (Array.isArray(resp)) return resp;
+    return [];
+  } catch { return []; }
+}
+
+/**
+ * Установить минус-слова для автокампании (тип 8).
+ * POST /adv/v2/auto/set-excluded
+ */
+export async function setWbExcludedKeywords(
+  apiKey: string,
+  campaignId: number,
+  excluded: string[],
+  signal?: AbortSignal,
+): Promise<void> {
+  await wbFetch<any>(
+    '/wb-adv/adv/v2/auto/set-excluded',
+    'POST', apiKey, { id: campaignId, excluded }, signal, 3,
+  );
+}
+
 // ── Content Management (Управление контентом) ──────────────────────────────
 
 /**
