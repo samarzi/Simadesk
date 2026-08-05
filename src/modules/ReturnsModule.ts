@@ -8,13 +8,11 @@
  * - Статистика по возвратам
  */
 
-import { appStore } from '@/stores/appStore';
 import { wbDb } from '@/services/wbDb';
-import { yandexDb } from '@/services/yandexDb';
-import { fetchWbReturns, WbReturn } from '@/services/wbApi';
+import { fetchWbReturns } from '@/services/wbApi';
 import { I } from '@/utils/icons';
 import { esc } from '@/utils/format';
-import { toast } from '@/utils/toast';
+import { showToast } from '@/utils/toast';
 
 type Marketplace = 'wb' | 'yandex';
 
@@ -110,14 +108,14 @@ export class ReturnsModule {
   private async loadReturns(): Promise<void> {
     const loadBtn = this.root.querySelector('#load-returns-btn') as HTMLButtonElement;
     loadBtn.disabled = true;
-    loadBtn.innerHTML = `${I.spinner} Загрузка...`;
+    loadBtn.innerHTML = `${I.loader} Загрузка...`;
 
     try {
       this.returns = await this.fetchReturns();
       this.renderReturnsTable();
       this.updateStats();
     } catch (err: any) {
-      toast(`Ошибка: ${err.message}`, 'error');
+      showToast(`Ошибка: ${err.message}`, 'error');
     } finally {
       loadBtn.disabled = false;
       loadBtn.innerHTML = `${I.refresh} Загрузить возвраты`;
@@ -130,7 +128,7 @@ export class ReturnsModule {
     dateFrom.setDate(dateFrom.getDate() - 30);
 
     if (this.selectedMp === 'wb') {
-      const stores = await wbDb.getAllStores();
+      const stores = await wbDb.getStores();
       for (const store of stores) {
         const wbReturns = await fetchWbReturns(store.api_key, dateFrom.toISOString());
         wbReturns.forEach(r => {

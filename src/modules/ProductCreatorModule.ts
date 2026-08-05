@@ -10,13 +10,12 @@
  */
 
 import { ozonApi } from '@/services/ozonApi';
-import { createWbCard } from '@/services/wbApi';
 import { yandexApi } from '@/services/yandexApi';
 import { ozonDb } from '@/services/ozonDb';
 import { wbDb } from '@/services/wbDb';
 import { yandexDb } from '@/services/yandexDb';
 import { I } from '@/utils/icons';
-import { toast } from '@/utils/toast';
+import { showToast } from '@/utils/toast';
 
 type Marketplace = 'ozon' | 'wb' | 'yandex';
 
@@ -80,7 +79,7 @@ export class ProductCreatorModule {
               ${I.refresh} Загрузить
             </button>
             <button id="auto-category-btn" class="btn btn-sm">
-              ${I.magic} Автоподбор
+              ${I.wand} Автоподбор
             </button>
           </div>
         </div>
@@ -162,11 +161,11 @@ https://example.com/image2.jpg"></textarea>
 
     let stores: any[] = [];
     if (this.selectedMp === 'ozon') {
-      stores = await ozonDb.getAllStores();
+      stores = await ozonDb.getStores();
     } else if (this.selectedMp === 'wb') {
-      stores = await wbDb.getAllStores();
+      stores = await wbDb.getStores();
     } else if (this.selectedMp === 'yandex') {
-      stores = await yandexDb.getAllStores();
+      stores = await yandexDb.getStores();
     }
 
     stores.forEach(s => {
@@ -180,22 +179,22 @@ https://example.com/image2.jpg"></textarea>
   private async loadCategories(): Promise<void> {
     const storeId = (this.root.querySelector('#store-select') as HTMLSelectElement).value;
     if (!storeId) {
-      toast('Выберите магазин', 'warning');
+      showToast('Выберите магазин', 'warning');
       return;
     }
 
     const loadBtn = this.root.querySelector('#load-categories-btn') as HTMLButtonElement;
     loadBtn.disabled = true;
-    loadBtn.innerHTML = `${I.spinner} Загрузка...`;
+    loadBtn.innerHTML = `${I.loader} Загрузка...`;
 
     try {
       if (this.selectedMp === 'ozon') {
-        const store = await ozonDb.getStore(storeId);
+        const store = (await ozonDb.getStores()).find(s => s.id === storeId);
         if (!store) throw new Error('Магазин не найден');
         const creds = { client_id: store.client_id, api_key: store.api_key };
         this.categories = await ozonApi.getCategoryTree(creds);
       } else if (this.selectedMp === 'yandex') {
-        const store = await yandexDb.getStore(storeId);
+        const store = (await yandexDb.getStores()).find(s => s.id === storeId);
         if (!store) throw new Error('Магазин не найден');
         this.categories = await yandexApi.getCategoryTree(store.api_key);
       }
@@ -209,9 +208,9 @@ https://example.com/image2.jpg"></textarea>
         categorySelect.appendChild(opt);
       });
 
-      toast(`Загружено ${this.categories.length} категорий`, 'success');
+      showToast(`Загружено ${this.categories.length} категорий`, 'success');
     } catch (err: any) {
-      toast(`Ошибка: ${err.message}`, 'error');
+      showToast(`Ошибка: ${err.message}`, 'error');
     } finally {
       loadBtn.disabled = false;
       loadBtn.innerHTML = `${I.refresh} Загрузить`;
@@ -221,42 +220,42 @@ https://example.com/image2.jpg"></textarea>
   private async autoSelectCategory(): Promise<void> {
     const productName = (this.root.querySelector('#product-name') as HTMLInputElement).value.trim();
     if (!productName) {
-      toast('Введите название товара', 'warning');
+      showToast('Введите название товара', 'warning');
       return;
     }
 
     const storeId = (this.root.querySelector('#store-select') as HTMLSelectElement).value;
     if (!storeId) {
-      toast('Выберите магазин', 'warning');
+      showToast('Выберите магазин', 'warning');
       return;
     }
 
     if (this.selectedMp !== 'yandex') {
-      toast('Автоподбор доступен только для Яндекс Маркета', 'info');
+      showToast('Автоподбор доступен только для Яндекс Маркета', 'info');
       return;
     }
 
     const autoBtn = this.root.querySelector('#auto-category-btn') as HTMLButtonElement;
     autoBtn.disabled = true;
-    autoBtn.innerHTML = `${I.spinner} Подбор...`;
+    autoBtn.innerHTML = `${I.loader} Подбор...`;
 
     try {
-      const store = await yandexDb.getStore(storeId);
+      const store = (await yandexDb.getStores()).find(s => s.id === storeId);
       if (!store) throw new Error('Магазин не найден');
       if (!store.business_id) throw new Error('business_id не указан');
 
       const categoryId = await yandexApi.suggestCategory(store.api_key, store.business_id, productName);
       if (categoryId) {
         (this.root.querySelector('#category-select') as HTMLSelectElement).value = String(categoryId);
-        toast(`Категория подобрана автоматически`, 'success');
+        showToast(`Категория подобрана автоматически`, 'success');
       } else {
-        toast('Не удалось подобрать категорию', 'warning');
+        showToast('Не удалось подобрать категорию', 'warning');
       }
     } catch (err: any) {
-      toast(`Ошибка: ${err.message}`, 'error');
+      showToast(`Ошибка: ${err.message}`, 'error');
     } finally {
       autoBtn.disabled = false;
-      autoBtn.innerHTML = `${I.magic} Автоподбор`;
+      autoBtn.innerHTML = `${I.wand} Автоподбор`;
     }
   }
 
@@ -275,23 +274,23 @@ https://example.com/image2.jpg"></textarea>
     const images = imagesText.split('\n').filter(l => l.trim()).map(l => l.trim());
 
     if (!offerId || !name || !categoryId || !price || !width || !height || !depth || !weight) {
-      toast('Заполните все обязательные поля', 'warning');
+      showToast('Заполните все обязательные поля', 'warning');
       return;
     }
 
     const storeId = (this.root.querySelector('#store-select') as HTMLSelectElement).value;
     if (!storeId) {
-      toast('Выберите магазин', 'warning');
+      showToast('Выберите магазин', 'warning');
       return;
     }
 
     const createBtn = this.root.querySelector('#create-btn') as HTMLButtonElement;
     createBtn.disabled = true;
-    createBtn.innerHTML = `${I.spinner} Создание...`;
+    createBtn.innerHTML = `${I.loader} Создание...`;
 
     try {
       if (this.selectedMp === 'ozon') {
-        const store = await ozonDb.getStore(storeId);
+        const store = (await ozonDb.getStores()).find(s => s.id === storeId);
         if (!store) throw new Error('Магазин не найден');
         const creds = { client_id: store.client_id, api_key: store.api_key };
 
@@ -310,11 +309,11 @@ https://example.com/image2.jpg"></textarea>
           images,
         }]);
 
-        toast(`✓ Товар создан! Task ID: ${result.task_id}`, 'success');
+        showToast(`✓ Товар создан! Task ID: ${result.task_id}`, 'success');
       } else if (this.selectedMp === 'wb') {
-        toast('Создание товаров WB через API требует характеристик категории', 'info');
+        showToast('Создание товаров WB через API требует характеристик категории', 'info');
       } else if (this.selectedMp === 'yandex') {
-        const store = await yandexDb.getStore(storeId);
+        const store = (await yandexDb.getStores()).find(s => s.id === storeId);
         if (!store) throw new Error('Магазин не найден');
         if (!store.business_id) throw new Error('business_id не указан');
 
@@ -327,11 +326,11 @@ https://example.com/image2.jpg"></textarea>
           weightDimensions: { length: depth, width, height, weight: weight / 1000 },
         }]);
 
-        toast(`✓ Товар создан на Яндекс Маркете`, 'success');
+        showToast(`✓ Товар создан на Яндекс Маркете`, 'success');
       }
 
     } catch (err: any) {
-      toast(`Ошибка создания: ${err.message}`, 'error');
+      showToast(`Ошибка создания: ${err.message}`, 'error');
     } finally {
       createBtn.disabled = false;
       createBtn.innerHTML = `${I.plus} Создать товар`;

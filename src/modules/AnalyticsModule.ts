@@ -16,7 +16,7 @@ import { wbDb } from '@/services/wbDb';
 import { yandexDb } from '@/services/yandexDb';
 import { I } from '@/utils/icons';
 import { esc } from '@/utils/format';
-import { toast } from '@/utils/toast';
+import { showToast } from '@/utils/toast';
 
 type Marketplace = 'ozon' | 'wb' | 'yandex';
 
@@ -112,13 +112,13 @@ export class AnalyticsModule {
     const dateTo = (this.root.querySelector('#date-to') as HTMLInputElement).value;
 
     if (!dateFrom || !dateTo) {
-      toast('Выберите период', 'warning');
+      showToast('Выберите период', 'warning');
       return;
     }
 
     const loadBtn = this.root.querySelector('#load-analytics-btn') as HTMLButtonElement;
     loadBtn.disabled = true;
-    loadBtn.innerHTML = `${I.spinner} Загрузка...`;
+    loadBtn.innerHTML = `${I.loader} Загрузка...`;
 
     try {
       if (this.selectedMp === 'ozon') {
@@ -129,7 +129,7 @@ export class AnalyticsModule {
         await this.loadYandexAnalytics(dateFrom, dateTo);
       }
     } catch (err: any) {
-      toast(`Ошибка: ${err.message}`, 'error');
+      showToast(`Ошибка: ${err.message}`, 'error');
     } finally {
       loadBtn.disabled = false;
       loadBtn.innerHTML = `${I.refresh} Загрузить`;
@@ -137,7 +137,7 @@ export class AnalyticsModule {
   }
 
   private async loadOzonAnalytics(dateFrom: string, dateTo: string): Promise<void> {
-    const stores = await ozonDb.getAllStores();
+    const stores = await ozonDb.getStores();
     const allData: any[] = [];
 
     for (const store of stores) {
@@ -205,7 +205,7 @@ export class AnalyticsModule {
   }
 
   private async loadWbAnalytics(dateFrom: string): Promise<void> {
-    const stores = await wbDb.getAllStores();
+    const stores = await wbDb.getStores();
     const allSales: WbSale[] = [];
 
     for (const store of stores) {
@@ -262,7 +262,7 @@ export class AnalyticsModule {
   }
 
   private async loadYandexAnalytics(dateFrom: string, dateTo: string): Promise<void> {
-    const stores = await yandexDb.getAllStores();
+    const stores = await yandexDb.getStores();
     const allData: any[] = [];
 
     for (const store of stores) {

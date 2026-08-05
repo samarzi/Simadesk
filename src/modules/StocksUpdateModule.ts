@@ -1,16 +1,3 @@
-/**
- * StocksUpdateModule — массовое обновление остатков на маркетплейсах.
- * 
- * Функционал:
- * - Синхронизация остатков SimaDesk → Ozon FBS
- * - Синхронизация остатков SimaDesk → Yandex Market
- * - Синхронизация остатков SimaDesk → WB FBS
- * - Выбор товаров для синхронизации
- * - Предпросмотр изменений
- */
-
-import { appStore } from '@/stores/appStore';
-import { api } from '@/services/api';
 import { ozonDb } from '@/services/ozonDb';
 import { wbDb } from '@/services/wbDb';
 import { yandexDb } from '@/services/yandexDb';
@@ -19,7 +6,10 @@ import { wbApi } from '@/services/wbApi';
 import { yandexApi } from '@/services/yandexApi';
 import { I } from '@/utils/icons';
 import { esc } from '@/utils/format';
-import { toast } from '@/utils/toast';
+import { showToast } from '@/utils/toast';
+import type { OzonProduct } from '@/types/ozon';
+import type { WbProduct } from '@/types/wb';
+import type { YandexProduct } from '@/types/yandex';
 
 type Marketplace = 'ozon' | 'wb' | 'yandex';
 
@@ -48,7 +38,7 @@ export class StocksUpdateModule {
   async render(): Promise<void> {
     this.root.innerHTML = `
       <div class="module-header">
-        <h2>${I.sync} Обновление остатков на маркетплейсах</h2>
+        <h2>${I.refresh} Обновление остатков на маркетплейсах</h2>
         <p class="hint">Синхронизация остатков из SimaDesk на маркетплейсы</p>
       </div>
 
@@ -86,7 +76,7 @@ export class StocksUpdateModule {
               <th>Товар</th>
               <th>Артикул</th>
               <th>Текущий остаток (МП)</th>
-              <th>Новый остаток (SimaDesk)</th>
+              <th>Новый остаток</th>
               <th>Изменение</th>
             </tr>
           </thead>
@@ -98,7 +88,7 @@ export class StocksUpdateModule {
 
       <div class="stocks-footer">
         <div class="stats">
-          Всего товаров: <strong id="total-items">0</strong> | 
+          Всего товаров: <strong id="total-items">0</strong> |
           Требуют обновления: <strong id="need-update">0</strong>
         </div>
       </div>
@@ -139,13 +129,13 @@ export class StocksUpdateModule {
     const storeSelect = this.root.querySelector('#store-select') as HTMLSelectElement;
     storeSelect.innerHTML = '<option value="">-- Выберите магазин --</option>';
 
-    let stores: any[] = [];
+    let stores: Array<{ id: string; name: string }> = [];
     if (this.selectedMp === 'ozon') {
-      stores = await ozonDb.getAllStores();
+      stores = await ozonDb.getStores();
     } else if (this.selectedMp === 'wb') {
-      stores = await wbDb.getAllStores();
+      stores = await wbDb.getStores();
     } else if (this.selectedMp === 'yandex') {
-      stores = await yandexDb.getAllStores();
+      stores = await yandexDb.getStores();
     }
 
     stores.forEach(s => {
@@ -158,115 +148,84 @@ export class StocksUpdateModule {
 
   private async loadStocks(): Promise<void> {
     if (!this.selectedStoreId) {
-      toast('Выберите магазин', 'warning');
+      showToast('Выберите магазин', 'warning');
       return;
     }
 
     const loadBtn = this.root.querySelector('#load-stocks-btn') as HTMLButtonElement;
     loadBtn.disabled = true;
-    loadBtn.textContent = `${I.spinner} Загрузка...`;
+    loadBtn.innerHTML = `${I.loader} Загрузка...`;
 
     try {
-      this.items = await this.fetchStockComparison();
+      this.items = await this.fetchStockItems();
       this.renderStocksTable();
       this.updateStats();
     } catch (err: any) {
-      toast(`Ошибка: ${err.message}`, 'error');
+      showToast(`Ошибка: ${err.message}`, 'error');
     } finally {
       loadBtn.disabled = false;
       loadBtn.innerHTML = `${I.refresh} Загрузить остатки`;
     }
   }
 
-  private async fetchStockComparison(): Promise<StockUpdateItem[]> {
+  private async fetchStockItems(): Promise<StockUpdateItem[]> {
     const items: StockUpdateItem[] = [];
 
     if (this.selectedMp === 'ozon') {
-      const store = await ozonDb.getStore(this.selectedStoreId);
+      const stores = await ozonDb.getStores();
+      const store = stores.find(s => s.id === this.selectedStoreId);
       if (!store) throw new Error('Магазин не найден');
 
-      const mpProducts = await ozonDb.getStoreProducts(this.selectedStoreId);
-      const boxes = await api.getAllBoxes();
+      const allProducts = await ozonDb.getProducts();
+      const products = allProducts.filter((p: OzonProduct) => p.store_id === this.selectedStoreId);
 
-      for (const mpProd of mpProducts) {
-        const box = boxes.find(b => b.products.some(p => p.sku === mpProd.offer_id));
-        if (!box) continue;
-
-        const prod = box.products.find(p => p.sku === mpProd.offer_id);
-        if (!prod) continue;
-
-        const currentStock = mpProd.fbs || 0;
-        const newStock = prod.stock || 0;
-
-        if (currentStock !== newStock) {
-          items.push({
-            offer_id: mpProd.offer_id,
-            name: mpProd.name,
-            current_stock: currentStock,
-            new_stock: newStock,
-            mp_id: mpProd.offer_id,
-            mp: 'ozon',
-            store_name: store.name,
-          });
-        }
+      for (const p of products) {
+        items.push({
+          offer_id: p.offer_id,
+          name: p.name,
+          current_stock: p.stock_fbs ?? 0,
+          new_stock: p.stock_fbs ?? 0,
+          mp_id: p.offer_id,
+          mp: 'ozon',
+          store_name: store.name,
+        });
       }
     } else if (this.selectedMp === 'wb') {
-      const store = await wbDb.getStore(this.selectedStoreId);
+      const stores = await wbDb.getStores();
+      const store = stores.find(s => s.id === this.selectedStoreId);
       if (!store) throw new Error('Магазин не найден');
 
-      const mpProducts = await wbDb.getStoreProducts(this.selectedStoreId);
-      const boxes = await api.getAllBoxes();
+      const products = await wbDb.getStoreProducts(this.selectedStoreId);
 
-      for (const mpProd of mpProducts) {
-        const box = boxes.find(b => b.products.some(p => p.sku === String(mpProd.nm_id)));
-        if (!box) continue;
-
-        const prod = box.products.find(p => p.sku === String(mpProd.nm_id));
-        if (!prod) continue;
-
-        const currentStock = mpProd.stock || 0;
-        const newStock = prod.stock || 0;
-
-        if (currentStock !== newStock) {
-          items.push({
-            offer_id: String(mpProd.nm_id),
-            name: mpProd.name,
-            current_stock: currentStock,
-            new_stock: newStock,
-            mp_id: String(mpProd.nm_id),
-            mp: 'wb',
-            store_name: store.name,
-          });
-        }
+      for (const p of products) {
+        items.push({
+          offer_id: String((p as WbProduct).nm_id ?? ''),
+          name: (p as WbProduct).title ?? '',
+          current_stock: (p as WbProduct).stock_total ?? 0,
+          new_stock: (p as WbProduct).stock_total ?? 0,
+          mp_id: String((p as WbProduct).nm_id ?? ''),
+          mp: 'wb',
+          store_name: store.name,
+        });
       }
     } else if (this.selectedMp === 'yandex') {
-      const store = await yandexDb.getStore(this.selectedStoreId);
+      const stores = await yandexDb.getStores();
+      const store = stores.find(s => s.id === this.selectedStoreId);
       if (!store) throw new Error('Магазин не найден');
 
-      const mpProducts = await yandexDb.getStoreProducts(this.selectedStoreId);
-      const boxes = await api.getAllBoxes();
+      const allProducts = await yandexDb.getProducts();
+      const products = allProducts.filter((p: YandexProduct) => p.store_id === this.selectedStoreId);
 
-      for (const mpProd of mpProducts) {
-        const box = boxes.find(b => b.products.some(p => p.sku === mpProd.offer_id));
-        if (!box) continue;
-
-        const prod = box.products.find(p => p.sku === mpProd.offer_id);
-        if (!prod) continue;
-
-        const currentStock = mpProd.stock || 0;
-        const newStock = prod.stock || 0;
-
-        if (currentStock !== newStock) {
-          items.push({
-            offer_id: mpProd.offer_id,
-            name: mpProd.name,
-            current_stock: currentStock,
-            new_stock: newStock,
-            mp_id: mpProd.offer_id,
-            mp: 'yandex',
-            store_name: store.name,
-          });
-        }
+      for (const p of products) {
+        items.push({
+          offer_id: p.offer_id,
+          name: p.name,
+          current_stock: p.stock_total ?? 0,
+          new_stock: p.stock_total ?? 0,
+          mp_id: p.offer_id,
+          mp: 'yandex',
+          store_name: store.name,
+        });
       }
     }
 
@@ -275,9 +234,9 @@ export class StocksUpdateModule {
 
   private renderStocksTable(): void {
     const tbody = this.root.querySelector('#stocks-tbody') as HTMLTableSectionElement;
-    
+
     if (this.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">Все остатки синхронизированы ✓</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">Товары не найдены</td></tr>';
       return;
     }
 
@@ -288,15 +247,23 @@ export class StocksUpdateModule {
 
       return `
         <tr>
-          <td><input type="checkbox" class="stock-checkbox" data-idx="${idx}" checked></td>
+          <td><input type="checkbox" class="stock-checkbox" data-idx="${idx}"></td>
           <td>${esc(item.name)}</td>
           <td><code>${esc(item.offer_id)}</code></td>
           <td>${item.current_stock}</td>
-          <td>${item.new_stock}</td>
+          <td><input type="number" class="stock-input" data-idx="${idx}" value="${item.new_stock}" min="0" style="width:80px"></td>
           <td class="diff ${diffClass}">${diffIcon} ${diff > 0 ? '+' : ''}${diff}</td>
         </tr>
       `;
     }).join('');
+
+    tbody.querySelectorAll<HTMLInputElement>('.stock-input').forEach(input => {
+      input.addEventListener('change', (e) => {
+        const idx = parseInt((e.target as HTMLInputElement).dataset.idx || '0');
+        this.items[idx].new_stock = parseInt((e.target as HTMLInputElement).value) || 0;
+        this.renderStocksTable();
+      });
+    });
 
     tbody.querySelectorAll('.stock-checkbox').forEach(cb => {
       cb.addEventListener('change', () => this.updateSelectedCount());
@@ -317,35 +284,36 @@ export class StocksUpdateModule {
   private updateStats(): void {
     const totalEl = this.root.querySelector('#total-items') as HTMLElement;
     const needUpdateEl = this.root.querySelector('#need-update') as HTMLElement;
+    const needUpdate = this.items.filter(i => i.new_stock !== i.current_stock).length;
 
     totalEl.textContent = String(this.items.length);
-    needUpdateEl.textContent = String(this.items.length);
+    needUpdateEl.textContent = String(needUpdate);
   }
 
   private async syncStocks(): Promise<void> {
-    const selected = Array.from(this.root.querySelectorAll<HTMLInputElement>('.stock-checkbox:checked'))
+    const selectedItems = Array.from(this.root.querySelectorAll<HTMLInputElement>('.stock-checkbox:checked'))
       .map(cb => parseInt(cb.dataset.idx || '0'))
       .map(idx => this.items[idx]);
 
-    if (selected.length === 0) return;
+    if (selectedItems.length === 0) return;
 
     const syncBtn = this.root.querySelector('#sync-stocks-btn') as HTMLButtonElement;
     syncBtn.disabled = true;
-    syncBtn.innerHTML = `${I.spinner} Синхронизация...`;
+    syncBtn.innerHTML = `${I.loader} Синхронизация...`;
 
     try {
       if (this.selectedMp === 'ozon') {
-        await this.syncOzonStocks(selected);
+        await this.syncOzonStocks(selectedItems);
       } else if (this.selectedMp === 'wb') {
-        await this.syncWbStocks(selected);
+        await this.syncWbStocks(selectedItems);
       } else if (this.selectedMp === 'yandex') {
-        await this.syncYandexStocks(selected);
+        await this.syncYandexStocks(selectedItems);
       }
 
-      toast(`✓ Синхронизировано ${selected.length} товаров`, 'success');
-      await this.loadStocks(); // Перезагрузить для актуализации
+      showToast(`✓ Синхронизировано ${selectedItems.length} товаров`, 'success');
+      await this.loadStocks();
     } catch (err: any) {
-      toast(`Ошибка синхронизации: ${err.message}`, 'error');
+      showToast(`Ошибка синхронизации: ${err.message}`, 'error');
     } finally {
       syncBtn.disabled = false;
       syncBtn.innerHTML = `${I.upload} Синхронизировать`;
@@ -353,7 +321,8 @@ export class StocksUpdateModule {
   }
 
   private async syncOzonStocks(items: StockUpdateItem[]): Promise<void> {
-    const store = await ozonDb.getStore(this.selectedStoreId);
+    const stores = await ozonDb.getStores();
+    const store = stores.find(s => s.id === this.selectedStoreId);
     if (!store) throw new Error('Магазин не найден');
 
     const creds = { client_id: store.client_id, api_key: store.api_key };
@@ -364,7 +333,8 @@ export class StocksUpdateModule {
   }
 
   private async syncWbStocks(items: StockUpdateItem[]): Promise<void> {
-    const store = await wbDb.getStore(this.selectedStoreId);
+    const stores = await wbDb.getStores();
+    const store = stores.find(s => s.id === this.selectedStoreId);
     if (!store) throw new Error('Магазин не найден');
 
     const warehouses = await wbApi.getWarehouses(store.api_key);
@@ -372,7 +342,6 @@ export class StocksUpdateModule {
 
     const warehouseId = warehouses[0].id;
 
-    // Получаем баркоды для каждого nmId
     const stocks: Array<{ sku: string; amount: number }> = [];
     for (const item of items) {
       const nmId = parseInt(item.offer_id);
@@ -386,12 +355,12 @@ export class StocksUpdateModule {
   }
 
   private async syncYandexStocks(items: StockUpdateItem[]): Promise<void> {
-    const store = await yandexDb.getStore(this.selectedStoreId);
+    const stores = await yandexDb.getStores();
+    const store = stores.find(s => s.id === this.selectedStoreId);
     if (!store) throw new Error('Магазин не найден');
 
     if (!store.campaign_id) throw new Error('campaign_id не указан');
 
-    // Получаем список складов
     const stocksResp = await yandexApi.getStocks(store.api_key, store.campaign_id, '', undefined);
     const warehouses = stocksResp.warehouses;
     if (!warehouses.length) throw new Error('Склады ЯМ не найдены');
