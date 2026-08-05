@@ -337,6 +337,16 @@ https://example.com/image2.jpg"></textarea>
     }
   }
 
+  show(): void {
+    const section = this.root.parentElement;
+    if (section) section.style.display = 'flex';
+  }
+
+  hide(): void {
+    const section = this.root.parentElement;
+    if (section) section.style.display = 'none';
+  }
+
   destroy(): void {
     this.root.remove();
   }

@@ -378,6 +378,16 @@ export class StocksUpdateModule {
     );
   }
 
+  show(): void {
+    const section = this.root.parentElement;
+    if (section) section.style.display = 'flex';
+  }
+
+  hide(): void {
+    const section = this.root.parentElement;
+    if (section) section.style.display = 'none';
+  }
+
   destroy(): void {
     this.root.remove();
   }
