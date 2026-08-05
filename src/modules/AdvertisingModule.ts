@@ -71,7 +71,7 @@ export class AdvertisingModule {
         <div class="rpr-header">
           <div class="rpr-header-left">
             <div class="rpr-logo-icon" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">
-              ${I.chartBar}
+              ${I.chartBar()}
             </div>
             <span class="rpr-logo-text">Реклама</span>
             <div class="an2-tabs" id="ad-tabs">
@@ -92,8 +92,8 @@ export class AdvertisingModule {
                 <span style="color:var(--text3)">—</span>
                 <input type="date" id="ad-to"   value="${this.dateTo}">
               </div>` : ''}
-            ${this.tab === 'wb' ? `<button class="rpr-btn rpr-btn-green" id="ad-create">${I.plus} Кампания</button>` : ''}
-            <button class="rpr-btn rpr-btn-ghost" id="ad-load">${I.refresh} Загрузить</button>
+            ${this.tab === 'wb' ? `<button class="rpr-btn rpr-btn-green" id="ad-create">${I.plus()} Кампания</button>` : ''}
+            <button class="rpr-btn rpr-btn-ghost" id="ad-load">${I.refresh()} Загрузить</button>
           </div>
         </div>
 
@@ -124,7 +124,7 @@ export class AdvertisingModule {
 
   private renderEmpty(msg: string): string {
     return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;gap:10px;color:var(--text2)">
-      <div style="font-size:36px;opacity:.3">${I.chartBar}</div>
+      <div style="font-size:36px;opacity:.3">${I.chartBar()}</div>
       <p style="margin:0;font-size:14px">${msg}</p>
     </div>`;
   }
@@ -396,7 +396,7 @@ export class AdvertisingModule {
           </div>
           <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
             <button type="button" id="ad-dlg-cancel" class="rpr-btn rpr-btn-ghost">Отмена</button>
-            <button type="submit" class="rpr-btn rpr-btn-green">${I.plus} Создать</button>
+            <button type="submit" class="rpr-btn rpr-btn-green">${I.plus()} Создать</button>
           </div>
         </form>
       </div>`;

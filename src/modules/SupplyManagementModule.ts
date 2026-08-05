@@ -61,7 +61,7 @@ export class SupplyManagementModule {
         <div class="rpr-header">
           <div class="rpr-header-left">
             <div class="rpr-logo-icon" style="background:linear-gradient(135deg,#f59e0b,#d97706)">
-              ${I.truck}
+              ${I.truck()}
             </div>
             <span class="rpr-logo-text">Поставки</span>
             <div class="an2-tabs" id="sp-tabs">
@@ -75,8 +75,8 @@ export class SupplyManagementModule {
             <select class="form-select" id="sp-store" style="min-width:180px;height:30px;font-size:12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:0 8px">
               <option value="">Загрузка...</option>
             </select>
-            <button class="rpr-btn rpr-btn-green" id="sp-create">${I.plus} Создать</button>
-            <button class="rpr-btn rpr-btn-ghost" id="sp-refresh">${I.refresh}</button>
+            <button class="rpr-btn rpr-btn-green" id="sp-create">${I.plus()} Создать</button>
+            <button class="rpr-btn rpr-btn-ghost" id="sp-refresh">${I.refresh()}</button>
           </div>
         </div>
 
@@ -104,13 +104,13 @@ export class SupplyManagementModule {
   private renderList(): string {
     if (!this.storeId) {
       return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;color:var(--text2)">
-        <div style="font-size:40px;opacity:.3">${I.truck}</div>
+        <div style="font-size:40px;opacity:.3">${I.truck()}</div>
         <p style="margin:0;font-size:14px">Выберите магазин для загрузки поставок</p>
       </div>`;
     }
     if (this.supplies.length === 0) {
       return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;color:var(--text2)">
-        <div style="font-size:40px;opacity:.3">${I.truck}</div>
+        <div style="font-size:40px;opacity:.3">${I.truck()}</div>
         <p style="margin:0;font-size:14px">Поставок нет. Нажмите <strong>«Создать»</strong>.</p>
       </div>`;
     }
@@ -132,7 +132,7 @@ export class SupplyManagementModule {
             <td style="color:var(--text2);font-size:12px">${new Date(s.createdAt).toLocaleDateString('ru-RU')}</td>
             <td>
               <button class="rpr-btn rpr-btn-ghost" style="padding:4px 10px;font-size:11px"
-                data-action="open" data-id="${esc(s.id)}">${I.eye} Открыть</button>
+                data-action="open" data-id="${esc(s.id)}">${I.eye()} Открыть</button>
             </td>
           </tr>`).join('')}
       </tbody>
@@ -165,22 +165,22 @@ export class SupplyManagementModule {
 
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="rpr-btn rpr-btn-green" id="sp-send" ${isDraft ? '' : 'disabled'}>
-            ${I.send} Отправить поставку
+            ${I.send()} Отправить поставку
           </button>
           <button class="rpr-btn rpr-btn-ghost" id="sp-barcodes">
-            ${I.download} Штрихкоды PDF
+            ${I.download()} Штрихкоды PDF
           </button>
           <button class="rpr-btn rpr-btn-ghost" id="sp-add-items" ${isDraft ? '' : 'disabled'}>
-            ${I.plus} Добавить товары
+            ${I.plus()} Добавить товары
           </button>
           <button class="rpr-btn" style="background:#ef444422;color:#ef4444;border:1px solid #ef444444"
             id="sp-cancel" ${isDraft ? '' : 'disabled'}>
-            ${I.trash} Отменить
+            ${I.trash()} Отменить
           </button>
         </div>
 
         <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;color:var(--text2);font-size:13px">
-          ${I.info} Для добавления товаров в поставку используйте личный кабинет маркетплейса или API addProductsToSupply.
+          ${I.info()} Для добавления товаров в поставку используйте личный кабинет маркетплейса или API addProductsToSupply.
         </div>
       </div>`;
   }
@@ -335,7 +335,7 @@ export class SupplyManagementModule {
 
     const btn = this.el.querySelector('#sp-create') as HTMLButtonElement;
     btn.disabled = true;
-    btn.innerHTML = `${I.loader} Создание...`;
+    btn.innerHTML = `${I.loader()} Создание...`;
 
     try {
       const store = this.stores.find(s => s.id === this.storeId) as any;
@@ -360,7 +360,7 @@ export class SupplyManagementModule {
       showToast(`Ошибка: ${err.message}`, 'error');
     } finally {
       btn.disabled = false;
-      btn.innerHTML = `${I.plus} Создать`;
+      btn.innerHTML = `${I.plus()} Создать`;
     }
   }
 
