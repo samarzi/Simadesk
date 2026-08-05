@@ -1,458 +1,407 @@
-/**
- * Модуль управления поставками FBO/FBY для всех маркетплейсов.
- * Функции:
- * - Создание поставки
- * - Добавление товаров
- * - Генерация штрихкодов
- * - Отправка поставки
- * - Просмотр статуса
- */
-
 import { ozonApi } from '@/services/ozonApi';
 import { wbApi } from '@/services/wbApi';
 import { yandexApi } from '@/services/yandexApi';
-import type { OzonStore } from '@/types/ozon';
-import type { WbStore } from '@/types/wb';
-import type { YandexStore } from '@/types/yandex';
+import { ozonDb } from '@/services/ozonDb';
+import { wbDb } from '@/services/wbDb';
+import { yandexDb } from '@/services/yandexDb';
+import { I } from '@/utils/icons';
+import { esc } from '@/utils/format';
+import { showToast } from '@/utils/toast';
 
-// Простые утилиты
-const escape = (str: string): string => {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-};
-
-const toast = {
-  success: (msg: string) => console.log('✅', msg),
-  error: (msg: string) => console.error('❌', msg),
-  warning: (msg: string) => console.warn('⚠️', msg),
-  info: (msg: string) => console.info('ℹ️', msg),
-};
-
-type Marketplace = 'ozon' | 'wb' | 'yandex';
+type Tab = 'ozon' | 'wb' | 'yandex';
 
 interface Supply {
   id: string;
-  marketplace: Marketplace;
   name: string;
   status: string;
   createdAt: string;
   itemsCount: number;
+  storeName?: string;
 }
 
 export class SupplyManagementModule {
-  private container: HTMLElement;
+  private el: HTMLElement;
+  private tab: Tab = 'ozon';
   private supplies: Supply[] = [];
-  private currentSupply: Supply | null = null;
-  private currentMarketplace: Marketplace = 'ozon';
-  private loading: boolean = false;
+  private storeId = '';
+  private loading = false;
+  private openSupply: Supply | null = null;
 
-  constructor(containerId: string) {
-    const el = document.getElementById(containerId);
-    if (!el) throw new Error(`Container #${containerId} not found`);
-    this.container = el;
+  constructor(container: HTMLElement) {
+    this.el = container;
     this.render();
+    this.loadStores();
   }
 
   private render(): void {
-    this.container.innerHTML = `
-      <div class="supply-module">
-        <div class="supply-header">
-          <h2>📦 Управление поставками</h2>
-          <div class="supply-controls">
-            <select id="supply-marketplace" class="marketplace-select">
-              <option value="ozon" ${this.currentMarketplace === 'ozon' ? 'selected' : ''}>Ozon FBO</option>
-              <option value="wb" ${this.currentMarketplace === 'wb' ? 'selected' : ''}>Wildberries</option>
-              <option value="yandex" ${this.currentMarketplace === 'yandex' ? 'selected' : ''}>Яндекс FBY</option>
-            </select>
-            <button id="supply-create-btn" class="btn-primary">
-              + Создать поставку
-            </button>
-            <button id="supply-refresh-btn" class="btn-secondary">
-              🔄 Обновить
-            </button>
+    this.el.style.cssText = 'display:flex;flex-direction:column;height:100%;overflow:hidden;background:var(--bg-primary)';
+    this.el.innerHTML = `
+      <div class="module-page">
+        <div class="module-page__header">
+          <div class="module-page__title">
+            <h2>${I.truck} Поставки FBO/FBY</h2>
+            <p class="module-page__subtitle">Управление поставками на склады маркетплейсов</p>
+          </div>
+          <div class="module-page__actions">
+            <button class="btn btn-success" id="sp-create">${I.plus} Создать поставку</button>
+            <button class="btn btn-ghost" id="sp-refresh">${I.refresh} Обновить</button>
           </div>
         </div>
 
-        <div class="supply-content">
-          ${this.currentSupply ? this.renderSupplyDetails() : this.renderSupplyList()}
+        <div class="module-tabs">
+          <button class="module-tab ${this.tab === 'ozon' ? 'active' : ''}" data-tab="ozon">
+            <span class="mp-dot mp-ozon"></span> Ozon FBO
+          </button>
+          <button class="module-tab ${this.tab === 'wb' ? 'active' : ''}" data-tab="wb">
+            <span class="mp-dot mp-wb"></span> Wildberries
+          </button>
+          <button class="module-tab ${this.tab === 'yandex' ? 'active' : ''}" data-tab="yandex">
+            <span class="mp-dot mp-yandex"></span> Яндекс FBY
+          </button>
+        </div>
+
+        <div class="module-toolbar">
+          <select class="form-select" id="sp-store" style="min-width:200px">
+            <option value="">Загрузка магазинов...</option>
+          </select>
+        </div>
+
+        <div class="module-body" id="sp-body">
+          ${this.loading ? this.renderSkeleton() : this.renderSupplyList()}
         </div>
       </div>
     `;
+    this.bindEvents();
+  }
 
-    this.attachEventListeners();
+  private renderSkeleton(): string {
+    return `<div class="skeleton-rows">${Array(5).fill('<div class="skeleton-row"></div>').join('')}</div>`;
   }
 
   private renderSupplyList(): string {
-    if (this.loading) {
-      return '<div class="loading-state">Загрузка поставок...</div>';
+    if (!this.storeId) {
+      return `<div class="empty-state"><div class="empty-state__icon">${I.truck}</div><p>Выберите магазин для загрузки поставок</p></div>`;
+    }
+    if (this.supplies.length === 0) {
+      return `<div class="empty-state"><div class="empty-state__icon">${I.truck}</div><p>Нет поставок. Создайте первую поставку.</p></div>`;
     }
 
-    if (!this.supplies.length) {
-      return `
-        <div class="empty-state">
-          <p>Нет активных поставок</p>
-          <p class="hint">Создайте новую поставку для отправки товаров на склад маркетплейса</p>
-        </div>
-      `;
-    }
+    const statusLabel: Record<string, string> = {
+      draft: 'Черновик', sent: 'Отправлена', received: 'Принята',
+      cancelled: 'Отменена', delivered: 'Доставлена',
+    };
 
     const rows = this.supplies.map(s => `
-      <tr class="supply-row" data-supply-id="${escape(s.id)}">
-        <td>${escape(s.name)}</td>
-        <td><span class="mp-badge mp-${s.marketplace}">${s.marketplace.toUpperCase()}</span></td>
-        <td><span class="status-badge status-${s.status}">${escape(s.status)}</span></td>
+      <tr class="clickable-row" data-id="${esc(s.id)}">
+        <td><span class="supply-name">${esc(s.name)}</span></td>
+        <td><span class="status-chip status-${s.status}">${statusLabel[s.status] ?? s.status}</span></td>
         <td>${s.itemsCount}</td>
         <td>${new Date(s.createdAt).toLocaleDateString('ru-RU')}</td>
-        <td>
-          <button class="btn-sm" data-action="view" data-supply-id="${escape(s.id)}">Открыть</button>
+        <td class="actions-cell">
+          <button class="btn btn-xs" data-action="open" data-id="${esc(s.id)}">${I.eye} Открыть</button>
         </td>
       </tr>
     `).join('');
 
     return `
-      <table class="supply-table">
+      <table class="data-table">
         <thead>
           <tr>
             <th>Название</th>
-            <th>Маркетплейс</th>
             <th>Статус</th>
             <th>Товаров</th>
             <th>Создана</th>
-            <th>Действия</th>
+            <th></th>
           </tr>
         </thead>
-        <tbody>
-          ${rows}
-        </tbody>
+        <tbody>${rows}</tbody>
       </table>
     `;
   }
 
-  private renderSupplyDetails(): string {
-    if (!this.currentSupply) return '';
+  private renderSupplyDetail(s: Supply): string {
+    const statusLabel: Record<string, string> = {
+      draft: 'Черновик', sent: 'Отправлена', received: 'Принята',
+      cancelled: 'Отменена', delivered: 'Доставлена',
+    };
+    const isDraft = s.status === 'draft';
 
     return `
-      <div class="supply-details">
-        <div class="supply-details-header">
-          <button id="supply-back-btn" class="btn-secondary">← Назад</button>
-          <h3>${escape(this.currentSupply.name)}</h3>
-          <span class="status-badge status-${this.currentSupply.status}">
-            ${escape(this.currentSupply.status)}
-          </span>
-        </div>
-
-        <div class="supply-info">
-          <div class="info-row">
-            <label>ID поставки:</label>
-            <span>${escape(this.currentSupply.id)}</span>
-          </div>
-          <div class="info-row">
-            <label>Маркетплейс:</label>
-            <span class="mp-badge mp-${this.currentSupply.marketplace}">
-              ${this.currentSupply.marketplace.toUpperCase()}
-            </span>
-          </div>
-          <div class="info-row">
-            <label>Создана:</label>
-            <span>${new Date(this.currentSupply.createdAt).toLocaleString('ru-RU')}</span>
-          </div>
-          <div class="info-row">
-            <label>Товаров:</label>
-            <span>${this.currentSupply.itemsCount}</span>
+      <div class="detail-panel">
+        <div class="detail-panel__head">
+          <button class="btn btn-ghost" id="sp-back">← Назад</button>
+          <div>
+            <h3>${esc(s.name)}</h3>
+            <span class="status-chip status-${s.status}">${statusLabel[s.status] ?? s.status}</span>
           </div>
         </div>
-
-        <div class="supply-actions">
-          <button id="supply-add-items-btn" class="btn-primary" ${this.currentSupply.status !== 'draft' ? 'disabled' : ''}>
-            + Добавить товары
-          </button>
-          <button id="supply-barcode-btn" class="btn-secondary">
-            🖨️ Штрихкоды
-          </button>
-          <button id="supply-send-btn" class="btn-success" ${this.currentSupply.status !== 'draft' ? 'disabled' : ''}>
-            ✓ Отправить поставку
-          </button>
+        <div class="detail-panel__meta">
+          <div class="meta-item"><span>ID</span><code>${esc(s.id)}</code></div>
+          <div class="meta-item"><span>Товаров</span><strong>${s.itemsCount}</strong></div>
+          <div class="meta-item"><span>Создана</span>${new Date(s.createdAt).toLocaleString('ru-RU')}</div>
         </div>
-
-        <div id="supply-items-container" class="supply-items">
-          ${this.renderSupplyItems()}
+        <div class="detail-panel__actions">
+          <button class="btn btn-primary" id="sp-add-items" ${isDraft ? '' : 'disabled'}>${I.plus} Добавить товары</button>
+          <button class="btn" id="sp-barcodes">${I.download} Штрихкоды</button>
+          <button class="btn btn-success" id="sp-send" ${isDraft ? '' : 'disabled'}>${I.send} Отправить поставку</button>
+          <button class="btn btn-danger" id="sp-cancel" ${isDraft ? '' : 'disabled'}>${I.trash} Отменить</button>
         </div>
       </div>
     `;
   }
 
-  private renderSupplyItems(): string {
-    // Здесь должен быть список товаров поставки
-    // Пока заглушка
-    return `
-      <div class="empty-state">
-        <p>Товары поставки будут отображаться здесь</p>
-      </div>
-    `;
-  }
+  private bindEvents(): void {
+    this.el.addEventListener('click', (e) => {
+      const t = e.target as HTMLElement;
+      const btn = t.closest('button') as HTMLButtonElement | null;
+      if (!btn) return;
 
-  private attachEventListeners(): void {
-    const createBtn = document.getElementById('supply-create-btn');
-    const refreshBtn = document.getElementById('supply-refresh-btn');
-    const backBtn = document.getElementById('supply-back-btn');
-    const marketplaceSelect = document.getElementById('supply-marketplace') as HTMLSelectElement;
-    const sendBtn = document.getElementById('supply-send-btn');
-    const barcodeBtn = document.getElementById('supply-barcode-btn');
-    const addItemsBtn = document.getElementById('supply-add-items-btn');
+      const tabEl = btn.closest('[data-tab]') as HTMLElement | null;
+      if (tabEl?.dataset.tab) {
+        this.tab = tabEl.dataset.tab as Tab;
+        this.storeId = '';
+        this.supplies = [];
+        this.openSupply = null;
+        this.render();
+        this.loadStores();
+        return;
+      }
 
-    createBtn?.addEventListener('click', () => this.createSupply());
-    refreshBtn?.addEventListener('click', () => this.loadSupplies());
-    backBtn?.addEventListener('click', () => {
-      this.currentSupply = null;
-      this.render();
+      const id = btn.id;
+      if (id === 'sp-create')  { this.createSupply(); return; }
+      if (id === 'sp-refresh') { this.loadSupplies(); return; }
+      if (id === 'sp-back')    { this.openSupply = null; this.refreshBody(); return; }
+      if (id === 'sp-send')    { this.sendSupply(); return; }
+      if (id === 'sp-barcodes'){ this.downloadBarcodes(); return; }
+      if (id === 'sp-cancel')  { this.cancelSupply(); return; }
+      if (id === 'sp-add-items'){ showToast('Добавление товаров: выберите товары из каталога', 'info'); return; }
+
+      const action = btn.dataset.action;
+      if (action === 'open') {
+        const found = this.supplies.find(s => s.id === btn.dataset.id);
+        if (found) { this.openSupply = found; this.refreshBody(); }
+      }
     });
 
-    marketplaceSelect?.addEventListener('change', (e) => {
-      this.currentMarketplace = (e.target as HTMLSelectElement).value as Marketplace;
-      this.loadSupplies();
-    });
-
-    sendBtn?.addEventListener('click', () => this.sendSupply());
-    barcodeBtn?.addEventListener('click', () => this.downloadBarcodes());
-    addItemsBtn?.addEventListener('click', () => this.showAddItemsDialog());
-
-    // Делегирование для кнопок в таблице
-    this.container.addEventListener('click', (e) => {
-      const target = e.target as HTMLElement;
-      if (target.dataset.action === 'view') {
-        const supplyId = target.dataset.supplyId;
-        this.viewSupply(supplyId!);
+    this.el.addEventListener('change', (e) => {
+      const sel = e.target as HTMLSelectElement;
+      if (sel.id === 'sp-store') {
+        this.storeId = sel.value;
+        this.supplies = [];
+        this.openSupply = null;
+        if (this.storeId) this.loadSupplies();
+        else this.refreshBody();
       }
     });
   }
 
-  private async createSupply(): Promise<void> {
-    const name = prompt(`Название поставки (${this.currentMarketplace.toUpperCase()}):`);
-    if (!name) return;
+  private refreshBody(): void {
+    const body = this.el.querySelector('#sp-body');
+    if (!body) return;
+    if (this.openSupply) {
+      body.innerHTML = this.renderSupplyDetail(this.openSupply);
+    } else {
+      body.innerHTML = this.loading ? this.renderSkeleton() : this.renderSupplyList();
+    }
+  }
 
-    this.loading = true;
-    this.render();
+  private async loadStores(): Promise<void> {
+    const sel = this.el.querySelector('#sp-store') as HTMLSelectElement;
+    if (!sel) return;
 
+    let stores: Array<{ id: string; name: string }> = [];
     try {
-      let supplyId: string;
+      if (this.tab === 'ozon') stores = await ozonDb.getStores();
+      else if (this.tab === 'wb') stores = await wbDb.getStores();
+      else stores = await yandexDb.getStores();
+    } catch { /* ignore */ }
 
-      switch (this.currentMarketplace) {
-        case 'ozon': {
-          const stores: OzonStore[] = JSON.parse(localStorage.getItem('ozon_stores') || '[]');
-          if (!stores.length) throw new Error('Нет магазинов Ozon');
-          const store = stores[0];
-          const creds = { client_id: store.client_id, api_key: store.api_key };
-          
-          // Нужно выбрать склад — для примера используем первый
-          const warehouses = await ozonApi.getWarehouses(creds);
-          if (!warehouses.length) throw new Error('Нет складов');
-          
-          const result = await ozonApi.createSupply(creds, warehouses[0].warehouse_id, name);
-          supplyId = result.supplyId;
-          break;
-        }
+    if (stores.length === 0) {
+      sel.innerHTML = '<option value="">Нет подключённых магазинов</option>';
+      return;
+    }
 
-        case 'wb': {
-          const stores: WbStore[] = JSON.parse(localStorage.getItem('wb_stores') || '[]');
-          if (!stores.length) throw new Error('Нет магазинов WB');
-          const store = stores[0];
-          const result = await wbApi.createWbSupply(store.api_key, name);
-          supplyId = result.supplyId;
-          break;
-        }
+    sel.innerHTML = '<option value="">— Выберите магазин —</option>' +
+      stores.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
 
-        case 'yandex': {
-          const stores: YandexStore[] = JSON.parse(localStorage.getItem('yandex_stores') || '[]');
-          if (!stores.length) throw new Error('Нет магазинов Яндекс');
-          const store = stores[0];
-          if (!store.campaign_id) throw new Error('У магазина нет campaign_id');
-
-          const tomorrow = new Date(Date.now() + 86400_000);
-          const nextWeek = new Date(Date.now() + 7 * 86400_000);
-          const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
-
-          const result = await yandexApi.createShipment(
-            store.api_key,
-            store.campaign_id,
-            {
-              planIntervalFrom: fmtDate(tomorrow),
-              planIntervalTo: fmtDate(nextWeek),
-            },
-          );
-          supplyId = String(result.id);
-          break;
-        }
-
-        default:
-          throw new Error('Unknown marketplace');
-      }
-
-      toast.success(`Поставка создана: ${supplyId}`);
-      await this.loadSupplies();
-    } catch (err) {
-      toast.error(`Ошибка: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      this.loading = false;
-      this.render();
+    if (stores.length === 1) {
+      sel.value = stores[0].id;
+      this.storeId = stores[0].id;
+      this.loadSupplies();
     }
   }
 
   private async loadSupplies(): Promise<void> {
+    if (!this.storeId) return;
     this.loading = true;
-    this.render();
+    this.refreshBody();
 
     try {
       this.supplies = [];
 
-      switch (this.currentMarketplace) {
-        case 'ozon': {
-          const stores: OzonStore[] = JSON.parse(localStorage.getItem('ozon_stores') || '[]');
-          for (const store of stores) {
-            const creds = { client_id: store.client_id, api_key: store.api_key };
-            const supplies = await ozonApi.getSupplies(creds);
-            
-            for (const s of supplies) {
-              this.supplies.push({
-                id: s.supply_order_id ?? s.id,
-                marketplace: 'ozon',
-                name: s.name ?? `Поставка ${s.supply_order_id}`,
-                status: s.status ?? 'draft',
-                createdAt: s.created_at ?? new Date().toISOString(),
-                itemsCount: s.items?.length ?? 0,
-              });
-            }
-          }
-          break;
+      if (this.tab === 'ozon') {
+        const stores = await ozonDb.getStores();
+        const store = stores.find(s => s.id === this.storeId);
+        if (!store) throw new Error('Магазин не найден');
+        const creds = { client_id: store.client_id, api_key: store.api_key };
+        const list = await ozonApi.getSupplies(creds);
+        for (const s of list) {
+          this.supplies.push({
+            id: s.supply_order_id ?? s.id ?? String(Math.random()),
+            name: s.name ?? `Поставка ${s.supply_order_id}`,
+            status: s.status ?? 'draft',
+            createdAt: s.created_at ?? new Date().toISOString(),
+            itemsCount: s.items?.length ?? 0,
+          });
         }
-
-        case 'wb': {
-          const stores: WbStore[] = JSON.parse(localStorage.getItem('wb_stores') || '[]');
-          for (const store of stores) {
-            const supplies = await wbApi.getWbSupplies(store.api_key);
-            
-            for (const s of supplies) {
-              this.supplies.push({
-                id: s.id,
-                marketplace: 'wb',
-                name: s.name,
-                status: s.done ? 'delivered' : 'draft',
-                createdAt: s.createdAt ?? new Date().toISOString(),
-                itemsCount: s.orderCount ?? 0,
-              });
-            }
-          }
-          break;
+      } else if (this.tab === 'wb') {
+        const stores = await wbDb.getStores();
+        const store = stores.find(s => s.id === this.storeId);
+        if (!store) throw new Error('Магазин не найден');
+        const list = await wbApi.getWbSupplies(store.api_key);
+        for (const s of list) {
+          this.supplies.push({
+            id: s.id,
+            name: s.name,
+            status: s.done ? 'delivered' : 'draft',
+            createdAt: s.createdAt ?? new Date().toISOString(),
+            itemsCount: s.orderCount ?? 0,
+          });
         }
-
-        case 'yandex': {
-          // У ЯМ нет прямого API для списка поставок
-          // Можно реализовать через хранение в localStorage
-          toast.info('Список поставок ЯМ пока недоступен через API');
-          break;
-        }
+      } else {
+        showToast('Список отгрузок Яндекс Маркет: используйте раздел заказов', 'info');
       }
-    } catch (err) {
-      toast.error(`Ошибка загрузки: ${err instanceof Error ? err.message : String(err)}`);
+    } catch (err: any) {
+      showToast(`Ошибка загрузки: ${err.message}`, 'error');
     } finally {
       this.loading = false;
-      this.render();
+      this.refreshBody();
     }
   }
 
-  private viewSupply(supplyId: string): void {
-    const supply = this.supplies.find(s => s.id === supplyId);
-    if (!supply) return;
-    this.currentSupply = supply;
-    this.render();
+  private async createSupply(): Promise<void> {
+    if (!this.storeId) { showToast('Выберите магазин', 'warning'); return; }
+
+    const name = prompt(`Название новой поставки (${this.tab.toUpperCase()}):`);
+    if (!name?.trim()) return;
+
+    const btn = this.el.querySelector('#sp-create') as HTMLButtonElement;
+    btn.disabled = true;
+    btn.innerHTML = `${I.loader} Создание...`;
+
+    try {
+      if (this.tab === 'ozon') {
+        const stores = await ozonDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        const creds = { client_id: store.client_id, api_key: store.api_key };
+        const warehouses = await ozonApi.getWarehouses(creds);
+        if (!warehouses.length) throw new Error('Нет складов Ozon');
+        await ozonApi.createSupply(creds, warehouses[0].warehouse_id, name.trim());
+      } else if (this.tab === 'wb') {
+        const stores = await wbDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        await wbApi.createWbSupply(store.api_key, name.trim());
+      } else {
+        const stores = await yandexDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        if (!store.campaign_id) throw new Error('Нет campaign_id у магазина');
+        const tomorrow = new Date(Date.now() + 86_400_000);
+        const nextWeek = new Date(Date.now() + 7 * 86_400_000);
+        const fmt = (d: Date) => d.toISOString().slice(0, 10);
+        await yandexApi.createShipment(store.api_key, store.campaign_id, {
+          planIntervalFrom: fmt(tomorrow),
+          planIntervalTo: fmt(nextWeek),
+        });
+      }
+
+      showToast('Поставка создана', 'success');
+      await this.loadSupplies();
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = `${I.plus} Создать поставку`;
+    }
   }
 
   private async sendSupply(): Promise<void> {
-    if (!this.currentSupply) return;
-    if (!confirm('Отправить поставку на склад? После отправки изменения невозможны.')) return;
+    if (!this.openSupply) return;
+    if (!confirm('Отправить поставку? После отправки изменения невозможны.')) return;
 
     try {
-      switch (this.currentSupply.marketplace) {
-        case 'ozon': {
-          const stores: OzonStore[] = JSON.parse(localStorage.getItem('ozon_stores') || '[]');
-          const store = stores[0];
-          const creds = { client_id: store.client_id, api_key: store.api_key };
-          await ozonApi.sendSupply(creds, this.currentSupply.id);
-          break;
-        }
-
-        case 'wb': {
-          const stores: WbStore[] = JSON.parse(localStorage.getItem('wb_stores') || '[]');
-          const store = stores[0];
-          await wbApi.deliverSupply(store.api_key, this.currentSupply.id);
-          break;
-        }
-
-        case 'yandex': {
-          const stores: YandexStore[] = JSON.parse(localStorage.getItem('yandex_stores') || '[]');
-          const store = stores[0];
-          if (!store.campaign_id) throw new Error('Нет campaign_id');
-          await yandexApi.confirmShipment(store.api_key, store.campaign_id, Number(this.currentSupply.id));
-          break;
-        }
+      if (this.tab === 'ozon') {
+        const stores = await ozonDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        await ozonApi.sendSupply({ client_id: store.client_id, api_key: store.api_key }, this.openSupply.id);
+      } else if (this.tab === 'wb') {
+        const stores = await wbDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        await wbApi.deliverSupply(store.api_key, this.openSupply.id);
+      } else {
+        const stores = await yandexDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        await yandexApi.confirmShipment(store.api_key, store.campaign_id!, Number(this.openSupply.id));
       }
 
-      toast.success('Поставка отправлена!');
-      this.currentSupply.status = 'sent';
-      this.render();
-    } catch (err) {
-      toast.error(`Ошибка: ${err instanceof Error ? err.message : String(err)}`);
+      showToast('Поставка отправлена', 'success');
+      this.openSupply.status = 'sent';
+      this.refreshBody();
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
     }
   }
 
   private async downloadBarcodes(): Promise<void> {
-    if (!this.currentSupply) return;
+    if (!this.openSupply) return;
 
     try {
       let blob: Blob;
 
-      switch (this.currentSupply.marketplace) {
-        case 'ozon': {
-          const stores: OzonStore[] = JSON.parse(localStorage.getItem('ozon_stores') || '[]');
-          const store = stores[0];
-          const creds = { client_id: store.client_id, api_key: store.api_key };
-          blob = await ozonApi.getSupplyBarcodes(creds, this.currentSupply.id);
-          break;
-        }
-
-        case 'wb': {
-          const stores: WbStore[] = JSON.parse(localStorage.getItem('wb_stores') || '[]');
-          const store = stores[0];
-          blob = await wbApi.getSupplyBarcodePdf(store.api_key, this.currentSupply.id);
-          break;
-        }
-
-        case 'yandex': {
-          toast.info('Штрихкоды ЯМ доступны через метод getShipmentLabels');
-          return;
-        }
-
-        default:
-          throw new Error('Unknown marketplace');
+      if (this.tab === 'ozon') {
+        const stores = await ozonDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        blob = await ozonApi.getSupplyBarcodes({ client_id: store.client_id, api_key: store.api_key }, this.openSupply.id);
+      } else if (this.tab === 'wb') {
+        const stores = await wbDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        blob = await wbApi.getSupplyBarcodePdf(store.api_key, this.openSupply.id);
+      } else {
+        showToast('Штрихкоды ЯМ: используйте Яндекс Маркет → Отгрузки', 'info');
+        return;
       }
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `supply_${this.currentSupply.id}_barcodes.pdf`;
+      a.download = `supply_${this.openSupply.id}_barcodes.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-
-      toast.success('Штрихкоды скачаны');
-    } catch (err) {
-      toast.error(`Ошибка: ${err instanceof Error ? err.message : String(err)}`);
+      showToast('Штрихкоды скачаны', 'success');
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
     }
   }
 
-  private showAddItemsDialog(): void {
-    toast.info('Функция добавления товаров в разработке');
+  private async cancelSupply(): Promise<void> {
+    if (!this.openSupply) return;
+    if (!confirm('Отменить поставку?')) return;
+
+    try {
+      if (this.tab === 'ozon') {
+        const stores = await ozonDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        await ozonApi.cancelSupply({ client_id: store.client_id, api_key: store.api_key }, this.openSupply.id);
+        showToast('Поставка отменена', 'success');
+        this.openSupply = null;
+        await this.loadSupplies();
+      } else {
+        showToast('Отмена поставки: доступна только для Ozon', 'info');
+      }
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    }
   }
 
-  show(): void { this.container.style.display = 'flex'; }
-  hide(): void { this.container.style.display = 'none'; }
+  show(): void { this.el.style.display = 'flex'; }
+  hide(): void { this.el.style.display = 'none'; }
 }

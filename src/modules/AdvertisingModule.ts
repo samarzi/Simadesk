@@ -1,8 +1,3 @@
-/**
- * Модуль управления рекламными кампаниями для всех маркетплейсов
- * Advertising Module
- */
-
 import { ozonApi } from '@/services/ozonApi';
 import {
   getWbCampaigns,
@@ -11,25 +6,16 @@ import {
   fetchWbAdStats,
 } from '@/services/wbApi';
 import { getYandexPromos } from '@/services/yandexApi';
-import type { OzonStore } from '@/types/ozon';
-import type { WbStore } from '@/types/wb';
-import type { YandexStore } from '@/types/yandex';
+import { ozonDb } from '@/services/ozonDb';
+import { wbDb } from '@/services/wbDb';
+import { yandexDb } from '@/services/yandexDb';
+import { I } from '@/utils/icons';
+import { esc } from '@/utils/format';
+import { showToast } from '@/utils/toast';
 
-const escape = (str: string): string => {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-};
-
-const toast = {
-  success: (msg: string) => console.log('✅', msg),
-  error: (msg: string) => console.error('❌', msg),
-  warning: (msg: string) => console.warn('⚠️', msg),
-  info: (msg: string) => console.info('ℹ️', msg),
-};
+type Tab = 'wb' | 'ozon' | 'yandex';
 
 interface Campaign {
-  marketplace: 'ozon' | 'wb' | 'yandex';
   id: string | number;
   name: string;
   status: string;
@@ -44,457 +30,403 @@ interface Campaign {
 }
 
 export class AdvertisingModule {
-  private container: HTMLElement;
-  private loading = false;
+  private el: HTMLElement;
+  private tab: Tab = 'wb';
+  private storeId = '';
   private campaigns: Campaign[] = [];
-  private selectedMarketplace: 'all' | 'ozon' | 'wb' | 'yandex' = 'all';
+  private loading = false;
+  private dateFrom: string;
+  private dateTo: string;
 
-  constructor(containerId: string) {
-    const el = document.getElementById(containerId);
-    if (!el) throw new Error(`Container #${containerId} not found`);
-    this.container = el;
+  constructor(container: HTMLElement) {
+    this.el = container;
+    const now = new Date();
+    const past = new Date(now.getTime() - 30 * 86_400_000);
+    this.dateTo = now.toISOString().slice(0, 10);
+    this.dateFrom = past.toISOString().slice(0, 10);
     this.render();
+    this.loadStores();
   }
 
   private render(): void {
-    this.container.innerHTML = `
-      <div class="advertising-module">
-        <div class="advertising-header">
-          <h2>📢 Управление рекламой</h2>
-          <div class="advertising-controls">
-            <select id="marketplace-filter" class="form-select">
-              <option value="all">Все маркетплейсы</option>
-              <option value="ozon">Ozon</option>
-              <option value="wb">Wildberries</option>
-              <option value="yandex">Яндекс.Маркет</option>
-            </select>
-            <button class="btn-primary" id="create-campaign-btn">+ Создать кампанию</button>
-            <button class="btn-secondary" id="load-campaigns-btn">
-              ${this.loading ? 'Загрузка...' : '🔄 Обновить'}
-            </button>
+    this.el.style.cssText = 'display:flex;flex-direction:column;height:100%;overflow:hidden;background:var(--bg-primary)';
+    this.el.innerHTML = `
+      <div class="module-page">
+        <div class="module-page__header">
+          <div class="module-page__title">
+            <h2>${I.chartBar} Реклама</h2>
+            <p class="module-page__subtitle">Кампании и акции на маркетплейсах</p>
+          </div>
+          <div class="module-page__actions">
+            ${this.tab === 'wb' ? `<button class="btn btn-success" id="ad-create">${I.plus} Создать кампанию</button>` : ''}
+            <button class="btn btn-ghost" id="ad-refresh">${I.refresh} Загрузить</button>
           </div>
         </div>
 
-        ${this.renderOverallStats()}
-
-        <div class="campaigns-tabs">
-          <button class="tab active" data-tab="campaigns">Кампании</button>
-          <button class="tab" data-tab="stats">Статистика</button>
-          <button class="tab" data-tab="promotions">Акции</button>
+        <div class="module-tabs">
+          <button class="module-tab ${this.tab === 'wb' ? 'active' : ''}" data-tab="wb">
+            <span class="mp-dot mp-wb"></span> Wildberries
+          </button>
+          <button class="module-tab ${this.tab === 'ozon' ? 'active' : ''}" data-tab="ozon">
+            <span class="mp-dot mp-ozon"></span> Ozon
+          </button>
+          <button class="module-tab ${this.tab === 'yandex' ? 'active' : ''}" data-tab="yandex">
+            <span class="mp-dot mp-yandex"></span> Яндекс.Маркет
+          </button>
         </div>
 
-        <div class="tab-content">
-          ${this.renderCampaignsList()}
+        <div class="module-toolbar">
+          <select class="form-select" id="ad-store" style="min-width:200px">
+            <option value="">Загрузка магазинов...</option>
+          </select>
+          ${this.tab === 'wb' ? `
+            <input type="date" class="form-input" id="ad-from" value="${this.dateFrom}" style="width:150px">
+            <span style="color:var(--text-muted)">—</span>
+            <input type="date" class="form-input" id="ad-to" value="${this.dateTo}" style="width:150px">
+          ` : ''}
+        </div>
+
+        ${this.renderStats()}
+
+        <div class="module-body" id="ad-body">
+          ${this.loading ? this.renderSkeleton() : this.renderTable()}
         </div>
       </div>
     `;
-
-    this.attachListeners();
+    this.bindEvents();
   }
 
-  private renderOverallStats(): string {
+  private renderSkeleton(): string {
+    return `<div class="skeleton-rows">${Array(5).fill('<div class="skeleton-row"></div>').join('')}</div>`;
+  }
+
+  private renderStats(): string {
     if (!this.campaigns.length) return '';
 
-    const totalBudget = this.campaigns.reduce((sum, c) => sum + c.budget, 0);
-    const totalSpent = this.campaigns.reduce((sum, c) => sum + c.spent, 0);
-    const totalRevenue = this.campaigns.reduce((sum, c) => sum + c.revenue, 0);
-    const totalOrders = this.campaigns.reduce((sum, c) => sum + c.orders, 0);
-    const avgROI = totalSpent > 0 ? ((totalRevenue - totalSpent) / totalSpent) * 100 : 0;
+    const totalBudget  = this.campaigns.reduce((s, c) => s + c.budget, 0);
+    const totalSpent   = this.campaigns.reduce((s, c) => s + c.spent, 0);
+    const totalRevenue = this.campaigns.reduce((s, c) => s + c.revenue, 0);
+    const totalOrders  = this.campaigns.reduce((s, c) => s + c.orders, 0);
+    const totalViews   = this.campaigns.reduce((s, c) => s + c.views, 0);
+    const totalClicks  = this.campaigns.reduce((s, c) => s + c.clicks, 0);
+    const ctr          = totalViews > 0 ? (totalClicks / totalViews * 100).toFixed(2) : '0.00';
+    const avgROI       = totalSpent > 0 ? ((totalRevenue - totalSpent) / totalSpent * 100).toFixed(1) : '0.0';
 
     return `
-      <div class="advertising-stats">
-        <div class="stat-card">
-          <div class="stat-label">Общий бюджет</div>
-          <div class="stat-value">${totalBudget.toLocaleString()} ₽</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Потрачено</div>
-          <div class="stat-value">${totalSpent.toLocaleString()} ₽</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Выручка</div>
-          <div class="stat-value">${totalRevenue.toLocaleString()} ₽</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Заказы</div>
-          <div class="stat-value">${totalOrders}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">ROI</div>
-          <div class="stat-value ${avgROI >= 0 ? 'positive' : 'negative'}">
-            ${avgROI.toFixed(1)}%
-          </div>
-        </div>
+      <div class="stats-row">
+        <div class="stat-tile"><div class="stat-tile__label">Бюджет</div><div class="stat-tile__value">${totalBudget.toLocaleString('ru-RU')} ₽</div></div>
+        <div class="stat-tile"><div class="stat-tile__label">Потрачено</div><div class="stat-tile__value">${totalSpent.toLocaleString('ru-RU')} ₽</div></div>
+        <div class="stat-tile"><div class="stat-tile__label">Выручка</div><div class="stat-tile__value">${totalRevenue.toLocaleString('ru-RU')} ₽</div></div>
+        <div class="stat-tile"><div class="stat-tile__label">Заказы</div><div class="stat-tile__value">${totalOrders}</div></div>
+        <div class="stat-tile"><div class="stat-tile__label">CTR</div><div class="stat-tile__value">${ctr}%</div></div>
+        <div class="stat-tile"><div class="stat-tile__label">ROI</div><div class="stat-tile__value ${Number(avgROI) >= 0 ? 'text-success' : 'text-danger'}">${Number(avgROI) >= 0 ? '+' : ''}${avgROI}%</div></div>
       </div>
     `;
   }
 
-  private renderCampaignsList(): string {
-    if (!this.campaigns.length) {
-      return '<div class="empty-state">Нет активных кампаний. Создайте первую кампанию.</div>';
+  private renderTable(): string {
+    if (!this.storeId) {
+      return `<div class="empty-state"><div class="empty-state__icon">${I.chartBar}</div><p>Выберите магазин для загрузки данных</p></div>`;
+    }
+    if (this.campaigns.length === 0) {
+      return `<div class="empty-state"><div class="empty-state__icon">${I.chartBar}</div><p>Нет данных. Нажмите «Загрузить».</p></div>`;
     }
 
-    const filtered = this.selectedMarketplace === 'all'
-      ? this.campaigns
-      : this.campaigns.filter(c => c.marketplace === this.selectedMarketplace);
+    if (this.tab === 'wb') {
+      return this.renderWbTable();
+    }
 
-    const rows = filtered.map(c => `
+    // Ozon promotions / Yandex promos — simplified view
+    const rows = this.campaigns.map(c => `
       <tr>
-        <td><span class="mp-badge mp-${c.marketplace}">${c.marketplace}</span></td>
-        <td>${escape(c.name)}</td>
-        <td><span class="status-badge status-${c.status}">${escape(c.status)}</span></td>
-        <td>${escape(c.type)}</td>
-        <td>${c.budget.toLocaleString()} ₽</td>
-        <td>${c.spent.toLocaleString()} ₽</td>
-        <td>${c.views.toLocaleString()}</td>
-        <td>${c.clicks}</td>
+        <td>${esc(String(c.id))}</td>
+        <td>${esc(c.name)}</td>
+        <td><span class="status-chip status-${c.status}">${esc(c.status)}</span></td>
+        <td>${esc(c.type)}</td>
+      </tr>
+    `).join('');
+
+    return `
+      <table class="data-table">
+        <thead><tr><th>ID</th><th>Название</th><th>Статус</th><th>Тип</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
+  private renderWbTable(): string {
+    const rows = this.campaigns.map(c => `
+      <tr>
+        <td>${esc(c.name)}</td>
+        <td><span class="status-chip status-${c.status}">${this.wbStatusLabel(c.status)}</span></td>
+        <td>${esc(c.type)}</td>
+        <td>${c.budget > 0 ? c.budget.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
+        <td>${c.spent > 0 ? c.spent.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
+        <td>${c.views.toLocaleString('ru-RU')}</td>
+        <td>${c.clicks.toLocaleString('ru-RU')}</td>
         <td>${c.orders}</td>
-        <td>${c.revenue.toLocaleString()} ₽</td>
-        <td class="${c.roi >= 0 ? 'positive' : 'negative'}">${c.roi.toFixed(1)}%</td>
-        <td>
-          <button class="btn-sm btn-edit" data-campaign-id="${c.id}" data-marketplace="${c.marketplace}">
-            ✏️
-          </button>
-          <button class="btn-sm btn-pause" data-campaign-id="${c.id}" data-marketplace="${c.marketplace}">
-            ⏸️
-          </button>
+        <td class="${c.roi >= 0 ? 'text-success' : 'text-danger'}">${c.roi >= 0 ? '+' : ''}${c.roi.toFixed(1)}%</td>
+        <td class="actions-cell">
+          ${c.status === 'active'
+            ? `<button class="btn btn-xs" data-action="pause" data-id="${c.id}">⏸</button>`
+            : `<button class="btn btn-xs btn-success" data-action="resume" data-id="${c.id}">▶</button>`}
         </td>
       </tr>
     `).join('');
 
     return `
-      <div class="campaigns-table-wrapper">
-        <table class="campaigns-table">
-          <thead>
-            <tr>
-              <th>МП</th>
-              <th>Название</th>
-              <th>Статус</th>
-              <th>Тип</th>
-              <th>Бюджет</th>
-              <th>Потрачено</th>
-              <th>Показы</th>
-              <th>Клики</th>
-              <th>Заказы</th>
-              <th>Выручка</th>
-              <th>ROI</th>
-              <th>Действия</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Название</th>
+            <th>Статус</th>
+            <th>Тип</th>
+            <th>Бюджет/д.</th>
+            <th>Потрачено</th>
+            <th>Показы</th>
+            <th>Клики</th>
+            <th>Заказы</th>
+            <th>ROI</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
     `;
   }
 
-  private attachListeners(): void {
-    // Marketplace filter
-    const filter = this.container.querySelector('#marketplace-filter') as HTMLSelectElement;
-    if (filter) {
-      filter.value = this.selectedMarketplace;
-      filter.addEventListener('change', (e) => {
-        this.selectedMarketplace = (e.target as HTMLSelectElement).value as any;
+  private wbStatusLabel(s: string): string {
+    const map: Record<string, string> = { active: 'Активна', paused: 'Пауза', stopped: 'Остановлена' };
+    return map[s] ?? s;
+  }
+
+  private bindEvents(): void {
+    this.el.addEventListener('click', async (e) => {
+      const t = e.target as HTMLElement;
+      const btn = t.closest('button') as HTMLButtonElement | null;
+      if (!btn) return;
+
+      const tabEl = btn.closest('[data-tab]') as HTMLElement | null;
+      if (tabEl?.dataset.tab) {
+        this.tab = tabEl.dataset.tab as Tab;
+        this.storeId = '';
+        this.campaigns = [];
         this.render();
-      });
-    }
+        this.loadStores();
+        return;
+      }
 
-    // Load button
-    const loadBtn = this.container.querySelector('#load-campaigns-btn');
-    if (loadBtn) {
-      loadBtn.addEventListener('click', () => this.loadCampaigns());
-    }
+      if (btn.id === 'ad-refresh') { await this.loadCampaigns(); return; }
+      if (btn.id === 'ad-create')  { this.showCreateDialog(); return; }
 
-    // Create campaign button
-    const createBtn = this.container.querySelector('#create-campaign-btn');
-    if (createBtn) {
-      createBtn.addEventListener('click', () => this.showCreateCampaignDialog());
-    }
-
-    // Edit/Pause buttons
-    this.container.querySelectorAll('.btn-edit').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        const id = target.dataset.campaignId;
-        const mp = target.dataset.marketplace;
-        if (id && mp) {
-          this.editCampaign(id, mp as 'ozon' | 'wb' | 'yandex');
-        }
-      });
+      const action = btn.dataset.action;
+      const id = btn.dataset.id;
+      if (action === 'pause' && id)  { await this.toggleCampaign(Number(id), 11 as 11); return; }
+      if (action === 'resume' && id) { await this.toggleCampaign(Number(id), 9 as 9); return; }
     });
 
-    this.container.querySelectorAll('.btn-pause').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        const id = target.dataset.campaignId;
-        const mp = target.dataset.marketplace;
-        if (id && mp) {
-          this.pauseCampaign(id, mp as 'ozon' | 'wb' | 'yandex');
-        }
-      });
-    });
-
-    // Tabs
-    this.container.querySelectorAll('.tab').forEach(tab => {
-      tab.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        this.container.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        target.classList.add('active');
-      });
+    this.el.addEventListener('change', (e) => {
+      const t = e.target as HTMLInputElement | HTMLSelectElement;
+      if (t.id === 'ad-store') {
+        this.storeId = t.value;
+        this.campaigns = [];
+        this.refreshBody();
+        return;
+      }
+      if (t.id === 'ad-from') { this.dateFrom = t.value; return; }
+      if (t.id === 'ad-to')   { this.dateTo = t.value; return; }
     });
   }
 
-  async loadCampaigns(): Promise<void> {
+  private refreshBody(): void {
+    const body = this.el.querySelector('#ad-body');
+    if (body) body.innerHTML = this.loading ? this.renderSkeleton() : this.renderTable();
+    const statsEl = this.el.querySelector('.stats-row');
+    if (statsEl) statsEl.outerHTML = this.renderStats();
+  }
+
+  private async loadStores(): Promise<void> {
+    const sel = this.el.querySelector('#ad-store') as HTMLSelectElement;
+    if (!sel) return;
+
+    let stores: Array<{ id: string; name: string }> = [];
+    try {
+      if (this.tab === 'wb') stores = await wbDb.getStores();
+      else if (this.tab === 'ozon') stores = await ozonDb.getStores();
+      else stores = await yandexDb.getStores();
+    } catch { /* ignore */ }
+
+    if (stores.length === 0) {
+      sel.innerHTML = '<option value="">Нет подключённых магазинов</option>';
+      return;
+    }
+
+    sel.innerHTML = '<option value="">— Выберите магазин —</option>' +
+      stores.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
+
+    if (stores.length === 1) {
+      sel.value = stores[0].id;
+      this.storeId = stores[0].id;
+    }
+  }
+
+  private async loadCampaigns(): Promise<void> {
+    if (!this.storeId) { showToast('Выберите магазин', 'warning'); return; }
     this.loading = true;
-    this.render();
+    this.refreshBody();
 
     try {
-      const allCampaigns: Campaign[] = [];
-      const stores = this.getAllStores();
+      this.campaigns = [];
 
-      // Load from all marketplaces
-      await Promise.all([
-        this.loadOzonCampaigns(stores.ozon, allCampaigns),
-        this.loadWbCampaigns(stores.wb, allCampaigns),
-        this.loadYandexCampaigns(stores.yandex, allCampaigns),
-      ]);
+      if (this.tab === 'wb') {
+        const stores = await wbDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        const list = await getWbCampaigns(store.api_key);
 
-      this.campaigns = allCampaigns;
-      toast.success(`Загружено ${allCampaigns.length} кампаний`);
-    } catch (err) {
-      toast.error(`Ошибка: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      this.loading = false;
-      this.render();
-    }
-  }
-
-  private async loadOzonCampaigns(stores: OzonStore[], target: Campaign[]): Promise<void> {
-    for (const store of stores) {
-      try {
-        const creds = { client_id: store.client_id, api_key: store.api_key };
-        const promos = await ozonApi.getPromotions(creds);
-
-        promos.forEach((p: any) => {
-          target.push({
-            marketplace: 'ozon',
-            id: p.action_id ?? p.id,
-            name: p.title ?? p.name ?? 'Акция Ozon',
-            status: p.is_active ? 'active' : 'paused',
-            type: p.action_type ?? 'promotion',
-            budget: 0, // Ozon не предоставляет бюджет
-            spent: 0,
-            clicks: 0,
-            views: 0,
-            orders: 0,
-            revenue: 0,
-            roi: 0,
-          });
-        });
-      } catch (err) {
-        console.error('[Ozon Campaigns]', err);
-      }
-    }
-  }
-
-  private async loadWbCampaigns(stores: WbStore[], target: Campaign[]): Promise<void> {
-    for (const store of stores) {
-      try {
-        const campaigns = await getWbCampaigns(store.api_key);
-
-        for (const c of campaigns) {
-          // Load stats for each campaign
+        for (const c of list) {
           let stats: any = {};
           try {
-            const now = new Date();
-            const past = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-            const statsData = await fetchWbAdStats(
-              store.api_key,
-              [c.advertId],
-              past.toISOString().split('T')[0],
-              now.toISOString().split('T')[0],
-            );
-            if (statsData.length > 0) {
-              stats = statsData[0];
-            }
-          } catch (err) {
-            console.error('[WB Campaign Stats]', err);
-          }
+            const data = await fetchWbAdStats(store.api_key, [c.advertId], this.dateFrom, this.dateTo);
+            if (data.length > 0) stats = data[0];
+          } catch { /* ignore stats error */ }
 
-          const spent = stats.sum ?? 0;
+          const spent   = stats.sum ?? 0;
           const revenue = (stats.orders ?? 0) * (stats.avgPrice ?? 0);
-          const roi = spent > 0 ? ((revenue - spent) / spent) * 100 : 0;
+          const roi     = spent > 0 ? (revenue - spent) / spent * 100 : 0;
 
-          target.push({
-            marketplace: 'wb',
+          this.campaigns.push({
             id: c.advertId,
             name: c.name ?? `Кампания ${c.advertId}`,
             status: c.status === 9 ? 'active' : c.status === 11 ? 'paused' : 'stopped',
             type: c.type === 8 ? 'Авто' : c.type === 6 ? 'Поиск' : 'Каталог',
             budget: c.dailyBudget ?? 0,
-            spent,
-            clicks: stats.clicks ?? 0,
-            views: stats.views ?? 0,
-            orders: stats.orders ?? 0,
-            revenue,
-            roi,
+            spent, clicks: stats.clicks ?? 0, views: stats.views ?? 0,
+            orders: stats.orders ?? 0, revenue, roi,
           });
         }
-      } catch (err) {
-        console.error('[WB Campaigns]', err);
-      }
-    }
-  }
-
-  private async loadYandexCampaigns(stores: YandexStore[], target: Campaign[]): Promise<void> {
-    for (const store of stores) {
-      try {
-        // Яндекс пока не имеет API для рекламы (только акции)
-        const promos = await getYandexPromos(store, 0); // TODO: get businessId
-
-        promos.forEach((p: any) => {
-          target.push({
-            marketplace: 'yandex',
+      } else if (this.tab === 'ozon') {
+        const stores = await ozonDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        const promos = await ozonApi.getPromotions({ client_id: store.client_id, api_key: store.api_key });
+        for (const p of promos) {
+          this.campaigns.push({
+            id: p.action_id ?? p.id,
+            name: p.title ?? p.name ?? 'Акция Ozon',
+            status: p.is_active ? 'active' : 'inactive',
+            type: p.action_type ?? 'promotion',
+            budget: 0, spent: 0, clicks: 0, views: 0, orders: 0, revenue: 0, roi: 0,
+          });
+        }
+      } else {
+        const stores = await yandexDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        const businessId = store.business_id ? Number(store.business_id) : 0;
+        const promos = await getYandexPromos(store, businessId);
+        for (const p of promos) {
+          this.campaigns.push({
             id: p.id,
             name: p.name ?? 'Акция Яндекс',
             status: p.status === 'ACTIVE' ? 'active' : 'inactive',
             type: 'promotion',
-            budget: 0,
-            spent: 0,
-            clicks: 0,
-            views: 0,
-            orders: 0,
-            revenue: 0,
-            roi: 0,
+            budget: 0, spent: 0, clicks: 0, views: 0, orders: 0, revenue: 0, roi: 0,
           });
-        });
-      } catch (err) {
-        console.error('[Yandex Campaigns]', err);
+        }
+      }
+
+      showToast(`Загружено ${this.campaigns.length} кампаний`, 'success');
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    } finally {
+      this.loading = false;
+      this.render();
+      // restore store selection
+      const sel = this.el.querySelector('#ad-store') as HTMLSelectElement | null;
+      if (sel && this.storeId) {
+        await this.loadStores();
+        sel.value = this.storeId;
       }
     }
   }
 
-  private showCreateCampaignDialog(): void {
-    const html = `
-      <div class="modal-overlay" id="create-campaign-modal">
-        <div class="modal-content">
-          <h3>Создать рекламную кампанию</h3>
-          <form id="create-campaign-form">
-            <label>
-              Маркетплейс:
-              <select name="marketplace" required>
-                <option value="wb">Wildberries</option>
-                <option value="ozon">Ozon</option>
-              </select>
-            </label>
-            <label>
-              Название:
-              <input type="text" name="name" required />
-            </label>
-            <label>
-              Дневной бюджет (₽):
-              <input type="number" name="budget" min="100" required />
-            </label>
-            <label>
-              Тип кампании:
-              <select name="type" required>
+  private async toggleCampaign(advertId: number, status: 7 | 4 | 8 | 9 | 11): Promise<void> {
+    try {
+      const stores = await wbDb.getStores();
+      const store = stores.find(s => s.id === this.storeId)!;
+      await updateWbCampaign(store.api_key, advertId, { status });
+      showToast(status === 11 ? 'Кампания приостановлена' : 'Кампания запущена', 'success');
+      await this.loadCampaigns();
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    }
+  }
+
+  private showCreateDialog(): void {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal__header">
+          <h3>Новая рекламная кампания WB</h3>
+          <button class="btn btn-ghost modal__close" id="ad-modal-close">${I.x}</button>
+        </div>
+        <div class="modal__body">
+          <form id="ad-create-form" class="form-vertical">
+            <div class="form-group">
+              <label>Название</label>
+              <input class="form-input" name="name" required placeholder="Название кампании">
+            </div>
+            <div class="form-group">
+              <label>Дневной бюджет (₽)</label>
+              <input class="form-input" type="number" name="budget" min="100" required placeholder="500">
+            </div>
+            <div class="form-group">
+              <label>Тип кампании</label>
+              <select class="form-select" name="type">
                 <option value="8">Автоматическая</option>
                 <option value="6">Поиск</option>
                 <option value="7">Каталог</option>
               </select>
-            </label>
-            <div class="modal-actions">
-              <button type="submit" class="btn-primary">Создать</button>
-              <button type="button" class="btn-secondary" id="cancel-modal">Отмена</button>
             </div>
           </form>
+        </div>
+        <div class="modal__footer">
+          <button class="btn" id="ad-modal-cancel">Отмена</button>
+          <button class="btn btn-success" id="ad-modal-submit">${I.plus} Создать</button>
         </div>
       </div>
     `;
 
-    const modal = document.createElement('div');
-    modal.innerHTML = html;
-    document.body.appendChild(modal.firstElementChild!);
+    document.body.appendChild(overlay);
 
-    const form = document.getElementById('create-campaign-form') as HTMLFormElement;
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const formData = new FormData(form);
-      await this.createCampaign(
-        formData.get('marketplace') as 'wb' | 'ozon',
-        formData.get('name') as string,
-        Number(formData.get('budget')),
-        Number(formData.get('type')),
-      );
-      document.getElementById('create-campaign-modal')?.remove();
-    });
+    const close = () => overlay.remove();
+    overlay.querySelector('#ad-modal-close')?.addEventListener('click', close);
+    overlay.querySelector('#ad-modal-cancel')?.addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
-    document.getElementById('cancel-modal')?.addEventListener('click', () => {
-      document.getElementById('create-campaign-modal')?.remove();
-    });
-  }
+    overlay.querySelector('#ad-modal-submit')?.addEventListener('click', async () => {
+      const form = overlay.querySelector('#ad-create-form') as HTMLFormElement;
+      if (!form.checkValidity()) { form.reportValidity(); return; }
+      const fd = new FormData(form);
+      close();
 
-  private async createCampaign(
-    marketplace: 'wb' | 'ozon',
-    name: string,
-    dailyBudget: number,
-    type: number,
-  ): Promise<void> {
-    try {
-      if (marketplace === 'wb') {
-        const stores = this.getAllStores().wb;
-        if (stores.length > 0) {
-          await createWbAdCampaign(stores[0].api_key, {
-            name,
-            subjectId: 0, // TODO: choose category
-            type,
-            nms: [], // TODO: choose products
-            dailyBudget: dailyBudget * 100, // convert to kopecks
-          });
-          toast.success('Кампания создана');
-          await this.loadCampaigns();
-        }
-      } else {
-        toast.warning('Создание кампаний Ozon в разработке');
+      try {
+        const stores = await wbDb.getStores();
+        const store = stores.find(s => s.id === this.storeId)!;
+        await createWbAdCampaign(store.api_key, {
+          name: fd.get('name') as string,
+          subjectId: 0,
+          type: Number(fd.get('type')),
+          nms: [],
+          dailyBudget: Number(fd.get('budget')) * 100,
+        });
+        showToast('Кампания создана', 'success');
+        await this.loadCampaigns();
+      } catch (err: any) {
+        showToast(`Ошибка: ${err.message}`, 'error');
       }
-    } catch (err) {
-      toast.error(`Ошибка: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    });
   }
 
-  private async editCampaign(_id: string, _marketplace: 'ozon' | 'wb' | 'yandex'): Promise<void> {
-    toast.info('Редактирование кампаний в разработке');
-  }
-
-  private async pauseCampaign(id: string, marketplace: 'ozon' | 'wb' | 'yandex'): Promise<void> {
-    try {
-      if (marketplace === 'wb') {
-        const stores = this.getAllStores().wb;
-        if (stores.length > 0) {
-          await updateWbCampaign(stores[0].api_key, Number(id), { status: 11 }); // 11 = pause
-          toast.success('Кампания приостановлена');
-          await this.loadCampaigns();
-        }
-      } else {
-        toast.warning('Управление кампаниями ' + marketplace + ' в разработке');
-      }
-    } catch (err) {
-      toast.error(`Ошибка: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  private getAllStores(): {
-    ozon: OzonStore[];
-    wb: WbStore[];
-    yandex: YandexStore[];
-  } {
-    // TODO: получить из глобального стейта
-    return {
-      ozon: [],
-      wb: [],
-      yandex: [],
-    };
-  }
-
-  show(): void { this.container.style.display = 'flex'; }
-  hide(): void { this.container.style.display = 'none'; }
+  show(): void { this.el.style.display = 'flex'; }
+  hide(): void { this.el.style.display = 'none'; }
 }

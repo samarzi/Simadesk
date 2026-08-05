@@ -104,8 +104,7 @@ export class NavigationModule {
       'sku-audit-section', 'reviews-section', 'chats-section', 'logs-section', 'automation-section',
       'producers-section', 'products-hub-section',
       'simastore-section', 'docs-section', 'notifications-section', 'billing-section',
-      'supply-section', 'advertising-section', 'returns-section', 'mp-analytics-section',
-      'content-section', 'adv-analytics-section', 'stocks-update-section', 'product-creator-section',
+      'supply-section', 'advertising-section',
     ];
     for (const id of ids) {
       const el = document.getElementById(id);
@@ -142,12 +141,6 @@ export class NavigationModule {
     w.billingModule?.hide();
     w.supplyModule?.hide();
     w.advertisingModule?.hide();
-    w.returnsModule?.hide();
-    w.mpAnalyticsModule?.hide();
-    w.contentModule?.hide();
-    w.advAnalyticsModule?.hide();
-    w.stocksUpdateModule?.hide();
-    w.productCreatorModule?.hide();
   }
 
   /** Сбросить active-классы у всех nav/dock элементов. */
@@ -212,8 +205,7 @@ export class NavigationModule {
       page === 'sku-audit' || page === 'reviews' || page === 'chats' || page === 'logs' || page === 'automation' ||
       page === 'tasks' || page === 'stock' || page === 'producers' || page === 'products-hub' ||
       page === 'simastore' || page === 'docs' || page === 'notifications' || page === 'admin' || page === 'billing' ||
-      page === 'supply' || page === 'advertising' || page === 'returns' || page === 'mp-analytics' ||
-      page === 'content' || page === 'adv-analytics' || page === 'stocks-update' || page === 'product-creator';
+      page === 'supply' || page === 'advertising';
 
     const groupsBar = document.getElementById('groups-bar');
     // Restore dock when leaving admin/billing
@@ -355,30 +347,6 @@ export class NavigationModule {
         case 'advertising':
           document.getElementById('nav-advertising')?.classList.add('active');
           w.advertisingModule?.show();
-          break;
-        case 'returns':
-          document.getElementById('nav-returns')?.classList.add('active');
-          w.returnsModule?.show();
-          break;
-        case 'mp-analytics':
-          document.getElementById('nav-mp-analytics')?.classList.add('active');
-          w.mpAnalyticsModule?.show();
-          break;
-        case 'content':
-          document.getElementById('nav-content')?.classList.add('active');
-          w.contentModule?.show();
-          break;
-        case 'adv-analytics':
-          document.getElementById('nav-adv-analytics')?.classList.add('active');
-          w.advAnalyticsModule?.show();
-          break;
-        case 'stocks-update':
-          document.getElementById('nav-stocks-update')?.classList.add('active');
-          w.stocksUpdateModule?.show();
-          break;
-        case 'product-creator':
-          document.getElementById('nav-product-creator')?.classList.add('active');
-          w.productCreatorModule?.show();
           break;
       }
       return;
