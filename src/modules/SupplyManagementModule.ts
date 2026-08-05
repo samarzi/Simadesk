@@ -16,170 +16,210 @@ interface Supply {
   status: string;
   createdAt: string;
   itemsCount: number;
-  storeName?: string;
+}
+
+const STATUS_LABEL: Record<string, { text: string; color: string }> = {
+  draft:      { text: 'Черновик',  color: '#6b7280' },
+  sent:       { text: 'Отправлена', color: '#f59e0b' },
+  delivering: { text: 'В пути',    color: '#3b82f6' },
+  delivered:  { text: 'Принята',   color: '#10b981' },
+  received:   { text: 'Получена',  color: '#10b981' },
+  cancelled:  { text: 'Отменена',  color: '#ef4444' },
+  done:       { text: 'Завершена', color: '#10b981' },
+};
+
+function statusChip(s: string): string {
+  const st = STATUS_LABEL[s] ?? { text: s, color: '#6b7280' };
+  return `<span style="
+    display:inline-block;padding:2px 10px;border-radius:999px;
+    font-size:11px;font-weight:700;letter-spacing:.3px;
+    background:${st.color}22;color:${st.color}">${st.text}</span>`;
 }
 
 export class SupplyManagementModule {
   private el: HTMLElement;
   private tab: Tab = 'ozon';
-  private supplies: Supply[] = [];
   private storeId = '';
+  private stores: Array<{ id: string; name: string }> = [];
+  private supplies: Supply[] = [];
   private loading = false;
-  private openSupply: Supply | null = null;
+  private detail: Supply | null = null;
 
   constructor(container: HTMLElement) {
     this.el = container;
-    this.render();
+    this.el.style.cssText = 'display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden';
+    this.buildShell();
     this.loadStores();
   }
 
-  private render(): void {
-    this.el.style.cssText = 'display:flex;flex-direction:column;height:100%;overflow:hidden;background:var(--bg-primary)';
+  // ── Render helpers ──────────────────────────────────────────────────────────
+
+  private buildShell(): void {
     this.el.innerHTML = `
-      <div class="module-page">
-        <div class="module-page__header">
-          <div class="module-page__title">
-            <h2>${I.truck} Поставки FBO/FBY</h2>
-            <p class="module-page__subtitle">Управление поставками на склады маркетплейсов</p>
+      <div class="rpr" style="flex:1;min-height:0">
+
+        <div class="rpr-header">
+          <div class="rpr-header-left">
+            <div class="rpr-logo-icon" style="background:linear-gradient(135deg,#f59e0b,#d97706)">
+              ${I.truck}
+            </div>
+            <span class="rpr-logo-text">Поставки</span>
+            <div class="an2-tabs" id="sp-tabs">
+              ${(['ozon','wb','yandex'] as Tab[]).map(t => `
+                <button class="an2-tab ${t === this.tab ? 'active' : ''}" data-tab="${t}">
+                  ${t === 'ozon' ? 'Ozon FBO' : t === 'wb' ? 'Wildberries' : 'Яндекс FBY'}
+                </button>`).join('')}
+            </div>
           </div>
-          <div class="module-page__actions">
-            <button class="btn btn-success" id="sp-create">${I.plus} Создать поставку</button>
-            <button class="btn btn-ghost" id="sp-refresh">${I.refresh} Обновить</button>
+          <div class="rpr-header-actions">
+            <select class="form-select" id="sp-store" style="min-width:180px;height:30px;font-size:12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:0 8px">
+              <option value="">Загрузка...</option>
+            </select>
+            <button class="rpr-btn rpr-btn-green" id="sp-create">${I.plus} Создать</button>
+            <button class="rpr-btn rpr-btn-ghost" id="sp-refresh">${I.refresh}</button>
           </div>
         </div>
 
-        <div class="module-tabs">
-          <button class="module-tab ${this.tab === 'ozon' ? 'active' : ''}" data-tab="ozon">
-            <span class="mp-dot mp-ozon"></span> Ozon FBO
-          </button>
-          <button class="module-tab ${this.tab === 'wb' ? 'active' : ''}" data-tab="wb">
-            <span class="mp-dot mp-wb"></span> Wildberries
-          </button>
-          <button class="module-tab ${this.tab === 'yandex' ? 'active' : ''}" data-tab="yandex">
-            <span class="mp-dot mp-yandex"></span> Яндекс FBY
-          </button>
+        <div class="rpr-body" id="sp-body" style="overflow:auto">
+          ${this.renderBody()}
         </div>
 
-        <div class="module-toolbar">
-          <select class="form-select" id="sp-store" style="min-width:200px">
-            <option value="">Загрузка магазинов...</option>
-          </select>
-        </div>
-
-        <div class="module-body" id="sp-body">
-          ${this.loading ? this.renderSkeleton() : this.renderSupplyList()}
-        </div>
       </div>
     `;
-    this.bindEvents();
+    this.bindAll();
+  }
+
+  private renderBody(): string {
+    if (this.detail) return this.renderDetail();
+    if (this.loading) return this.renderSkeleton();
+    return this.renderList();
   }
 
   private renderSkeleton(): string {
-    return `<div class="skeleton-rows">${Array(5).fill('<div class="skeleton-row"></div>').join('')}</div>`;
+    return `<div style="padding:20px;display:flex;flex-direction:column;gap:10px">
+      ${Array(6).fill(`<div style="height:40px;border-radius:8px;background:var(--bg3);animation:spin .9s linear infinite alternate"></div>`).join('')}
+    </div>`;
   }
 
-  private renderSupplyList(): string {
+  private renderList(): string {
     if (!this.storeId) {
-      return `<div class="empty-state"><div class="empty-state__icon">${I.truck}</div><p>Выберите магазин для загрузки поставок</p></div>`;
+      return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;color:var(--text2)">
+        <div style="font-size:40px;opacity:.3">${I.truck}</div>
+        <p style="margin:0;font-size:14px">Выберите магазин для загрузки поставок</p>
+      </div>`;
     }
     if (this.supplies.length === 0) {
-      return `<div class="empty-state"><div class="empty-state__icon">${I.truck}</div><p>Нет поставок. Создайте первую поставку.</p></div>`;
+      return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;color:var(--text2)">
+        <div style="font-size:40px;opacity:.3">${I.truck}</div>
+        <p style="margin:0;font-size:14px">Поставок нет. Нажмите <strong>«Создать»</strong>.</p>
+      </div>`;
     }
 
-    const statusLabel: Record<string, string> = {
-      draft: 'Черновик', sent: 'Отправлена', received: 'Принята',
-      cancelled: 'Отменена', delivered: 'Доставлена',
-    };
-
-    const rows = this.supplies.map(s => `
-      <tr class="clickable-row" data-id="${esc(s.id)}">
-        <td><span class="supply-name">${esc(s.name)}</span></td>
-        <td><span class="status-chip status-${s.status}">${statusLabel[s.status] ?? s.status}</span></td>
-        <td>${s.itemsCount}</td>
-        <td>${new Date(s.createdAt).toLocaleDateString('ru-RU')}</td>
-        <td class="actions-cell">
-          <button class="btn btn-xs" data-action="open" data-id="${esc(s.id)}">${I.eye} Открыть</button>
-        </td>
-      </tr>
-    `).join('');
-
-    return `
-      <table class="data-table">
-        <thead>
+    return `<table class="rpr-table" style="width:100%">
+      <thead><tr>
+        <th>Название</th>
+        <th>Статус</th>
+        <th style="text-align:center">Товаров</th>
+        <th>Создана</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+        ${this.supplies.map(s => `
           <tr>
-            <th>Название</th>
-            <th>Статус</th>
-            <th>Товаров</th>
-            <th>Создана</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
+            <td style="font-weight:600">${esc(s.name)}</td>
+            <td>${statusChip(s.status)}</td>
+            <td style="text-align:center;font-variant-numeric:tabular-nums">${s.itemsCount}</td>
+            <td style="color:var(--text2);font-size:12px">${new Date(s.createdAt).toLocaleDateString('ru-RU')}</td>
+            <td>
+              <button class="rpr-btn rpr-btn-ghost" style="padding:4px 10px;font-size:11px"
+                data-action="open" data-id="${esc(s.id)}">${I.eye} Открыть</button>
+            </td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
   }
 
-  private renderSupplyDetail(s: Supply): string {
-    const statusLabel: Record<string, string> = {
-      draft: 'Черновик', sent: 'Отправлена', received: 'Принята',
-      cancelled: 'Отменена', delivered: 'Доставлена',
-    };
+  private renderDetail(): string {
+    const s = this.detail!;
     const isDraft = s.status === 'draft';
-
     return `
-      <div class="detail-panel">
-        <div class="detail-panel__head">
-          <button class="btn btn-ghost" id="sp-back">← Назад</button>
-          <div>
-            <h3>${esc(s.name)}</h3>
-            <span class="status-chip status-${s.status}">${statusLabel[s.status] ?? s.status}</span>
-          </div>
+      <div style="max-width:680px;padding:24px;display:flex;flex-direction:column;gap:20px">
+
+        <div style="display:flex;align-items:center;gap:12px">
+          <button class="rpr-btn rpr-btn-ghost" id="sp-back">← Назад</button>
+          <h3 style="margin:0;font-size:16px;font-weight:800">${esc(s.name)}</h3>
+          ${statusChip(s.status)}
         </div>
-        <div class="detail-panel__meta">
-          <div class="meta-item"><span>ID</span><code>${esc(s.id)}</code></div>
-          <div class="meta-item"><span>Товаров</span><strong>${s.itemsCount}</strong></div>
-          <div class="meta-item"><span>Создана</span>${new Date(s.createdAt).toLocaleString('ru-RU')}</div>
+
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+          ${[
+            ['ID', `<code style="font-size:11px">${esc(s.id)}</code>`],
+            ['Товаров', `<strong>${s.itemsCount}</strong>`],
+            ['Создана', new Date(s.createdAt).toLocaleDateString('ru-RU')],
+          ].map(([label, val]) => `
+            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+              <div style="font-size:11px;color:var(--text2);margin-bottom:4px">${label}</div>
+              <div style="font-size:13px;color:var(--text)">${val}</div>
+            </div>`).join('')}
         </div>
-        <div class="detail-panel__actions">
-          <button class="btn btn-primary" id="sp-add-items" ${isDraft ? '' : 'disabled'}>${I.plus} Добавить товары</button>
-          <button class="btn" id="sp-barcodes">${I.download} Штрихкоды</button>
-          <button class="btn btn-success" id="sp-send" ${isDraft ? '' : 'disabled'}>${I.send} Отправить поставку</button>
-          <button class="btn btn-danger" id="sp-cancel" ${isDraft ? '' : 'disabled'}>${I.trash} Отменить</button>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="rpr-btn rpr-btn-green" id="sp-send" ${isDraft ? '' : 'disabled'}>
+            ${I.send} Отправить поставку
+          </button>
+          <button class="rpr-btn rpr-btn-ghost" id="sp-barcodes">
+            ${I.download} Штрихкоды PDF
+          </button>
+          <button class="rpr-btn rpr-btn-ghost" id="sp-add-items" ${isDraft ? '' : 'disabled'}>
+            ${I.plus} Добавить товары
+          </button>
+          <button class="rpr-btn" style="background:#ef444422;color:#ef4444;border:1px solid #ef444444"
+            id="sp-cancel" ${isDraft ? '' : 'disabled'}>
+            ${I.trash} Отменить
+          </button>
         </div>
-      </div>
-    `;
+
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;color:var(--text2);font-size:13px">
+          ${I.info} Для добавления товаров в поставку используйте личный кабинет маркетплейса или API addProductsToSupply.
+        </div>
+      </div>`;
   }
 
-  private bindEvents(): void {
+  // ── Events ──────────────────────────────────────────────────────────────────
+
+  private bindAll(): void {
     this.el.addEventListener('click', (e) => {
-      const t = e.target as HTMLElement;
-      const btn = t.closest('button') as HTMLButtonElement | null;
+      const btn = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
       if (!btn) return;
 
-      const tabEl = btn.closest('[data-tab]') as HTMLElement | null;
-      if (tabEl?.dataset.tab) {
-        this.tab = tabEl.dataset.tab as Tab;
+      const tabVal = btn.dataset.tab as Tab | undefined;
+      if (tabVal) {
+        this.tab = tabVal;
         this.storeId = '';
         this.supplies = [];
-        this.openSupply = null;
-        this.render();
+        this.detail = null;
+        this.el.querySelectorAll('.an2-tab').forEach(t => {
+          t.classList.toggle('active', (t as HTMLElement).dataset.tab === tabVal);
+        });
         this.loadStores();
         return;
       }
 
-      const id = btn.id;
-      if (id === 'sp-create')  { this.createSupply(); return; }
-      if (id === 'sp-refresh') { this.loadSupplies(); return; }
-      if (id === 'sp-back')    { this.openSupply = null; this.refreshBody(); return; }
-      if (id === 'sp-send')    { this.sendSupply(); return; }
-      if (id === 'sp-barcodes'){ this.downloadBarcodes(); return; }
-      if (id === 'sp-cancel')  { this.cancelSupply(); return; }
-      if (id === 'sp-add-items'){ showToast('Добавление товаров: выберите товары из каталога', 'info'); return; }
+      switch (btn.id) {
+        case 'sp-create':  this.createSupply(); break;
+        case 'sp-refresh': this.loadSupplies(); break;
+        case 'sp-back':    this.detail = null; this.flush(); break;
+        case 'sp-send':    this.sendSupply(); break;
+        case 'sp-barcodes': this.downloadBarcodes(); break;
+        case 'sp-cancel':  this.cancelSupply(); break;
+        case 'sp-add-items':
+          showToast('Добавление товаров: используйте метод ozonApi.addProductsToSupply', 'info');
+          break;
+      }
 
-      const action = btn.dataset.action;
-      if (action === 'open') {
+      if (btn.dataset.action === 'open') {
         const found = this.supplies.find(s => s.id === btn.dataset.id);
-        if (found) { this.openSupply = found; this.refreshBody(); }
+        if (found) { this.detail = found; this.flush(); }
       }
     });
 
@@ -188,100 +228,108 @@ export class SupplyManagementModule {
       if (sel.id === 'sp-store') {
         this.storeId = sel.value;
         this.supplies = [];
-        this.openSupply = null;
+        this.detail = null;
         if (this.storeId) this.loadSupplies();
-        else this.refreshBody();
+        else this.flush();
       }
     });
   }
 
-  private refreshBody(): void {
+  private flush(): void {
     const body = this.el.querySelector('#sp-body');
-    if (!body) return;
-    if (this.openSupply) {
-      body.innerHTML = this.renderSupplyDetail(this.openSupply);
-    } else {
-      body.innerHTML = this.loading ? this.renderSkeleton() : this.renderSupplyList();
-    }
+    if (body) body.innerHTML = this.renderBody();
   }
 
-  private async loadStores(): Promise<void> {
-    const sel = this.el.querySelector('#sp-store') as HTMLSelectElement;
-    if (!sel) return;
+  // ── Data ────────────────────────────────────────────────────────────────────
 
-    let stores: Array<{ id: string; name: string }> = [];
+  private async loadStores(): Promise<void> {
+    const sel = this.el.querySelector('#sp-store') as HTMLSelectElement | null;
+    if (!sel) return;
+    this.stores = [];
     try {
-      if (this.tab === 'ozon') stores = await ozonDb.getStores();
-      else if (this.tab === 'wb') stores = await wbDb.getStores();
-      else stores = await yandexDb.getStores();
+      if (this.tab === 'ozon')   this.stores = await ozonDb.getStores();
+      else if (this.tab === 'wb') this.stores = await wbDb.getStores();
+      else                        this.stores = await yandexDb.getStores();
     } catch { /* ignore */ }
 
-    if (stores.length === 0) {
-      sel.innerHTML = '<option value="">Нет подключённых магазинов</option>';
+    if (!this.stores.length) {
+      sel.innerHTML = '<option value="">Нет магазинов</option>';
+      this.storeId = '';
+      this.flush();
       return;
     }
+    sel.innerHTML = '<option value="">— Магазин —</option>' +
+      this.stores.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
 
-    sel.innerHTML = '<option value="">— Выберите магазин —</option>' +
-      stores.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
-
-    if (stores.length === 1) {
-      sel.value = stores[0].id;
-      this.storeId = stores[0].id;
+    if (this.stores.length === 1) {
+      this.storeId = this.stores[0].id;
+      sel.value = this.storeId;
       this.loadSupplies();
+    } else {
+      this.flush();
     }
   }
 
   private async loadSupplies(): Promise<void> {
     if (!this.storeId) return;
     this.loading = true;
-    this.refreshBody();
+    this.flush();
 
     try {
       this.supplies = [];
 
       if (this.tab === 'ozon') {
-        const stores = await ozonDb.getStores();
-        const store = stores.find(s => s.id === this.storeId);
+        const store = this.stores.find(s => s.id === this.storeId) as any;
         if (!store) throw new Error('Магазин не найден');
         const creds = { client_id: store.client_id, api_key: store.api_key };
-        const list = await ozonApi.getSupplies(creds);
+        let list: any[] = [];
+        try {
+          list = await ozonApi.getSupplies(creds);
+        } catch (err: any) {
+          if (err.message?.includes('404') || err.status === 404) {
+            showToast('FBO поставки недоступны — у этого магазина нет FBO-склада', 'info');
+          } else {
+            throw err;
+          }
+        }
         for (const s of list) {
           this.supplies.push({
-            id: s.supply_order_id ?? s.id ?? String(Math.random()),
+            id: s.supply_order_id ?? s.id ?? '',
             name: s.name ?? `Поставка ${s.supply_order_id}`,
             status: s.status ?? 'draft',
             createdAt: s.created_at ?? new Date().toISOString(),
             itemsCount: s.items?.length ?? 0,
           });
         }
+
       } else if (this.tab === 'wb') {
-        const stores = await wbDb.getStores();
-        const store = stores.find(s => s.id === this.storeId);
+        const store = this.stores.find(s => s.id === this.storeId) as any;
         if (!store) throw new Error('Магазин не найден');
         const list = await wbApi.getWbSupplies(store.api_key);
         for (const s of list) {
           this.supplies.push({
             id: s.id,
-            name: s.name,
-            status: s.done ? 'delivered' : 'draft',
+            name: s.name ?? `Поставка ${s.id}`,
+            status: s.done ? 'done' : 'draft',
             createdAt: s.createdAt ?? new Date().toISOString(),
             itemsCount: s.orderCount ?? 0,
           });
         }
+
       } else {
-        showToast('Список отгрузок Яндекс Маркет: используйте раздел заказов', 'info');
+        showToast('Отгрузки Яндекс Маркет управляются в ЯМ → Логистика', 'info');
       }
+
     } catch (err: any) {
-      showToast(`Ошибка загрузки: ${err.message}`, 'error');
+      showToast(`Ошибка: ${err.message}`, 'error');
     } finally {
       this.loading = false;
-      this.refreshBody();
+      this.flush();
     }
   }
 
   private async createSupply(): Promise<void> {
     if (!this.storeId) { showToast('Выберите магазин', 'warning'); return; }
-
     const name = prompt(`Название новой поставки (${this.tab.toUpperCase()}):`);
     if (!name?.trim()) return;
 
@@ -290,116 +338,81 @@ export class SupplyManagementModule {
     btn.innerHTML = `${I.loader} Создание...`;
 
     try {
+      const store = this.stores.find(s => s.id === this.storeId) as any;
       if (this.tab === 'ozon') {
-        const stores = await ozonDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
         const creds = { client_id: store.client_id, api_key: store.api_key };
-        const warehouses = await ozonApi.getWarehouses(creds);
-        if (!warehouses.length) throw new Error('Нет складов Ozon');
-        await ozonApi.createSupply(creds, warehouses[0].warehouse_id, name.trim());
+        const wh = await ozonApi.getWarehouses(creds);
+        if (!wh.length) throw new Error('Нет складов Ozon FBO');
+        await ozonApi.createSupply(creds, wh[0].warehouse_id, name.trim());
       } else if (this.tab === 'wb') {
-        const stores = await wbDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
         await wbApi.createWbSupply(store.api_key, name.trim());
       } else {
-        const stores = await yandexDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
-        if (!store.campaign_id) throw new Error('Нет campaign_id у магазина');
-        const tomorrow = new Date(Date.now() + 86_400_000);
-        const nextWeek = new Date(Date.now() + 7 * 86_400_000);
+        if (!store.campaign_id) throw new Error('Нет campaign_id');
+        const d1 = new Date(Date.now() + 86_400_000);
+        const d7 = new Date(Date.now() + 7 * 86_400_000);
         const fmt = (d: Date) => d.toISOString().slice(0, 10);
-        await yandexApi.createShipment(store.api_key, store.campaign_id, {
-          planIntervalFrom: fmt(tomorrow),
-          planIntervalTo: fmt(nextWeek),
-        });
+        await yandexApi.createShipment(store.api_key, store.campaign_id,
+          { planIntervalFrom: fmt(d1), planIntervalTo: fmt(d7) });
       }
-
       showToast('Поставка создана', 'success');
       await this.loadSupplies();
     } catch (err: any) {
       showToast(`Ошибка: ${err.message}`, 'error');
     } finally {
       btn.disabled = false;
-      btn.innerHTML = `${I.plus} Создать поставку`;
+      btn.innerHTML = `${I.plus} Создать`;
     }
   }
 
   private async sendSupply(): Promise<void> {
-    if (!this.openSupply) return;
-    if (!confirm('Отправить поставку? После отправки изменения невозможны.')) return;
-
+    if (!this.detail || !confirm('Отправить поставку? После отправки изменения невозможны.')) return;
     try {
-      if (this.tab === 'ozon') {
-        const stores = await ozonDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
-        await ozonApi.sendSupply({ client_id: store.client_id, api_key: store.api_key }, this.openSupply.id);
-      } else if (this.tab === 'wb') {
-        const stores = await wbDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
-        await wbApi.deliverSupply(store.api_key, this.openSupply.id);
-      } else {
-        const stores = await yandexDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
-        await yandexApi.confirmShipment(store.api_key, store.campaign_id!, Number(this.openSupply.id));
-      }
+      const store = this.stores.find(s => s.id === this.storeId) as any;
+      if (this.tab === 'ozon')
+        await ozonApi.sendSupply({ client_id: store.client_id, api_key: store.api_key }, this.detail.id);
+      else if (this.tab === 'wb')
+        await wbApi.deliverSupply(store.api_key, this.detail.id);
+      else
+        await yandexApi.confirmShipment(store.api_key, store.campaign_id, Number(this.detail.id));
 
       showToast('Поставка отправлена', 'success');
-      this.openSupply.status = 'sent';
-      this.refreshBody();
-    } catch (err: any) {
-      showToast(`Ошибка: ${err.message}`, 'error');
-    }
+      this.detail.status = 'sent';
+      this.flush();
+    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
   }
 
   private async downloadBarcodes(): Promise<void> {
-    if (!this.openSupply) return;
-
+    if (!this.detail) return;
     try {
       let blob: Blob;
-
-      if (this.tab === 'ozon') {
-        const stores = await ozonDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
-        blob = await ozonApi.getSupplyBarcodes({ client_id: store.client_id, api_key: store.api_key }, this.openSupply.id);
-      } else if (this.tab === 'wb') {
-        const stores = await wbDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
-        blob = await wbApi.getSupplyBarcodePdf(store.api_key, this.openSupply.id);
-      } else {
-        showToast('Штрихкоды ЯМ: используйте Яндекс Маркет → Отгрузки', 'info');
+      const store = this.stores.find(s => s.id === this.storeId) as any;
+      if (this.tab === 'ozon')
+        blob = await ozonApi.getSupplyBarcodes({ client_id: store.client_id, api_key: store.api_key }, this.detail.id);
+      else if (this.tab === 'wb')
+        blob = await wbApi.getSupplyBarcodePdf(store.api_key, this.detail.id);
+      else {
+        showToast('Штрихкоды ЯМ: скачайте через Яндекс Маркет → Отгрузки', 'info');
         return;
       }
-
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `supply_${this.openSupply.id}_barcodes.pdf`;
+      const a = Object.assign(document.createElement('a'), {
+        href: url, download: `supply_${this.detail.id}_barcodes.pdf` });
       a.click();
       URL.revokeObjectURL(url);
       showToast('Штрихкоды скачаны', 'success');
-    } catch (err: any) {
-      showToast(`Ошибка: ${err.message}`, 'error');
-    }
+    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
   }
 
   private async cancelSupply(): Promise<void> {
-    if (!this.openSupply) return;
-    if (!confirm('Отменить поставку?')) return;
-
+    if (!this.detail || !confirm('Отменить поставку?')) return;
     try {
-      if (this.tab === 'ozon') {
-        const stores = await ozonDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
-        await ozonApi.cancelSupply({ client_id: store.client_id, api_key: store.api_key }, this.openSupply.id);
-        showToast('Поставка отменена', 'success');
-        this.openSupply = null;
-        await this.loadSupplies();
-      } else {
-        showToast('Отмена поставки: доступна только для Ozon', 'info');
-      }
-    } catch (err: any) {
-      showToast(`Ошибка: ${err.message}`, 'error');
-    }
+      if (this.tab !== 'ozon') { showToast('Отмена доступна только для Ozon', 'info'); return; }
+      const store = this.stores.find(s => s.id === this.storeId) as any;
+      await ozonApi.cancelSupply({ client_id: store.client_id, api_key: store.api_key }, this.detail.id);
+      showToast('Поставка отменена', 'success');
+      this.detail = null;
+      await this.loadSupplies();
+    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
   }
 
   show(): void { this.el.style.display = 'flex'; }

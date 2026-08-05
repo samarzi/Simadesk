@@ -29,10 +29,24 @@ interface Campaign {
   roi: number;
 }
 
+function fmt(n: number): string { return n.toLocaleString('ru-RU'); }
+
+function statusChip(s: string): string {
+  const map: Record<string, [string, string]> = {
+    active:   ['Активна',     '#10b981'],
+    paused:   ['Пауза',       '#f59e0b'],
+    stopped:  ['Остановлена', '#ef4444'],
+    inactive: ['Неактивна',   '#6b7280'],
+  };
+  const [text, color] = map[s] ?? [s, '#6b7280'];
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:700;background:${color}22;color:${color}">${text}</span>`;
+}
+
 export class AdvertisingModule {
   private el: HTMLElement;
   private tab: Tab = 'wb';
   private storeId = '';
+  private stores: Array<{ id: string; name: string }> = [];
   private campaigns: Campaign[] = [];
   private loading = false;
   private dateFrom: string;
@@ -40,273 +54,274 @@ export class AdvertisingModule {
 
   constructor(container: HTMLElement) {
     this.el = container;
+    this.el.style.cssText = 'display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden';
     const now = new Date();
-    const past = new Date(now.getTime() - 30 * 86_400_000);
-    this.dateTo = now.toISOString().slice(0, 10);
-    this.dateFrom = past.toISOString().slice(0, 10);
-    this.render();
+    this.dateTo   = now.toISOString().slice(0, 10);
+    this.dateFrom = new Date(now.getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
+    this.buildShell();
     this.loadStores();
   }
 
-  private render(): void {
-    this.el.style.cssText = 'display:flex;flex-direction:column;height:100%;overflow:hidden;background:var(--bg-primary)';
+  // ── Shell ───────────────────────────────────────────────────────────────────
+
+  private buildShell(): void {
     this.el.innerHTML = `
-      <div class="module-page">
-        <div class="module-page__header">
-          <div class="module-page__title">
-            <h2>${I.chartBar} Реклама</h2>
-            <p class="module-page__subtitle">Кампании и акции на маркетплейсах</p>
+      <div class="rpr" style="flex:1;min-height:0">
+
+        <div class="rpr-header">
+          <div class="rpr-header-left">
+            <div class="rpr-logo-icon" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">
+              ${I.chartBar}
+            </div>
+            <span class="rpr-logo-text">Реклама</span>
+            <div class="an2-tabs" id="ad-tabs">
+              ${(['wb','ozon','yandex'] as Tab[]).map(t => `
+                <button class="an2-tab ${t === this.tab ? 'active' : ''}" data-tab="${t}">
+                  ${t === 'wb' ? 'Wildberries' : t === 'ozon' ? 'Ozon' : 'Яндекс.Маркет'}
+                </button>`).join('')}
+            </div>
           </div>
-          <div class="module-page__actions">
-            ${this.tab === 'wb' ? `<button class="btn btn-success" id="ad-create">${I.plus} Создать кампанию</button>` : ''}
-            <button class="btn btn-ghost" id="ad-refresh">${I.refresh} Загрузить</button>
+          <div class="rpr-header-actions">
+            <select class="form-select" id="ad-store"
+              style="min-width:180px;height:30px;font-size:12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:0 8px">
+              <option value="">Загрузка...</option>
+            </select>
+            ${this.tab === 'wb' ? `
+              <div class="an2-period-custom" id="ad-period">
+                <input type="date" id="ad-from" value="${this.dateFrom}">
+                <span style="color:var(--text3)">—</span>
+                <input type="date" id="ad-to"   value="${this.dateTo}">
+              </div>` : ''}
+            ${this.tab === 'wb' ? `<button class="rpr-btn rpr-btn-green" id="ad-create">${I.plus} Кампания</button>` : ''}
+            <button class="rpr-btn rpr-btn-ghost" id="ad-load">${I.refresh} Загрузить</button>
           </div>
         </div>
 
-        <div class="module-tabs">
-          <button class="module-tab ${this.tab === 'wb' ? 'active' : ''}" data-tab="wb">
-            <span class="mp-dot mp-wb"></span> Wildberries
-          </button>
-          <button class="module-tab ${this.tab === 'ozon' ? 'active' : ''}" data-tab="ozon">
-            <span class="mp-dot mp-ozon"></span> Ozon
-          </button>
-          <button class="module-tab ${this.tab === 'yandex' ? 'active' : ''}" data-tab="yandex">
-            <span class="mp-dot mp-yandex"></span> Яндекс.Маркет
-          </button>
+        <div id="ad-stats"></div>
+
+        <div class="rpr-body" id="ad-body" style="overflow:auto">
+          ${this.renderBody()}
         </div>
 
-        <div class="module-toolbar">
-          <select class="form-select" id="ad-store" style="min-width:200px">
-            <option value="">Загрузка магазинов...</option>
-          </select>
-          ${this.tab === 'wb' ? `
-            <input type="date" class="form-input" id="ad-from" value="${this.dateFrom}" style="width:150px">
-            <span style="color:var(--text-muted)">—</span>
-            <input type="date" class="form-input" id="ad-to" value="${this.dateTo}" style="width:150px">
-          ` : ''}
-        </div>
+      </div>`;
+    this.bindAll();
+  }
 
-        ${this.renderStats()}
+  // ── Render ──────────────────────────────────────────────────────────────────
 
-        <div class="module-body" id="ad-body">
-          ${this.loading ? this.renderSkeleton() : this.renderTable()}
-        </div>
-      </div>
-    `;
-    this.bindEvents();
+  private renderBody(): string {
+    if (this.loading) return this.renderSkeleton();
+    if (!this.storeId) return this.renderEmpty('Выберите магазин для загрузки данных');
+    if (!this.campaigns.length) return this.renderEmpty('Нет данных. Нажмите «Загрузить».');
+    return this.tab === 'wb' ? this.renderWbTable() : this.renderPromoTable();
   }
 
   private renderSkeleton(): string {
-    return `<div class="skeleton-rows">${Array(5).fill('<div class="skeleton-row"></div>').join('')}</div>`;
+    return `<div style="padding:20px;display:flex;flex-direction:column;gap:10px">
+      ${Array(6).fill(`<div style="height:40px;border-radius:8px;background:var(--bg3)"></div>`).join('')}
+    </div>`;
+  }
+
+  private renderEmpty(msg: string): string {
+    return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;gap:10px;color:var(--text2)">
+      <div style="font-size:36px;opacity:.3">${I.chartBar}</div>
+      <p style="margin:0;font-size:14px">${msg}</p>
+    </div>`;
   }
 
   private renderStats(): string {
     if (!this.campaigns.length) return '';
+    const budget  = this.campaigns.reduce((s, c) => s + c.budget,  0);
+    const spent   = this.campaigns.reduce((s, c) => s + c.spent,   0);
+    const revenue = this.campaigns.reduce((s, c) => s + c.revenue, 0);
+    const orders  = this.campaigns.reduce((s, c) => s + c.orders,  0);
+    const views   = this.campaigns.reduce((s, c) => s + c.views,   0);
+    const clicks  = this.campaigns.reduce((s, c) => s + c.clicks,  0);
+    const ctr     = views > 0 ? (clicks / views * 100).toFixed(2) : '0.00';
+    const roi     = spent > 0 ? ((revenue - spent) / spent * 100) : 0;
+    const roiStr  = (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%';
+    const roiColor = roi >= 0 ? '#10b981' : '#ef4444';
 
-    const totalBudget  = this.campaigns.reduce((s, c) => s + c.budget, 0);
-    const totalSpent   = this.campaigns.reduce((s, c) => s + c.spent, 0);
-    const totalRevenue = this.campaigns.reduce((s, c) => s + c.revenue, 0);
-    const totalOrders  = this.campaigns.reduce((s, c) => s + c.orders, 0);
-    const totalViews   = this.campaigns.reduce((s, c) => s + c.views, 0);
-    const totalClicks  = this.campaigns.reduce((s, c) => s + c.clicks, 0);
-    const ctr          = totalViews > 0 ? (totalClicks / totalViews * 100).toFixed(2) : '0.00';
-    const avgROI       = totalSpent > 0 ? ((totalRevenue - totalSpent) / totalSpent * 100).toFixed(1) : '0.0';
+    const tiles = [
+      ['Бюджет/д.',  fmt(budget) + ' ₽',   '#6366f1'],
+      ['Потрачено',  fmt(spent) + ' ₽',    '#f59e0b'],
+      ['Выручка',    fmt(revenue) + ' ₽',  '#10b981'],
+      ['Заказы',     String(orders),        '#3b82f6'],
+      ['CTR',        ctr + '%',             '#8b5cf6'],
+      ['ROI',        roiStr,                roiColor],
+    ];
 
-    return `
-      <div class="stats-row">
-        <div class="stat-tile"><div class="stat-tile__label">Бюджет</div><div class="stat-tile__value">${totalBudget.toLocaleString('ru-RU')} ₽</div></div>
-        <div class="stat-tile"><div class="stat-tile__label">Потрачено</div><div class="stat-tile__value">${totalSpent.toLocaleString('ru-RU')} ₽</div></div>
-        <div class="stat-tile"><div class="stat-tile__label">Выручка</div><div class="stat-tile__value">${totalRevenue.toLocaleString('ru-RU')} ₽</div></div>
-        <div class="stat-tile"><div class="stat-tile__label">Заказы</div><div class="stat-tile__value">${totalOrders}</div></div>
-        <div class="stat-tile"><div class="stat-tile__label">CTR</div><div class="stat-tile__value">${ctr}%</div></div>
-        <div class="stat-tile"><div class="stat-tile__label">ROI</div><div class="stat-tile__value ${Number(avgROI) >= 0 ? 'text-success' : 'text-danger'}">${Number(avgROI) >= 0 ? '+' : ''}${avgROI}%</div></div>
-      </div>
-    `;
-  }
-
-  private renderTable(): string {
-    if (!this.storeId) {
-      return `<div class="empty-state"><div class="empty-state__icon">${I.chartBar}</div><p>Выберите магазин для загрузки данных</p></div>`;
-    }
-    if (this.campaigns.length === 0) {
-      return `<div class="empty-state"><div class="empty-state__icon">${I.chartBar}</div><p>Нет данных. Нажмите «Загрузить».</p></div>`;
-    }
-
-    if (this.tab === 'wb') {
-      return this.renderWbTable();
-    }
-
-    // Ozon promotions / Yandex promos — simplified view
-    const rows = this.campaigns.map(c => `
-      <tr>
-        <td>${esc(String(c.id))}</td>
-        <td>${esc(c.name)}</td>
-        <td><span class="status-chip status-${c.status}">${esc(c.status)}</span></td>
-        <td>${esc(c.type)}</td>
-      </tr>
-    `).join('');
-
-    return `
-      <table class="data-table">
-        <thead><tr><th>ID</th><th>Название</th><th>Статус</th><th>Тип</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
+    return `<div style="display:flex;gap:10px;padding:12px 16px;flex-wrap:wrap;border-bottom:1px solid var(--border)">
+      ${tiles.map(([label, val, color]) => `
+        <div style="flex:1;min-width:110px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 14px">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:4px">${label}</div>
+          <div style="font-size:17px;font-weight:800;color:${color};font-variant-numeric:tabular-nums">${val}</div>
+        </div>`).join('')}
+    </div>`;
   }
 
   private renderWbTable(): string {
-    const rows = this.campaigns.map(c => `
-      <tr>
-        <td>${esc(c.name)}</td>
-        <td><span class="status-chip status-${c.status}">${this.wbStatusLabel(c.status)}</span></td>
-        <td>${esc(c.type)}</td>
-        <td>${c.budget > 0 ? c.budget.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
-        <td>${c.spent > 0 ? c.spent.toLocaleString('ru-RU') + ' ₽' : '—'}</td>
-        <td>${c.views.toLocaleString('ru-RU')}</td>
-        <td>${c.clicks.toLocaleString('ru-RU')}</td>
-        <td>${c.orders}</td>
-        <td class="${c.roi >= 0 ? 'text-success' : 'text-danger'}">${c.roi >= 0 ? '+' : ''}${c.roi.toFixed(1)}%</td>
-        <td class="actions-cell">
-          ${c.status === 'active'
-            ? `<button class="btn btn-xs" data-action="pause" data-id="${c.id}">⏸</button>`
-            : `<button class="btn btn-xs btn-success" data-action="resume" data-id="${c.id}">▶</button>`}
-        </td>
-      </tr>
-    `).join('');
-
-    return `
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Название</th>
-            <th>Статус</th>
-            <th>Тип</th>
-            <th>Бюджет/д.</th>
-            <th>Потрачено</th>
-            <th>Показы</th>
-            <th>Клики</th>
-            <th>Заказы</th>
-            <th>ROI</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
+    return `<table class="rpr-table" style="width:100%">
+      <thead><tr>
+        <th>Кампания</th>
+        <th>Статус</th>
+        <th>Тип</th>
+        <th class="num">Бюджет/д.</th>
+        <th class="num">Потрачено</th>
+        <th class="num">Показы</th>
+        <th class="num">Клики</th>
+        <th class="num">Заказы</th>
+        <th class="num">ROI</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+        ${this.campaigns.map(c => {
+          const roiColor = c.roi >= 0 ? '#10b981' : '#ef4444';
+          return `<tr>
+            <td style="font-weight:600;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</td>
+            <td>${statusChip(c.status)}</td>
+            <td style="color:var(--text2);font-size:12px">${esc(c.type)}</td>
+            <td class="num">${c.budget ? fmt(c.budget) + ' ₽' : '—'}</td>
+            <td class="num">${c.spent ? fmt(c.spent) + ' ₽' : '—'}</td>
+            <td class="num">${fmt(c.views)}</td>
+            <td class="num">${fmt(c.clicks)}</td>
+            <td class="num">${c.orders}</td>
+            <td class="num" style="font-weight:700;color:${roiColor}">${c.roi >= 0 ? '+' : ''}${c.roi.toFixed(1)}%</td>
+            <td>
+              ${c.status === 'active'
+                ? `<button class="rpr-btn rpr-btn-ghost" style="padding:3px 8px;font-size:11px" data-action="pause"  data-id="${c.id}">⏸ Пауза</button>`
+                : `<button class="rpr-btn rpr-btn-ghost" style="padding:3px 8px;font-size:11px" data-action="resume" data-id="${c.id}">▶ Запуск</button>`}
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
   }
 
-  private wbStatusLabel(s: string): string {
-    const map: Record<string, string> = { active: 'Активна', paused: 'Пауза', stopped: 'Остановлена' };
-    return map[s] ?? s;
+  private renderPromoTable(): string {
+    const mpLabel = this.tab === 'ozon' ? 'Ozon' : 'Яндекс.Маркет';
+    return `<table class="rpr-table" style="width:100%">
+      <thead><tr>
+        <th>ID</th>
+        <th>Название ${mpLabel}</th>
+        <th>Тип</th>
+        <th>Статус</th>
+      </tr></thead>
+      <tbody>
+        ${this.campaigns.map(c => `<tr>
+          <td style="color:var(--text2);font-size:12px"><code>${esc(String(c.id))}</code></td>
+          <td style="font-weight:600">${esc(c.name)}</td>
+          <td style="color:var(--text2);font-size:12px">${esc(c.type)}</td>
+          <td>${statusChip(c.status)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
   }
 
-  private bindEvents(): void {
+  // ── Events ──────────────────────────────────────────────────────────────────
+
+  private bindAll(): void {
     this.el.addEventListener('click', async (e) => {
-      const t = e.target as HTMLElement;
-      const btn = t.closest('button') as HTMLButtonElement | null;
+      const btn = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
       if (!btn) return;
 
-      const tabEl = btn.closest('[data-tab]') as HTMLElement | null;
-      if (tabEl?.dataset.tab) {
-        this.tab = tabEl.dataset.tab as Tab;
+      const tabVal = btn.dataset.tab as Tab | undefined;
+      if (tabVal) {
+        this.tab = tabVal;
         this.storeId = '';
         this.campaigns = [];
-        this.render();
+        this.buildShell();
         this.loadStores();
         return;
       }
 
-      if (btn.id === 'ad-refresh') { await this.loadCampaigns(); return; }
-      if (btn.id === 'ad-create')  { this.showCreateDialog(); return; }
+      switch (btn.id) {
+        case 'ad-load':   await this.loadCampaigns(); break;
+        case 'ad-create': this.showCreateDialog(); break;
+      }
 
-      const action = btn.dataset.action;
-      const id = btn.dataset.id;
-      if (action === 'pause' && id)  { await this.toggleCampaign(Number(id), 11 as 11); return; }
-      if (action === 'resume' && id) { await this.toggleCampaign(Number(id), 9 as 9); return; }
+      if (btn.dataset.action === 'pause')  await this.toggleCampaign(Number(btn.dataset.id), 11 as 11);
+      if (btn.dataset.action === 'resume') await this.toggleCampaign(Number(btn.dataset.id), 9 as 9);
     });
 
     this.el.addEventListener('change', (e) => {
       const t = e.target as HTMLInputElement | HTMLSelectElement;
-      if (t.id === 'ad-store') {
-        this.storeId = t.value;
-        this.campaigns = [];
-        this.refreshBody();
-        return;
-      }
-      if (t.id === 'ad-from') { this.dateFrom = t.value; return; }
-      if (t.id === 'ad-to')   { this.dateTo = t.value; return; }
+      if (t.id === 'ad-store') { this.storeId = t.value; this.flush(); }
+      if (t.id === 'ad-from')  this.dateFrom = t.value;
+      if (t.id === 'ad-to')    this.dateTo   = t.value;
     });
   }
 
-  private refreshBody(): void {
-    const body = this.el.querySelector('#ad-body');
-    if (body) body.innerHTML = this.loading ? this.renderSkeleton() : this.renderTable();
-    const statsEl = this.el.querySelector('.stats-row');
-    if (statsEl) statsEl.outerHTML = this.renderStats();
+  private flush(): void {
+    const body  = this.el.querySelector('#ad-body');
+    const stats = this.el.querySelector('#ad-stats');
+    if (body)  body.innerHTML  = this.renderBody();
+    if (stats) stats.innerHTML = this.renderStats();
   }
 
-  private async loadStores(): Promise<void> {
-    const sel = this.el.querySelector('#ad-store') as HTMLSelectElement;
-    if (!sel) return;
+  // ── Data ────────────────────────────────────────────────────────────────────
 
-    let stores: Array<{ id: string; name: string }> = [];
+  private async loadStores(): Promise<void> {
+    const sel = this.el.querySelector('#ad-store') as HTMLSelectElement | null;
+    if (!sel) return;
+    this.stores = [];
     try {
-      if (this.tab === 'wb') stores = await wbDb.getStores();
-      else if (this.tab === 'ozon') stores = await ozonDb.getStores();
-      else stores = await yandexDb.getStores();
+      if (this.tab === 'wb')     this.stores = await wbDb.getStores();
+      else if (this.tab === 'ozon') this.stores = await ozonDb.getStores();
+      else                          this.stores = await yandexDb.getStores();
     } catch { /* ignore */ }
 
-    if (stores.length === 0) {
-      sel.innerHTML = '<option value="">Нет подключённых магазинов</option>';
+    if (!this.stores.length) {
+      sel.innerHTML = '<option value="">Нет магазинов</option>';
+      this.storeId = '';
+      this.flush();
       return;
     }
+    sel.innerHTML = '<option value="">— Магазин —</option>' +
+      this.stores.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
 
-    sel.innerHTML = '<option value="">— Выберите магазин —</option>' +
-      stores.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
-
-    if (stores.length === 1) {
-      sel.value = stores[0].id;
-      this.storeId = stores[0].id;
+    if (this.stores.length === 1) {
+      this.storeId = this.stores[0].id;
+      sel.value = this.storeId;
     }
+    this.flush();
   }
 
   private async loadCampaigns(): Promise<void> {
     if (!this.storeId) { showToast('Выберите магазин', 'warning'); return; }
     this.loading = true;
-    this.refreshBody();
+    this.flush();
 
     try {
       this.campaigns = [];
+      const store = this.stores.find(s => s.id === this.storeId) as any;
 
       if (this.tab === 'wb') {
-        const stores = await wbDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
         const list = await getWbCampaigns(store.api_key);
-
         for (const c of list) {
           let stats: any = {};
           try {
             const data = await fetchWbAdStats(store.api_key, [c.advertId], this.dateFrom, this.dateTo);
-            if (data.length > 0) stats = data[0];
-          } catch { /* ignore stats error */ }
-
+            if (data.length) stats = data[0];
+          } catch { /* ignore stats */ }
           const spent   = stats.sum ?? 0;
           const revenue = (stats.orders ?? 0) * (stats.avgPrice ?? 0);
-          const roi     = spent > 0 ? (revenue - spent) / spent * 100 : 0;
-
           this.campaigns.push({
             id: c.advertId,
             name: c.name ?? `Кампания ${c.advertId}`,
             status: c.status === 9 ? 'active' : c.status === 11 ? 'paused' : 'stopped',
             type: c.type === 8 ? 'Авто' : c.type === 6 ? 'Поиск' : 'Каталог',
             budget: c.dailyBudget ?? 0,
-            spent, clicks: stats.clicks ?? 0, views: stats.views ?? 0,
-            orders: stats.orders ?? 0, revenue, roi,
+            spent,
+            clicks: stats.clicks ?? 0,
+            views:  stats.views  ?? 0,
+            orders: stats.orders ?? 0,
+            revenue,
+            roi: spent > 0 ? (revenue - spent) / spent * 100 : 0,
           });
         }
+
       } else if (this.tab === 'ozon') {
-        const stores = await ozonDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
         const promos = await ozonApi.getPromotions({ client_id: store.client_id, api_key: store.api_key });
         for (const p of promos) {
           this.campaigns.push({
@@ -317,9 +332,8 @@ export class AdvertisingModule {
             budget: 0, spent: 0, clicks: 0, views: 0, orders: 0, revenue: 0, roi: 0,
           });
         }
+
       } else {
-        const stores = await yandexDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
         const businessId = store.business_id ? Number(store.business_id) : 0;
         const promos = await getYandexPromos(store, businessId);
         for (const p of promos) {
@@ -333,97 +347,82 @@ export class AdvertisingModule {
         }
       }
 
-      showToast(`Загружено ${this.campaigns.length} кампаний`, 'success');
+      showToast(`Загружено: ${this.campaigns.length}`, 'success');
     } catch (err: any) {
       showToast(`Ошибка: ${err.message}`, 'error');
     } finally {
       this.loading = false;
-      this.render();
-      // restore store selection
-      const sel = this.el.querySelector('#ad-store') as HTMLSelectElement | null;
-      if (sel && this.storeId) {
-        await this.loadStores();
-        sel.value = this.storeId;
-      }
+      this.flush();
     }
   }
 
   private async toggleCampaign(advertId: number, status: 7 | 4 | 8 | 9 | 11): Promise<void> {
     try {
-      const stores = await wbDb.getStores();
-      const store = stores.find(s => s.id === this.storeId)!;
+      const store = this.stores.find(s => s.id === this.storeId) as any;
       await updateWbCampaign(store.api_key, advertId, { status });
-      showToast(status === 11 ? 'Кампания приостановлена' : 'Кампания запущена', 'success');
+      showToast(status === 11 ? 'Кампания на паузе' : 'Кампания запущена', 'success');
       await this.loadCampaigns();
-    } catch (err: any) {
-      showToast(`Ошибка: ${err.message}`, 'error');
-    }
+    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
   }
 
   private showCreateDialog(): void {
     const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center';
     overlay.innerHTML = `
-      <div class="modal">
-        <div class="modal__header">
-          <h3>Новая рекламная кампания WB</h3>
-          <button class="btn btn-ghost modal__close" id="ad-modal-close">${I.x}</button>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:24px;width:400px;max-width:90vw">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <h3 style="margin:0;font-size:16px;font-weight:800">Новая кампания WB</h3>
+          <button id="ad-dlg-close" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:18px">✕</button>
         </div>
-        <div class="modal__body">
-          <form id="ad-create-form" class="form-vertical">
-            <div class="form-group">
-              <label>Название</label>
-              <input class="form-input" name="name" required placeholder="Название кампании">
-            </div>
-            <div class="form-group">
-              <label>Дневной бюджет (₽)</label>
-              <input class="form-input" type="number" name="budget" min="100" required placeholder="500">
-            </div>
-            <div class="form-group">
-              <label>Тип кампании</label>
-              <select class="form-select" name="type">
-                <option value="8">Автоматическая</option>
-                <option value="6">Поиск</option>
-                <option value="7">Каталог</option>
-              </select>
-            </div>
-          </form>
-        </div>
-        <div class="modal__footer">
-          <button class="btn" id="ad-modal-cancel">Отмена</button>
-          <button class="btn btn-success" id="ad-modal-submit">${I.plus} Создать</button>
-        </div>
-      </div>
-    `;
+        <form id="ad-dlg-form" style="display:flex;flex-direction:column;gap:14px">
+          <div>
+            <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Название</label>
+            <input name="name" required placeholder="Название кампании"
+              style="width:100%;box-sizing:border-box;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Дневной бюджет (₽)</label>
+            <input name="budget" type="number" min="100" required placeholder="500"
+              style="width:100%;box-sizing:border-box;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none">
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Тип кампании</label>
+            <select name="type"
+              style="width:100%;box-sizing:border-box;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none">
+              <option value="8">Автоматическая</option>
+              <option value="6">Поиск</option>
+              <option value="7">Каталог</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+            <button type="button" id="ad-dlg-cancel" class="rpr-btn rpr-btn-ghost">Отмена</button>
+            <button type="submit" class="rpr-btn rpr-btn-green">${I.plus} Создать</button>
+          </div>
+        </form>
+      </div>`;
 
     document.body.appendChild(overlay);
-
     const close = () => overlay.remove();
-    overlay.querySelector('#ad-modal-close')?.addEventListener('click', close);
-    overlay.querySelector('#ad-modal-cancel')?.addEventListener('click', close);
+    overlay.querySelector('#ad-dlg-close')?.addEventListener('click', close);
+    overlay.querySelector('#ad-dlg-cancel')?.addEventListener('click', close);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
-    overlay.querySelector('#ad-modal-submit')?.addEventListener('click', async () => {
-      const form = overlay.querySelector('#ad-create-form') as HTMLFormElement;
-      if (!form.checkValidity()) { form.reportValidity(); return; }
-      const fd = new FormData(form);
+    (overlay.querySelector('#ad-dlg-form') as HTMLFormElement).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target as HTMLFormElement);
       close();
-
       try {
-        const stores = await wbDb.getStores();
-        const store = stores.find(s => s.id === this.storeId)!;
+        const store = this.stores.find(s => s.id === this.storeId) as any;
         await createWbAdCampaign(store.api_key, {
-          name: fd.get('name') as string,
-          subjectId: 0,
-          type: Number(fd.get('type')),
-          nms: [],
+          name:        fd.get('name') as string,
+          subjectId:   0,
+          type:        Number(fd.get('type')),
+          nms:         [],
           dailyBudget: Number(fd.get('budget')) * 100,
         });
         showToast('Кампания создана', 'success');
         await this.loadCampaigns();
-      } catch (err: any) {
-        showToast(`Ошибка: ${err.message}`, 'error');
-      }
+      } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
     });
   }
 
