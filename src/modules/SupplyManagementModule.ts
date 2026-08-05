@@ -201,6 +201,7 @@ export class SupplyManagementModule {
         this.el.querySelectorAll('.an2-tab').forEach(t => {
           t.classList.toggle('active', (t as HTMLElement).dataset.tab === tabVal);
         });
+        this.flush();
         this.loadStores();
         return;
       }

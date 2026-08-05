@@ -51,6 +51,7 @@ export class AdvertisingModule {
   private loading = false;
   private dateFrom: string;
   private dateTo: string;
+  private eventsAC = new AbortController();
 
   constructor(container: HTMLElement) {
     this.el = container;
@@ -221,6 +222,10 @@ export class AdvertisingModule {
   // ── Events ──────────────────────────────────────────────────────────────────
 
   private bindAll(): void {
+    this.eventsAC.abort();
+    this.eventsAC = new AbortController();
+    const { signal } = this.eventsAC;
+
     this.el.addEventListener('click', async (e) => {
       const btn = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
       if (!btn) return;
@@ -242,14 +247,14 @@ export class AdvertisingModule {
 
       if (btn.dataset.action === 'pause')  await this.toggleCampaign(Number(btn.dataset.id), 11 as 11);
       if (btn.dataset.action === 'resume') await this.toggleCampaign(Number(btn.dataset.id), 9 as 9);
-    });
+    }, { signal });
 
     this.el.addEventListener('change', (e) => {
       const t = e.target as HTMLInputElement | HTMLSelectElement;
       if (t.id === 'ad-store') { this.storeId = t.value; this.flush(); }
       if (t.id === 'ad-from')  this.dateFrom = t.value;
       if (t.id === 'ad-to')    this.dateTo   = t.value;
-    });
+    }, { signal });
   }
 
   private flush(): void {
