@@ -76,6 +76,9 @@ export class DocsModule {
   show(): void { this.root.style.display = ''; this.render(); }
   hide(): void { this.flushSave(); this.root.style.display = 'none'; document.getElementById('dx-fill-handle')?.remove(); }
 
+  /** Публичный геттер: id активного документа (для внешних вызовов после aiCreateDoc). */
+  get activeDocId(): string | null { return this.activeId; }
+
   /** Создать новый документ из ассистента (кросс-страничное глобальное действие). */
   aiCreateDoc(type: DocType, title?: string): string {
     this.createDoc(type);
@@ -2900,7 +2903,15 @@ export class DocsModule {
     if (!doc) return fsFocus + 'Нет открытого документа. Пользователь может создать Word или Excel.' + allDocsInfo;
     if (doc.type === 'word') {
       const text = doc.content.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
-      return fsFocus + `Открыт Word-документ «${doc.title}». Текста ~${text.length} симв.\nНачало: "${text.slice(0, 400)}"`;
+      const words = text ? text.split(/\s+/).filter(Boolean).length : 0;
+      const paragraphs = (doc.content.match(/<(p|h[1-6])\b/gi) ?? []).length;
+      const headingMatches = [...doc.content.matchAll(/<(h[1-6])[^>]*>(.*?)<\/h[1-6]>/gi)];
+      const headings = headingMatches
+        .map(m => `  ${m[1].toUpperCase()}: ${m[2].replace(/<[^>]+>/g, '').trim()}`)
+        .slice(0, 10).join('\n');
+      return fsFocus + `Открыт Word-документ «${doc.title}».
+Статистика: ${words} слов, ${text.length} символов, ~${paragraphs} абзацев.${headings ? '\nЗаголовки в документе:\n' + headings : ''}
+Содержимое (первые 1500 симв): "${text.slice(0, 1500)}"${text.length > 1500 ? '\n...(текст обрезан)' : ''}` + allDocsInfo;
     }
     const s = this.aiSheet();
     if (!s) return `Открыт документ «${doc.title}», но лист пуст.`;
@@ -2953,13 +2964,24 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
 
   /** Публичная точка: капабилити текущей страницы редактора для ассистента. */
   getAiCapability(): AiPageCapability {
-    const fsSuggestions = [
+    const isWord = this.aiDoc()?.type === 'word';
+    const fsSuggestions = isWord ? [
+      { label: '📊 Статистика', prompt: 'Посчитай слова и символы в документе' },
+      { label: '🔁 Замена текста', prompt: 'Помоги заменить текст в документе' },
+      { label: '✨ Убрать форматирование', prompt: 'Убери все стили и форматирование из документа' },
+      { label: '✍️ Дополни текст', prompt: 'Предложи продолжение для этого текста' },
+    ] : [
       { label: '🔎 Что в документе?', prompt: 'Проанализируй открытый документ: что за данные, структура, ключевые значения' },
       { label: '✨ Улучшить дизайн', prompt: 'Улучши оформление текущей таблицы' },
       { label: '🔁 Замена текста', prompt: 'Помоги заменить текст в таблице' },
       { label: '📊 Сводка по данным', prompt: 'Дай краткую сводку по данным в открытой таблице' },
     ];
-    const normalSuggestions = [
+    const normalSuggestions = isWord ? [
+      { label: '➕ Новый Word', prompt: 'Создай новый Word-документ' },
+      { label: '📊 Статистика', prompt: 'Посчитай слова и символы в открытом документе' },
+      { label: '🔎 Анализ текста', prompt: 'Проанализируй содержимое документа: о чём он, основные темы' },
+      { label: '🔁 Замена', prompt: 'Помоги заменить текст в документе' },
+    ] : [
       { label: '➕ Новый Excel', prompt: 'Создай новый документ Excel' },
       { label: '✨ Улучшить дизайн', prompt: 'Улучши дизайн текущей таблицы' },
       { label: '🔎 Что в таблице?', prompt: 'Проанализируй открытую таблицу: что за данные, какие колонки' },
@@ -2997,9 +3019,33 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
         },
         {
           name: 'word_replace',
-          description: 'Заменить текст в открытом Word-документе.',
+          description: 'Заменить текст в открытом Word-документе. Используй когда пользователь просит «замени», «поменяй», «исправь» текст в документе.',
           args: '{ find: string, replaceWith: string, caseSensitive?: boolean }',
           run: (a) => this.aiWordReplace(a),
+        },
+        {
+          name: 'word_count',
+          description: 'Подсчитать статистику Word-документа: количество слов, символов, абзацев. Используй когда спрашивают «сколько слов», «статистика документа», «размер текста».',
+          args: '{}',
+          run: () => this.aiWordCount(),
+        },
+        {
+          name: 'word_set_content',
+          description: 'Установить или дополнить содержимое Word-документа. html — готовый HTML-текст. text — обычный текст (будет преобразован в HTML). append — если true, добавить в конец, не заменяя. Используй когда просят «напиши», «заполни», «добавь текст», «вставь содержимое».',
+          args: '{ html?: string, text?: string, append?: boolean }',
+          run: (a) => this.aiWordSetContent(a),
+        },
+        {
+          name: 'word_clear_formatting',
+          description: 'Убрать всё форматирование из Word-документа: стили, цвета, жирность, курсив. Структурные теги (абзацы, заголовки) сохраняются. Используй когда просят «убери форматирование», «сними стили», «сделай обычный текст».',
+          args: '{}',
+          run: () => this.aiWordClearFormatting(),
+        },
+        {
+          name: 'word_heading',
+          description: 'Применить стиль заголовка к абзацу документа. text — текст абзаца, который нужно сделать заголовком (если не указан — первый абзац). level — уровень заголовка 1–6. Используй когда просят «сделай заголовком», «оформи как H1/H2».',
+          args: '{ text?: string, level?: number }',
+          run: (a) => this.aiWordHeading(a),
         },
         {
           name: 'excel_insert_column',
@@ -3377,6 +3423,89 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     });
     this.aiPersist(doc, ec);
     return this.docsResult(doc.id, before, `Дизайн обновлён: выделена строка-заголовок (${accent}), добавлено чередование строк. Затронуто ${sheet.data.length} строк.`, 'Отменить дизайн');
+  }
+
+  /** Публичный метод для прямой записи ячейки Excel по docId (используется в export_analytics_report). */
+  aiExcelCommand(docId: string, _cmd: 'set_cell', args: { row: number; col: number; value: string | number }): void {
+    const doc = this.docs.find(d => d.id === docId);
+    if (!doc || doc.type !== 'excel') return;
+    const ec = this.parseExcelContent(doc.content);
+    const sheet = ec.sheets[0];
+    if (!sheet) return;
+    while (sheet.data.length <= args.row) sheet.data.push([]);
+    const row = sheet.data[args.row];
+    while (row.length <= args.col) row.push({ v: '' });
+    row[args.col] = { v: String(args.value ?? '') };
+    this.updateContent(docId, JSON.stringify(ec));
+    if (this.root.style.display !== 'none') this.render();
+  }
+
+  private aiWordCount(): AiActionResult {
+    const doc = this.aiDoc();
+    if (!doc || doc.type !== 'word') throw new Error('Сейчас открыт не Word-документ');
+    const text = doc.content.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    const words = text ? text.split(/\s+/).filter(Boolean).length : 0;
+    const chars = text.length;
+    const charsNoSpace = text.replace(/\s/g, '').length;
+    const paragraphs = (doc.content.match(/<(p|h[1-6])\b/gi) ?? []).length;
+    return { summary: `📊 «${doc.title}»: **${words} слов**, ${chars} символов (без пробелов: ${charsNoSpace}), ~${paragraphs} абзацев.` };
+  }
+
+  private aiWordSetContent(a: { html?: string; text?: string; append?: boolean }): AiActionResult {
+    const doc = this.aiDoc();
+    if (!doc || doc.type !== 'word') throw new Error('Сейчас открыт не Word-документ');
+    const before = doc.content;
+    let html = (a?.html ?? '').trim();
+    if (!html && a?.text) {
+      html = a.text.split(/\n\n+/).map(p => `<p>${this.esc(p.trim()).replace(/\n/g, '<br>')}</p>`).join('');
+    }
+    if (!html) throw new Error('Не указано содержимое (html или text)');
+    const result = a?.append ? before + html : html;
+    this.updateContent(doc.id, result);
+    this.render();
+    const wordCount = result.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length;
+    return this.docsResult(doc.id, before, `Документ обновлён (~${wordCount} слов).`, 'Отменить изменение содержимого');
+  }
+
+  private aiWordClearFormatting(): AiActionResult {
+    const doc = this.aiDoc();
+    if (!doc || doc.type !== 'word') throw new Error('Сейчас открыт не Word-документ');
+    const before = doc.content;
+    const result = doc.content
+      .replace(/ style="[^"]*"/gi, '')
+      .replace(/ color="[^"]*"/gi, '')
+      .replace(/ face="[^"]*"/gi, '')
+      .replace(/ size="[^"]*"/gi, '')
+      .replace(/<\/?(font|span)\b[^>]*>/gi, '')
+      .replace(/<(strong|b)>([\s\S]*?)<\/\1>/gi, '$2')
+      .replace(/<(em|i)>([\s\S]*?)<\/\1>/gi, '$2')
+      .replace(/<u>([\s\S]*?)<\/u>/gi, '$1')
+      .replace(/<(s|strike)>([\s\S]*?)<\/\1>/gi, '$2')
+      .replace(/<mark>([\s\S]*?)<\/mark>/gi, '$1');
+    this.updateContent(doc.id, result);
+    this.render();
+    return this.docsResult(doc.id, before, 'Форматирование очищено: убраны стили, цвета, жирность, курсив.', 'Отменить очистку форматирования');
+  }
+
+  private aiWordHeading(a: { text?: string; level?: number }): AiActionResult {
+    const doc = this.aiDoc();
+    if (!doc || doc.type !== 'word') throw new Error('Сейчас открыт не Word-документ');
+    const before = doc.content;
+    const level = Math.min(Math.max(a?.level ?? 1, 1), 6);
+    const tag = `h${level}`;
+    let result = doc.content;
+    let count = 0;
+    if (a?.text) {
+      const re = new RegExp(`<p([^>]*)>([^<]*${this.escRe(a.text)}[^<]*)<\/p>`, 'gi');
+      result = result.replace(re, (_m, attrs, inner) => { count++; return `<${tag}${attrs}>${inner}</${tag}>`; });
+      if (!count) throw new Error(`Абзац с текстом «${a.text}» не найден`);
+    } else {
+      result = result.replace(/<p([^>]*)>([\s\S]*?)<\/p>/i, (_m, attrs, inner) => { count++; return `<${tag}${attrs}>${inner}</${tag}>`; });
+      if (!count) throw new Error('Нет абзацев для преобразования в заголовок');
+    }
+    this.updateContent(doc.id, result);
+    this.render();
+    return this.docsResult(doc.id, before, `Применён «Заголовок ${level}» к ${count} абзацу(-ам).`, 'Отменить заголовок');
   }
 
   private aiWordReplace(a: { find: string; replaceWith: string; caseSensitive?: boolean }): AiActionResult {

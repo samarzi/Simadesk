@@ -196,6 +196,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  // Sima element picker result — forward to popup
+  if (msg.type === 'sima-pick-result') {
+    broadcastToPopup({ type: 'sima-pick-result', text: msg.text, tag: msg.tag });
+    return;
+  }
+
+  // SimaDesk key + quota sync from bridge
+  if (msg.type === 'sima-sync') {
+    const updates = {};
+    if (msg.ai_key)     updates.sima_ai_key   = msg.ai_key;
+    if (msg.used_today !== undefined) updates.sima_used_today = msg.used_today;
+    if (msg.boost !== undefined)      updates.sima_boost      = msg.boost;
+    if (Object.keys(updates).length) {
+      chrome.storage.local.set(updates);
+      broadcastToPopup({ type: 'sima-sync', ...updates });
+    }
+    return;
+  }
+
   // Статус от content scripts
   if (msg.type === 'status') {
     const tabId = sender.tab?.id;

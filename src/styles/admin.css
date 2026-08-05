@@ -1,8 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   SimaDesk — Admin Panel (v3)
-   Полностью переработанная панель: боковая навигация со сворачиванием,
-   командная палитра (Ctrl+K), липкий заголовок, единый визуальный язык.
-   Использует токены из main.css → автоматически поддерживает обе темы.
+   SimaDesk — Admin Panel (v4, минимальная)
+   Плоский список из 7 разделов, без сворачивания, без командной палитры —
+   просто клик по пункту. Использует токены из main.css → обе темы бесплатно.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 #admin-section {
@@ -13,8 +12,7 @@
 
 .ap {
   /* Локальные токены панели — производные от глобальной темы */
-  --ap-rail: 246px;
-  --ap-rail-min: 66px;
+  --ap-rail: 224px;
   --ap-surface: var(--bg);
   --ap-panel: var(--bg2);
   --ap-raised: var(--bg3);
@@ -76,11 +74,9 @@ html.light .ap {
   flex-direction: column;
   background: var(--ap-panel);
   border-right: 1px solid var(--ap-line);
-  transition: width .18s cubic-bezier(.4,0,.2,1);
   position: relative;
   z-index: 5;
 }
-.ap.is-collapsed .ap-rail { width: var(--ap-rail-min); }
 
 /* Бренд */
 .ap-brand {
@@ -97,7 +93,6 @@ html.light .ap {
   display: flex; align-items: center; justify-content: center;
   background: var(--accent);
   color: #0a0a0a;
-  box-shadow: 0 2px 10px var(--accent-dim);
 }
 .ap-brand-text { min-width: 0; overflow: hidden; }
 .ap-brand-title {
@@ -108,72 +103,25 @@ html.light .ap {
   font-size: 10.5px; font-weight: 600; color: var(--text3);
   text-transform: uppercase; letter-spacing: .7px; white-space: nowrap;
 }
-.ap.is-collapsed .ap-brand { padding: 16px 0 14px; justify-content: center; }
-.ap.is-collapsed .ap-brand-text { display: none; }
 
-/* Кнопка поиска / командная палитра */
-.ap-cmd-trigger {
-  margin: 0 12px 12px;
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px;
-  background: var(--ap-surface);
-  border: 1px solid var(--ap-line-strong);
-  border-radius: var(--ap-radius-sm);
-  color: var(--text3);
-  font: inherit; font-size: 12.5px;
-  cursor: pointer;
-  transition: border-color .14s, color .14s, background .14s;
-}
-.ap-cmd-trigger:hover { border-color: var(--accent); color: var(--text2); }
-.ap-cmd-trigger span { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; }
-.ap-kbd {
-  font-size: 10px; font-weight: 700; letter-spacing: .3px;
-  padding: 2px 5px; border-radius: 5px;
-  background: var(--ap-raised); border: 1px solid var(--ap-line);
-  color: var(--text3); white-space: nowrap;
-}
-.ap.is-collapsed .ap-cmd-trigger { margin: 0 12px 12px; padding: 8px 0; justify-content: center; }
-.ap.is-collapsed .ap-cmd-trigger span,
-.ap.is-collapsed .ap-cmd-trigger .ap-kbd { display: none; }
-
-/* Навигация */
+/* Навигация — плоский список, без групп и подсказок */
 .ap-nav {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 2px 12px 12px;
+  padding: 6px 12px 12px;
   display: flex; flex-direction: column; gap: 1px;
 }
-.ap-nav-group {
-  font-size: 10px; font-weight: 700; letter-spacing: .8px;
-  text-transform: uppercase; color: var(--text3);
-  padding: 11px 10px 4px;
-  white-space: nowrap;
-}
-.ap.is-collapsed .ap-nav-group {
-  padding: 12px 0 6px;
-  text-align: center;
-  font-size: 0;
-}
-.ap.is-collapsed .ap-nav-group::after {
-  content: '';
-  display: block;
-  height: 1px;
-  background: var(--ap-line);
-  margin: 0 12px;
-}
-
 .ap-nav-item {
   display: flex; align-items: center; gap: 10px;
   width: 100%;
-  padding: 7px 10px;
+  padding: 8px 10px;
   border: none; background: none;
   border-radius: var(--ap-radius-sm);
   color: var(--text2);
   font: inherit; font-size: 13px; font-weight: 500;
   cursor: pointer;
   text-align: left;
-  position: relative;
   transition: background .13s, color .13s;
 }
 .ap-nav-item > span:first-of-type {
@@ -186,15 +134,8 @@ html.light .ap {
   color: var(--accent-text);
   font-weight: 650;
 }
-.ap-nav-item.active::before {
-  content: '';
-  position: absolute; left: -12px; top: 50%;
-  transform: translateY(-50%);
-  width: 3px; height: 20px;
-  border-radius: 0 3px 3px 0;
-  background: var(--accent);
-}
 .ap-nav-badge {
+  flex: 0 0 auto;
   font-size: 10.5px; font-weight: 700;
   min-width: 19px; height: 19px; padding: 0 6px;
   border-radius: 20px;
@@ -202,36 +143,7 @@ html.light .ap {
   background: var(--ap-raised); color: var(--text2);
   border: 1px solid var(--ap-line);
 }
-.ap-nav-badge.hot { background: var(--ap-amber); color: #1a1200; border-color: transparent; }
-.ap-nav-hint {
-  font-size: 10px; font-weight: 700; color: var(--text4);
-  letter-spacing: .3px;
-}
-.ap-nav-item.active .ap-nav-hint { color: var(--accent-text); opacity: .7; }
-
-.ap.is-collapsed .ap-nav { padding: 2px 12px 12px; }
-.ap.is-collapsed .ap-nav-item { justify-content: center; padding: 9px 0; }
-.ap.is-collapsed .ap-nav-item > span:first-of-type,
-.ap.is-collapsed .ap-nav-hint { display: none; }
-.ap.is-collapsed .ap-nav-badge {
-  position: absolute; top: 3px; right: 3px;
-  min-width: 15px; height: 15px; padding: 0 3px; font-size: 9px;
-}
-/* Тултип для свёрнутого режима */
-.ap.is-collapsed .ap-nav-item::after {
-  content: attr(data-label);
-  position: absolute; left: calc(100% + 12px); top: 50%;
-  transform: translateY(-50%);
-  padding: 5px 10px; border-radius: 7px;
-  background: var(--ap-raised); color: var(--text);
-  border: 1px solid var(--ap-line-strong);
-  box-shadow: var(--ap-shadow-md);
-  font-size: 12px; font-weight: 600; white-space: nowrap;
-  opacity: 0; pointer-events: none;
-  transition: opacity .12s;
-  z-index: 40;
-}
-.ap.is-collapsed .ap-nav-item:hover::after { opacity: 1; }
+.ap-nav-item.active .ap-nav-badge { background: var(--ap-surface); }
 
 /* Подвал рейла */
 .ap-rail-foot {
@@ -256,12 +168,9 @@ html.light .ap {
   font-size: 10.5px; font-weight: 700; letter-spacing: .3px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.ap.is-collapsed .ap-identity { justify-content: center; padding: 7px 0; }
-.ap.is-collapsed .ap-identity-body { display: none; }
 
-.ap-foot-btns { display: flex; gap: 6px; }
 .ap-foot-btn {
-  flex: 1;
+  width: 100%;
   display: flex; align-items: center; justify-content: center; gap: 7px;
   padding: 8px 10px;
   background: var(--ap-surface);
@@ -273,10 +182,6 @@ html.light .ap {
   transition: background .13s, color .13s, border-color .13s;
 }
 .ap-foot-btn:hover { background: var(--hover); color: var(--text); border-color: var(--border3); }
-.ap-foot-btn.icon-only { flex: 0 0 36px; padding: 8px 0; }
-.ap.is-collapsed .ap-foot-btns { flex-direction: column; }
-.ap.is-collapsed .ap-foot-btn span { display: none; }
-.ap.is-collapsed .ap-foot-btn.icon-only { flex: 1; }
 
 /* ═══════════════════════════════════  MAIN  ═══════════════════════════════ */
 
@@ -293,18 +198,10 @@ html.light .ap {
   display: flex; align-items: center; gap: 16px;
   padding: 14px 26px;
   min-height: 68px;
-  background: color-mix(in srgb, var(--ap-surface) 88%, transparent);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: var(--ap-surface);
   border-bottom: 1px solid var(--ap-line);
   position: sticky; top: 0; z-index: 8;
 }
-.ap-crumb {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11px; font-weight: 650; color: var(--text3);
-  letter-spacing: .2px; margin-bottom: 3px;
-}
-.ap-crumb svg { opacity: .55; }
 .ap-topbar h1 {
   margin: 0;
   font-size: 20px; font-weight: 700; letter-spacing: -.4px;
@@ -626,14 +523,6 @@ html.light .ap {
   border: 1px solid var(--ap-line);
   border-radius: var(--ap-radius);
   padding: 16px 18px;
-  position: relative;
-  overflow: hidden;
-  transition: border-color .15s, transform .15s;
-}
-.ap-kpi:hover { border-color: var(--ap-line-strong); transform: translateY(-1px); }
-.ap-kpi::after {
-  content: ''; position: absolute; inset: 0 0 auto 0; height: 2px;
-  background: var(--kpi-color, var(--accent)); opacity: .85;
 }
 .ap-kpi-top { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
 .ap-kpi-icon {
@@ -681,9 +570,9 @@ html.light .ap {
   color: var(--text);
   font: inherit; font-size: 13px; font-weight: 600;
   cursor: pointer; text-align: left;
-  transition: background .13s, border-color .13s, transform .1s;
+  transition: background .13s, border-color .13s;
 }
-.ap-quick:hover { background: var(--hover); border-color: var(--accent); transform: translateX(2px); }
+.ap-quick:hover { background: var(--hover); border-color: var(--accent); }
 .ap-quick > span:first-of-type { flex: 1; }
 .ap-quick .ap-nav-badge { flex: 0 0 auto; }
 .ap-quick svg:first-child { color: var(--text3); }
@@ -815,6 +704,14 @@ html.light .ap-api-tag.ya { color: #cc2626; }
 
 .ap-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
 .ap-settings .ap-wide { grid-column: 1 / -1; }
+.ap-settings-divider {
+  grid-column: 1 / -1;
+  font-size: 12px; font-weight: 700; color: var(--text3);
+  text-transform: uppercase; letter-spacing: .7px;
+  margin: 10px 0 -4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ap-line);
+}
 
 .ap-link-row {
   display: flex; align-items: center; gap: 10px;
@@ -1080,9 +977,9 @@ html.light .ap-api-tag.ya { color: #cc2626; }
   border-radius: var(--ap-radius-sm);
   padding: 13px 14px;
   display: flex; flex-direction: column; gap: 8px;
-  transition: border-color .14s, transform .14s, box-shadow .14s;
+  transition: border-color .14s;
 }
-.ap-task:hover { border-color: var(--ap-line-strong); transform: translateY(-1px); box-shadow: var(--ap-shadow-sm); }
+.ap-task:hover { border-color: var(--ap-line-strong); }
 .ap-task-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ap-task-quad {
   font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .5px;
@@ -1100,74 +997,6 @@ html.light .ap-api-tag.ya { color: #cc2626; }
   padding: 24px 14px; text-align: center;
   color: var(--text3); font-size: 12px;
 }
-
-/* ═══════════════════════════  КОМАНДНАЯ ПАЛИТРА  ═════════════════════════ */
-
-.ap-cmd-overlay {
-  position: fixed; inset: 0;
-  z-index: 9500;
-  background: rgba(0,0,0,.5);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  display: flex; justify-content: center;
-  padding-top: 12vh;
-  animation: ap-fade .12s ease-out;
-}
-html.light .ap-cmd-overlay { background: rgba(30,28,24,.32); }
-@keyframes ap-fade { from { opacity: 0 } to { opacity: 1 } }
-.ap-cmd-panel {
-  width: min(560px, 92vw);
-  max-height: 62vh;
-  display: flex; flex-direction: column;
-  background: var(--bg2);
-  border: 1px solid var(--border2);
-  border-radius: 16px;
-  box-shadow: 0 28px 70px rgba(0,0,0,.5);
-  overflow: hidden;
-  animation: ap-rise .15s cubic-bezier(.2,.9,.3,1);
-}
-@keyframes ap-rise { from { opacity: 0; transform: translateY(-10px) scale(.985) } to { opacity: 1; transform: none } }
-.ap-cmd-search {
-  display: flex; align-items: center; gap: 11px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
-}
-.ap-cmd-search svg { color: var(--text3); }
-.ap-cmd-search input {
-  flex: 1; border: none; background: none; outline: none;
-  color: var(--text); font: inherit; font-size: 15px;
-}
-.ap-cmd-search input::placeholder { color: var(--text3); }
-.ap-cmd-list { flex: 1; overflow-y: auto; padding: 6px; }
-.ap-cmd-group {
-  font-size: 10px; font-weight: 700; letter-spacing: .8px;
-  text-transform: uppercase; color: var(--text3);
-  padding: 10px 12px 5px;
-}
-.ap-cmd-item {
-  display: flex; align-items: center; gap: 11px;
-  padding: 9px 12px;
-  border-radius: 9px;
-  cursor: pointer;
-  color: var(--text2);
-}
-.ap-cmd-item svg { color: var(--text3); }
-.ap-cmd-item.sel { background: var(--accent-dim); color: var(--accent-text); }
-.ap-cmd-item.sel svg { color: var(--accent-text); }
-.ap-cmd-item-body { flex: 1; min-width: 0; }
-.ap-cmd-item-title { font-size: 13.5px; font-weight: 650; color: var(--text); }
-.ap-cmd-item.sel .ap-cmd-item-title { color: var(--accent-text); }
-.ap-cmd-item-desc {
-  font-size: 11.5px; color: var(--text3); margin-top: 1px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.ap-cmd-foot {
-  display: flex; align-items: center; gap: 14px;
-  padding: 9px 18px;
-  border-top: 1px solid var(--border);
-  font-size: 11px; color: var(--text3);
-}
-.ap-cmd-foot span { display: inline-flex; align-items: center; gap: 5px; }
 
 /* ═══════════════════════════════  СКЕЛЕТОН  ══════════════════════════════ */
 
@@ -1196,12 +1025,10 @@ html.light .ap-cmd-overlay { background: rgba(30,28,24,.32); }
   .ap-span-2 { grid-column: auto; }
 }
 @media (max-width: 1000px) {
-  .ap-rail { width: var(--ap-rail-min); }
+  .ap-rail { width: 70px; }
   .ap-rail .ap-brand-text,
-  .ap-rail .ap-cmd-trigger span,
-  .ap-rail .ap-cmd-trigger .ap-kbd,
-  .ap-rail .ap-nav-item > span:first-of-type,
-  .ap-rail .ap-nav-hint,
+  .ap-rail .ap-nav-item > span,
+  .ap-rail .ap-nav-badge,
   .ap-rail .ap-identity-body,
   .ap-rail .ap-foot-btn span { display: none; }
   .ap-rail .ap-nav-item, .ap-rail .ap-brand, .ap-rail .ap-identity { justify-content: center; }

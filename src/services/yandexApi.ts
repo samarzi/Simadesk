@@ -718,6 +718,205 @@ export const yandexApi = {
       'POST', apiKey, { message: { text } }, signal, 1,
     );
   },
+
+  /**
+   * PUT /v2/campaigns/{campaignId}/offers/stocks — обновление остатков ЯМ.
+   */
+  async updateStocks(
+    apiKey: string,
+    campaignId: number,
+    skus: Array<{ sku: string; warehouseId: number; items: Array<{ count: number; type: string; updatedAt: string }> }>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const res = await fetch(`${PROXY}/v2/campaigns/${campaignId}/offers/stocks`, {
+      method: 'PUT',
+      headers: {
+        'Api-Key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ skus }),
+      signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`YM stocks update ${res.status}: ${text.slice(0, 200)}`);
+    }
+  },
+
+  /**
+   * POST /v2/businesses/{businessId}/offer-mappings/create — создание товаров.
+   */
+  async createOffers(
+    apiKey: string,
+    businessId: number,
+    offers: Array<{
+      offerId: string;
+      name: string;
+      categoryId: number;
+      pictures?: string[];
+      vendor?: string;
+      description?: string;
+      barcodes?: string[];
+      weightDimensions?: { length: number; width: number; height: number; weight: number };
+    }>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await yandexFetch(
+      `/v2/businesses/${businessId}/offer-mappings/create`,
+      'POST', apiKey,
+      { offerMappings: offers.map(o => ({ offer: o })) },
+      signal,
+    );
+  },
+
+  /**
+   * POST /v2/businesses/{businessId}/offers/delete — удаление товаров.
+   */
+  async deleteOffers(
+    apiKey: string,
+    businessId: number,
+    offerIds: string[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await yandexFetch(
+      `/v2/businesses/${businessId}/offers/delete`,
+      'POST', apiKey, { offerIds }, signal,
+    );
+  },
+
+  /**
+   * GET /v2/category/tree — дерево категорий ЯМ.
+   */
+  async getCategoryTree(apiKey: string, signal?: AbortSignal): Promise<any[]> {
+    const resp = await yandexFetch<any>('/v2/category/tree', 'GET', apiKey, undefined, signal);
+    return resp.result?.categories ?? [];
+  },
+
+  /**
+   * GET /v2/category/{categoryId}/parameters — параметры категории.
+   */
+  async getCategoryParameters(
+    apiKey: string,
+    categoryId: number,
+    signal?: AbortSignal,
+  ): Promise<any[]> {
+    const resp = await yandexFetch<any>(
+      `/v2/category/${categoryId}/parameters`,
+      'GET', apiKey, undefined, signal,
+    );
+    return resp.result?.parameters ?? [];
+  },
+
+  /**
+   * POST /v2/businesses/{businessId}/offer-mappings/suggestions — автоподбор категории.
+   */
+  async suggestCategory(
+    apiKey: string,
+    businessId: number,
+    offerName: string,
+    signal?: AbortSignal,
+  ): Promise<number | null> {
+    const resp = await yandexFetch<any>(
+      `/v2/businesses/${businessId}/offer-mappings/suggestions`,
+      'POST', apiKey, { offers: [{ name: offerName }] }, signal,
+    );
+    const suggestions = resp.result?.offers?.[0]?.categoryId;
+    return suggestions ?? null;
+  },
+
+  /**
+   * POST /v2/campaigns/{campaignId}/stats/skus — статистика по товарам (клики, показы).
+   */
+  async getSkuStats(
+    apiKey: string,
+    campaignId: number,
+    dateFrom: string, // YYYY-MM-DD
+    dateTo: string,
+    signal?: AbortSignal,
+  ): Promise<any[]> {
+    const resp = await yandexFetch<any>(
+      `/v2/campaigns/${campaignId}/stats/skus`,
+      'POST', apiKey,
+      { dateFrom, dateTo, metrics: ['CLICKS', 'SHOWS', 'ORDERS', 'CTR'] },
+      signal,
+    );
+    return resp.result?.shopSkus ?? [];
+  },
+
+  /**
+   * POST /v2/campaigns/{campaignId}/shipments — создание поставки FBY.
+   */
+  async createShipment(
+    apiKey: string,
+    campaignId: number,
+    shipment: {
+      externalId?: string;
+      planIntervalFrom: string; // YYYY-MM-DD
+      planIntervalTo: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<{ id: number }> {
+    const resp = await yandexFetch<any>(
+      `/v2/campaigns/${campaignId}/shipments`,
+      'POST', apiKey, shipment, signal,
+    );
+    return { id: resp.result?.id ?? 0 };
+  },
+
+  /**
+   * PUT /v2/campaigns/{campaignId}/shipments/{shipmentId}/confirm — подтверждение поставки.
+   */
+  async confirmShipment(
+    apiKey: string,
+    campaignId: number,
+    shipmentId: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const res = await fetch(`${PROXY}/v2/campaigns/${campaignId}/shipments/${shipmentId}/confirm`, {
+      method: 'PUT',
+      headers: { 'Api-Key': apiKey, 'Content-Type': 'application/json' },
+      signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`YM shipment confirm ${res.status}: ${text.slice(0, 200)}`);
+    }
+  },
+
+  /**
+   * POST /v2/campaigns/{campaignId}/orders/{orderId}/return — оформление возврата.
+   */
+  async processReturn(
+    apiKey: string,
+    campaignId: number,
+    orderId: number,
+    returnItems: Array<{ itemId: number; count: number; reasonType: string }>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await yandexFetch(
+      `/v2/campaigns/${campaignId}/orders/${orderId}/return`,
+      'POST', apiKey, { returnItems }, signal,
+    );
+  },
+};
+
+export interface YandexChat {
+  chatId: string;
+  topic: string;
+  orderId?: string;
+  lastMessageText: string;
+  lastMessageTime: string;
+  unreadCount: number;
+}
+
+export interface YandexChatMessage {
+  messageId: string;
+  text: string;
+  attachments?: { name: string; url: string }[];
+  fromSeller: boolean;
+  isSystem?: boolean;
+  senderLabel?: string;
+  createdAt: string;
 };
 
 export interface YandexChat {
@@ -935,4 +1134,238 @@ export async function updateYandexFbsStock(
     const text = await res.text().catch(() => '');
     throw new Error(`Yandex stocks ${res.status}: ${text.slice(0, 200)}`);
   }
+}
+
+// ── Analytics (Аналитика) ──────────────────────────────────────────────────
+
+/**
+ * Статистика по товарам Яндекс.Маркет.
+ * POST /v2/campaigns/{campaignId}/stats/skus
+ */
+export async function getYandexSkuStats(
+  store: YandexStore,
+  params: {
+    dateFrom: string;
+    dateTo: string;
+    offerIds?: string[];
+  },
+): Promise<any[]> {
+  if (!store.campaign_id) throw new Error('campaign_id не задан');
+  const res = await fetch(`/yandex-api/v2/campaigns/${store.campaign_id}/stats/skus`, {
+    method: 'POST',
+    headers: {
+      'Api-Key': store.api_key,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({
+      dateFrom: params.dateFrom,
+      dateTo: params.dateTo,
+      shopSkus: params.offerIds?.map(id => ({ shopSku: id })),
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Yandex stats ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data?.result?.shopSkus ?? data?.shopSkus ?? [];
+}
+
+/**
+ * Общая статистика магазина.
+ * GET /v2/campaigns/{campaignId}/stats/main
+ */
+export async function getYandexShopStats(
+  store: YandexStore,
+  dateFrom: string,
+  dateTo: string,
+): Promise<any> {
+  if (!store.campaign_id) throw new Error('campaign_id не задан');
+  const res = await fetch(
+    `/yandex-api/v2/campaigns/${store.campaign_id}/stats/main?dateFrom=${dateFrom}&dateTo=${dateTo}`,
+    {
+      method: 'GET',
+      headers: {
+        'Api-Key': store.api_key,
+        'Accept': 'application/json',
+      },
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Yandex shop stats ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data?.result ?? data;
+}
+
+// ── Shipments (Поставки FBY) ───────────────────────────────────────────────
+
+/**
+ * Создать отгрузку (поставку) Яндекс.Маркет.
+ * POST /v2/campaigns/{campaignId}/shipments
+ */
+export async function createYandexShipment(
+  store: YandexStore,
+  orderIds: number[],
+): Promise<{ shipmentId: number }> {
+  if (!store.campaign_id) throw new Error('campaign_id не задан');
+  const res = await fetch(`/yandex-api/v2/campaigns/${store.campaign_id}/shipments`, {
+    method: 'POST',
+    headers: {
+      'Api-Key': store.api_key,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({ orderIds }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Yandex shipment ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return { shipmentId: data?.result?.id ?? data?.id ?? 0 };
+}
+
+/**
+ * Подтвердить отгрузку.
+ * POST /v2/campaigns/{campaignId}/shipments/{shipmentId}/confirm
+ */
+export async function confirmYandexShipment(
+  store: YandexStore,
+  shipmentId: number,
+): Promise<void> {
+  if (!store.campaign_id) throw new Error('campaign_id не задан');
+  const res = await fetch(
+    `/yandex-api/v2/campaigns/${store.campaign_id}/shipments/${shipmentId}/confirm`,
+    {
+      method: 'POST',
+      headers: {
+        'Api-Key': store.api_key,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Yandex shipment confirm ${res.status}: ${text.slice(0, 200)}`);
+  }
+}
+
+/**
+ * Получить этикетки для отгрузки (PDF).
+ * GET /v2/campaigns/{campaignId}/shipments/{shipmentId}/documents/labels
+ */
+export async function getYandexShipmentLabels(
+  store: YandexStore,
+  shipmentId: number,
+): Promise<Blob> {
+  if (!store.campaign_id) throw new Error('campaign_id не задан');
+  const res = await fetch(
+    `/yandex-api/v2/campaigns/${store.campaign_id}/shipments/${shipmentId}/documents/labels`,
+    {
+      method: 'GET',
+      headers: {
+        'Api-Key': store.api_key,
+        'Accept': 'application/pdf',
+      },
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Yandex labels ${res.status}: ${text.slice(0, 200)}`);
+  }
+  return res.blob();
+}
+
+// ── Returns (Возвраты) ─────────────────────────────────────────────────────
+
+/**
+ * Получить возвраты Яндекс.Маркет.
+ * POST /v2/campaigns/{campaignId}/orders/returns
+ */
+export async function getYandexReturns(
+  store: YandexStore,
+  params: {
+    dateFrom?: string;
+    dateTo?: string;
+    status?: string[];
+  } = {},
+): Promise<any[]> {
+  if (!store.campaign_id) throw new Error('campaign_id не задан');
+  const res = await fetch(`/yandex-api/v2/campaigns/${store.campaign_id}/orders/returns`, {
+    method: 'POST',
+    headers: {
+      'Api-Key': store.api_key,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({
+      dateFrom: params.dateFrom,
+      dateTo: params.dateTo,
+      statuses: params.status,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Yandex returns ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data?.result?.returns ?? data?.returns ?? [];
+}
+
+/**
+ * Обработать возврат.
+ * POST /v2/campaigns/{campaignId}/orders/{orderId}/return/{returnId}/decision
+ */
+export async function processYandexReturn(
+  store: YandexStore,
+  orderId: number,
+  returnId: number,
+  decision: 'REFUND_MONEY' | 'REFUND_WITH_BONUSES' | 'UNREDEEMED',
+): Promise<void> {
+  if (!store.campaign_id) throw new Error('campaign_id не задан');
+  const res = await fetch(
+    `/yandex-api/v2/campaigns/${store.campaign_id}/orders/${orderId}/return/${returnId}/decision`,
+    {
+      method: 'POST',
+      headers: {
+        'Api-Key': store.api_key,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({ decision }),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Yandex return decision ${res.status}: ${text.slice(0, 200)}`);
+  }
+}
+
+// ── Promotions (Акции и продвижение) ───────────────────────────────────────
+
+/**
+ * Получить список доступных акций Яндекс.Маркет.
+ * GET /v2/businesses/{businessId}/promos
+ */
+export async function getYandexPromos(
+  store: YandexStore,
+  businessId: number,
+): Promise<any[]> {
+  const res = await fetch(`/yandex-api/v2/businesses/${businessId}/promos`, {
+    method: 'GET',
+    headers: {
+      'Api-Key': store.api_key,
+      'Accept': 'application/json',
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Yandex promos ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data?.result?.promos ?? data?.promos ?? [];
 }

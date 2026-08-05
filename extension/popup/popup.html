@@ -5,236 +5,733 @@
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body {
-  width: 420px;
-  max-height: 580px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: #0f0f13;
-  color: #e4e4e7;
+  width: 400px;
+  height: 600px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+  background: #09090b;
+  color: #fafafa;
   font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.header {
-  padding: 12px 16px;
+
+/* ── Header ─────────────────────────────────────────── */
+.hdr {
   display: flex;
   align-items: center;
-  gap: 10px;
-  border-bottom: 1px solid #27272a;
+  justify-content: space-between;
+  padding: 12px 16px 11px;
+  flex-shrink: 0;
 }
-.header-icon {
+.hdr-brand { display: flex; align-items: center; gap: 9px; }
+.hdr-logo {
   width: 28px; height: 28px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);
   display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 14px rgba(99,102,241,.45);
+  flex-shrink: 0;
 }
-.header-icon svg { width: 16px; height: 16px; stroke: #fff; fill: none; stroke-width: 2; }
-.header h1 { font-size: 13px; font-weight: 700; }
-.header small { font-size: 10px; color: #71717a; }
+.hdr-logo svg { width: 14px; height: 14px; stroke: #fff; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.hdr-name { font-size: 12.5px; font-weight: 700; letter-spacing: -.01em; }
+.hdr-ver  { font-size: 9px; color: #3f3f46; font-weight: 500; margin-top: 1px; }
 
-.tabs {
+/* Pill tab switcher */
+.tab-sw {
   display: flex;
-  border-bottom: 1px solid #27272a;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
 }
-.tab-btn {
+.tab-pill {
   flex: 1;
-  padding: 8px 4px;
+  padding: 5px 14px;
   border: none;
   background: none;
-  color: #71717a;
+  color: #52525b;
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: all .2s;
+  border-radius: 7px;
+  transition: all .18s;
+  font-family: inherit;
+  white-space: nowrap;
 }
-.tab-btn.active { color: #a78bfa; border-bottom-color: #a78bfa; }
-.tab-btn:hover { color: #e4e4e7; }
+.tab-pill.active {
+  background: linear-gradient(135deg, #6366f1, #7c3aed);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(99,102,241,.4);
+}
+.tab-pill:not(.active):hover { color: #a1a1aa; background: #27272a; }
 
-.task-panel { display: none; flex-direction: column; flex: 1; overflow: hidden; }
-.task-panel.active { display: flex; }
+.hdr-divider { height: 1px; background: #18181b; flex-shrink: 0; }
 
-.task-header {
-  padding: 8px 12px;
+/* ── Panels ──────────────────────────────────────────── */
+.panel { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.panel.active { display: flex; }
+
+/* ══════════════════════════════════════════════════════
+   SIMA PANEL
+══════════════════════════════════════════════════════ */
+/* Context bar */
+.ctx-bar {
   display: flex;
   align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  background: #0d0d12;
+  border-bottom: 1px solid #18181b;
+  font-size: 10.5px;
+  color: #71717a;
+  flex-shrink: 0;
+}
+.ctx-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #3f3f46;
+  flex-shrink: 0;
+  transition: background .3s;
+}
+.ctx-dot.live { background: #22c55e; animation: blink 2s infinite; }
+.ctx-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #a1a1aa; }
+.ctx-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(99,102,241,.12);
+  color: #818cf8;
+  border: 1px solid rgba(99,102,241,.2);
+  text-transform: uppercase;
+}
+
+/* Messages */
+.sima-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: #27272a transparent;
+}
+
+.sima-welcome {
+  margin: auto 0;
+  padding: 8px 0 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
   gap: 6px;
-  border-bottom: 1px solid #27272a;
-  min-height: 40px;
+}
+.sima-ava {
+  width: 46px; height: 46px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #1e1b4b, #312e81);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  border: 1px solid rgba(99,102,241,.25);
+  margin-bottom: 2px;
+}
+.sima-welcome h3 { font-size: 13.5px; font-weight: 700; color: #e4e4e7; }
+.sima-welcome p  { font-size: 11px; color: #52525b; line-height: 1.55; max-width: 264px; }
+.hints-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  margin-top: 6px;
+}
+.hint {
+  font-size: 10.5px;
+  color: #52525b;
+  background: #111116;
+  border: 1px solid #1f1f27;
+  border-radius: 8px;
+  padding: 7px 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: all .15s;
+  line-height: 1.4;
+}
+.hint:hover { border-color: rgba(99,102,241,.4); color: #a5b4fc; background: rgba(99,102,241,.05); }
+
+.sima-msg {
+  max-width: 90%;
+  padding: 8px 11px;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: msg-in .15s ease;
+}
+.sima-msg.user {
+  align-self: flex-end;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+  box-shadow: 0 2px 10px rgba(99,102,241,.3);
+}
+.sima-msg.assistant {
+  align-self: flex-start;
+  background: #18181b;
+  color: #e4e4e7;
+  border: 1px solid #27272a;
+  border-bottom-left-radius: 4px;
+}
+.sima-msg.error {
+  align-self: flex-start;
+  background: rgba(239,68,68,.07);
+  color: #f87171;
+  border: 1px solid rgba(239,68,68,.2);
+  font-size: 11px;
+}
+.sima-snippet {
+  align-self: flex-start;
+  max-width: 92%;
+  background: rgba(99,102,241,.06);
+  border: 1px solid rgba(99,102,241,.18);
+  border-radius: 10px;
+  border-bottom-left-radius: 4px;
+  padding: 6px 10px;
+  font-size: 10.5px;
+  color: #818cf8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: msg-in .15s ease;
+}
+.sima-snippet b { display: block; font-size: 9.5px; color: #6366f1; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
+
+.sima-thinking {
+  align-self: flex-start;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 10px 13px;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  border-bottom-left-radius: 4px;
+}
+.sima-thinking span {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: #3f3f46;
+  animation: tdot 1.2s infinite;
+}
+.sima-thinking span:nth-child(2) { animation-delay: .18s; }
+.sima-thinking span:nth-child(3) { animation-delay: .36s; }
+
+@keyframes tdot { 0%,80%,100%{opacity:.25;transform:scale(.8)} 40%{opacity:1;transform:scale(1)} }
+@keyframes msg-in { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+/* Pick notification */
+.pick-bar {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: rgba(99,102,241,.08);
+  border-top: 1px solid rgba(99,102,241,.2);
+  font-size: 11px;
+  color: #818cf8;
+  flex-shrink: 0;
+  animation: msg-in .15s ease;
+}
+.pick-bar.visible { display: flex; }
+.pick-bar-cancel {
+  margin-left: 4px;
+  font-size: 10px;
+  color: #52525b;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.pick-bar-cancel:hover { color: #a1a1aa; }
+
+/* Footer */
+.sima-footer {
+  flex-shrink: 0;
+  padding: 9px 12px;
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  border-top: 1px solid #18181b;
+  background: #09090b;
+}
+.sima-input {
+  flex: 1;
+  background: #111116;
+  border: 1px solid #27272a;
+  border-radius: 10px;
+  color: #fafafa;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 8px 10px;
+  resize: none;
+  outline: none;
+  min-height: 36px;
+  max-height: 80px;
+  line-height: 1.45;
+  transition: border-color .15s;
+}
+.sima-input:focus { border-color: rgba(99,102,241,.5); }
+.sima-input::placeholder { color: #3f3f46; }
+
+.sima-btns { display: flex; flex-direction: column; gap: 5px; align-items: center; }
+
+.sima-pick-btn {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: #111116;
+  border: 1px solid #27272a;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s;
+  color: #52525b;
+}
+.sima-pick-btn:hover { border-color: rgba(99,102,241,.4); color: #818cf8; background: rgba(99,102,241,.08); }
+.sima-pick-btn.on {
+  border-color: #6366f1;
+  color: #818cf8;
+  background: rgba(99,102,241,.12);
+  animation: pick-glow 1.5s ease infinite;
+}
+.sima-pick-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+@keyframes pick-glow { 0%,100%{box-shadow:0 0 0 0 rgba(99,102,241,.3)} 50%{box-shadow:0 0 0 4px rgba(99,102,241,0)} }
+
+.sima-send {
+  flex-shrink: 0;
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #6366f1, #7c3aed);
+  border: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s;
+  box-shadow: 0 2px 10px rgba(99,102,241,.35);
+}
+.sima-send:hover { transform: scale(1.06); box-shadow: 0 4px 14px rgba(99,102,241,.45); }
+.sima-send:disabled { background: #27272a; cursor: default; box-shadow: none; transform: none; }
+.sima-send svg { width: 15px; height: 15px; stroke: #fff; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Key setup */
+.key-setup {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 24px;
+  gap: 10px;
+  text-align: center;
+}
+.key-setup .k-icon { font-size: 30px; }
+.key-setup h3 { font-size: 14px; font-weight: 700; }
+.key-setup p { font-size: 11px; color: #71717a; line-height: 1.5; }
+.key-input {
+  width: 100%;
+  background: #111116;
+  border: 1px solid #27272a;
+  border-radius: 9px;
+  color: #fafafa;
+  font-size: 11.5px;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 9px 11px;
+  outline: none;
+  transition: border-color .15s;
+}
+.key-input:focus { border-color: rgba(99,102,241,.5); }
+.key-input.shake { animation: shake .3s; border-color: #ef4444; }
+.key-save {
+  width: 100%;
+  padding: 9px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #6366f1, #7c3aed);
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s;
+  box-shadow: 0 2px 12px rgba(99,102,241,.35);
+  font-family: inherit;
+}
+.key-save:hover { opacity: .9; }
+.key-hint { font-size: 10px; color: #3f3f46; }
+.key-hint a { color: #6366f1; text-decoration: none; }
+
+/* ══════════════════════════════════════════════════════
+   TERMINAL PANEL
+══════════════════════════════════════════════════════ */
+.term-hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #18181b;
+  background: #0c0c11;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  min-height: 42px;
+}
+.task-pills {
+  display: flex;
+  gap: 5px;
+  flex: 1;
   flex-wrap: wrap;
 }
-.status-dot {
-  width: 8px; height: 8px;
+.task-pill {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: #52525b;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+.task-pill .dot {
+  width: 5px; height: 5px;
   border-radius: 50%;
-  flex-shrink: 0;
+  background: #3f3f46;
+  transition: background .3s;
 }
-/* status text shrinks and truncates; progress text stays compact */
-[id^="status-text-"] {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-[id^="progress-text-"] {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.status-dot.idle { background: #52525b; }
-.status-dot.running { background: #3b82f6; animation: pulse 2s infinite; }
-.status-dot.paused { background: #06b6d4; animation: pulse 2s infinite; }
-.status-dot.completed { background: #22c55e; }
-.status-dot.error { background: #ef4444; }
-.status-dot.stopped { background: #f59e0b; }
+.task-pill .dot.running  { background: #3b82f6; animation: blink 2s infinite; }
+.task-pill .dot.paused   { background: #06b6d4; }
+.task-pill .dot.completed{ background: #22c55e; }
+.task-pill .dot.error    { background: #ef4444; }
+.task-pill .dot.stopped  { background: #f59e0b; }
 
-.progress-bar {
-  height: 3px;
-  background: #27272a;
-  position: relative;
+.term-ctrl { display: flex; gap: 4px; flex-shrink: 0; }
+.ctrl-btn {
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 9.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: all .15s;
 }
-.progress-fill {
+.ctrl-btn.stop  { color: #ef4444; display: none; }
+.ctrl-btn.pause { color: #06b6d4; display: none; }
+.ctrl-btn.skip  { color: #f59e0b; display: none; }
+.ctrl-btn.copy  { color: #6366f1; }
+.ctrl-btn.vis   { display: inline-block; }
+.ctrl-btn.stop:hover  { background: #ef4444; color: #fff; }
+.ctrl-btn.pause:hover { background: #06b6d4; color: #000; }
+.ctrl-btn.skip:hover  { background: #f59e0b; color: #000; }
+.ctrl-btn.copy:hover  { background: #6366f1; color: #fff; }
+.ctrl-btn.copied { color: #22c55e; }
+
+/* Filter row */
+.term-filter {
+  display: flex;
+  padding: 0 14px;
+  border-bottom: 1px solid #18181b;
+  background: #0c0c11;
+  flex-shrink: 0;
+  gap: 0;
+}
+.ftab {
+  padding: 5px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #3f3f46;
+  cursor: pointer;
+  border: none;
+  background: none;
+  border-bottom: 2px solid transparent;
+  transition: all .15s;
+  font-family: inherit;
+}
+.ftab.active  { color: #818cf8; border-bottom-color: #6366f1; }
+.ftab:not(.active):hover { color: #71717a; }
+
+/* Progress bar */
+.prog-bar { height: 2px; background: #18181b; flex-shrink: 0; }
+.prog-fill {
   height: 100%;
   background: linear-gradient(90deg, #6366f1, #8b5cf6);
   transition: width .3s;
 }
 
+/* Terminal */
 .terminal {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 12px;
-  background: #0a0a0f;
-  font-family: 'JetBrains Mono', Consolas, monospace;
+  padding: 8px 14px;
+  background: #06060a;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
   font-size: 10px;
-  line-height: 1.6;
-  max-height: 380px;
-  min-height: 200px;
+  line-height: 1.65;
+  scrollbar-width: thin;
+  scrollbar-color: #27272a transparent;
 }
-.terminal .line { white-space: pre-wrap; word-break: break-word; }
-.terminal .line.info { color: #60a5fa; }
-.terminal .line.success { color: #4ade80; }
-.terminal .line.warn { color: #fbbf24; }
-.terminal .line.err { color: #f87171; }
-.terminal .line.default { color: #8b949e; }
-
-.empty-state {
-  padding: 32px 16px;
-  text-align: center;
-  color: #52525b;
-  font-size: 11px;
+.tline {
+  display: flex;
+  gap: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  min-height: 1.65em;
 }
-.stop-btn, .skip-btn, .pause-btn, .copy-btn {
+.ttag {
+  font-size: 8.5px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
   flex-shrink: 0;
-  padding: 3px 8px;
+  align-self: flex-start;
+  margin-top: 2px;
+  letter-spacing: .04em;
+}
+.ttxt { flex: 1; word-break: break-word; }
+
+.tline.info    .ttag { background: rgba(96,165,250,.14); color: #60a5fa; }
+.tline.success .ttag { background: rgba(74,222,128,.14); color: #4ade80; }
+.tline.warn    .ttag { background: rgba(251,191,36,.14);  color: #fbbf24; }
+.tline.err     .ttag { background: rgba(248,113,113,.14); color: #f87171; }
+.tline.default .ttag { background: #18181b; color: #3f3f46; }
+.tline.info    .ttxt { color: #60a5fa; }
+.tline.success .ttxt { color: #4ade80; }
+.tline.warn    .ttxt { color: #fbbf24; }
+.tline.err     .ttxt { color: #f87171; }
+.tline.default .ttxt { color: #52525b; }
+
+.empty-st {
+  padding: 48px 16px;
+  text-align: center;
+  color: #27272a;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.empty-st-icon { font-size: 26px; margin-bottom: 8px; opacity: .5; }
+
+/* ── Global footer ─────────────────────────────────── */
+.gfooter {
+  border-top: 1px solid #18181b;
+  padding: 7px 16px;
+  text-align: center;
+  flex-shrink: 0;
+  background: #09090b;
+}
+.gfooter a {
+  color: #3f3f46;
+  text-decoration: none;
+  font-size: 10px;
+  font-weight: 500;
+  transition: color .15s;
+}
+.gfooter a:hover { color: #6366f1; }
+
+@keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)} }
+
+/* ── Message copy button ─────────────────────────────── */
+.msg-wrap {
+  display: flex;
+  flex-direction: column;
+  max-width: 90%;
+  gap: 3px;
+  position: relative;
+}
+.msg-wrap.user  { align-self: flex-end; align-items: flex-end; }
+.msg-wrap.assistant { align-self: flex-start; align-items: flex-start; }
+.msg-wrap.error { align-self: flex-start; align-items: flex-start; }
+.msg-wrap .sima-msg { max-width: 100%; align-self: unset; }
+.msg-copy {
+  display: none;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  color: #3f3f46;
+  cursor: pointer;
+  padding: 2px 6px;
   border-radius: 5px;
   background: transparent;
-  font-size: 10px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all .2s;
-  border: 1px solid currentColor;
+  border: none;
+  font-family: inherit;
+  transition: color .15s;
+}
+.msg-copy svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.msg-copy:hover { color: #a1a1aa; }
+.msg-copy.copied { color: #22c55e; }
+.msg-wrap:hover .msg-copy { display: flex; }
+
+/* ── Quota bar ───────────────────────────────────────── */
+.sq-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 14px 5px;
+  background: #0d0d12;
+  border-bottom: 1px solid #18181b;
+  flex-shrink: 0;
+}
+.sq-track {
+  flex: 1;
+  height: 3px;
+  background: #27272a;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.sq-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  border-radius: 2px;
+  transition: width .4s ease;
+}
+.sq-fill.warn { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+.sq-fill.crit { background: linear-gradient(90deg, #ef4444, #f87171); }
+.sq-lbl {
+  font-size: 9.5px;
+  color: #3f3f46;
   white-space: nowrap;
-}
-.stop-btn  { display: none; color: #ef4444; }
-.skip-btn  { display: none; color: #f59e0b; }
-.pause-btn { display: none; color: #06b6d4; }
-.copy-btn  { color: #6366f1; }
-
-.stop-btn:hover  { background: #ef4444; color: #fff; }
-.skip-btn:hover  { background: #f59e0b; color: #000; }
-.pause-btn:hover { background: #06b6d4; color: #000; }
-.copy-btn:hover  { background: #6366f1; color: #fff; }
-
-.stop-btn.visible  { display: inline-block; }
-.skip-btn.visible  { display: inline-block; }
-.pause-btn.visible { display: inline-block; }
-
-.pause-btn.paused       { color: #3b82f6; }
-.pause-btn.paused:hover { background: #3b82f6; color: #fff; }
-
-.copy-btn.copied       { color: #22c55e; }
-.copy-btn.copied:hover { background: #22c55e; color: #fff; }
-
-.footer {
-  padding: 8px 16px;
-  border-top: 1px solid #27272a;
-  text-align: center;
-}
-.footer a {
-  color: #8b5cf6;
-  text-decoration: none;
-  font-size: 11px;
-  font-weight: 600;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: .4; }
+  flex-shrink: 0;
 }
 </style>
 </head>
 <body>
-  <div class="header">
-    <div class="header-icon">
-      <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
-      </svg>
+  <!-- Header -->
+  <div class="hdr">
+    <div class="hdr-brand">
+      <div class="hdr-logo">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+        </svg>
+      </div>
+      <div>
+        <div class="hdr-name">SimaDesk</div>
+        <div class="hdr-ver">v1.4.0</div>
+      </div>
     </div>
-    <div>
-      <h1>SimaDesk Automation</h1>
-      <small>v1.1.3</small>
+    <div class="tab-sw">
+      <button class="tab-pill active" data-tab="sima">🤖 Сима</button>
+      <button class="tab-pill" data-tab="terminal">Терминал</button>
+    </div>
+  </div>
+  <div class="hdr-divider"></div>
+
+  <!-- SIMA PANEL -->
+  <div class="panel active" data-panel="sima" id="sima-panel">
+
+    <!-- No sync screen (shown when SimaDesk not opened yet) -->
+    <div class="key-setup" id="sima-no-sync" style="display:none">
+      <div class="k-icon">🔗</div>
+      <h3>Открой SimaDesk</h3>
+      <p>Сима синхронизируется с SimaDesk автоматически — используется тот же ключ и те же лимиты токенов.</p>
+      <a href="https://simadesk.ru" target="_blank" class="key-save" style="text-decoration:none;display:block;text-align:center">Открыть SimaDesk →</a>
+      <p class="key-hint">После открытия SimaDesk перезапусти этот popup</p>
+    </div>
+
+    <!-- Chat UI -->
+    <div id="sima-chat" style="display:none;flex-direction:column;flex:1;min-height:0;overflow:hidden">
+
+      <!-- Context bar -->
+      <div class="ctx-bar">
+        <span class="ctx-dot" id="sima-ctx-dot"></span>
+        <span class="ctx-label" id="sima-ctx-label">Определяю страницу…</span>
+        <span class="ctx-badge" id="sima-ctx-mp" style="display:none"></span>
+      </div>
+      <!-- Quota bar -->
+      <div class="sq-bar">
+        <div class="sq-track"><div class="sq-fill" id="sima-quota-bar" style="width:0%"></div></div>
+        <span class="sq-lbl" id="sima-quota-lbl">0К / 50К токенов</span>
+      </div>
+
+      <!-- Messages -->
+      <div class="sima-messages" id="sima-messages">
+        <div class="sima-welcome" id="sima-welcome">
+          <div class="sima-ava">🤖</div>
+          <h3>Привет, я Сима</h3>
+          <p>Ассистент для маркетплейсов. Вижу страницу которую ты открыл — помогу с анализом товара и стратегией.</p>
+          <div class="hints-grid" id="hints-grid">
+            <div class="hint" data-hint="Расскажи плюсы и минусы продавать этот товар на маркетплейсе">💡 Плюсы и минусы продавать этот товар</div>
+            <div class="hint" data-hint="Какая средняя цена на этот товар? Стоит ли снизить цену?">💰 Анализ цены и конкурентов</div>
+            <div class="hint" data-hint="Оцени нишу: высокая ли конкуренция, стоит ли заходить?">📊 Оценка ниши и конкуренции</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Picker mode notification -->
+      <div class="pick-bar" id="pick-bar">
+        🎯 Кликни на элемент на странице
+        <span class="pick-bar-cancel" id="pick-cancel">отмена</span>
+      </div>
+
+      <!-- Input footer -->
+      <div class="sima-footer">
+        <textarea class="sima-input" id="sima-input" placeholder="Спроси Симу…" rows="1"></textarea>
+        <div class="sima-btns">
+          <button class="sima-pick-btn" id="sima-pick" title="Выбрать элемент на странице (как в Cursor)">
+            <svg viewBox="0 0 24 24">
+              <path d="M5 3l14 9-7 1-3 7-4-17z"/>
+            </svg>
+          </button>
+          <button class="sima-send" id="sima-send" title="Отправить (Enter)">
+            <svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="tabs">
-    <button class="tab-btn active" data-tab="yandex-warehouses">Яндекс Склады</button>
-    <button class="tab-btn" data-tab="yandex-tariffs">Яндекс Тарифы</button>
-    <button class="tab-btn" data-tab="ozon-warehouses">Озон Склады</button>
-  </div>
-
-  <div class="task-panel active" data-panel="yandex-warehouses">
-    <div class="task-header">
-      <span class="status-dot idle" id="status-yandex-warehouses"></span>
-      <span id="status-text-yandex-warehouses" style="font-size:11px;color:#71717a">Ожидание запуска</span>
-      <span id="progress-text-yandex-warehouses" style="font-size:10px;color:#71717a"></span>
-      <button class="pause-btn" id="pause-yandex-warehouses" data-type="yandex-warehouses">⏸ Пауза</button>
-      <button class="stop-btn" id="stop-yandex-warehouses" data-type="yandex-warehouses">Стоп</button>
-      <button class="copy-btn" data-type="yandex-warehouses">Копировать</button>
+  <!-- TERMINAL PANEL -->
+  <div class="panel" data-panel="terminal">
+    <div class="term-hdr">
+      <div class="task-pills">
+        <div class="task-pill">
+          <span class="dot idle" id="dot-yandex-warehouses"></span>
+          <span>ЯМ Склады</span>
+        </div>
+        <div class="task-pill">
+          <span class="dot idle" id="dot-yandex-tariffs"></span>
+          <span>ЯМ Тарифы</span>
+        </div>
+        <div class="task-pill">
+          <span class="dot idle" id="dot-ozon-warehouses"></span>
+          <span>Ozon</span>
+        </div>
+      </div>
+      <div class="term-ctrl">
+        <button class="ctrl-btn stop"  id="stop-active">Стоп</button>
+        <button class="ctrl-btn pause" id="pause-active">Пауза</button>
+        <button class="ctrl-btn skip"  id="skip-ozon">Пропустить</button>
+        <button class="ctrl-btn copy"  id="copy-all">Копировать</button>
+      </div>
     </div>
-    <div class="progress-bar"><div class="progress-fill" id="progress-yandex-warehouses" style="width:0%"></div></div>
-    <div class="terminal" id="terminal-yandex-warehouses">
-      <div class="empty-state">Запустите автоматизацию<br>на сайте SimaDesk</div>
+    <div class="term-filter">
+      <button class="ftab active" data-filter="all">Все</button>
+      <button class="ftab" data-filter="yandex-warehouses">ЯМ Склады</button>
+      <button class="ftab" data-filter="yandex-tariffs">ЯМ Тарифы</button>
+      <button class="ftab" data-filter="ozon-warehouses">Ozon</button>
     </div>
-  </div>
-
-  <div class="task-panel" data-panel="yandex-tariffs">
-    <div class="task-header">
-      <span class="status-dot idle" id="status-yandex-tariffs"></span>
-      <span id="status-text-yandex-tariffs" style="font-size:11px;color:#71717a">Ожидание запуска</span>
-      <span id="progress-text-yandex-tariffs" style="font-size:10px;color:#71717a"></span>
-      <button class="pause-btn" id="pause-yandex-tariffs" data-type="yandex-tariffs">⏸ Пауза</button>
-      <button class="stop-btn" id="stop-yandex-tariffs" data-type="yandex-tariffs">Стоп</button>
-      <button class="copy-btn" data-type="yandex-tariffs">Копировать</button>
-    </div>
-    <div class="progress-bar"><div class="progress-fill" id="progress-yandex-tariffs" style="width:0%"></div></div>
-    <div class="terminal" id="terminal-yandex-tariffs">
-      <div class="empty-state">Запустите автоматизацию<br>на сайте SimaDesk</div>
-    </div>
-  </div>
-
-  <div class="task-panel" data-panel="ozon-warehouses">
-    <div class="task-header">
-      <span class="status-dot idle" id="status-ozon-warehouses"></span>
-      <span id="status-text-ozon-warehouses" style="font-size:11px;color:#71717a">Ожидание запуска</span>
-      <span id="progress-text-ozon-warehouses" style="font-size:10px;color:#71717a"></span>
-      <button class="skip-btn" id="skip-ozon-warehouses" data-type="ozon-warehouses">Пропустить</button>
-      <button class="pause-btn" id="pause-ozon-warehouses" data-type="ozon-warehouses">⏸ Пауза</button>
-      <button class="stop-btn" id="stop-ozon-warehouses" data-type="ozon-warehouses">Стоп</button>
-      <button class="copy-btn" data-type="ozon-warehouses">Копировать</button>
-    </div>
-    <div class="progress-bar"><div class="progress-fill" id="progress-ozon-warehouses" style="width:0%"></div></div>
-    <div class="terminal" id="terminal-ozon-warehouses">
-      <div class="empty-state">Запустите автоматизацию<br>на сайте SimaDesk</div>
+    <div class="prog-bar"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
+    <div class="terminal" id="terminal-combined">
+      <div class="empty-st">
+        <div class="empty-st-icon">⚡</div>
+        Запустите автоматизацию<br>на сайте SimaDesk
+      </div>
     </div>
   </div>
 
-  <div class="footer">
-    <a href="https://simadesk.ru" target="_blank">Открыть SimaDesk</a>
+  <!-- Global footer (hidden on Sima tab) -->
+  <div class="gfooter" id="gfooter">
+    <a href="https://simadesk.ru" target="_blank">simadesk.ru</a>
   </div>
 
   <script src="popup.js"></script>

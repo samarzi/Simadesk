@@ -456,10 +456,11 @@ const ANALYTICS_ACTIONS: AiAction[] = [
       if (!dm?.aiCreateDoc) return 'Открываю Редактор для создания отчёта. Нажмите «Новый Excel» и скопируйте данные из Аналитики.';
 
       const title = a.title ?? `Отчёт аналитики ${new Date().toLocaleDateString('ru-RU')}`;
-      const docId = await dm.aiCreateDoc('excel', title);
+      await dm.aiCreateDoc('excel', title);
+      const docId = dm.activeDocId ?? '';
 
-      if (kpi && dm.aiExcelCommand) {
-        const rows = [
+      if (kpi && docId) {
+        const rows: [string, string | number][] = [
           ['Метрика', 'Значение'],
           ['Выручка нетто', kpi.revenue ?? 0],
           ['Выручка брутто', kpi.revenue_gross ?? 0],
@@ -473,8 +474,8 @@ const ANALYTICS_ACTIONS: AiAction[] = [
           ['Логистика', kpi.logistics ?? 0],
         ];
         for (let i = 0; i < rows.length; i++) {
-          await dm.aiExcelCommand?.(docId, 'set_cell', { row: i, col: 0, value: rows[i][0] });
-          await dm.aiExcelCommand?.(docId, 'set_cell', { row: i, col: 1, value: rows[i][1] });
+          dm.aiExcelCommand(docId, 'set_cell', { row: i, col: 0, value: rows[i][0] });
+          dm.aiExcelCommand(docId, 'set_cell', { row: i, col: 1, value: rows[i][1] });
         }
       }
 

@@ -765,6 +765,143 @@ export const ozonApi = {
     }
   },
 
+  // ── Update Stocks (FBS) ────────────────────────────────────────────────────
+  /**
+   * POST /v2/products/stocks — обновление остатков FBS.
+   * @param stocks массив { offer_id, stock, warehouse_id }
+   */
+  async updateStocks(
+    creds: Creds,
+    stocks: Array<{ offer_id: string; stock: number; warehouse_id?: number }>,
+  ): Promise<void> {
+    const CHUNK = 100;
+    for (let i = 0; i < stocks.length; i += CHUNK) {
+      await ozonPost('/v2/products/stocks', {
+        stocks: stocks.slice(i, i + CHUNK).map(s => ({
+          offer_id: s.offer_id,
+          stock: s.stock,
+          warehouse_id: s.warehouse_id ?? 0,
+        })),
+      }, creds);
+    }
+  },
+
+  // ── Create Products ────────────────────────────────────────────────────────
+  /**
+   * POST /v3/product/import — создание новых товаров.
+   * @param items массив товаров с полными атрибутами
+   */
+  async createProducts(
+    creds: Creds,
+    items: Array<{
+      offer_id: string;
+      name: string;
+      description?: string;
+      category_id: number;
+      price: string;
+      old_price?: string;
+      vat: string;
+      height: number;
+      width: number;
+      depth: number;
+      dimension_unit: string;
+      weight: number;
+      weight_unit: string;
+      images: string[];
+      attributes?: Array<{ complex_id?: number; id: number; values: Array<{ dictionary_value_id?: number; value?: string }> }>;
+      barcode?: string;
+    }>,
+  ): Promise<{ task_id: number }> {
+    const resp = await ozonPost<any>('/v3/product/import', { items }, creds);
+    return { task_id: resp.result?.task_id ?? 0 };
+  },
+
+  /**
+   * POST /v1/product/import/info — статус импорта товаров.
+   */
+  async getImportStatus(creds: Creds, taskId: number): Promise<any> {
+    return ozonPost('/v1/product/import/info', { task_id: taskId }, creds);
+  },
+
+  // ── Upload Images ──────────────────────────────────────────────────────────
+  /**
+   * POST /v1/product/pictures/import — загрузка фотографий.
+   * @param items массив { product_id, images: ['http://...'] }
+   */
+  async uploadImages(
+    creds: Creds,
+    items: Array<{ product_id: number; images: string[] }>,
+  ): Promise<void> {
+    await ozonPost('/v1/product/pictures/import', { items }, creds);
+  },
+
+  // ── Category Tree ──────────────────────────────────────────────────────────
+  /**
+   * POST /v1/description-category/tree — дерево категорий Ozon.
+   */
+  async getCategoryTree(creds: Creds, language = 'DEFAULT'): Promise<any[]> {
+    const resp = await ozonPost<any>('/v1/description-category/tree', { language }, creds);
+    return resp.result ?? [];
+  },
+
+  /**
+   * POST /v1/description-category/attribute — атрибуты категории.
+   */
+  async getCategoryAttributes(
+    creds: Creds,
+    categoryId: number,
+    language = 'DEFAULT',
+  ): Promise<any[]> {
+    const resp = await ozonPost<any>('/v1/description-category/attribute', {
+      description_category_id: categoryId,
+      language,
+      type_id: 0,
+    }, creds);
+    return resp.result ?? [];
+  },
+
+  // ── Analytics ──────────────────────────────────────────────────────────────
+  /**
+   * POST /v1/analytics/data — детальная аналитика (просмотры, конверсия).
+   */
+  async getAnalytics(
+    creds: Creds,
+    dateFrom: string,
+    dateTo: string,
+    metrics: string[] = ['hits_view', 'hits_tocart', 'ordered_units', 'revenue'],
+    dimension: string[] = ['sku'],
+  ): Promise<any> {
+    return ozonPost('/v1/analytics/data', {
+      date_from: dateFrom,
+      date_to: dateTo,
+      metrics,
+      dimension,
+      filters: [],
+      sort: [{ key: 'hits_view', order: 'DESC' }],
+      limit: 1000,
+      offset: 0,
+    }, creds);
+  },
+
+  // ── Promotions ─────────────────────────────────────────────────────────────
+  /**
+   * POST /v1/product/info/discounted — товары в акциях.
+   */
+  async getPromotedProducts(creds: Creds): Promise<any[]> {
+    const resp = await ozonPost<any>('/v1/product/info/discounted', { discount_type: 'ALL' }, creds);
+    return resp.result?.items ?? [];
+  },
+
+  /**
+   * POST /v1/product/promote — участие в промо-акции.
+   */
+  async promoteProducts(
+    creds: Creds,
+    products: Array<{ product_id: number; discount: number }>,
+  ): Promise<void> {
+    await ozonPost('/v1/product/promote', { products }, creds);
+  },
+
   // ── Visibility ────────────────────────────────────────────────────────────
   // visibility: 'VISIBLE' | 'INVISIBLE'
   async setVisibility(creds: Creds, items: Array<{ product_id: number; visibility: 'VISIBLE' | 'INVISIBLE' }>): Promise<void> {
@@ -1103,6 +1240,299 @@ export const ozonApi = {
           }, creds).catch((e) => debug.warn('[ozonApi] swallowed error', e)),
         ),
     );
+  },
+
+  // ── Supply Management (FBO поставки) ───────────────────────────────────────
+
+  /**
+   * POST /v1/supply-order/create — создать поставку FBO.
+   */
+  async createSupply(
+    creds: Creds,
+    warehouseId: number,
+    name?: string,
+  ): Promise<{ supplyId: string }> {
+    const body: any = { warehouse_id: warehouseId };
+    if (name) body.name = name;
+    const resp = await ozonPost<any>('/v1/supply-order/create', body, creds);
+    return { supplyId: resp?.result?.supply_order_id ?? resp?.supply_order_id ?? '' };
+  },
+
+  /**
+   * POST /v1/supply-order/items/add — добавить товары в поставку.
+   */
+  async addProductsToSupply(
+    creds: Creds,
+    supplyId: string,
+    items: Array<{ sku: number; quantity: number }>,
+  ): Promise<void> {
+    await ozonPost('/v1/supply-order/items/add', {
+      supply_order_id: supplyId,
+      items: items.map(i => ({ sku: i.sku, quantity: i.quantity })),
+    }, creds);
+  },
+
+  /**
+   * POST /v1/supply-order/barcode — получить штрихкоды поставки (PDF).
+   */
+  async getSupplyBarcodes(
+    creds: Creds,
+    supplyId: string,
+  ): Promise<Blob> {
+    const res = await fetch(`${PROXY}/v1/supply-order/barcode`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Client-Id': creds.client_id,
+        'Api-Key': creds.api_key,
+        'Accept': 'application/pdf',
+      },
+      body: JSON.stringify({ supply_order_id: supplyId }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Ozon ${res.status}: ${text.slice(0, 200)}`);
+    }
+    return res.blob();
+  },
+
+  /**
+   * POST /v1/supply-order/submit — отправить поставку (перевести в статус "отправлено").
+   */
+  async sendSupply(
+    creds: Creds,
+    supplyId: string,
+  ): Promise<void> {
+    await ozonPost('/v1/supply-order/submit', { supply_order_id: supplyId }, creds);
+  },
+
+  /**
+   * POST /v1/supply-order/list — список поставок.
+   */
+  async getSupplies(
+    creds: Creds,
+    status?: 'draft' | 'awaiting_deliver' | 'delivering' | 'delivered' | 'cancelled',
+    limit = 100,
+  ): Promise<any[]> {
+    const body: any = { limit, offset: 0 };
+    if (status) body.status = status;
+    const resp = await ozonPost<any>('/v1/supply-order/list', body, creds);
+    return resp?.result?.supply_orders ?? resp?.supply_orders ?? [];
+  },
+
+  /**
+   * POST /v1/supply-order/get — детали поставки.
+   */
+  async getSupplyDetails(
+    creds: Creds,
+    supplyId: string,
+  ): Promise<any> {
+    const resp = await ozonPost<any>('/v1/supply-order/get', { supply_order_id: supplyId }, creds);
+    return resp?.result ?? resp;
+  },
+
+  /**
+   * POST /v1/supply-order/cancel — отменить поставку.
+   */
+  async cancelSupply(
+    creds: Creds,
+    supplyId: string,
+  ): Promise<void> {
+    await ozonPost('/v1/supply-order/cancel', { supply_order_id: supplyId }, creds);
+  },
+
+  // ── Analytics (Аналитика) ──────────────────────────────────────────────────
+
+  /**
+   * POST /v1/analytics/data — детальная аналитика Ozon.
+   */
+  async getAnalyticsData(
+    creds: Creds,
+    params: {
+      dateFrom: string;
+      dateTo: string;
+      metrics: string[];
+      dimensions?: string[];
+      filters?: Array<{ key: string; value: string }>;
+      limit?: number;
+    },
+  ): Promise<any[]> {
+    const resp = await ozonPost<any>('/v1/analytics/data', params, creds);
+    return resp?.result?.data ?? resp?.data ?? [];
+  },
+
+  /**
+   * POST /v2/products/info/statistics — статистика по конкретному товару.
+   */
+  async getProductStatistics(
+    creds: Creds,
+    productIds: number[],
+  ): Promise<any[]> {
+    const resp = await ozonPost<any>('/v2/products/info/statistics', {
+      product_ids: productIds,
+    }, creds);
+    return resp?.result?.products ?? resp?.products ?? [];
+  },
+
+  /**
+   * POST /v1/analytics/stock_on_warehouses — динамика остатков по складам.
+   */
+  async getStocksDynamics(
+    creds: Creds,
+    params: {
+      productIds: number[];
+      dateFrom: string;
+      dateTo: string;
+      warehouseIds?: number[];
+    },
+  ): Promise<any[]> {
+    const resp = await ozonPost<any>('/v1/analytics/stock_on_warehouses', {
+      product_ids: params.productIds,
+      date_from: params.dateFrom,
+      date_to: params.dateTo,
+      warehouse_ids: params.warehouseIds,
+    }, creds);
+    return resp?.result ?? resp?.data ?? [];
+  },
+
+  // ── Advertising (Реклама) ──────────────────────────────────────────────────
+
+  /**
+   * POST /v1/actions/candidates — товары доступные для участия в акциях.
+   */
+  async getPromotionCandidates(
+    creds: Creds,
+    actionId: number,
+  ): Promise<any[]> {
+    const resp = await ozonPost<any>('/v1/actions/candidates', { action_id: actionId }, creds);
+    return resp?.result?.products ?? resp?.products ?? [];
+  },
+
+  /**
+   * POST /v1/actions/products/activate — добавить товары в акцию.
+   */
+  async activateProductsInPromotion(
+    creds: Creds,
+    actionId: number,
+    productIds: number[],
+  ): Promise<void> {
+    await ozonPost('/v1/actions/products/activate', {
+      action_id: actionId,
+      product_ids: productIds,
+    }, creds);
+  },
+
+  /**
+   * GET /v1/actions — список доступных акций Ozon.
+   */
+  async getPromotions(creds: Creds): Promise<any[]> {
+    const resp = await ozonGet<any>('/v1/actions', creds);
+    return resp?.result ?? resp?.actions ?? [];
+  },
+
+  // ── Returns (Возвраты) ─────────────────────────────────────────────────────
+
+  /**
+   * POST /v3/returns/company/fbo — получить возвраты FBO.
+   */
+  async getFboReturns(
+    creds: Creds,
+    params: {
+      limit?: number;
+      offset?: number;
+      filter?: {
+        status?: string;
+        posting_number?: string;
+      };
+    } = {},
+  ): Promise<any[]> {
+    const resp = await ozonPost<any>('/v3/returns/company/fbo', {
+      limit: params.limit ?? 100,
+      offset: params.offset ?? 0,
+      filter: params.filter ?? {},
+    }, creds);
+    return resp?.result?.returns ?? resp?.returns ?? [];
+  },
+
+  /**
+   * POST /v2/returns/company/fbs — получить возвраты FBS.
+   */
+  async getFbsReturns(
+    creds: Creds,
+    params: {
+      limit?: number;
+      last_id?: string;
+      filter?: {
+        status?: string;
+        posting_number?: string;
+      };
+    } = {},
+  ): Promise<{ returns: any[]; last_id: string; has_next: boolean }> {
+    const resp = await ozonPost<any>('/v2/returns/company/fbs', {
+      limit: params.limit ?? 100,
+      last_id: params.last_id ?? '',
+      filter: params.filter ?? {},
+    }, creds);
+    return {
+      returns: resp?.result?.returns ?? resp?.returns ?? [],
+      last_id: resp?.result?.last_id ?? resp?.last_id ?? '',
+      has_next: resp?.result?.has_next ?? resp?.has_next ?? false,
+    };
+  },
+
+  // ── Content Management (Управление контентом) ──────────────────────────────
+
+  /**
+   * POST /v1/product/pictures/import — загрузить изображения для товара.
+   */
+  async uploadProductImages(
+    creds: Creds,
+    productId: number,
+    images: Array<{ file_name: string; url: string }>,
+  ): Promise<void> {
+    await ozonPost('/v1/product/pictures/import', {
+      product_id: productId,
+      images,
+    }, creds);
+  },
+
+  /**
+   * POST /v1/product/import/pictures — массовая загрузка изображений.
+   */
+  async bulkUploadImages(
+    creds: Creds,
+    items: Array<{ product_id: number; images: Array<{ file_name: string; url: string }> }>,
+  ): Promise<void> {
+    await ozonPost('/v1/product/import/pictures', { items }, creds);
+  },
+
+  /**
+   * POST /v1/product/info/description — получить Rich-контент товара.
+   */
+  async getRichProductDescription(
+    creds: Creds,
+    productId: number,
+    offerId?: string,
+  ): Promise<any> {
+    const resp = await ozonPost<any>('/v1/product/info/description', {
+      product_id: productId,
+      offer_id: offerId,
+    }, creds);
+    return resp?.result ?? resp;
+  },
+
+  /**
+   * POST /v1/product/update/description — обновить описание товара.
+   */
+  async updateProductDescription(
+    creds: Creds,
+    productId: number,
+    description: string,
+  ): Promise<void> {
+    await ozonPost('/v1/product/update/description', {
+      product_id: productId,
+      description,
+    }, creds);
   },
 };
 

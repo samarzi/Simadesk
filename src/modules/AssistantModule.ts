@@ -327,20 +327,52 @@ const NAV_PATTERNS: Array<{ re: RegExp; page: string; label: string }> = [
   { re: /отзыв|review/i,                                          page: 'reviews',      label: 'Отзывы' },
   { re: /чат|chat/i,                                              page: 'chats',        label: 'Чаты' },
   { re: /редактор|документ|docs/i,                                page: 'docs',         label: 'Редактор' },
+  { re: /тариф|оплат|billing/i,                                   page: 'billing',      label: 'Тариф и оплата' },
 ];
 
-const OPEN_PREFIXES = /^(?:открой|открыть|перейди\s+(?:в|на)|покажи|запусти|зайди\s+(?:в|на)|иди\s+(?:в|на)|go\s+to|open)\s+/i;
+const OPEN_PREFIXES = /^(?:открой|открыть|перейди(?:\s+(?:в|на|к))?|перейти(?:\s+(?:в|на|к))?|покажи|показать|запусти|запустить|зайди(?:\s+(?:в|на))?|зайти(?:\s+(?:в|на))?|иди(?:\s+(?:в|на))?|войди(?:\s+(?:в|на))?|go\s+to|open|switch\s+to)\s+/i;
+
+// Bare single-word/phrase navigation — these exact terms alone (no prefix required)
+const BARE_NAV_PATTERNS: Array<{ re: RegExp; page: string; label: string }> = [
+  { re: /^(?:главная|дашборд|домой|home)$/i,           page: 'home',         label: 'Главная' },
+  { re: /^аналитика?$/i,                               page: 'analytics',    label: 'Аналитика' },
+  { re: /^(?:репрайсер|цены)$/i,                       page: 'repricer',     label: 'Репрайсер' },
+  { re: /^заказы?$/i,                                  page: 'orders',       label: 'Заказы' },
+  { re: /^(?:товары|продукты?)$/i,                     page: 'products-hub', label: 'Товары' },
+  { re: /^(?:остатки?|склад)$/i,                       page: 'stock',        label: 'Остатки' },
+  { re: /^(?:производители?|поставщики?)$/i,           page: 'producers',    label: 'Производители' },
+  { re: /^задачи?$/i,                                  page: 'tasks',        label: 'Задачи' },
+  { re: /^(?:витрина|магазин|simastore)$/i,            page: 'simastore',    label: 'Витрина' },
+  { re: /^маркетплейсы?$/i,                            page: 'marketplaces', label: 'API Маркет' },
+  { re: /^ozon|озон$/i,                                page: 'ozon',         label: 'Ozon' },
+  { re: /^(?:wb|вайлдберриз?|wildberries?)$/i,         page: 'wb',           label: 'Wildberries' },
+  { re: /^яндекс(?:\s+маркет)?$/i,                    page: 'yandex',       label: 'Яндекс Маркет' },
+  { re: /^настройки?$/i,                               page: 'settings',     label: 'Настройки' },
+  { re: /^(?:профиль|профайл)$/i,                      page: 'profile',      label: 'Профиль' },
+  { re: /^отзывы?$/i,                                  page: 'reviews',      label: 'Отзывы' },
+  { re: /^(?:чаты?|чат)$/i,                            page: 'chats',        label: 'Чаты' },
+  { re: /^(?:документы?|редактор)$/i,                  page: 'docs',         label: 'Редактор' },
+  { re: /^(?:тариф|оплата|billing)$/i,                 page: 'billing',      label: 'Тариф и оплата' },
+];
 
 function tryLocalNav(text: string): NavAction | null {
-  const clean = text.trim().replace(OPEN_PREFIXES, '');
-  for (const { re, page, label } of NAV_PATTERNS) {
-    if (re.test(clean)) return { action: 'navigate', page, label };
+  const t = text.trim();
+  // Bare navigation (single keyword without prefix)
+  for (const { re, page, label } of BARE_NAV_PATTERNS) {
+    if (re.test(t)) return { action: 'navigate', page, label };
+  }
+  // With "открой / покажи / перейди ..." prefix
+  const clean = t.replace(OPEN_PREFIXES, '');
+  if (clean !== t) {  // prefix was present
+    for (const { re, page, label } of NAV_PATTERNS) {
+      if (re.test(clean)) return { action: 'navigate', page, label };
+    }
   }
   return null;
 }
 
-// Is this message clearly a nav command?
-const IS_NAV_COMMAND = /^(?:открой|открыть|перейди|покажи|запусти|зайди|иди|go\s+to|open)\s+/i;
+// Is this message a nav command (has explicit prefix OR is a bare nav keyword)?
+const IS_NAV_COMMAND = /^(?:открой|открыть|перейди|покажи|запусти|зайди|иди|go\s+to|open)\s+|^(?:главная|дашборд|аналитик|репрайсер|заказы|товары|остатки|склад|задачи|витрина|маркетплейсы|настройки|профиль|отзывы|чаты|документы|редактор|тариф|оплата|ozon|озон|wb|яндекс)/i;
 
 // ── Hint suggestions shown at panel open ──────────────────────────────────────
 
@@ -597,6 +629,67 @@ async function loadAiConfig(): Promise<{ key: string; model: string }> {
   return { key, model };
 }
 
+// ── Command Palette ───────────────────────────────────────────────────────────
+
+interface PaletteCommand {
+  icon: string;
+  category: string;
+  label: string;     // displayed in palette, used for filter
+  cmd: string;       // text inserted into textarea (may have trailing space for args)
+  action?: string;   // if set, only show when aiPage.hasAction(action) is true
+}
+
+const PALETTE_COMMANDS: PaletteCommand[] = [
+  // Navigation — always available
+  { icon: '🏠', category: 'Навигация', label: 'Главная / дашборд',         cmd: 'главная' },
+  { icon: '📊', category: 'Навигация', label: 'Аналитика',                  cmd: 'аналитика' },
+  { icon: '📦', category: 'Навигация', label: 'Заказы',                     cmd: 'заказы' },
+  { icon: '🏷️', category: 'Навигация', label: 'Товары',                     cmd: 'товары' },
+  { icon: '🏭', category: 'Навигация', label: 'Остатки / Склад',            cmd: 'остатки' },
+  { icon: '✅', category: 'Навигация', label: 'Задачи',                     cmd: 'задачи' },
+  { icon: '⭐', category: 'Навигация', label: 'Отзывы',                     cmd: 'отзывы' },
+  { icon: '💰', category: 'Навигация', label: 'Репрайсер',                  cmd: 'репрайсер' },
+  { icon: '🛒', category: 'Навигация', label: 'Витрина / SimaStore',        cmd: 'витрина' },
+  { icon: '📝', category: 'Навигация', label: 'Редактор документов',        cmd: 'редактор' },
+  { icon: '⚙️', category: 'Навигация', label: 'Настройки',                  cmd: 'настройки' },
+  { icon: '💳', category: 'Навигация', label: 'Тариф и оплата',             cmd: 'тариф' },
+  { icon: '🔗', category: 'Навигация', label: 'Маркетплейсы / API',        cmd: 'маркетплейсы' },
+  // Docs / editor — page-specific
+  { icon: '📊', category: 'Редактор (Excel)', label: 'Создать таблицу Excel',            cmd: 'создай excel ',    action: 'create_doc' },
+  { icon: '✨', category: 'Редактор (Excel)', label: 'Улучшить дизайн таблицы',          cmd: 'улучши дизайн',    action: 'excel_improve_design' },
+  { icon: '🔤', category: 'Редактор (Excel)', label: 'Сортировать по колонке',            cmd: 'отсортируй по ',   action: 'excel_sort_sheet' },
+  { icon: '📋', category: 'Редактор (Excel)', label: 'Добавить лист',                    cmd: 'добавь лист ',     action: 'excel_add_sheet' },
+  { icon: '➕', category: 'Редактор (Excel)', label: 'Добавить колонку',                 cmd: 'добавь колонку ',  action: 'excel_insert_column' },
+  { icon: '🗑️', category: 'Редактор (Excel)', label: 'Удалить строки',                   cmd: 'удали строки ',    action: 'excel_delete_rows' },
+  { icon: '📈', category: 'Редактор (Excel)', label: 'Прибавить к колонке (напр. 10%)',  cmd: 'прибавь 10% к ',  action: 'excel_add_to_column' },
+  { icon: '📉', category: 'Редактор (Excel)', label: 'Вычесть из колонки',               cmd: 'вычти 10% из ',   action: 'excel_add_to_column' },
+  { icon: '🔢', category: 'Редактор (Excel)', label: 'Установить значение ячейки',       cmd: 'A1 = ',            action: 'excel_set_cell' },
+  { icon: '📄', category: 'Редактор (Word)',   label: 'Создать документ Word',            cmd: 'создай word ',     action: 'create_doc' },
+  { icon: '🔁', category: 'Редактор (Word)',   label: 'Замена текста в документе',        cmd: 'замени  на ',      action: 'word_replace' },
+  { icon: '📊', category: 'Редактор (Word)',   label: 'Статистика: слова / символы',      cmd: 'посчитай слова',   action: 'word_count' },
+  { icon: '✨', category: 'Редактор (Word)',   label: 'Убрать всё форматирование',        cmd: 'убери форматирование', action: 'word_clear_formatting' },
+  { icon: '🅷',  category: 'Редактор (Word)',   label: 'Сделать заголовком H1',            cmd: 'сделай заголовком ', action: 'word_heading' },
+  { icon: '🔄', category: 'Редактор',          label: 'Переключиться на документ',        cmd: 'переключись на ',  action: 'docs_switch' },
+  // Tasks
+  { icon: '✅', category: 'Задачи', label: 'Создать задачу',                cmd: 'создай задачу ' },
+  { icon: '🚨', category: 'Задачи', label: 'Срочные заказы → задача',      cmd: 'срочные заказы', action: 'create_urgent_orders_task' },
+  { icon: '📦', category: 'Задачи', label: 'Задачи по дозаказу',           cmd: 'задачи по дозаказу', action: 'create_reorder_tasks' },
+  // Prices
+  { icon: '📈', category: 'Цены', label: 'Поднять цены (напр. +10%)',       cmd: 'изменить цены на +10%', action: 'bulk_price_change' },
+  { icon: '📉', category: 'Цены', label: 'Снизить цены (напр. -500₽)',      cmd: 'изменить цены на -10%', action: 'bulk_price_change' },
+  // Analytics
+  { icon: '📊', category: 'Аналитика', label: 'Экспорт отчёта аналитики',  cmd: 'отчёт аналитики', action: 'export_analytics_report' },
+  // Reviews
+  { icon: '💬', category: 'Отзывы', label: 'Ответить на все отзывы',       cmd: 'ответь на все отзывы', action: 'reply_all_unanswered' },
+  // System
+  { icon: '📊', category: 'Система', label: 'Статус / сводка',             cmd: 'статус' },
+  { icon: '🆕', category: 'Система', label: 'Новый чат (очистить)',         cmd: 'новый чат' },
+  { icon: '❓', category: 'Система', label: 'Помощь — список команд',       cmd: 'помощь' },
+  { icon: '🔄', category: 'Система', label: 'Синхронизировать',             cmd: 'синхронизируй' },
+  { icon: '⚡', category: 'Система', label: 'Дневной чеклист',              cmd: 'дневной чеклист', action: 'daily_checklist' },
+  { icon: '📋', category: 'Система', label: 'Аудит рисков',                 cmd: 'аудит' },
+];
+
 // ── Main AssistantModule class ────────────────────────────────────────────────
 
 export class AssistantModule {
@@ -622,6 +715,9 @@ export class AssistantModule {
   private isAdminUser = false;
   private aiEnabled = localStorage.getItem('sd_sima_ai_enabled') !== 'false';
   private ttsEnabled = localStorage.getItem('sd_tts_enabled') !== 'false';
+  private paletteEl: HTMLElement | null = null;
+  private paletteIdx = 0;
+  private paletteVisible = false;
   private ttsRate = parseFloat(localStorage.getItem('sd_tts_rate') || '1.1');
   // Edge TTS voice ID — default to Svetlana Neural; migrate legacy Web Speech API names
   private ttsVoiceName = (() => {
@@ -890,14 +986,55 @@ export class AssistantModule {
       });
     });
 
+    // Command palette — created once, inserted before the input area
+    this.paletteEl = document.createElement('div');
+    this.paletteEl.className = 'sd-pal';
+    this.paletteEl.style.display = 'none';
+    const inputArea = panel.querySelector('.sd-ap-input-area');
+    inputArea?.parentNode?.insertBefore(this.paletteEl, inputArea);
+
     this.textareaEl?.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (this.paletteVisible) {
+        const filter = this.getPaletteFilter();
+        const cmds = this.getPageCommands(filter);
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          this.paletteIdx = Math.min(this.paletteIdx + 1, cmds.length - 1);
+          this.renderPalette(cmds, filter);
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          this.paletteIdx = Math.max(this.paletteIdx - 1, 0);
+          this.renderPalette(cmds, filter);
+          return;
+        }
+        if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+          e.preventDefault();
+          this.selectPaletteItem(cmds, this.paletteIdx);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          this.hidePalette();
+          return;
+        }
+      }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         if (this.ttsEnabled) edgeTtsUnlock(); // user gesture context
         this.handleSend();
       }
     });
-    this.textareaEl?.addEventListener('input', () => this.autoResizeTextarea());
+    this.textareaEl?.addEventListener('input', () => {
+      this.autoResizeTextarea();
+      const val = this.textareaEl?.value ?? '';
+      if (val.startsWith('/')) {
+        this.showPalette(val.slice(1));
+      } else {
+        this.hidePalette();
+      }
+    });
 
     this.updateTtsBtn();
 
@@ -2745,6 +2882,7 @@ export class AssistantModule {
   closePanel(): void {
     if (!this.panel) return;
     this.isOpen = false;
+    this.hidePalette();
     this.btn?.classList.remove('active');
     this.stopMsgTts();
     this.stopVoice();
@@ -2903,6 +3041,161 @@ export class AssistantModule {
     if (!this.textareaEl) return;
     this.textareaEl.style.height = 'auto';
     this.textareaEl.style.height = Math.min(this.textareaEl.scrollHeight, 100) + 'px';
+  }
+
+  /** Выполнить page-action напрямую (без LLM): показать индикатор, запустить, вывести результат. */
+  private async runFastAction(name: string, args: any, status: string, fallbackStatus: string): Promise<void> {
+    this.isLoading = true;
+    this.setInputEnabled(false);
+    this.setStatus(status || fallbackStatus, 'thinking');
+    const typing = this.addTypingIndicator();
+    try {
+      const result = await aiPage.run(name, args);
+      this.removeTypingIndicator(typing);
+      this.history.push({ role: 'assistant', content: result.summary });
+      this.saveSession();
+      const ttsBtn = this.addAssistantMessage(result.summary);
+      if (this.ttsEnabled && ttsBtn) this.startMsgTts(result.summary, ttsBtn);
+    } catch (e: unknown) {
+      this.removeTypingIndicator(typing);
+      this.addAssistantMessage(`Не удалось: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      this.isLoading = false;
+      this.setInputEnabled(true);
+      this.setStatus('Готова');
+    }
+  }
+
+  /** Быстрая сводка без LLM — берёт данные из уже загруженных модулей на странице. */
+  private buildQuickStatusMessage(): string {
+    const lines: string[] = ['📊 **Быстрая сводка**\n'];
+    try {
+      const am = (window as any).analyticsModule;
+      if (am?.kpi) {
+        const k = am.kpi;
+        const fmt = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)} млн ₽`
+          : n >= 1_000 ? `${(n/1_000).toFixed(0)}К ₽` : `${Math.round(n)} ₽`;
+        lines.push(`💰 Выручка: **${fmt(k.revenue)}** | Маржа: **${k.margin_pct?.toFixed(1)}%**`);
+        lines.push(`📦 Заказов: **${(k.orders_delivered??0)+(k.orders_processing??0)}** | Возвраты: ${k.orders_returned??0}`);
+      }
+    } catch { /* ignore */ }
+    try {
+      const orders: any[] = (window as any).allOrdersModule?.orders ?? [];
+      const urgent = orders.filter((o: any) => o.status === 'awaiting_packaging' && o.shipment_date &&
+        new Date(o.shipment_date).getTime() - Date.now() < 4 * 3600_000);
+      if (urgent.length) lines.push(`⚠️ FBS с дедлайном <4ч: **${urgent.length}**`);
+    } catch { /* ignore */ }
+    try {
+      const reviews: any[] = (window as any).reviewsModule?.reviews ?? [];
+      const neg = reviews.filter((r: any) => !r.reply && r.stars <= 2);
+      if (neg.length) lines.push(`⭐ Негативных без ответа: **${neg.length}**`);
+    } catch { /* ignore */ }
+    if (lines.length === 1) lines.push('Данные не загружены — открой нужную страницу сначала.');
+    return lines.join('\n');
+  }
+
+  /** Сообщение-справка по механическим командам (показывается когда AI выключен или по запросу "помощь"). */
+  private buildMechanicalHelpMessage(failedCmd?: string): string {
+    const intro = failedCmd
+      ? `🤖 **AI выключен** — «${failedCmd}» не распознано.\n\n`
+      : '';
+    return intro + `⚙️ **Механические команды** (работают без AI):\n\n` +
+      `**Навигация** — просто напиши раздел:\n` +
+      `\`заказы\` · \`аналитика\` · \`товары\` · \`остатки\` · \`задачи\`\n` +
+      `\`отзывы\` · \`настройки\` · \`репрайсер\` · \`склад\` · \`витрина\`\n\n` +
+      `**Задачи:**\n` +
+      `\`создай задачу [название]\` · \`отметь задачу [название]\`\n` +
+      `\`срочные заказы\` · \`задачи по дозаказу\` · \`создай задачи по OOS\`\n\n` +
+      `**Редактор (таблицы/Word):**\n` +
+      `\`создай excel [название]\` · \`создай word [название]\`\n` +
+      `\`замени [что] на [что]\` · \`улучши дизайн\`\n` +
+      `\`отсортируй по [колонка]\` · \`отсортируй по [колонка] по убыванию\`\n` +
+      `\`B3 = значение\` · \`прибавь 10% к Цена\` · \`вычти 500 из Цена\`\n` +
+      `\`добавь лист [название]\` · \`добавь колонку [название]\`\n` +
+      `\`удали строки 3 5 7\` · \`переключись на [название документа]\`\n\n` +
+      `**Цены:**\n` +
+      `\`изменить цены на +10%\` · \`изменить цены на -500₽\`\n\n` +
+      `**Аналитика / отзывы:**\n` +
+      `\`отчёт аналитики\` · \`ответь на все отзывы\`\n\n` +
+      `**Системные:**\n` +
+      `\`синхронизируй\` · \`аудит\` · \`юнит-экономика\`\n` +
+      `\`отмени\` · \`статус\` · \`новый чат\`\n\n` +
+      `Для сложных задач — включи AI (кнопка 🤖 вверху).`;
+  }
+
+  // ── Command Palette ───────────────────────────────────────────────────────────
+
+  private getPaletteFilter(): string {
+    const val = this.textareaEl?.value ?? '';
+    return val.startsWith('/') ? val.slice(1) : '';
+  }
+
+  private getPageCommands(filter: string): PaletteCommand[] {
+    const q = filter.trim().toLowerCase();
+    return PALETTE_COMMANDS.filter(c => {
+      if (c.action && !aiPage.hasAction(c.action)) return false;
+      if (!q) return true;
+      const haystack = (c.label + ' ' + c.cmd + ' ' + c.category).toLowerCase();
+      return haystack.includes(q);
+    });
+  }
+
+  private showPalette(filter: string): void {
+    if (!this.paletteEl) return;
+    const cmds = this.getPageCommands(filter);
+    if (!cmds.length) { this.hidePalette(); return; }
+    this.paletteIdx = Math.min(this.paletteIdx, cmds.length - 1);
+    this.paletteVisible = true;
+    this.renderPalette(cmds, filter);
+    this.paletteEl.style.display = 'block';
+  }
+
+  private hidePalette(): void {
+    this.paletteVisible = false;
+    this.paletteIdx = 0;
+    if (this.paletteEl) this.paletteEl.style.display = 'none';
+  }
+
+  private renderPalette(cmds: PaletteCommand[], filter = ''): void {
+    if (!this.paletteEl) return;
+    let lastCat = '';
+    const rows = cmds.map((c, i) => {
+      let catRow = '';
+      if (c.category !== lastCat) {
+        catRow = `<div class="sd-pal-cat">${esc(c.category)}</div>`;
+        lastCat = c.category;
+      }
+      const q = filter.trim().toLowerCase();
+      let label = esc(c.label);
+      if (q) {
+        const idx = c.label.toLowerCase().indexOf(q);
+        if (idx >= 0) {
+          label = esc(c.label.slice(0, idx))
+            + `<mark>${esc(c.label.slice(idx, idx + q.length))}</mark>`
+            + esc(c.label.slice(idx + q.length));
+        }
+      }
+      return `${catRow}<div class="sd-pal-item${i === this.paletteIdx ? ' active' : ''}" data-idx="${i}">${c.icon} ${label}</div>`;
+    }).join('');
+    this.paletteEl.innerHTML = `<div class="sd-pal-inner">${rows}</div>`;
+    this.paletteEl.querySelectorAll<HTMLElement>('.sd-pal-item').forEach(el => {
+      el.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const idx = parseInt(el.dataset.idx ?? '0', 10);
+        this.selectPaletteItem(cmds, idx);
+      });
+    });
+    this.paletteEl?.querySelector<HTMLElement>('.sd-pal-item.active')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  private selectPaletteItem(cmds: PaletteCommand[], idx: number): void {
+    const cmd = cmds[idx];
+    if (!cmd || !this.textareaEl) return;
+    this.textareaEl.value = cmd.cmd;
+    this.textareaEl.focus();
+    this.textareaEl.selectionStart = this.textareaEl.selectionEnd = cmd.cmd.length;
+    this.autoResizeTextarea();
+    this.hidePalette();
   }
 
   /** Обновить полосу использования токенов под лентой сообщений. */
@@ -3121,11 +3414,316 @@ export class AssistantModule {
       return;
     }
 
+    // ═══ РЕДАКТОР (docs) ══════════════════════════════════════════════════════════
+
+    // Нормализация опечаток и русских транслитераций для ключевых слов
+    const norm = (s: string) => s
+      // Excel transliterations — handle common typos
+      .replace(/эксел[ьъ]?|екссел[ьъ]?|ексел[ьъ]?|ексл|ексель|екселл|эксел|xcell?/gi, 'excel')
+      // Word transliterations
+      .replace(/ворд[ае]?|варт|уорд|ворт|ворть|вор[дт]/gi, 'word')
+      // Sort synonyms
+      .replace(/сортируй|сортировку|сортировать|sort|упорядочи|упорядочить/gi, 'отсортируй')
+      // Replace synonyms
+      .replace(/заменить|замена|replace|поменяй|изменить\s+текст/gi, 'замени')
+      // Design synonyms
+      .replace(/красивее|оформить\s+(?:таблиц|лист|документ)|форматировать|beautify|стилизовать/gi, 'улучши дизайн')
+      // Infinitive → imperative
+      .replace(/удалить/gi, 'удали')
+      .replace(/добавить/gi, 'добавь')
+      .replace(/вставить/gi, 'вставь')
+      .replace(/переключиться|переключить(?:ся)?/gi, 'переключись')
+      .replace(/улучшить/gi, 'улучши')
+      .replace(/создать/gi, 'создай')
+      .replace(/прибавить/gi, 'прибавь')
+      .replace(/увеличить|поднять/gi, 'увеличь')
+      .replace(/уменьшить|снизить/gi, 'уменьши')
+      .replace(/вычесть|вычтите/gi, 'вычти')
+      // Price change synonyms
+      .replace(/(?:подними|подними|повысь|подними)\s+цены/gi, 'изменить цены на +')
+      .replace(/(?:опусти|понизь|снизь)\s+цены/gi, 'изменить цены на -');
+    const t = norm(text.trim());
+
+    // Fast: создать документ Excel / Word (работает с любой страницы — global action)
+    const createDocRe = /^(?:создай|новый|новая|открой новый)\s+(?:(excel|эксел[ьъ]?|таблиц[ауы]|xlsx|spreadsheet)|(word|документ|doc[a-z]*))\s*(.*)$/i;
+    const createDocMatch = t.match(createDocRe);
+    if (createDocMatch) {
+      const type = createDocMatch[1] ? 'excel' : 'word';
+      const title = createDocMatch[3]?.trim() || undefined;
+      await this.runFastAction('create_doc', { type, title },
+        `Создаю ${type === 'excel' ? 'таблицу' : 'документ'}${title ? ` «${title}»` : ''}…`,
+        `Создаю ${type === 'excel' ? 'таблицу' : 'документ'}…`);
+      return;
+    }
+
+    // Fast: улучшить дизайн таблицы
+    if (/^(?:улучши|оформи|красиво|beautify|сделай красивым?)\s+(?:дизайн|таблиц[ую]|оформление|стил[ьь])?$/i.test(t)
+      && aiPage.hasAction('excel_improve_design')) {
+      await this.runFastAction('excel_improve_design', {},
+        'Улучшаю дизайн таблицы…', 'Улучшаю дизайн таблицы…');
+      return;
+    }
+
+    // Fast: сортировка — "отсортируй по Цена" / "сортируй по B по убыванию"
+    const sortRe = /^(?:отсортируй|сортируй|сортировка|sort)\s+(?:по\s+)?([А-Яа-яA-Za-z\s]+?)(?:\s+(?:по\s+)?(убыванию|возрастанию|desc|asc|↑|↓))?$/i;
+    const sortMatch = t.match(sortRe);
+    if (sortMatch && aiPage.hasAction('excel_sort_sheet')) {
+      const column = sortMatch[1].trim();
+      const order = /убыв|desc|↓/i.test(sortMatch[2] ?? '') ? 'desc' : 'asc';
+      await this.runFastAction('excel_sort_sheet', { column, order },
+        `Сортирую по «${column}» (${order === 'desc' ? 'убывание' : 'возрастание'})…`,
+        `Сортирую по «${column}»…`);
+      return;
+    }
+
+    // Fast: замена текста — "замени Старое на Новое" / "заменить X на Y"
+    const replaceRe = /^(?:замени|заменить|replace)\s+(.+?)\s+на\s+(.+)$/i;
+    const replaceMatch = t.match(replaceRe);
+    if (replaceMatch) {
+      const find = replaceMatch[1].trim();
+      const replaceWith = replaceMatch[2].trim();
+      const action = aiPage.hasAction('excel_replace') ? 'excel_replace'
+        : aiPage.hasAction('word_replace') ? 'word_replace' : null;
+      if (action) {
+        await this.runFastAction(action, { find, replaceWith },
+          `Заменяю «${find}» → «${replaceWith}»…`, `Заменяю текст…`);
+        return;
+      }
+    }
+
+    // ─── WORD-SPECIFIC FAST-PATHS ─────────────────────────────────────────────
+
+    // Fast: статистика Word-документа — "посчитай слова" / "сколько слов" / "статистика документа"
+    const wordCountRe = /^(?:посчитай\s+слова?|подсчитай\s+слова?|сколько\s+слов|количество\s+слов|статистика\s+(?:документа|текста)?|word\s+count)$/i;
+    if (wordCountRe.test(t) && aiPage.hasAction('word_count')) {
+      await this.runFastAction('word_count', {}, 'Считаю слова…', 'Считаю слова…');
+      return;
+    }
+
+    // Fast: убрать форматирование — "убери форматирование" / "сними стили" / "очисти стили"
+    const clearFmtRe = /^(?:убери|убрать|сними|снять|очисти?|clear)\s+(?:форматирование|стили|стиль|оформление)(?:\s+(?:из\s+)?документа)?$/i;
+    if (clearFmtRe.test(t) && aiPage.hasAction('word_clear_formatting')) {
+      await this.runFastAction('word_clear_formatting', {}, 'Убираю форматирование…', 'Убираю форматирование…');
+      return;
+    }
+
+    // Fast: заголовок — "сделай заголовком [текст]" / "оформи заголовок 2 [текст]"
+    const wordHeadingRe = /^(?:сделай|оформи|назначь|поставь)\s+заголовк[оуа]м?\s*(?:(h?[1-6])\s*)?(.+)?$/i;
+    const wordHeadingMatch = t.match(wordHeadingRe);
+    if (wordHeadingMatch && aiPage.hasAction('word_heading')) {
+      const levelStr = wordHeadingMatch[1]?.replace(/h/i, '') ?? '1';
+      const level = parseInt(levelStr, 10) || 1;
+      const matchText = wordHeadingMatch[2]?.trim() || undefined;
+      await this.runFastAction('word_heading', { text: matchText, level },
+        `Применяю заголовок H${level}…`, 'Применяю заголовок…');
+      return;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Fast: задать значение ячейки — "ячейка B3 = 500" / "B3: итого" / "ячейка B3 значение"
+    const cellSetRe = /^(?:ячейка\s+|cell\s+)?([A-Za-z]{1,3}\d+)\s*(?:[=:]\s*|\s+)(.+)$/i;
+    const cellSetMatch = t.match(cellSetRe);
+    if (cellSetMatch && aiPage.hasAction('excel_set_cell')) {
+      const cell = cellSetMatch[1].toUpperCase();
+      const value = cellSetMatch[2].trim();
+      if (value && !/^(на|по|и|или|в|к)$/i.test(value)) {
+        await this.runFastAction('excel_set_cell', { cell, value },
+          `Устанавливаю ячейку ${cell} = «${value}»…`, `Устанавливаю ячейку…`);
+        return;
+      }
+    }
+
+    // Fast: добавить лист — "добавь лист Данные" / "новый лист"
+    const addSheetRe = /^(?:добавь|создай|новый|добавить|новая)\s+лист(?:\s+(.+))?$/i;
+    const addSheetMatch = t.match(addSheetRe);
+    if (addSheetMatch && aiPage.hasAction('excel_add_sheet')) {
+      const name = addSheetMatch[1]?.trim() || undefined;
+      await this.runFastAction('excel_add_sheet', { name },
+        `Добавляю лист${name ? ` «${name}»` : ''}…`, 'Добавляю лист…');
+      return;
+    }
+
+    // Fast: добавить колонку — "добавь колонку Маржа" / "вставить столбец"
+    const addColRe = /^(?:добавь|вставь|создай|добавить|вставить)\s+(?:колонк[ую]|столбец|column)(?:\s+(.+))?$/i;
+    const addColMatch = t.match(addColRe);
+    if (addColMatch && aiPage.hasAction('excel_insert_column')) {
+      const header = addColMatch[1]?.trim() || undefined;
+      await this.runFastAction('excel_insert_column', { header },
+        `Добавляю колонку${header ? ` «${header}»` : ''}…`, 'Добавляю колонку…');
+      return;
+    }
+
+    // Fast: удалить строку(и) — "удали строку 5" / "удали строки 3 5 7" / "удалить строку 10"
+    const delRowRe = /^(?:удали|удалить|delete)\s+строк[иу]?\s+([\d\s,;]+)$/i;
+    const delRowMatch = t.match(delRowRe);
+    if (delRowMatch && aiPage.hasAction('excel_delete_rows')) {
+      const rows = delRowMatch[1].split(/[\s,;]+/).map(Number).filter(n => n > 0);
+      if (rows.length) {
+        await this.runFastAction('excel_delete_rows', { rows },
+          `Удаляю строки ${rows.join(', ')}…`, 'Удаляю строки…');
+        return;
+      }
+    }
+
+    // Fast: переключиться на документ — "переключись на Таблица 1" / "открой [имя файла]"
+    const switchDocRe = /^(?:переключись|переключиться|открой|перейди|switch)\s+(?:на\s+|к\s+|to\s+)?(.+)$/i;
+    const switchDocMatch = t.match(switchDocRe);
+    if (switchDocMatch && aiPage.hasAction('docs_switch')) {
+      const name = switchDocMatch[1].trim();
+      await this.runFastAction('docs_switch', { name },
+        `Переключаюсь на «${name}»…`, `Переключаюсь…`);
+      return;
+    }
+
+    // Fast: прибавить к колонке — "прибавь 10% к Цена" / "+500 к Себестоимость"
+    const addColValRe = /^(?:прибавь|добавь|увеличь|прибавить|увеличить|\+)\s+([\d.]+)\s*(%|процент[оа]в?|руб|₽|р\.?)?\s+(?:к|в|to)\s+(?:колонк[ее]?\s+|столбц[ее]?\s+)?(.+)$/i;
+    const addColValMatch = t.match(addColValRe);
+    if (addColValMatch && aiPage.hasAction('excel_add_to_column')) {
+      const delta = parseFloat(addColValMatch[1]);
+      const percent = /[%]|процент/i.test(addColValMatch[2] ?? '');
+      const column = addColValMatch[3].trim();
+      await this.runFastAction('excel_add_to_column', { column, delta, percent },
+        `Увеличиваю «${column}» на ${delta}${percent ? '%' : ' ₽'}…`, 'Изменяю колонку…');
+      return;
+    }
+    const subColValRe = /^(?:вычти|уменьши|вычесть|уменьшить|-)\s+([\d.]+)\s*(%|процент[оа]в?|руб|₽|р\.?)?\s+(?:из|в|от|from)\s+(?:колонк[ее]?\s+|столбц[ее]?\s+)?(.+)$/i;
+    const subColValMatch = t.match(subColValRe);
+    if (subColValMatch && aiPage.hasAction('excel_add_to_column')) {
+      const delta = -parseFloat(subColValMatch[1]);
+      const percent = /[%]|процент/i.test(subColValMatch[2] ?? '');
+      const column = subColValMatch[3].trim();
+      await this.runFastAction('excel_add_to_column', { column, delta, percent },
+        `Уменьшаю «${column}» на ${Math.abs(delta)}${percent ? '%' : ' ₽'}…`, 'Изменяю колонку…');
+      return;
+    }
+
+    // ═══ ЦЕНЫ / РЕПРАЙСЕР ════════════════════════════════════════════════════════
+
+    // Fast: массово изменить цены — "изменить цены на +10%" / "цены -500 рублей" / "поднять цены на 15%"
+    const bulkPriceRe = /^(?:изменить?|поменять?|измени|поднять|снизить|поднять?|снизить?)\s+цены?\s+на\s+([+-]?[\d.]+)\s*(%|₽|р|руб)?$/i;
+    const bulkPriceMatch = t.match(bulkPriceRe);
+    if (bulkPriceMatch && aiPage.hasAction('bulk_price_change')) {
+      const delta = parseFloat(bulkPriceMatch[1]);
+      const percent = /[%]/.test(bulkPriceMatch[2] ?? '');
+      await this.runFastAction('bulk_price_change', { delta, percent },
+        `Меняю цены на ${delta > 0 ? '+' : ''}${delta}${percent ? '%' : ' ₽'}…`, 'Меняю цены…');
+      return;
+    }
+
+    // ═══ АНАЛИТИКА ════════════════════════════════════════════════════════════════
+
+    // Fast: экспорт отчёта аналитики
+    const exportAnRe = /^(?:экспорт|отчёт|отчет|выгрузка|скачать?|export|report)\s*(?:аналитик[аи]|статистик[аи]|данных)?$/i;
+    if (exportAnRe.test(t) && aiPage.hasAction('export_analytics_report')) {
+      await this.runFastAction('export_analytics_report', {},
+        'Формирую отчёт аналитики…', 'Формирую отчёт…');
+      return;
+    }
+
+    // ═══ ОТЗЫВЫ ══════════════════════════════════════════════════════════════════
+
+    // Fast: ответить на все отзывы без ответа
+    const replyAllRe = /^(?:ответь|отвечай|ответить)\s+на\s+все\s+(?:отзыв[ыи]|негатив)?(?:\s+отзывы)?$/i;
+    if (replyAllRe.test(t) && aiPage.hasAction('reply_all_unanswered')) {
+      await this.runFastAction('reply_all_unanswered', {},
+        'Отвечаю на все неотвеченные отзывы…', 'Отвечаю на отзывы…');
+      return;
+    }
+
+    // ═══ ЗАКАЗЫ ══════════════════════════════════════════════════════════════════
+
+    // Fast: создать задачу по срочным заказам
+    const urgentOrdersRe = /^(?:срочные\s+заказы|создай?\s+задач[ую]\s+по\s+срочным|fbs\s+дедлайн|urgent\s+orders?)$/i;
+    if (urgentOrdersRe.test(t) && aiPage.hasAction('create_urgent_orders_task')) {
+      await this.runFastAction('create_urgent_orders_task', {},
+        'Создаю задачу по срочным заказам…', 'Обрабатываю заказы…');
+      return;
+    }
+
+    // Fast: задачи по дозаказу (reorder)
+    const reorderRe = /^(?:задачи?\s+(?:по\s+)?дозаказ[ую]|пополнить?\s+запасы?|дозаказ|reorder)$/i;
+    if (reorderRe.test(t) && aiPage.hasAction('create_reorder_tasks')) {
+      await this.runFastAction('create_reorder_tasks', {},
+        'Создаю задачи по дозаказу…', 'Создаю задачи…');
+      return;
+    }
+
+    // Fast: статус / статистика — показать быструю сводку без LLM
+    const statsRe = /^(?:статус|статистика|сводка|summary|status|итог[иа]?|показатели|дашборд|что сейчас)$/i;
+    if (statsRe.test(text.trim())) {
+      this.addAssistantMessage(this.buildQuickStatusMessage());
+      this.setStatus('Готова');
+      return;
+    }
+
+    // Fast: показать OOS — нет в наличии
+    const oosViewRe = /^(?:покажи?\s+)?(?:oos|out.of.stock|нет\s+в\s+наличии|нулевые\s+остатки?|нулевой\s+склад)$/i;
+    if (oosViewRe.test(text.trim())) {
+      this.navigateTo('stock');
+      this.addAssistantMessage('Открываю склад — там фильтр по нулевым остаткам.');
+      return;
+    }
+
+    // Fast: новый чат / очистить
+    const clearChatRe = /^(?:новый чат|очисти?(?:ть)?\s+чат|clear|сброс|начни\s+сначала?)$/i;
+    if (clearChatRe.test(text.trim())) {
+      this.clearChat();
+      return;
+    }
+
+    // Fast: помощь / что умеешь — показать список команд
+    const helpRe = /^(?:помощь|помоги|команды|что умеешь|что можешь|help|\?)$/i;
+    if (helpRe.test(text.trim())) {
+      this.addAssistantMessage(this.buildMechanicalHelpMessage());
+      this.setStatus('Готова');
+      return;
+    }
+
+    // Fast: дневной чеклист / что делать
+    const checklistRe = /^(?:дневной\s+чеклист|чеклист|что\s+делать\s+сегодня?|план\s+на\s+день)$/i;
+    if (checklistRe.test(text.trim()) && aiPage.hasAction('daily_checklist')) {
+      this.isLoading = true;
+      this.setInputEnabled(false);
+      const typing = this.addTypingIndicator();
+      try {
+        const result = await aiPage.run('daily_checklist', {});
+        this.removeTypingIndicator(typing);
+        const ttsBtn = this.addAssistantMessage(result.summary);
+        if (this.ttsEnabled && ttsBtn) this.startMsgTts(result.summary, ttsBtn);
+      } catch {
+        this.removeTypingIndicator(typing);
+        this.addAssistantMessage('Чеклист недоступен на этой странице.');
+      } finally {
+        this.isLoading = false;
+        this.setInputEnabled(true);
+      }
+      return;
+    }
+
+    // Fast: отчёт / экспорт
+    const reportRe = /^(?:отчёт|отчет|экспорт|выгрузка|excel|xlsx)$/i;
+    if (reportRe.test(text.trim()) && aiPage.hasAction('export_report')) {
+      this.isLoading = true;
+      this.setInputEnabled(false);
+      const typing = this.addTypingIndicator();
+      try {
+        const result = await aiPage.run('export_report', {});
+        this.removeTypingIndicator(typing);
+        this.addAssistantMessage(result.summary);
+      } catch {
+        this.removeTypingIndicator(typing);
+        this.addAssistantMessage('Экспорт: используй кнопку на странице или включи AI для детального отчёта.');
+      } finally {
+        this.isLoading = false;
+        this.setInputEnabled(true);
+      }
+      return;
+    }
+
     // Mechanical mode — AI disabled
     if (!this.aiEnabled) {
-      this.addAssistantMessage(
-        '🤖 **AI выключен.** Команда не распознана — перефразируй или включи AI (кнопка 🤖 вверху панели).'
-      );
+      this.addAssistantMessage(this.buildMechanicalHelpMessage(text));
       this.setStatus('Готова');
       return;
     }

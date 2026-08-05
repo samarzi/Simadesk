@@ -1,13 +1,14 @@
 /**
- * Админ-панель SimaDesk (v3).
+ * Админ-панель SimaDesk (v4 — минимальная).
  *
- * Отличия от предыдущей версии — только оболочка и подача:
- *  • сворачиваемый боковой рейл с группами, бейджами и подсказками;
- *  • командная палитра (Ctrl/⌘+K) — переход в любой раздел с клавиатуры;
- *  • горячие клавиши Alt+1…Alt+9, запоминание последнего раздела;
- *  • липкий заголовок с хлебными крошками и кнопкой обновления;
- *  • иконки вместо эмодзи, единая типографика, обе темы через токены main.css.
- * Вся серверная логика (RPC, поддержка, AI-автоответы) сохранена без изменений.
+ * Плоский список из 7 разделов, без групп, без сворачивания меню,
+ * без командной палитры и хоткеев — просто клик по пункту. Разделы,
+ * которые логически об одном и том же, объединены на одной странице:
+ *  • Дашборд = сводка (KPI) + графики (было 2 отдельных пункта)
+ *  • Биллинг = подписки + промокоды (было 2 отдельных пункта)
+ *  • Настройки = конфигурация + редактор страниц сайта (было 2 пункта)
+ * Вся серверная логика (RPC, поддержка, AI-автоответы) не менялась —
+ * переработана только структура разделов и подача.
  */
 
 import {
@@ -28,35 +29,21 @@ import { AI_BOOST_PACKAGES, setAiBoostPriceOverrides } from '@/services/aiTokenQ
 import { icon } from './admin/icons';
 import { areaChart, groupedBars, hBars, donut } from './admin/charts';
 
-type AdminTab =
-  | 'overview' | 'analytics' | 'users' | 'companies' | 'subscriptions'
-  | 'promos' | 'support' | 'settings' | 'pages' | 'roadmap';
+type AdminTab = 'overview' | 'users' | 'companies' | 'billing' | 'support' | 'settings' | 'roadmap';
+type BillingView = 'subscriptions' | 'promos';
 
-interface TabMeta {
-  title: string;
-  desc: string;
-  group: string;
-  icon: string;
-  /** Синонимы для поиска в командной палитре. */
-  keywords: string;
-}
+interface TabMeta { title: string; desc: string; icon: string }
 
-const TABS: AdminTab[] = [
-  'overview', 'analytics', 'users', 'companies', 'subscriptions',
-  'promos', 'support', 'settings', 'pages', 'roadmap',
-];
+const TABS: AdminTab[] = ['overview', 'users', 'companies', 'billing', 'support', 'settings', 'roadmap'];
 
 const TAB_META: Record<AdminTab, TabMeta> = {
-  overview:      { title: 'Дашборд',          group: 'Обзор',       icon: 'dashboard', keywords: 'главная статистика kpi показатели', desc: 'Ключевые показатели платформы в реальном времени' },
-  analytics:     { title: 'Аналитика',        group: 'Обзор',       icon: 'analytics', keywords: 'графики рост выручка отчёты админы',  desc: 'Динамика роста пользователей, компаний и выручки' },
-  users:         { title: 'Пользователи',     group: 'Управление',  icon: 'users',     keywords: 'аккаунты бан блокировка триал',       desc: 'Все зарегистрированные аккаунты, блокировки и пробный период' },
-  companies:     { title: 'Компании',         group: 'Управление',  icon: 'building',  keywords: 'организации фирмы оборот инн',        desc: 'Организации на платформе, их оборот и подписки' },
-  subscriptions: { title: 'Подписки',         group: 'Управление',  icon: 'card',      keywords: 'тарифы продление доступ api оплата',  desc: 'Назначение тарифов, продление доступа и пробного периода' },
-  promos:        { title: 'Промокоды',        group: 'Маркетинг',   icon: 'tag',       keywords: 'скидки коды акции',                   desc: 'Создание кодов и статистика их использования' },
-  support:       { title: 'Поддержка',        group: 'Поддержка',   icon: 'chat',      keywords: 'чаты обращения тикеты ai автоответ',  desc: 'Обращения пользователей, живой чат и AI-автоответы' },
-  settings:      { title: 'Настройки',        group: 'Система',     icon: 'settings',  keywords: 'тарифы права роли ключ openrouter',   desc: 'Тарифная шкала, права администраторов и настройки AI' },
-  pages:         { title: 'Редактор сайта',   group: 'Система',     icon: 'page',      keywords: 'политика оферта реквизиты страницы',  desc: 'Политика конфиденциальности, реквизиты и публичная оферта' },
-  roadmap:       { title: 'Дорожная карта',   group: 'Разработка',  icon: 'roadmap',   keywords: 'задачи kanban приоритеты разработка', desc: 'Задачи разработки: приоритеты, статусы и дедупликация' },
+  overview:  { title: 'Дашборд',      icon: 'dashboard', desc: 'Ключевые показатели и динамика роста платформы' },
+  users:     { title: 'Пользователи', icon: 'users',     desc: 'Все зарегистрированные аккаунты, блокировки и пробный период' },
+  companies: { title: 'Компании',     icon: 'building',  desc: 'Организации на платформе, их оборот и подписки' },
+  billing:   { title: 'Биллинг',      icon: 'card',      desc: 'Подписки, продление доступа и промокоды' },
+  support:   { title: 'Поддержка',    icon: 'chat',      desc: 'Обращения пользователей, живой чат и AI-автоответы' },
+  settings:  { title: 'Настройки',    icon: 'settings',  desc: 'Тарифы, права администраторов, AI и страницы сайта' },
+  roadmap:   { title: 'Дорожная карта', icon: 'roadmap', desc: 'Задачи разработки: приоритеты, статусы и дедупликация' },
 };
 
 const PLAN_COLORS: Record<string, string> = {
@@ -73,7 +60,6 @@ const ROLE_META: Record<string, { label: string; color: string }> = {
   billing:    { label: 'Биллинг',        color: '#f59e0b' },
 };
 
-/** Темы обращений: иконка + подпись (эмодзи заменены иконками). */
 const REASON_META: Record<string, { label: string; icon: string; color: string }> = {
   question:       { label: 'Вопрос',          icon: 'help',   color: '#3b82f6' },
   problem:        { label: 'Проблема',        icon: 'warn',   color: '#ef4444' },
@@ -86,47 +72,48 @@ const REASON_META: Record<string, { label: string; icon: string; color: string }
 const C = { indigo: '#6366f1', blue: '#3b82f6', violet: '#8b5cf6', amber: '#f59e0b', emerald: '#10b981', rose: '#ef4444' };
 
 const LS_TAB = 'sd_adm_tab';
-const LS_RAIL = 'sd_adm_rail_collapsed';
 
 interface PickerState { userId: string; userName: string; companyId: string; companyName: string }
 
 export class AdminModule {
   private el: HTMLElement;
   private tab: AdminTab = 'overview';
-  private railCollapsed = localStorage.getItem(LS_RAIL) === '1';
   private loading = false;
   private role = 'admin';
 
-  /* данные разделов */
+  /* дашборд */
   private stats: AdminStats | null = null;
+  private analytics: AnalyticsData | null = null;
+
+  /* пользователи */
   private users: AdminUser[] = [];
   private usersTotal = 0;
   private userSearch = '';
+
+  /* компании */
   private companies: AdminCompany[] = [];
   private companiesTotal = 0;
   private companySearch = '';
-  private promos: PromoCode[] = [];
+
+  /* биллинг */
+  private billingView: BillingView = 'subscriptions';
   private plans: PlanConfig[] = [];
-  private aiBoostPrices: Record<string, number> = {};
-  private analytics: AnalyticsData | null = null;
-  private siteContent: SiteContent[] = [];
-
-  /* промокоды — детализация */
-  private promoRedemptions: PromoRedemption[] = [];
-  private activePromo: PromoCode | null = null;
-  private loadingRedemptions = false;
-
-  /* пикеры */
-  private picker: PickerState = { userId: '', userName: '', companyId: '', companyName: '' };
-  private _cleanups: Array<() => void> = [];
-
-  /* подписки */
   private apiCompanies: AdminCompanyWithApi[] = [];
   private apiSearch = '';
   private apiFilter: 'all' | 'active' | 'trial' | 'expired' = 'all';
   private inlineEdit: string | null = null;
+  private promos: PromoCode[] = [];
+  private promoRedemptions: PromoRedemption[] = [];
+  private activePromo: PromoCode | null = null;
+  private loadingRedemptions = false;
+  private picker: PickerState = { userId: '', userName: '', companyId: '', companyName: '' };
+  private _cleanups: Array<() => void> = [];
 
-  /* живая поддержка */
+  /* настройки */
+  private aiBoostPrices: Record<string, number> = {};
+  private siteContent: SiteContent[] = [];
+
+  /* поддержка — живой чат */
   private liveChats: AdminSupportChat[] = [];
   private activeLiveChat: AdminSupportChat | null = null;
   private liveChatPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -136,7 +123,6 @@ export class AdminModule {
   private liveChatReasonFilter: string | null = null;
   private supError: string | null = null;
 
-  /* AI-автоответы поддержки */
   private supAiEnabled: boolean = localStorage.getItem('sd_sup_ai_enabled') === '1';
   private supAiModel: string = localStorage.getItem('sd_sup_ai_model') || 'anthropic/claude-haiku-4-5';
   private supNeedsAttention: Set<string> = new Set();
@@ -155,12 +141,6 @@ export class AdminModule {
   private roadmapForm: { title: string; description: string; quadrant: Quadrant; status: RoadmapStatus } =
     { title: '', description: '', quadrant: 'important_not_urgent', status: 'todo' };
 
-  /* командная палитра */
-  private paletteEl: HTMLElement | null = null;
-  private paletteIndex = 0;
-  private paletteItems: Array<{ tab: AdminTab }> = [];
-  private _keyHandler: ((e: KeyboardEvent) => void) | null = null;
-
   constructor(el: HTMLElement) { this.el = el; }
 
   // ── ЖИЗНЕННЫЙ ЦИКЛ ──────────────────────────────────────────────────────
@@ -171,7 +151,6 @@ export class AdminModule {
     this.tab = saved && TABS.includes(saved) ? saved : 'overview';
     this.activeLiveChat = null;
     this.activePromo = null;
-    this.bindGlobalKeys();
     this.render();
     adminService.checkAdmin().then(r => { if (r.role) { this.role = r.role; this.render(); } });
     this.loadTab();
@@ -180,35 +159,8 @@ export class AdminModule {
   hide(): void {
     this.el.style.display = 'none';
     this.stopLiveChatPolling();
-    this.closePalette();
-    this.unbindGlobalKeys();
     this._cleanups.forEach(fn => fn());
     this._cleanups = [];
-  }
-
-  private bindGlobalKeys(): void {
-    if (this._keyHandler) return;
-    this._keyHandler = (e: KeyboardEvent) => {
-      if (this.el.style.display === 'none') return;
-      // Ctrl/⌘+K — командная палитра
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        this.paletteEl ? this.closePalette() : this.openPalette();
-        return;
-      }
-      if (e.key === 'Escape' && this.paletteEl) { e.preventDefault(); this.closePalette(); return; }
-      // Alt+1…9 — быстрый переход по разделам
-      if (e.altKey && !e.ctrlKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
-        const t = TABS[Number(e.key) - 1];
-        if (t) { e.preventDefault(); this.setTab(t); }
-      }
-    };
-    document.addEventListener('keydown', this._keyHandler);
-  }
-
-  private unbindGlobalKeys(): void {
-    if (this._keyHandler) document.removeEventListener('keydown', this._keyHandler);
-    this._keyHandler = null;
   }
 
   private setTab(tab: AdminTab): void {
@@ -227,7 +179,10 @@ export class AdminModule {
     this.render();
     try {
       switch (this.tab) {
-        case 'overview': this.stats = await adminService.getStats(); break;
+        case 'overview': {
+          const [stats, analytics] = await Promise.all([adminService.getStats(), adminService.getAnalytics()]);
+          this.stats = stats; this.analytics = analytics; break;
+        }
         case 'users': {
           const r = await adminService.getUsers(this.userSearch);
           this.users = r.users; this.usersTotal = r.total; break;
@@ -236,7 +191,14 @@ export class AdminModule {
           const r = await adminService.getCompanies(this.companySearch);
           this.companies = r.companies; this.companiesTotal = r.total; break;
         }
-        case 'promos': this.promos = await adminService.getPromos(); break;
+        case 'billing': {
+          const [plans, apiCos, promos] = await Promise.all([
+            adminService.getPlanConfigs(),
+            adminService.getCompaniesWithApi(this.apiSearch),
+            adminService.getPromos(),
+          ]);
+          this.plans = plans; this.apiCompanies = apiCos; this.promos = promos; break;
+        }
         case 'support': {
           // Ошибку списка чатов показываем внутри вкладки, а не роняем весь loadTab —
           // иначе админ видит пустой экран и не понимает, что RPC недоступна.
@@ -250,22 +212,14 @@ export class AdminModule {
           this.startLiveChatPolling();
           break;
         }
-        case 'subscriptions': {
-          const [plans, apiCos] = await Promise.all([
-            adminService.getPlanConfigs(),
-            adminService.getCompaniesWithApi(this.apiSearch),
-          ]);
-          this.plans = plans; this.apiCompanies = apiCos; break;
-        }
         case 'settings': {
-          const [plans, prices] = await Promise.all([
+          const [plans, prices, content] = await Promise.all([
             adminService.getPlanConfigs(),
             adminService.getAiBoostPrices(),
+            adminService.getSiteContent(),
           ]);
-          this.plans = plans; this.aiBoostPrices = prices; break;
+          this.plans = plans; this.aiBoostPrices = prices; this.siteContent = content; break;
         }
-        case 'pages': this.siteContent = await adminService.getSiteContent(); break;
-        case 'analytics': this.analytics = await adminService.getAnalytics(); break;
         case 'roadmap': this.roadmapTasks = await roadmapDb.getTasks(); break;
       }
     } catch (e: unknown) {
@@ -283,8 +237,8 @@ export class AdminModule {
     this._cleanups = [];
     const flush = this.tab === 'support' && !this.loading;
     this.el.innerHTML = `
-      <div class="ap${this.railCollapsed ? ' is-collapsed' : ''}">
-        ${this.renderRail()}
+      <div class="ap">
+        ${this.renderSidebar()}
         <div class="ap-main">
           ${this.renderTopbar()}
           <div class="ap-content${flush ? ' is-flush' : ''}" id="ap-content">
@@ -295,26 +249,16 @@ export class AdminModule {
     this.bindEvents();
   }
 
-  private renderRail(): string {
-    const badges: Partial<Record<AdminTab, { n: number; hot?: boolean }>> = {
-      users:     this.usersTotal ? { n: this.usersTotal } : undefined,
-      companies: this.companiesTotal ? { n: this.companiesTotal } : undefined,
-      support:   this.stats?.open_tickets ? { n: this.stats.open_tickets, hot: true } : undefined,
-    };
-
-    const items: string[] = [];
-    let lastGroup = '';
-    TABS.forEach((id, i) => {
+  private renderSidebar(): string {
+    const openTickets = this.stats?.open_tickets ?? 0;
+    const items = TABS.map(id => {
       const m = TAB_META[id];
-      if (m.group !== lastGroup) { items.push(`<div class="ap-nav-group">${m.group}</div>`); lastGroup = m.group; }
-      const b = badges[id];
-      items.push(`
-        <button class="ap-nav-item${this.tab === id ? ' active' : ''}" data-tab="${id}" data-label="${m.title}" title="${m.title} · Alt+${i + 1}">
-          ${icon(m.icon, 17)}
-          <span>${m.title}</span>
-          ${b ? `<span class="ap-nav-badge${b.hot ? ' hot' : ''}">${b.n > 999 ? '999+' : b.n}</span>` : `<span class="ap-nav-hint">${i < 9 ? this.altKey() + (i + 1) : ''}</span>`}
-        </button>`);
-    });
+      const badge = id === 'support' && openTickets > 0 ? `<span class="ap-nav-badge">${openTickets}</span>` : '';
+      return `
+        <button class="ap-nav-item${this.tab === id ? ' active' : ''}" data-tab="${id}">
+          ${icon(m.icon, 17)}<span>${m.title}</span>${badge}
+        </button>`;
+    }).join('');
 
     const u = authService.getUser();
     const name = u ? `${u.first_name ?? ''} ${u.last_name ?? ''}`.trim() || 'Администратор' : 'Администратор';
@@ -329,25 +273,16 @@ export class AdminModule {
             <div class="ap-brand-sub">Админ-панель</div>
           </div>
         </div>
-
-        <button class="ap-cmd-trigger" id="ap-open-palette" title="Быстрый переход (Ctrl+K)">
-          ${icon('search', 15)}<span>Поиск</span><span class="ap-kbd">${this.modKey()} K</span>
-        </button>
-
-        <nav class="ap-nav">${items.join('')}</nav>
-
+        <nav class="ap-nav">${items}</nav>
         <div class="ap-rail-foot">
-          <div class="ap-identity" title="${this.esc(name)} · ${rm.label}">
+          <div class="ap-identity">
             ${this.avatar(u?.photo_url ?? null, u?.first_name ?? 'A', 'sm')}
             <div class="ap-identity-body">
               <div class="ap-identity-name">${this.esc(name)}</div>
               <div class="ap-identity-role" style="color:${rm.color}">${rm.label}</div>
             </div>
           </div>
-          <div class="ap-foot-btns">
-            <button class="ap-foot-btn" id="ap-exit">${icon('logout', 15)}<span>Выйти из панели</span></button>
-            <button class="ap-foot-btn icon-only" id="ap-toggle-rail" title="${this.railCollapsed ? 'Развернуть меню' : 'Свернуть меню'}">${icon('collapse', 15)}</button>
-          </div>
+          <button class="ap-foot-btn" id="ap-exit">${icon('logout', 15)}<span>Выйти из панели</span></button>
         </div>
       </aside>`;
   }
@@ -357,30 +292,22 @@ export class AdminModule {
     return `
       <header class="ap-topbar">
         <div class="ap-topbar-text">
-          <div class="ap-crumb">${m.group} ${icon('chevron', 11)} ${m.title}</div>
           <h1>${m.title}</h1>
           <div class="ap-topbar-desc">${m.desc}</div>
         </div>
-        <div class="ap-topbar-actions">
-          <button class="ap-btn" id="ap-refresh" title="Обновить данные раздела">
-            ${icon('refresh', 15)}<span>Обновить</span>
-          </button>
-        </div>
+        <button class="ap-btn" id="ap-refresh" title="Обновить данные раздела">${icon('refresh', 15)}<span>Обновить</span></button>
       </header>`;
   }
 
   private renderTabContent(): string {
     switch (this.tab) {
-      case 'overview':      return this.renderOverview();
-      case 'analytics':     return this.renderAnalytics();
-      case 'users':         return this.renderUsers();
-      case 'companies':     return this.renderCompanies();
-      case 'subscriptions': return this.renderSubscriptions();
-      case 'promos':        return this.renderPromos();
-      case 'support':       return this.renderSupport();
-      case 'settings':      return this.renderSettings();
-      case 'pages':         return this.renderPages();
-      case 'roadmap':       return this.renderRoadmap();
+      case 'overview':  return this.renderOverview();
+      case 'users':     return this.renderUsers();
+      case 'companies': return this.renderCompanies();
+      case 'billing':   return this.renderBilling();
+      case 'support':   return this.renderSupport();
+      case 'settings':  return this.renderSettings();
+      case 'roadmap':   return this.renderRoadmap();
     }
   }
 
@@ -390,120 +317,34 @@ export class AdminModule {
       <div class="ap-skel ap-skel-block"></div>`;
   }
 
-  // ── КОМАНДНАЯ ПАЛИТРА ───────────────────────────────────────────────────
-
-  private openPalette(): void {
-    if (this.paletteEl) return;
-    const host = document.createElement('div');
-    host.className = 'ap-cmd-overlay';
-    host.innerHTML = `
-      <div class="ap-cmd-panel" role="dialog" aria-label="Быстрый переход">
-        <div class="ap-cmd-search">
-          ${icon('search', 18)}
-          <input id="ap-cmd-input" placeholder="Куда перейти?" autocomplete="off" spellcheck="false">
-          <span class="ap-kbd">ESC</span>
-        </div>
-        <div class="ap-cmd-list" id="ap-cmd-list"></div>
-        <div class="ap-cmd-foot">
-          <span>${icon('chevron', 12)} ↑↓ выбор</span>
-          <span>${icon('cornerDown', 12)} перейти</span>
-          <span>${icon('command', 12)} ${this.altKey()}1…9 — прямой переход</span>
-        </div>
-      </div>`;
-    document.body.appendChild(host);
-    this.paletteEl = host;
-    this.paletteIndex = 0;
-
-    const input = host.querySelector<HTMLInputElement>('#ap-cmd-input')!;
-    const paint = () => this.paintPalette(input.value);
-    paint();
-    input.focus();
-    input.addEventListener('input', () => { this.paletteIndex = 0; paint(); });
-    input.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'ArrowDown') { e.preventDefault(); this.paletteIndex = Math.min(this.paletteIndex + 1, this.paletteItems.length - 1); paint(); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); this.paletteIndex = Math.max(this.paletteIndex - 1, 0); paint(); }
-      else if (e.key === 'Enter') {
-        e.preventDefault();
-        const pick = this.paletteItems[this.paletteIndex];
-        if (pick) { this.closePalette(); this.setTab(pick.tab); }
-      }
-    });
-    host.addEventListener('mousedown', (e) => { if (e.target === host) this.closePalette(); });
-  }
-
-  private paintPalette(query: string): void {
-    const list = this.paletteEl?.querySelector<HTMLElement>('#ap-cmd-list');
-    if (!list) return;
-    const q = query.trim().toLowerCase();
-    const matched = TABS.filter(t => {
-      if (!q) return true;
-      const m = TAB_META[t];
-      return `${m.title} ${m.group} ${m.desc} ${m.keywords}`.toLowerCase().includes(q);
-    });
-    this.paletteItems = matched.map(tab => ({ tab }));
-    if (this.paletteIndex >= matched.length) this.paletteIndex = Math.max(0, matched.length - 1);
-
-    if (!matched.length) {
-      list.innerHTML = `<div class="ap-picker-empty">Ничего не найдено</div>`;
-      return;
-    }
-
-    const html: string[] = [];
-    let lastGroup = '';
-    matched.forEach((tab, i) => {
-      const m = TAB_META[tab];
-      if (m.group !== lastGroup) { html.push(`<div class="ap-cmd-group">${m.group}</div>`); lastGroup = m.group; }
-      html.push(`
-        <div class="ap-cmd-item${i === this.paletteIndex ? ' sel' : ''}" data-cmd-tab="${tab}">
-          ${icon(m.icon, 17)}
-          <div class="ap-cmd-item-body">
-            <div class="ap-cmd-item-title">${m.title}</div>
-            <div class="ap-cmd-item-desc">${m.desc}</div>
-          </div>
-          <span class="ap-kbd">${this.altKey()}${TABS.indexOf(tab) + 1}</span>
-        </div>`);
-    });
-    list.innerHTML = html.join('');
-    list.querySelectorAll<HTMLElement>('[data-cmd-tab]').forEach(el => {
-      el.addEventListener('click', () => { this.closePalette(); this.setTab(el.dataset.cmdTab as AdminTab); });
-    });
-    list.querySelector<HTMLElement>('.ap-cmd-item.sel')?.scrollIntoView({ block: 'nearest' });
-  }
-
-  private closePalette(): void {
-    this.paletteEl?.remove();
-    this.paletteEl = null;
-  }
-
-  // ── ДАШБОРД ─────────────────────────────────────────────────────────────
+  // ── ДАШБОРД (сводка + аналитика на одной странице) ─────────────────────
 
   private renderOverview(): string {
+    if (!this.stats && !this.analytics) {
+      return this.emptyState('alert', 'Данные недоступны', 'Не удалось загрузить сводку. Нажмите «Обновить».');
+    }
+
     const s = this.stats;
-    if (!s) return this.emptyState('alert', 'Статистика недоступна', 'Не удалось загрузить сводку. Нажмите «Обновить» или проверьте доступ к RPC admin_get_stats.');
-
-    const kpis = [
-      { label: 'Пользователи',      value: s.total_users.toLocaleString('ru'),  icon: 'users',    color: C.indigo,  sub: `+${s.new_users_7d} за 7 дней`, up: s.new_users_7d > 0 },
-      { label: 'Компании',          value: s.total_companies.toLocaleString('ru'), icon: 'building', color: C.blue, sub: 'всего активных' },
-      { label: 'Активных подписок', value: s.active_subs.toLocaleString('ru'),  icon: 'card',     color: C.emerald, sub: `${s.trial_users} на пробном` },
-      { label: 'MRR',               value: adminService.fmtMoney(s.mrr),        icon: 'ruble',    color: C.amber,   sub: `+${s.new_users_30d} пользователей/мес`, up: s.new_users_30d > 0 },
-    ];
-
-    return `
+    const kpiSection = s ? `
       <div class="ap-kpis">
-        ${kpis.map(k => `
+        ${[
+          { label: 'Пользователи',      value: s.total_users.toLocaleString('ru'),     icon: 'users',    color: C.indigo,  sub: `+${s.new_users_7d} за 7 дней` },
+          { label: 'Компании',          value: s.total_companies.toLocaleString('ru'), icon: 'building', color: C.blue,    sub: 'всего активных' },
+          { label: 'Активных подписок', value: s.active_subs.toLocaleString('ru'),     icon: 'card',     color: C.emerald, sub: `${s.trial_users} на пробном` },
+          { label: 'MRR',               value: adminService.fmtMoney(s.mrr),           icon: 'ruble',    color: C.amber,   sub: `+${s.new_users_30d} пользователей/мес` },
+        ].map(k => `
           <div class="ap-kpi" style="--kpi-color:${k.color}">
             <div class="ap-kpi-top">
               <div class="ap-kpi-icon">${icon(k.icon, 16)}</div>
               <div class="ap-kpi-label">${k.label}</div>
             </div>
             <div class="ap-kpi-value">${k.value}</div>
-            <div class="ap-kpi-sub${k.up ? ' up' : ''}">${k.up ? icon('trend', 13) : ''}${k.sub}</div>
+            <div class="ap-kpi-sub">${k.sub}</div>
           </div>`).join('')}
       </div>
-
       <div class="ap-grid-2">
         <div class="ap-card">
-          <div class="ap-card-title">${icon('analytics', 15)} Активность платформы</div>
+          <div class="ap-card-title">Активность платформы</div>
           <div style="margin-top:8px">
             ${this.statRow('Новых за 7 дней',    s.new_users_7d,  C.indigo)}
             ${this.statRow('Новых за 30 дней',   s.new_users_30d, C.blue)}
@@ -513,15 +354,19 @@ export class AdminModule {
           </div>
         </div>
         <div class="ap-card">
-          <div class="ap-card-title">${icon('zap', 15)} Быстрые действия</div>
-          <div class="ap-card-desc">Частые операции — в один клик</div>
-          <button class="ap-quick" data-tab="users">${icon('users', 16)}<span>Управление пользователями</span>${icon('chevron', 15)}</button>
-          <button class="ap-quick" data-tab="companies">${icon('building', 16)}<span>Управление компаниями</span>${icon('chevron', 15)}</button>
-          <button class="ap-quick" data-tab="support">${icon('chat', 16)}<span>Обращения в поддержку</span>${s.open_tickets > 0 ? `<span class="ap-nav-badge hot">${s.open_tickets}</span>` : ''}${icon('chevron', 15)}</button>
-          <button class="ap-quick" data-tab="subscriptions">${icon('card', 16)}<span>Подписки и продление доступа</span>${icon('chevron', 15)}</button>
-          <button class="ap-quick" data-tab="settings">${icon('settings', 16)}<span>Настроить тарифы и AI</span>${icon('chevron', 15)}</button>
+          <div class="ap-card-title">Быстрые действия</div>
+          <button class="ap-quick" data-tab="users">${icon('users', 16)}<span>Управление пользователями</span></button>
+          <button class="ap-quick" data-tab="companies">${icon('building', 16)}<span>Управление компаниями</span></button>
+          <button class="ap-quick" data-tab="support">${icon('chat', 16)}<span>Обращения в поддержку</span>${s.open_tickets > 0 ? `<span class="ap-nav-badge">${s.open_tickets}</span>` : ''}</button>
+          <button class="ap-quick" data-tab="billing">${icon('card', 16)}<span>Подписки и промокоды</span></button>
+          <button class="ap-quick" data-tab="settings">${icon('settings', 16)}<span>Настроить тарифы и AI</span></button>
         </div>
-      </div>`;
+      </div>` : `<div class="ap-banner error">${icon('warn', 18)}<div class="ap-banner-body">Не удалось загрузить статистику.</div></div>`;
+
+    const a = this.analytics;
+    const chartsSection = a ? this.renderDashboardCharts(a) : `<div class="ap-banner error" style="margin-top:16px">${icon('warn', 18)}<div class="ap-banner-body">Не удалось загрузить графики.</div></div>`;
+
+    return kpiSection + chartsSection;
   }
 
   private statRow(label: string, value: number, color: string): string {
@@ -532,46 +377,18 @@ export class AdminModule {
     </div>`;
   }
 
-  // ── АНАЛИТИКА ───────────────────────────────────────────────────────────
-
-  private renderAnalytics(): string {
-    const a = this.analytics;
-    if (!a) return this.emptyState('alert', 'Аналитика недоступна', 'Не удалось загрузить данные. Нажмите «Обновить» — если ошибка повторяется, проверьте RPC admin_get_analytics.');
-
+  private renderDashboardCharts(a: AnalyticsData): string {
     const newUsers30 = a.users_by_day.reduce((s, d) => s + d.count, 0);
-    const newComp30 = a.companies_by_day.reduce((s, d) => s + d.count, 0);
-    const activeSubs = a.plans_dist.reduce((s, d) => s + d.count, 0);
-    const priorBase = Math.max(1, a.total_users - newUsers30);
-    const growthPct = Math.round((newUsers30 / priorBase) * 100);
-
-    const summary = [
-      { label: 'Всего пользователей',    value: a.total_users.toLocaleString('ru'),     icon: 'users',    color: C.indigo,  trend: `+${newUsers30} за 30 дней`, up: newUsers30 > 0 },
-      { label: 'Компаний',               value: a.total_companies.toLocaleString('ru'), icon: 'building', color: C.blue,    trend: `+${newComp30} за 30 дней`,  up: newComp30 > 0 },
-      { label: 'Активных подписок',      value: activeSubs.toLocaleString('ru'),        icon: 'card',     color: C.violet,  trend: `${a.plans_dist.length} тарифов в обороте`, up: activeSubs > 0 },
-      { label: 'Оборот клиентов / 30 дн.', value: adminService.fmtMoney(a.total_revenue), icon: 'ruble',  color: C.emerald, trend: `рост ${growthPct}%`, up: growthPct > 0 },
-    ];
 
     return `
-      <div class="ap-kpis">
-        ${summary.map(k => `
-          <div class="ap-kpi" style="--kpi-color:${k.color}">
-            <div class="ap-kpi-top">
-              <div class="ap-kpi-icon">${icon(k.icon, 16)}</div>
-              <div class="ap-kpi-label">${k.label}</div>
-            </div>
-            <div class="ap-kpi-value">${k.value}</div>
-            <div class="ap-kpi-sub${k.up ? ' up' : ''}">${k.up ? icon('trend', 13) : ''}${k.trend}</div>
-          </div>`).join('')}
-      </div>
-
+      <div class="ap-section-title">Динамика за 30 дней</div>
       <div class="ap-charts">
         <div class="ap-card ap-span-2">
           <div class="ap-chart-head">
             <div>
               <div class="ap-card-title">Рост пользователей</div>
-              <div class="ap-card-desc">Накопительно за последние 30 дней · +${newUsers30} новых</div>
+              <div class="ap-card-desc">Накопительно · +${newUsers30} новых</div>
             </div>
-            <div class="ap-legend"><i style="background:${C.indigo}"></i> Всего аккаунтов</div>
           </div>
           <div class="ap-chart">${areaChart(a.users_by_day, a.total_users, C.indigo, 'apGradUsers')}</div>
         </div>
@@ -592,19 +409,16 @@ export class AdminModule {
 
         <div class="ap-card">
           <div class="ap-card-title">Топ компаний по обороту</div>
-          <div class="ap-card-desc">За последние 30 дней</div>
           <div class="ap-chart">${hBars(a.revenue_by_company, C.emerald, n => adminService.fmt(n))}</div>
         </div>
 
         <div class="ap-card">
           <div class="ap-card-title">Распределение по тарифам</div>
-          <div class="ap-card-desc">Активные подписки</div>
           ${donut(a.plans_dist, PLAN_COLORS, PLAN_LABELS)}
         </div>
 
         <div class="ap-card ap-span-2">
-          <div class="ap-card-title">${icon('shield', 15)} Администраторы платформы</div>
-          <div class="ap-card-desc">Пользователи с доступом к этой панели</div>
+          <div class="ap-card-title">Администраторы платформы</div>
           <div class="ap-table-wrap" style="margin-top:14px">
             <table class="ap-table">
               <thead><tr><th>Пользователь</th><th>Роль</th><th>Добавлен</th><th style="width:56px"></th></tr></thead>
@@ -664,9 +478,9 @@ export class AdminModule {
     else planBadge = '<span class="ap-badge grey">—</span>';
 
     const status = isBanned
-      ? `<span class="ap-badge red" title="Заблокирован до ${adminService.fmtDate(u.banned_until)}">${icon('ban', 12)} Бан</span>`
-      : trialActive ? `<span class="ap-badge amber">${icon('clock', 12)} Пробный</span>`
-      : u.subscription?.status === 'active' ? `<span class="ap-badge green">${icon('check', 12)} Активен</span>`
+      ? `<span class="ap-badge red" title="Заблокирован до ${adminService.fmtDate(u.banned_until)}">Бан</span>`
+      : trialActive ? `<span class="ap-badge amber">Пробный</span>`
+      : u.subscription?.status === 'active' ? `<span class="ap-badge green">Активен</span>`
       : `<span class="ap-badge grey">Без подписки</span>`;
 
     const trialCell = trialActive
@@ -674,7 +488,7 @@ export class AdminModule {
            <input class="ap-input ap-input-sm ap-trial-input" type="number" min="1" max="365" value="${daysLeft}" data-uid="${u.id}" style="width:66px" title="Количество дней">
            <button class="ap-icon-btn sm ok" data-action="set-trial-days" data-uid="${u.id}" title="Сохранить количество дней">${icon('check', 14)}</button>
          </div>`
-      : `<button class="ap-btn ap-btn-sm" data-action="extend-trial" data-uid="${u.id}">${icon('clock', 13)} Выдать</button>`;
+      : `<button class="ap-btn ap-btn-sm" data-action="extend-trial" data-uid="${u.id}">Выдать</button>`;
 
     const roleBadge = u.admin_role
       ? (() => { const rm = ROLE_META[u.admin_role!] ?? { label: u.admin_role!, color: '#64748b' };
@@ -761,9 +575,18 @@ export class AdminModule {
       </tr>`;
   }
 
-  // ── ПОДПИСКИ ────────────────────────────────────────────────────────────
+  // ── БИЛЛИНГ (подписки + промокоды) ──────────────────────────────────────
 
-  private renderSubscriptions(): string {
+  private renderBilling(): string {
+    const switcher = `
+      <div class="ap-segment" style="margin-bottom:16px">
+        <button class="${this.billingView === 'subscriptions' ? 'active' : ''}" data-billing-view="subscriptions">${icon('card', 14)} Подписки</button>
+        <button class="${this.billingView === 'promos' ? 'active' : ''}" data-billing-view="promos">${icon('tag', 14)} Промокоды</button>
+      </div>`;
+    return switcher + (this.billingView === 'promos' ? this.renderPromosView() : this.renderSubscriptionsView());
+  }
+
+  private renderSubscriptionsView(): string {
     const now = Date.now();
     const labels: Record<string, string> = { all: 'Все', active: 'Активные', trial: 'Пробный', expired: 'Без доступа' };
     const filterBtns = (['all', 'active', 'trial', 'expired'] as const)
@@ -801,7 +624,7 @@ export class AdminModule {
 
         <div class="ap-subs-forms">
           <div class="ap-card">
-            <div class="ap-card-title">${icon('card', 15)} Назначить подписку</div>
+            <div class="ap-card-title">Назначить подписку</div>
             <div class="ap-card-desc">Выберите пользователя и компанию — подписка будет создана или обновлена.</div>
             <div class="ap-form">
               <div class="ap-field">
@@ -824,12 +647,12 @@ export class AdminModule {
                   <input class="ap-input" id="sub-months" type="number" min="1" max="24" value="1">
                 </div>
               </div>
-              <button class="ap-btn ap-btn-primary" id="sub-save">${icon('check', 15)} Назначить подписку</button>
+              <button class="ap-btn ap-btn-primary" id="sub-save">Назначить подписку</button>
             </div>
           </div>
 
           <div class="ap-card">
-            <div class="ap-card-title">${icon('clock', 15)} Продлить пробный период</div>
+            <div class="ap-card-title">Продлить пробный период</div>
             <div class="ap-form">
               <div class="ap-field">
                 <label class="ap-label">Пользователь</label>
@@ -839,7 +662,7 @@ export class AdminModule {
                 <label class="ap-label">Количество дней</label>
                 <input class="ap-input" id="trial-days" type="number" min="1" max="365" value="14">
               </div>
-              <button class="ap-btn ap-btn-primary" id="trial-save">${icon('plus', 15)} Продлить</button>
+              <button class="ap-btn ap-btn-primary" id="trial-save">Продлить</button>
             </div>
           </div>
         </div>
@@ -941,9 +764,7 @@ export class AdminModule {
       </div>`;
   }
 
-  // ── ПРОМОКОДЫ ───────────────────────────────────────────────────────────
-
-  private renderPromos(): string {
+  private renderPromosView(): string {
     if (this.activePromo) return this.renderPromoDetail(this.activePromo);
 
     const totalRedemptions = this.promos.reduce((s, p) => s + (p.redemption_count ?? p.use_count ?? 0), 0);
@@ -968,7 +789,7 @@ export class AdminModule {
         </div>
 
         <div class="ap-card">
-          <div class="ap-card-title">${icon('plus', 15)} Создать промокод</div>
+          <div class="ap-card-title">Создать промокод</div>
           <div class="ap-card-desc">Скидка применяется к подписке компании</div>
           <div class="ap-form">
             <div class="ap-field">
@@ -999,7 +820,7 @@ export class AdminModule {
                 <div class="ap-hint">Пусто — без ограничений</div>
               </div>
             </div>
-            <button class="ap-btn ap-btn-primary" id="promo-create">${icon('tag', 15)} Создать промокод</button>
+            <button class="ap-btn ap-btn-primary" id="promo-create">Создать промокод</button>
           </div>
         </div>
       </div>`;
@@ -1133,14 +954,14 @@ export class AdminModule {
 
     const detail = this.activeLiveChat
       ? this.renderChatDetail(this.activeLiveChat)
-      : `<div class="ap-empty">${icon('chat', 34, 1.4)}<div class="ap-empty-title">Выберите обращение</div><div class="ap-empty-desc">Список чатов слева. AI-автоответы отвечают на очевидные вопросы сами и помечают спорные для оператора.</div></div>`;
+      : `<div class="ap-empty">${icon('chat', 34, 1.4)}<div class="ap-empty-title">Выберите обращение</div><div class="ap-empty-desc">AI-автоответы отвечают на очевидные вопросы сами и помечают спорные для оператора.</div></div>`;
 
     return `
       ${errorBar}
       <div class="ap-sup-bar">
         <label class="ap-switch" title="ИИ автоматически отвечает на очевидные вопросы. Если не уверен — помечает чат для оператора.">
           <span class="ap-switch-track${this.supAiEnabled ? ' on' : ''}" id="sup-ai-toggle-track"><span class="ap-switch-thumb"></span></span>
-          <span class="ap-switch-label">${icon('bot', 14)} AI-автоответы</span>
+          <span class="ap-switch-label">AI-автоответы</span>
         </label>
         <select class="ap-select" id="sup-ai-model-sel" style="width:auto;max-width:270px;padding:5px 9px;font-size:12px">
           ${aiModels.map(m => `<option value="${m.id}"${this.supAiModel === m.id ? ' selected' : ''}>${m.label}</option>`).join('')}
@@ -1155,7 +976,7 @@ export class AdminModule {
       <div class="ap-sup">
         <div class="ap-sup-list">
           <div class="ap-sup-list-head">
-            ${icon('inbox', 15)} Обращения
+            Обращения
             <div class="ap-segment">
               <button class="${this.liveChatFilter === 'open' ? 'active' : ''}" data-live-filter="open">Активные</button>
               <button class="${this.liveChatFilter === 'all' ? 'active' : ''}" data-live-filter="all">Все</button>
@@ -1586,7 +1407,7 @@ Q: Как изменить тариф? → Настройки → Подписк
 ВАЖНО: предлагай кнопку ТОЛЬКО если контекст [🤖 АВТОКОНТЕКСТ:...] подтверждает актуальность проблемы.
 Кнопка будет показана пользователю — при нажатии действие выполнится автоматически в его браузере.
 
-Навигация: левое меню, иконки разделов. Горячие клавиши: Alt+1…9.`;
+Навигация: левое меню, иконки разделов.`;
 
   private readonly DISSATISFACTION_PATTERNS = /не (то|так|правильно|понял|понимаю|помогло)|нет[,.]?\s*(не|это)|это не|не об этом|другой вопрос|вы не поняли|всё равно не|по-прежнему|так и не|не решил|не работает|не помогает/i;
 
@@ -1699,13 +1520,46 @@ ${this.SIMADESK_KNOWLEDGE}
     } catch { el.innerHTML = `${icon('zap', 13)} —`; }
   }
 
-  // ── НАСТРОЙКИ ───────────────────────────────────────────────────────────
+  // ── НАСТРОЙКИ (конфигурация + страницы сайта) ───────────────────────────
 
   private renderSettings(): string {
+    const pages: Array<{ key: string; title: string; link: string }> = [
+      { key: 'privacy_policy',   title: 'Политика конфиденциальности',      link: '/privacy.html' },
+      { key: 'legal_requisites', title: 'Реквизиты и правовая информация',  link: '/legal.html' },
+      { key: 'offer',            title: 'Публичная оферта',                 link: '/offer.html' },
+    ];
+    const pageEditors = pages.map(p => {
+      const sc = this.siteContent.find(c => c.key === p.key);
+      const title = sc?.title ?? p.title;
+      const content = sc?.content ?? '';
+      const updated = sc?.updated_at ? `Изменено: ${adminService.fmtDate(sc.updated_at)}` : 'Ещё не редактировалось';
+      return `
+        <div class="ap-card">
+          <div class="ap-card-head">
+            <div>
+              <div class="ap-card-title">${this.esc(title)}</div>
+              <div class="ap-card-desc">${updated}</div>
+            </div>
+            <a href="${p.link}" target="_blank" rel="noopener" class="ap-btn ap-btn-sm">${icon('external', 13)} Открыть</a>
+          </div>
+          <div class="ap-form">
+            <div class="ap-field">
+              <label class="ap-label">Заголовок страницы</label>
+              <input class="ap-input" id="page-title-${p.key}" value="${this.esc(title)}">
+            </div>
+            <div class="ap-field">
+              <label class="ap-label">Содержимое (HTML или текст)</label>
+              <textarea class="ap-textarea" id="page-content-${p.key}" rows="10" style="font-family:'DM Mono',ui-monospace,monospace;font-size:12px">${this.esc(content)}</textarea>
+            </div>
+            <button class="ap-btn ap-btn-primary" data-action="save-page" data-page-key="${p.key}">Сохранить страницу</button>
+          </div>
+        </div>`;
+    }).join('');
+
     return `
       <div class="ap-settings">
         <div class="ap-card ap-wide">
-          <div class="ap-card-title">${icon('card', 15)} Тарифная шкала</div>
+          <div class="ap-card-title">Тарифная шкала</div>
           <div class="ap-card-desc">Цены и пороги оборота. Изменения синхронизируются на странице /info автоматически.</div>
           <div class="ap-table-wrap" style="margin-top:14px">
             <table class="ap-table">
@@ -1719,7 +1573,7 @@ ${this.SIMADESK_KNOWLEDGE}
                       <td><input class="ap-input ap-input-sm" id="plan-min-${p.key}" type="number" value="${p.revenue_min}" min="0"></td>
                       <td><input class="ap-input ap-input-sm" id="plan-max-${p.key}" type="number" value="${p.revenue_max ?? ''}" placeholder="без предела"></td>
                       <td><input class="ap-input ap-input-sm" id="plan-price-${p.key}" type="number" value="${p.price_rub}" min="0"></td>
-                      <td><button class="ap-btn ap-btn-primary ap-btn-sm" data-action="save-plan" data-plan="${p.key}">${icon('check', 13)} Сохранить</button></td>
+                      <td><button class="ap-btn ap-btn-primary ap-btn-sm" data-action="save-plan" data-plan="${p.key}">Сохранить</button></td>
                     </tr>`;
                   }).join('')}
               </tbody>
@@ -1728,7 +1582,7 @@ ${this.SIMADESK_KNOWLEDGE}
         </div>
 
         <div class="ap-card">
-          <div class="ap-card-title">${icon('userPlus', 15)} Права администратора</div>
+          <div class="ap-card-title">Права администратора</div>
           <div class="ap-card-desc">Выдача доступа к этой панели</div>
           <div class="ap-form">
             <div class="ap-field">
@@ -1743,12 +1597,12 @@ ${this.SIMADESK_KNOWLEDGE}
                 <option value="admin">Admin — полный доступ</option>
               </select>
             </div>
-            <button class="ap-btn ap-btn-primary" id="grant-admin-btn">${icon('shield', 15)} Выдать права</button>
+            <button class="ap-btn ap-btn-primary" id="grant-admin-btn">Выдать права</button>
           </div>
         </div>
 
         <div class="ap-card">
-          <div class="ap-card-title">${icon('bot', 15)} AI-ассистент «Сима»</div>
+          <div class="ap-card-title">AI-ассистент «Сима»</div>
           <div class="ap-card-desc">Подключается через OpenRouter. Модель применяется ко всем пользователям, ключ хранится в базе.</div>
           <div class="ap-form">
             <div class="ap-field">
@@ -1760,7 +1614,7 @@ ${this.SIMADESK_KNOWLEDGE}
               <select class="ap-select" id="ai-model-select">${this.renderModelOptions()}</select>
             </div>
             <div style="display:flex;gap:10px;align-items:center">
-              <button class="ap-btn ap-btn-primary" id="save-ai-config-btn">${icon('check', 15)} Сохранить</button>
+              <button class="ap-btn ap-btn-primary" id="save-ai-config-btn">Сохранить</button>
               <span class="ap-status-msg" id="ai-config-status"></span>
             </div>
             <div class="ap-note">
@@ -1772,10 +1626,10 @@ ${this.SIMADESK_KNOWLEDGE}
         </div>
 
         <div class="ap-card">
-          <div class="ap-card-title">${icon('key', 15)} Вход разработчиков и проверяющих</div>
+          <div class="ap-card-title">Вход разработчиков и проверяющих</div>
           <div class="ap-card-desc">Email/password-аккаунты для входа без Telegram и Яндекса. Смена без знания старого пароля.</div>
           <div id="ap-reviewer-accounts" style="margin-top:14px">
-            <button class="ap-btn" id="load-reviewer-accounts-btn">${icon('db', 15)} Загрузить аккаунты</button>
+            <button class="ap-btn" id="load-reviewer-accounts-btn">Загрузить аккаунты</button>
           </div>
           <div id="ap-reviewer-form" style="display:none">
             <div class="ap-form">
@@ -1792,7 +1646,7 @@ ${this.SIMADESK_KNOWLEDGE}
                 <input class="ap-input" id="reviewer-new-password" type="text" placeholder="Оставьте пустым — не менять" autocomplete="new-password">
               </div>
               <div style="display:flex;gap:10px;align-items:center">
-                <button class="ap-btn ap-btn-primary" id="reviewer-save-btn">${icon('check', 15)} Сохранить</button>
+                <button class="ap-btn ap-btn-primary" id="reviewer-save-btn">Сохранить</button>
                 <span class="ap-status-msg" id="reviewer-save-status"></span>
               </div>
             </div>
@@ -1800,7 +1654,7 @@ ${this.SIMADESK_KNOWLEDGE}
         </div>
 
         <div class="ap-card">
-          <div class="ap-card-title">${icon('sparkle', 15)} Цены пакетов AI-токенов</div>
+          <div class="ap-card-title">Цены пакетов AI-токенов</div>
           <div class="ap-card-desc">Сохраняются в Supabase и сразу отображаются на странице «Тариф и оплата».</div>
           <div class="ap-table-wrap" style="margin-top:14px">
             <table class="ap-table">
@@ -1812,7 +1666,7 @@ ${this.SIMADESK_KNOWLEDGE}
                   <td><span class="ap-badge violet">${this.esc(pkg.label)}</span></td>
                   <td class="ap-td-muted">${dayK.toLocaleString('ru')}К</td>
                   <td><input class="ap-input ap-input-sm" id="ai-boost-price-${pkg.key}" type="number" value="${price}" min="0" style="width:100px"></td>
-                  <td><button class="ap-btn ap-btn-primary ap-btn-sm" data-action="save-ai-boost-price" data-pkg="${pkg.key}">${icon('check', 13)} Сохранить</button></td>
+                  <td><button class="ap-btn ap-btn-primary ap-btn-sm" data-action="save-ai-boost-price" data-pkg="${pkg.key}">Сохранить</button></td>
                 </tr>`;
               }).join('')}</tbody>
             </table>
@@ -1820,64 +1674,18 @@ ${this.SIMADESK_KNOWLEDGE}
         </div>
 
         <div class="ap-card">
-          <div class="ap-card-title">${icon('external', 15)} Быстрые ссылки</div>
+          <div class="ap-card-title">Быстрые ссылки</div>
           <div class="ap-form" style="gap:8px">
             <a href="/legal.html"   target="_blank" rel="noopener" class="ap-link-row">${icon('page', 15)}<span>Реквизиты</span>${icon('external', 14)}</a>
             <a href="/privacy.html" target="_blank" rel="noopener" class="ap-link-row">${icon('page', 15)}<span>Политика конфиденциальности</span>${icon('external', 14)}</a>
             <a href="/offer.html"   target="_blank" rel="noopener" class="ap-link-row">${icon('page', 15)}<span>Публичная оферта</span>${icon('external', 14)}</a>
             <a href="/info"         target="_blank" rel="noopener" class="ap-link-row">${icon('card', 15)}<span>Страница тарифов /info</span>${icon('external', 14)}</a>
           </div>
-          <div class="ap-note" style="margin-top:12px">
-            Тексты юридических страниц редактируются в разделе
-            <button class="ap-inline-link" data-tab="pages">Редактор сайта</button>.
-          </div>
         </div>
+
+        <div class="ap-settings-divider">Страницы сайта</div>
+        ${pageEditors}
       </div>`;
-  }
-
-  // ── РЕДАКТОР СТРАНИЦ ────────────────────────────────────────────────────
-
-  private renderPages(): string {
-    const pages: Array<{ key: string; title: string; link: string }> = [
-      { key: 'privacy_policy',   title: 'Политика конфиденциальности',      link: '/privacy.html' },
-      { key: 'legal_requisites', title: 'Реквизиты и правовая информация',  link: '/legal.html' },
-      { key: 'offer',            title: 'Публичная оферта',                 link: '/offer.html' },
-    ];
-
-    const editors = pages.map(p => {
-      const sc = this.siteContent.find(c => c.key === p.key);
-      const title = sc?.title ?? p.title;
-      const content = sc?.content ?? '';
-      const updated = sc?.updated_at ? `Изменено: ${adminService.fmtDate(sc.updated_at)}` : 'Ещё не редактировалось';
-      return `
-        <div class="ap-card">
-          <div class="ap-card-head">
-            <div>
-              <div class="ap-card-title">${icon('page', 15)} ${this.esc(title)}</div>
-              <div class="ap-card-desc">${updated}</div>
-            </div>
-            <a href="${p.link}" target="_blank" rel="noopener" class="ap-btn ap-btn-sm">${icon('external', 13)} Открыть</a>
-          </div>
-          <div class="ap-form">
-            <div class="ap-field">
-              <label class="ap-label">Заголовок страницы</label>
-              <input class="ap-input" id="page-title-${p.key}" value="${this.esc(title)}">
-            </div>
-            <div class="ap-field">
-              <label class="ap-label">Содержимое (HTML или текст)</label>
-              <textarea class="ap-textarea" id="page-content-${p.key}" rows="12" style="font-family:'DM Mono',ui-monospace,monospace;font-size:12px">${this.esc(content)}</textarea>
-            </div>
-            <button class="ap-btn ap-btn-primary" data-action="save-page" data-page-key="${p.key}">${icon('check', 15)} Сохранить страницу</button>
-          </div>
-        </div>`;
-    });
-
-    return `
-      <div class="ap-banner info">
-        ${icon('info', 18)}
-        <div class="ap-banner-body">Содержимое хранится в базе данных и подгружается на соответствующих страницах сайта динамически.</div>
-      </div>
-      <div class="ap-settings">${editors.join('')}</div>`;
   }
 
   // ── ДОРОЖНАЯ КАРТА ──────────────────────────────────────────────────────
@@ -1911,7 +1719,7 @@ ${this.SIMADESK_KNOWLEDGE}
           <div class="ap-task-title">${this.esc(t.title)}</div>
           ${t.description ? `<div class="ap-task-desc">${this.esc(t.description)}</div>` : ''}
           <div class="ap-task-foot">
-            <button class="ap-btn ap-btn-sm" data-action="roadmap-edit" data-task-id="${t.id}">${icon('edit', 13)} Изменить</button>
+            <button class="ap-btn ap-btn-sm" data-action="roadmap-edit" data-task-id="${t.id}">Изменить</button>
             <button class="ap-icon-btn sm danger" data-action="roadmap-delete" data-task-id="${t.id}" title="Удалить задачу">${icon('trash', 13)}</button>
           </div>
         </div>`;
@@ -1934,7 +1742,7 @@ ${this.SIMADESK_KNOWLEDGE}
       <div class="ap-banner warn">
         ${icon('warn', 18)}
         <div class="ap-banner-body">Обнаружено <b style="display:inline">${dupCount}</b> групп задач с одинаковым названием — вероятно, дубликаты.</div>
-        <button class="ap-btn ap-btn-danger ap-btn-sm" data-action="roadmap-dedup">${icon('trash', 13)} Удалить дубликаты</button>
+        <button class="ap-btn ap-btn-danger ap-btn-sm" data-action="roadmap-dedup">Удалить дубликаты</button>
       </div>` : '';
 
     const filters: Array<{ key: string; label: string; color?: string }> = [
@@ -1944,7 +1752,7 @@ ${this.SIMADESK_KNOWLEDGE}
 
     const form = this.roadmapFormOpen ? `
       <div class="ap-card" style="margin-bottom:16px">
-        <div class="ap-card-title">${icon(this.roadmapEditing ? 'edit' : 'plus', 15)} ${this.roadmapEditing ? 'Редактировать задачу' : 'Новая задача'}</div>
+        <div class="ap-card-title">${this.roadmapEditing ? 'Редактировать задачу' : 'Новая задача'}</div>
         <div class="ap-form">
           <div class="ap-field">
             <label class="ap-label">Заголовок *</label>
@@ -1970,7 +1778,7 @@ ${this.SIMADESK_KNOWLEDGE}
           </div>
           <div style="display:flex;gap:8px;justify-content:flex-end">
             <button class="ap-btn" data-action="roadmap-cancel">Отмена</button>
-            <button class="ap-btn ap-btn-primary" data-action="roadmap-save">${icon('check', 15)} ${this.roadmapEditing ? 'Сохранить изменения' : 'Создать задачу'}</button>
+            <button class="ap-btn ap-btn-primary" data-action="roadmap-save">${this.roadmapEditing ? 'Сохранить изменения' : 'Создать задачу'}</button>
           </div>
         </div>
       </div>` : '';
@@ -2000,11 +1808,13 @@ ${this.SIMADESK_KNOWLEDGE}
     this.el.querySelector('#ap-exit')?.addEventListener('click', () => window.app?.navigateTo?.('profile'));
     this.el.querySelector('#ap-refresh')?.addEventListener('click', () => this.loadTab());
     this.el.querySelector('#ap-refresh-empty')?.addEventListener('click', () => this.loadTab());
-    this.el.querySelector('#ap-open-palette')?.addEventListener('click', () => this.openPalette());
-    this.el.querySelector('#ap-toggle-rail')?.addEventListener('click', () => {
-      this.railCollapsed = !this.railCollapsed;
-      localStorage.setItem(LS_RAIL, this.railCollapsed ? '1' : '0');
-      this.render();
+
+    this.el.querySelectorAll<HTMLElement>('[data-billing-view]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.billingView = btn.dataset.billingView as BillingView;
+        this.activePromo = null;
+        this.render();
+      });
     });
 
     this.debouncedSearch('#ap-user-search', v => { this.userSearch = v; this.loadTab(); });
@@ -2039,9 +1849,6 @@ ${this.SIMADESK_KNOWLEDGE}
     });
 
     this.el.querySelectorAll<HTMLElement>('.ap-picker').forEach(p => this.bindPickerEvents(p));
-
-    // Активный пункт всегда виден, даже если список разделов прокручен.
-    this.el.querySelector('.ap-nav-item.active')?.scrollIntoView({ block: 'nearest' });
   }
 
   private debouncedSearch(sel: string, cb: (value: string) => void): void {
@@ -2646,13 +2453,6 @@ ${this.SIMADESK_KNOWLEDGE}
   }
 
   // ── УТИЛИТЫ ─────────────────────────────────────────────────────────────
-
-  /** Подписи модификаторов: на macOS — символы, на остальных ОС — слова. */
-  private get isMac(): boolean {
-    return /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
-  }
-  private modKey(): string { return this.isMac ? '⌘' : 'Ctrl'; }
-  private altKey(): string { return this.isMac ? '⌥' : 'Alt '; }
 
   private esc(s: string | null | undefined): string {
     if (s == null) return '';

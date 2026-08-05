@@ -628,6 +628,174 @@ export const wbApi = {
     form.append('file', file, file.name);
     await wbFetchForm('/wb-buyer-chat/api/v1/seller/message', apiKey, form, signal);
   },
+
+  // ── Supply Management (Поставки WB) ────────────────────────────────────────
+
+  /**
+   * POST /api/v3/supplies — создать поставку.
+   */
+  async createWbSupply(
+    apiKey: string,
+    name: string,
+  ): Promise<{ supplyId: string }> {
+    const resp = await wbFetch<any>('/wb-marketplace/api/v3/supplies', 'POST', apiKey, { name });
+    return { supplyId: resp?.id ?? '' };
+  },
+
+  /**
+   * PUT /api/v3/supplies/{supplyId}/orders — добавить заказы в поставку.
+   */
+  async addOrdersToSupply(
+    apiKey: string,
+    supplyId: string,
+    orderIds: number[],
+  ): Promise<void> {
+    await wbFetch(`/wb-marketplace/api/v3/supplies/${supplyId}/orders`, 'PUT', apiKey, { orders: orderIds });
+  },
+
+  /**
+   * GET /api/v3/supplies/{supplyId}/barcode — штрихкод поставки (PDF).
+   */
+  async getSupplyBarcodePdf(
+    apiKey: string,
+    supplyId: string,
+  ): Promise<Blob> {
+    const res = await fetch(`${WB_PROXY}/wb-marketplace/api/v3/supplies/${supplyId}/barcode?type=pdf`, {
+      method: 'GET',
+      headers: {
+        'Authorization': apiKey,
+        'Accept': 'application/pdf',
+        'apikey': API_KEY,
+      },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`WB ${res.status}: ${text.slice(0, 200)}`);
+    }
+    return res.blob();
+  },
+
+  /**
+   * PATCH /api/v3/supplies/{supplyId}/deliver — передать поставку в доставку.
+   */
+  async deliverSupply(
+    apiKey: string,
+    supplyId: string,
+  ): Promise<void> {
+    const res = await fetch(`${WB_PROXY}/wb-marketplace/api/v3/supplies/${supplyId}/deliver`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': apiKey,
+        'Content-Type': 'application/json',
+        'apikey': API_KEY,
+      },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`WB ${res.status}: ${text.slice(0, 200)}`);
+    }
+  },
+
+  /**
+   * GET /api/v3/supplies — список поставок.
+   */
+  async getWbSupplies(
+    apiKey: string,
+    limit = 100,
+  ): Promise<any[]> {
+    const resp = await wbFetch<any>(`/wb-marketplace/api/v3/supplies?limit=${limit}`, 'GET', apiKey);
+    return resp?.supplies ?? [];
+  },
+
+  // ── Analytics & Reports ────────────────────────────────────────────────────
+
+  /**
+   * GET /api/v1/supplier/sales — детальная статистика продаж (с регионами).
+   */
+  async fetchWbSalesAnalytics(
+    apiKey: string,
+    dateFrom: string, // RFC3339
+    flag = 0, // 0 = продажи, 1 = возвраты
+  ): Promise<any[]> {
+    const resp = await wbFetch<any[]>(
+      `/wb-stats/api/v1/supplier/sales?dateFrom=${encodeURIComponent(dateFrom)}&flag=${flag}`,
+      'GET', apiKey,
+    );
+    return Array.isArray(resp) ? resp : [];
+  },
+
+  /**
+   * POST /content/v2/cards/upload — создать карточку товара.
+   */
+  async createWbCard(
+    apiKey: string,
+    card: {
+      subjectID: number;
+      variants: Array<{
+        vendorCode: string;
+        title: string;
+        description: string;
+        brand: string;
+        dimensions: { length: number; width: number; height: number };
+        characteristics: Array<{ id: number; value: string | number }>;
+        sizes: Array<{ wbSize: string; price: number }>;
+      }>;
+    },
+  ): Promise<any> {
+    return wbFetch('/wb-content/content/v2/cards/upload', 'POST', apiKey, card);
+  },
+
+  /**
+   * POST /content/v1/directory/subjects — получить список предметов (subjects).
+   */
+  async fetchWbDirectory(
+    apiKey: string,
+    params: { name?: string; parent?: number; limit?: number } = {},
+  ): Promise<any[]> {
+    const resp = await wbFetch<any>(
+      '/wb-content/content/v1/directory/subjects',
+      'POST', apiKey,
+      { ...params, limit: params.limit ?? 1000 },
+    );
+    return resp?.data ?? [];
+  },
+
+  /**
+   * GET /adv/v1/stat — статистика рекламных кампаний.
+   */
+  async fetchWbAdStats(
+    apiKey: string,
+    campaignIds: number[],
+    dateFrom: string,
+    dateTo: string,
+  ): Promise<any[]> {
+    const resp = await wbFetch<any[]>(
+      `/wb-adv/adv/v1/stat?ids=${campaignIds.join(',')}&from=${dateFrom}&to=${dateTo}`,
+      'GET', apiKey,
+    );
+    return Array.isArray(resp) ? resp : [];
+  },
+
+  /**
+   * POST /adv/v1/promotion — создать рекламную кампанию.
+   */
+  async createWbAdCampaign(
+    apiKey: string,
+    campaign: {
+      name: string;
+      subjectId: number;
+      sum: number; // бюджет в копейках
+      bid: number; // ставка в копейках
+      type: 4 | 5 | 6 | 7 | 8 | 9; // тип кампании
+      autoParams?: {
+        cpm?: { autobudget: boolean };
+        active?: { dates: { from: string; to: string } };
+      };
+    },
+  ): Promise<{ campaignId: number }> {
+    const resp = await wbFetch<any>('/wb-adv/adv/v1/promotion', 'POST', apiKey, campaign);
+    return { campaignId: resp?.id ?? 0 };
+  },
 };
 
 export interface WbChat {
@@ -730,6 +898,192 @@ export async function fetchWbCurrentPrices(
 }
 
 /**
+ * Получить список возвратов WB.
+ * GET /api/v1/supplier/returns
+ */
+export async function fetchWbReturns(
+  apiKey: string,
+  dateFrom: string, // RFC3339
+  signal?: AbortSignal,
+): Promise<WbReturn[]> {
+  const resp = await wbFetch<WbReturn[]>(
+    `/wb-stats/api/v1/supplier/returns?dateFrom=${encodeURIComponent(dateFrom)}`,
+    'GET', apiKey, undefined, signal,
+  );
+  return Array.isArray(resp) ? resp : [];
+}
+
+export interface WbReturn {
+  nmId?: number;
+  subject?: string;
+  srid?: string;
+  returnDate?: string;
+  quantity?: number;
+  retailPrice?: number;
+  productName?: string;
+}
+
+/**
+ * Получить детальную аналитику продаж WB.
+ * GET /api/v1/supplier/sales
+ */
+export async function fetchWbSalesAnalytics(
+  apiKey: string,
+  dateFrom: string, // RFC3339
+  signal?: AbortSignal,
+): Promise<WbSale[]> {
+  const resp = await wbFetch<WbSale[]>(
+    `/wb-stats/api/v1/supplier/sales?dateFrom=${encodeURIComponent(dateFrom)}`,
+    'GET', apiKey, undefined, signal,
+  );
+  return Array.isArray(resp) ? resp : [];
+}
+
+export interface WbSale {
+  nmId?: number;
+  subject?: string;
+  saleID?: string;
+  date?: string;
+  regionName?: string;
+  quantity?: number;
+  priceWithDisc?: number;
+  forPay?: number;
+}
+
+/**
+ * Создать новую карточку товара WB.
+ * POST /content/v2/cards/upload
+ */
+export async function createWbCard(
+  apiKey: string,
+  card: {
+    vendorCode: string;
+    brand: string;
+    title: string;
+    description: string;
+    dimensions: { length: number; width: number; height: number };
+    characteristics: Array<{ id: number; value: string | number }>;
+    photos: string[];
+  },
+  signal?: AbortSignal,
+): Promise<{ nmID: number }> {
+  const resp = await wbFetch<any>(
+    '/wb-content/content/v2/cards/upload',
+    'POST', apiKey, [card], signal,
+  );
+  const nmID = resp?.data?.[0]?.nmID ?? 0;
+  return { nmID };
+}
+
+/**
+ * Получить справочник категорий/характеристик WB.
+ * GET /content/v1/directory/{type}
+ */
+export async function fetchWbDirectory(
+  apiKey: string,
+  type: 'subjects' | 'brands' | 'colors',
+  signal?: AbortSignal,
+): Promise<any[]> {
+  const resp = await wbFetch<any>(
+    `/wb-content/content/v1/directory/${type}`,
+    'GET', apiKey, undefined, signal,
+  );
+  return resp?.data ?? [];
+}
+
+/**
+ * Создать поставку WB.
+ * POST /api/v3/supplies
+ */
+export async function createWbSupply(
+  apiKey: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<{ id: string }> {
+  const resp = await wbFetch<any>(
+    '/wb-marketplace/api/v3/supplies',
+    'POST', apiKey, { name }, signal,
+  );
+  return { id: resp?.id ?? '' };
+}
+
+/**
+ * Добавить заказы в поставку WB.
+ * PUT /api/v3/supplies/{supplyId}/orders
+ */
+export async function addOrdersToSupply(
+  apiKey: string,
+  supplyId: string,
+  orderIds: number[],
+  signal?: AbortSignal,
+): Promise<void> {
+  await wbFetch<any>(
+    `/wb-marketplace/api/v3/supplies/${supplyId}/orders`,
+    'PUT', apiKey, { orders: orderIds }, signal,
+  );
+}
+
+/**
+ * Получить штрихкод поставки WB (PDF).
+ * GET /api/v3/supplies/{supplyId}/barcode
+ */
+export async function getSupplyBarcodePdf(
+  apiKey: string,
+  supplyId: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const res = await fetch(`${WB_PROXY}/wb-marketplace/api/v3/supplies/${supplyId}/barcode?type=pdf`, {
+    headers: { 'Authorization': apiKey, 'apikey': API_KEY },
+    signal,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`WB ${res.status}: ${text.slice(0, 200)}`);
+  }
+  return res.blob();
+}
+
+/**
+ * Получить статистику рекламы WB.
+ * GET /adv/v1/stat
+ */
+export async function fetchWbAdStats(
+  apiKey: string,
+  campaignIds: number[],
+  dateFrom: string, // YYYY-MM-DD
+  dateTo: string,
+  signal?: AbortSignal,
+): Promise<any[]> {
+  const resp = await wbFetch<any>(
+    `/wb-adv/adv/v1/stat?from=${dateFrom}&to=${dateTo}`,
+    'POST', apiKey, campaignIds, signal,
+  );
+  return Array.isArray(resp) ? resp : [];
+}
+
+/**
+ * Создать рекламную кампанию WB.
+ * POST /adv/v1/promotion
+ */
+export async function createWbAdCampaign(
+  apiKey: string,
+  campaign: {
+    name: string;
+    subjectId: number;
+    type: number; // 4=автоматическая, 6=поиск, 7=каталог, 8=карточка товара
+    nms: number[]; // nmId товаров
+    dailyBudget: number;
+  },
+  signal?: AbortSignal,
+): Promise<{ id: number }> {
+  const resp = await wbFetch<any>(
+    '/wb-adv/adv/v1/promotion',
+    'POST', apiKey, campaign, signal,
+  );
+  return { id: resp?.id ?? 0 };
+}
+
+/**
  * Устанавливает новые цены/скидки для nmId.
  * POST https://discounts-prices-api.wildberries.ru/api/v2/upload/task (через wb-proxy)
  */
@@ -767,6 +1121,180 @@ export async function fetchWbActualBuyerPrice(nmID: number): Promise<number | nu
   } catch { return null; }
 }
 
+// ── Returns Processing (Возвраты) ──────────────────────────────────────────
+
+/**
+ * Получить детальные возвраты с аналитикой.
+ * GET /api/v1/supplier/returns
+ */
+export async function fetchWbDetailedReturns(
+  apiKey: string,
+  dateFrom: string, // RFC3339
+  dateTo: string,
+  signal?: AbortSignal,
+): Promise<WbReturn[]> {
+  const resp = await wbFetch<WbReturn[]>(
+    `/wb-stats/api/v1/supplier/returns?dateFrom=${encodeURIComponent(dateFrom)}&dateTo=${encodeURIComponent(dateTo)}`,
+    'GET', apiKey, undefined, signal,
+  );
+  return Array.isArray(resp) ? resp : [];
+}
+
+/**
+ * Статистика возвратов по товарам.
+ */
+export async function getReturnsAnalytics(
+  apiKey: string,
+  dateFrom: string,
+  dateTo: string,
+  signal?: AbortSignal,
+): Promise<{
+  totalReturns: number;
+  byReason: Record<string, number>;
+  byProduct: Map<number, number>;
+  returnRate: number;
+}> {
+  const returns = await fetchWbDetailedReturns(apiKey, dateFrom, dateTo, signal);
+  const byProduct = new Map<number, number>();
+  const byReason: Record<string, number> = {};
+  
+  returns.forEach(r => {
+    if (r.nmId) {
+      byProduct.set(r.nmId, (byProduct.get(r.nmId) || 0) + (r.quantity || 1));
+    }
+    const reason = r.status || 'unknown';
+    byReason[reason] = (byReason[reason] || 0) + 1;
+  });
+
+  return {
+    totalReturns: returns.length,
+    byReason,
+    byProduct,
+    returnRate: 0, // Требует данные о продажах
+  };
+}
+
+// ── Advertising Management (Реклама) ───────────────────────────────────────
+
+/**
+ * Получить список рекламных кампаний.
+ * GET /adv/v1/promotion
+ */
+export async function getWbCampaigns(
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<any[]> {
+  const resp = await wbFetch<any>(
+    '/wb-adv/adv/v1/promotion',
+    'GET', apiKey, undefined, signal,
+  );
+  return Array.isArray(resp) ? resp : [];
+}
+
+/**
+ * Обновить рекламную кампанию.
+ * POST /adv/v1/promotion/{id}
+ */
+export async function updateWbCampaign(
+  apiKey: string,
+  campaignId: number,
+  params: {
+    status?: 4 | 7 | 8 | 9 | 11; // 4=готова к запуску, 7=завершена, 8=отклонена, 9=активна, 11=пауза
+    dailyBudget?: number;
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  await wbFetch<any>(
+    `/wb-adv/adv/v1/promotion/${campaignId}`,
+    'POST', apiKey, params, signal,
+  );
+}
+
+/**
+ * Управление ставками рекламной кампании.
+ * POST /adv/v1/promotion/{id}/bids
+ */
+export async function updateWbCampaignBids(
+  apiKey: string,
+  campaignId: number,
+  bids: Array<{ nm: number; bid: number }>,
+  signal?: AbortSignal,
+): Promise<void> {
+  await wbFetch<any>(
+    `/wb-adv/adv/v1/promotion/${campaignId}/bids`,
+    'POST', apiKey, bids, signal,
+  );
+}
+
+// ── Content Management (Управление контентом) ──────────────────────────────
+
+/**
+ * Массовое обновление описаний товаров.
+ * POST /content/v2/cards/update
+ */
+export async function bulkUpdateWbCards(
+  apiKey: string,
+  updates: Array<{
+    nmID: number;
+    vendorCode?: string;
+    title?: string;
+    description?: string;
+    characteristics?: Array<{ id: number; value: string | number }>;
+  }>,
+  signal?: AbortSignal,
+): Promise<void> {
+  await wbFetch<any>(
+    '/wb-content/content/v2/cards/update',
+    'POST', apiKey, updates, signal,
+  );
+}
+
+/**
+ * Загрузить медиафайлы для карточки товара.
+ * POST /content/v2/media/file
+ */
+export async function uploadWbMedia(
+  apiKey: string,
+  file: File,
+  signal?: AbortSignal,
+): Promise<string> {
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  const resp = await wbFetchForm('/wb-content/content/v2/media/file', apiKey, formData, signal);
+  return resp?.url ?? '';
+}
+
+/**
+ * Передать поставку в доставку.
+ * PUT /api/v3/supplies/{supplyId}/deliver
+ */
+export async function deliverSupply(
+  apiKey: string,
+  supplyId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await wbFetch<any>(
+    `/wb-marketplace/api/v3/supplies/${supplyId}/deliver`,
+    'PUT', apiKey, undefined, signal,
+  );
+}
+
+/**
+ * Получить список поставок.
+ * GET /api/v3/supplies
+ */
+export async function getWbSupplies(
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<WbSupply[]> {
+  const resp = await wbFetch<any>(
+    '/wb-marketplace/api/v3/supplies',
+    'GET', apiKey, undefined, signal,
+  );
+  return resp?.supplies ?? [];
+}
+
 export interface WbFeedback {
   id: string;
   createdDate: string;
@@ -782,6 +1310,33 @@ export interface WbFeedback {
   matchingSize?: string;
   bables?: any[];
   isAbleSupplierFeedbackValuation?: boolean;
+}
+
+export interface WbReturn {
+  id?: number;
+  rid?: number;
+  returnDate?: string;
+  orderDt?: string;
+  supplierArticle?: string;
+  nmId?: number;
+  barcode?: string;
+  productName?: string;
+  status?: string;
+  statusTranslated?: string;
+  quantity?: number;
+  retailPrice?: number;
+  officeAddress?: string;
+  buyerType?: string;
+}
+
+export interface WbSupply {
+  id: string;
+  name: string;
+  createdAt: string;
+  closedAt?: string;
+  scanDt?: string;
+  done: boolean;
+  orderCount: number;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

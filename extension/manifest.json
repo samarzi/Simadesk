@@ -24,7 +24,8 @@
     "https://market.yandex.ru/*",
     "https://www.wildberries.ru/*",
     "https://www.ozon.ru/*",
-    "https://simadesk.ru/*"
+    "https://simadesk.ru/*",
+    "https://openrouter.ai/*"
   ],
 
   "background": {
@@ -72,6 +73,19 @@
       "js": ["content/simadesk-bridge.js"],
       "run_at": "document_start",
       "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.ozon.ru/*",
+        "https://www.wildberries.ru/*",
+        "https://market.yandex.ru/*",
+        "https://seller.ozon.ru/*",
+        "https://partner.market.yandex.ru/*",
+        "https://simadesk.ru/*",
+        "http://localhost:*/*"
+      ],
+      "js": ["content/page-context.js"],
+      "run_at": "document_idle"
     },
     {
       "matches": ["https://partner.market.yandex.ru/*"],

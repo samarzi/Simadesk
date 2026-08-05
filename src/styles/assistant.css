@@ -1811,3 +1811,55 @@ html.light .sd-sup-msg.user .sd-sup-bubble {
   opacity: 0.55;
 }
 #sd-ap-ai-toggle.ai-off svg { filter: grayscale(1); }
+
+/* ═══ COMMAND PALETTE (/ trigger) ══════════════════════════════════════════════ */
+
+.sd-pal {
+  margin: 0 var(--ap-pad) 4px;
+  background: var(--ap-surface);
+  border: 1px solid var(--ap-line-str);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.12);
+  animation: sd-pal-in 0.12s ease;
+}
+@keyframes sd-pal-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.sd-pal-inner {
+  max-height: 220px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 4px 0;
+}
+.sd-pal-cat {
+  padding: 6px 12px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ap-txt-3);
+  user-select: none;
+}
+.sd-pal-item {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--ap-txt-2);
+  cursor: pointer;
+  border-radius: 0;
+  transition: background 0.1s, color 0.1s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sd-pal-item:hover,
+.sd-pal-item.active {
+  background: var(--ap-accent-soft);
+  color: var(--ap-txt);
+}
+.sd-pal-item mark {
+  background: transparent;
+  color: var(--ap-accent);
+  font-weight: 600;
+}
