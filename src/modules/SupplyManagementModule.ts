@@ -451,6 +451,8 @@ export class SupplyManagementModule {
 
   private showAddItemsDialog(): void {
     toast.info('Функция добавления товаров в разработке');
-    // Здесь должен открываться диалог выбора товаров
   }
+
+  show(): void { this.container.style.display = 'flex'; }
+  hide(): void { this.container.style.display = 'none'; }
 }

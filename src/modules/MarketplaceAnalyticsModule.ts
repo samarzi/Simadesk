@@ -445,4 +445,7 @@ export class MarketplaceAnalyticsModule {
 
     toast.success('CSV экспортирован');
   }
+
+  show(): void { this.container.style.display = 'flex'; }
+  hide(): void { this.container.style.display = 'none'; }
 }

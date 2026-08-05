@@ -462,4 +462,7 @@ export class AdvancedAnalyticsModule {
       yandex: [],
     };
   }
+
+  show(): void { this.container.style.display = 'flex'; }
+  hide(): void { this.container.style.display = 'none'; }
 }

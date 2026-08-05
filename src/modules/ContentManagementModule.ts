@@ -478,4 +478,7 @@ export class ContentManagementModule {
       yandex: [],
     };
   }
+
+  show(): void { this.container.style.display = 'flex'; }
+  hide(): void { this.container.style.display = 'none'; }
 }

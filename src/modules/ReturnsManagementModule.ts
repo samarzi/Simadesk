@@ -401,4 +401,7 @@ export class ReturnsManagementModule {
       yandex: [],
     };
   }
+
+  show(): void { this.container.style.display = 'flex'; }
+  hide(): void { this.container.style.display = 'none'; }
 }
