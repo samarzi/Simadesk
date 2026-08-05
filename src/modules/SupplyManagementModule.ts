@@ -1,5 +1,5 @@
 import { ozonApi } from '@/services/ozonApi';
-import { wbApi, fetchWbSalesAnalytics } from '@/services/wbApi';
+import { wbApi, fetchWbReturns, fetchWbSalesAnalytics } from '@/services/wbApi';
 import { yandexApi } from '@/services/yandexApi';
 import {
   getYandexShipments,
@@ -87,6 +87,8 @@ export class SupplyManagementModule {
   private recoItems: RecoItem[] = [];
   private recoLoading = false;
   private showReco = false;
+  private searchQuery = '';
+  private statusFilter: string = '';
 
   supplyStats = { draft: 0, sending: 0, delivered: 0, cancelled: 0 };
 
@@ -152,11 +154,37 @@ export class SupplyManagementModule {
   private renderListWithReco(): string {
     return `<div class="sp-body-wrap">
       <div class="sp-list-pane" id="sp-list-pane">
+        ${this.renderFilterBar()}
         ${this.renderList()}
       </div>
       ${this.showReco ? `<div class="sp-reco-pane" id="sp-reco-pane">
         ${this.renderReco()}
       </div>` : ''}
+    </div>`;
+  }
+
+  private renderFilterBar(): string {
+    if (!this.supplies.length && !this.loading) return '';
+    const statusOptions: Array<[string, string]> = [
+      ['', 'Все статусы'],
+      ['draft', 'Черновик'],
+      ['sending', 'В пути'],
+      ['delivered', 'Принято'],
+      ['cancelled', 'Отменено'],
+    ];
+    return `<div class="sp-filter-bar">
+      <input
+        id="sp-search"
+        class="sp-search"
+        placeholder="Поиск по названию или ID…"
+        value="${esc(this.searchQuery)}"
+      >
+      <select id="sp-status-filter" class="sp-select" style="min-width:130px">
+        ${statusOptions.map(([v, l]) =>
+          `<option value="${v}" ${this.statusFilter === v ? 'selected' : ''}>${l}</option>`
+        ).join('')}
+      </select>
+      ${(this.searchQuery || this.statusFilter) ? `<button class="sp-btn sp-btn-ghost" id="sp-clear-filter" style="padding:4px 8px">✕</button>` : ''}
     </div>`;
   }
 
@@ -202,8 +230,15 @@ export class SupplyManagementModule {
         </div>
       </div>`;
     }
+    const filtered = this.filteredSupplies();
+    if (!filtered.length) {
+      return `<div class="sp-empty" style="height:120px">
+        <p style="font-size:13px">Нет поставок, подходящих под фильтр</p>
+        <button class="sp-btn sp-btn-ghost" id="sp-clear-filter" style="margin-top:6px">Сбросить фильтр</button>
+      </div>`;
+    }
     return `<div class="sp-supply-list">
-      ${this.supplies.map(s => this.renderSupplyRow(s)).join('')}
+      ${filtered.map(s => this.renderSupplyRow(s)).join('')}
     </div>`;
   }
 
@@ -233,6 +268,22 @@ export class SupplyManagementModule {
         <div class="sp-chevron">›</div>
       </div>
     </div>`;
+  }
+
+  private filteredSupplies(): Supply[] {
+    const statusGroupMap: Record<string, string[]> = {
+      draft:     ['draft', 'CREATED', 'awaiting_deliver'],
+      sending:   ['sent', 'delivering', 'READY_TO_TRANSFER', 'TRANSFERRED'],
+      delivered: ['delivered', 'received', 'done', 'ACCEPTED'],
+      cancelled: ['cancelled', 'CANCELLED_BY_PARTNER'],
+    };
+    const allowedStatuses = this.statusFilter ? statusGroupMap[this.statusFilter] : null;
+    const q = this.searchQuery.toLowerCase().trim();
+    return this.supplies.filter(s => {
+      if (allowedStatuses && !allowedStatuses.includes(s.status)) return false;
+      if (q && !s.name.toLowerCase().includes(q) && !s.id.toLowerCase().includes(q)) return false;
+      return true;
+    });
   }
 
   private renderSkeleton(): string {
@@ -396,7 +447,10 @@ export class SupplyManagementModule {
       </div>`;
     }
     return `<div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:8px">${this.detailItems.length} позиций</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:12px;color:var(--text2)">${this.detailItems.length} позиций</span>
+        <button class="sp-btn sp-btn-ghost" id="sp-export-csv" style="padding:3px 10px;font-size:11px">${I.download()} CSV</button>
+      </div>
       <table class="sp-table">
         <thead><tr>
           <th>Товар</th>
@@ -492,20 +546,33 @@ export class SupplyManagementModule {
           case 'sp-cancel': this.cancelSupply(); break;
           case 'sp-reco': this.showReco = !this.showReco; this.flush(); if (this.showReco && !this.recoItems.length) this.loadReco(); break;
           case 'sp-reco-load': this.loadReco(); break;
+          case 'sp-export-csv': this.exportCsv(); break;
+          case 'sp-clear-filter': this.searchQuery = ''; this.statusFilter = ''; this.flush(); break;
         }
       }
 
+      // quick-send must be checked BEFORE the generic row open to avoid double-fire
       if (row) {
         const action = row.dataset.action;
         const id = row.dataset.id;
+        if (action === 'quick-send' && id) {
+          e.stopPropagation();
+          const found = this.supplies.find(s => s.id === id);
+          if (found) { this.detail = found; this.sendSupply(); }
+          return;
+        }
         if (action === 'open' && id) {
           const found = this.supplies.find(s => s.id === id);
           if (found) { this.detail = found; this.detailTab = 'overview'; this.detailItems = []; this.detailReturns = []; this.flush(); }
         }
-        if (action === 'quick-send' && id) {
-          const found = this.supplies.find(s => s.id === id);
-          if (found) { this.detail = found; this.sendSupply(); }
-        }
+      }
+    });
+
+    this.el.addEventListener('input', (e) => {
+      const inp = e.target as HTMLInputElement;
+      if (inp.id === 'sp-search') {
+        this.searchQuery = inp.value;
+        this.flush();
       }
     });
 
@@ -517,8 +584,14 @@ export class SupplyManagementModule {
         this.supplyStats = { draft: 0, sending: 0, delivered: 0, cancelled: 0 };
         this.detail = null;
         this.recoItems = [];
+        this.searchQuery = '';
+        this.statusFilter = '';
         if (this.storeId) this.loadSupplies();
         else this.flush();
+      }
+      if (sel.id === 'sp-status-filter') {
+        this.statusFilter = sel.value;
+        this.flush();
       }
     });
   }
@@ -670,32 +743,44 @@ export class SupplyManagementModule {
       const store = this.stores.find(s => s.id === this.storeId)!;
 
       if (this.tab === 'ozon') {
-        const returns = await ozonApi.getFboReturns({ client_id: store.client_id, api_key: store.api_key }, { limit: 100 });
-        this.detailReturns = returns
-          .filter((r: any) => r.supply_order_id === this.detail!.id || !r.supply_order_id)
-          .map((r: any) => ({
-            name: r.product_name ?? r.name ?? `SKU ${r.sku}`,
-            qty: r.quantity ?? 1,
-            reason: r.return_reason ?? r.reason,
-            date: r.accepted_at ?? r.created_at,
-          }));
+        // Load supply items first to filter returns by SKU
+        const itemSkus = new Set(this.detailItems.map(i => i.sku).filter(Boolean));
+        const [fboReturns, fbsResult] = await Promise.all([
+          ozonApi.getFboReturns({ client_id: store.client_id, api_key: store.api_key }, { limit: 500 }).catch(() => []),
+          ozonApi.getFbsReturns({ client_id: store.client_id, api_key: store.api_key }, { limit: 500 }).catch(() => ({ returns: [] })),
+        ]);
+        const allReturns = [...fboReturns, ...fbsResult.returns];
+        const filtered = itemSkus.size > 0
+          ? allReturns.filter((r: any) => itemSkus.has(String(r.sku ?? r.offer_id ?? '')))
+          : allReturns.slice(0, 50);  // no items loaded: show recent returns as proxy
+        this.detailReturns = filtered.map((r: any) => ({
+          name: r.product_name ?? r.name ?? `SKU ${r.sku}`,
+          qty: r.quantity ?? 1,
+          reason: r.return_reason ?? r.reason_name ?? r.reason,
+          date: r.accepted_at ?? r.created_at,
+        }));
 
       } else if (this.tab === 'wb') {
+        // Use proper returns endpoint (fetchWbReturns), not sales analytics
         const dateFrom = new Date(Date.now() - 90 * 86_400_000).toISOString();
-        const returns = await fetchWbSalesAnalytics(store.api_key, dateFrom);
-        const supplyOrders = await wbApi.getSupplyOrders(store.api_key, this.detail.id).catch(() => []);
+        const [returns, supplyOrders] = await Promise.all([
+          fetchWbReturns(store.api_key, dateFrom),
+          wbApi.getSupplyOrders(store.api_key, this.detail.id).catch(() => []),
+        ]);
         const orderNmIds = new Set(supplyOrders.map((o: any) => o.nmId ?? o.nm_id));
-        this.detailReturns = (returns as any[])
-          .filter((r: any) => orderNmIds.has(r.nmId))
-          .slice(0, 50)
-          .map((r: any) => ({
-            name: r.subject ?? String(r.nmId ?? ''),
-            qty: r.quantity ?? 1,
-            reason: 'Возврат',
-            date: r.date,
-          }));
+        // Filter by nmId if supply has orders, otherwise show recent returns as proxy
+        const filtered = orderNmIds.size > 0
+          ? returns.filter(r => r.nmId != null && orderNmIds.has(r.nmId))
+          : returns.slice(0, 50);
+        this.detailReturns = filtered.map(r => ({
+          name: r.productName ?? r.subject ?? String(r.nmId ?? ''),
+          qty: r.quantity ?? 1,
+          reason: '—',
+          date: r.returnDate,
+        }));
 
       } else {
+        // Yandex: no returns API for FBY, show placeholder
         this.detailReturns = [];
       }
     } catch {
@@ -755,15 +840,34 @@ export class SupplyManagementModule {
                 if (key) velocityMap.set(key, sold);
               }
             }
+
+          } else if (this.tab === 'ozon') {
+            // Use getStocksDynamics — needs numeric productIds from StockModule
+            const productIds: number[] = baseItems
+              .map(i => Number(i.productId ?? i.product_id))
+              .filter(id => id > 0)
+              .slice(0, 200);
+            if (productIds.length) {
+              const dateTo = new Date().toISOString().slice(0, 10);
+              const dateFrom = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+              const dynamics = await ozonApi.getStocksDynamics(
+                { client_id: store.client_id, api_key: store.api_key },
+                { productIds, dateFrom, dateTo },
+              );
+              for (const d of dynamics) {
+                const key = String(d.product_id ?? d.sku ?? '');
+                const sold = d.items?.reduce?.((s: number, item: any) => s + (item.quantity_sold ?? 0), 0) ?? 0;
+                if (key && sold > 0) velocityMap.set(key, sold / 30);
+              }
+            }
           }
-          // Ozon: use existing stock dynamics if available (getStocksDynamics needs product IDs from products list)
         }
       } catch { /* velocity stays empty — fallback to stock level only */ }
 
       this.recoItems = baseItems
         .map(i => {
           const stock = i.stockFbo ?? i.stockTotal ?? 0;
-          const key = String(i.nmId ?? i.offerId ?? i.offer_id ?? '');
+          const key = String(i.productId ?? i.product_id ?? i.nmId ?? i.offerId ?? i.offer_id ?? '');
           const dailySales = velocityMap.get(key) ?? (stock > 0 ? stock / 45 : 0.1);
           const daysLeft = dailySales > 0 ? Math.round(stock / dailySales) : 999;
           return {
@@ -975,16 +1079,41 @@ export class SupplyManagementModule {
   private async createSupply(name: string): Promise<void> {
     try {
       const store = this.stores.find(s => s.id === this.storeId)!;
+      let newId = '';
       if (this.tab === 'ozon') {
         const wh = await ozonApi.getWarehouses({ client_id: store.client_id, api_key: store.api_key });
         if (!wh.length) throw new Error('Нет FBO складов Ozon');
-        await ozonApi.createSupply({ client_id: store.client_id, api_key: store.api_key }, wh[0].warehouse_id, name);
+        const res = await ozonApi.createSupply({ client_id: store.client_id, api_key: store.api_key }, wh[0].warehouse_id, name);
+        newId = res.supplyId;
       } else {
-        await wbApi.createWbSupply(store.api_key, name);
+        const res = await wbApi.createWbSupply(store.api_key, name);
+        newId = res.supplyId;
       }
       showToast('Поставка создана', 'success');
       await this.loadSupplies();
+      // Navigate directly into the new supply
+      if (newId) {
+        const found = this.supplies.find(s => s.id === newId);
+        if (found) { this.detail = found; this.detailTab = 'overview'; this.flush(); }
+      }
     } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
+  }
+
+  private exportCsv(): void {
+    if (!this.detailItems.length) return;
+    const rows = [['Название', 'SKU / Артикул', 'Количество']];
+    for (const item of this.detailItems) {
+      rows.push([item.name, item.sku ?? '', String(item.qty)]);
+    }
+    const csv = rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    Object.assign(document.createElement('a'), {
+      href: url,
+      download: `supply_${this.detail?.id ?? 'export'}.csv`,
+    }).click();
+    URL.revokeObjectURL(url);
+    showToast('CSV скачан', 'success');
   }
 
   private async createYmShipment(dateFrom: string, dateTo: string, externalId?: string): Promise<void> {
@@ -1196,6 +1325,18 @@ export class SupplyManagementModule {
         width:280px;flex-shrink:0;border-left:1px solid var(--border);
         overflow-y:auto;background:var(--bg2)
       }
+
+      /* Filter bar */
+      .sp-filter-bar {
+        display:flex;align-items:center;gap:8px;padding:8px 12px;
+        border-bottom:1px solid var(--border);background:var(--bg2);flex-wrap:wrap
+      }
+      .sp-search {
+        flex:1;min-width:160px;height:30px;padding:0 10px;font-size:12px;
+        background:var(--bg3);border:1px solid var(--border);border-radius:8px;
+        color:var(--text);outline:none;font-family:inherit;transition:border-color .15s
+      }
+      .sp-search:focus { border-color:#f59e0b }
 
       /* Supply list */
       .sp-supply-list { display:flex;flex-direction:column }
