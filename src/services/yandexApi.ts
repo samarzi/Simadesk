@@ -1280,6 +1280,52 @@ export async function getYandexShipmentLabels(
   return res.blob();
 }
 
+/**
+ * Список текущих отгрузок ЯМ.
+ * GET /v2/campaigns/{campaignId}/shipments
+ */
+export async function getYandexShipments(
+  store: YandexStore,
+  params: { dateFrom?: string; dateTo?: string; status?: string; limit?: number } = {},
+): Promise<any[]> {
+  if (!store.campaign_id) throw new Error('campaign_id не задан');
+  const q = new URLSearchParams();
+  if (params.dateFrom) q.set('dateFrom', params.dateFrom);
+  if (params.dateTo)   q.set('dateTo',   params.dateTo);
+  if (params.status)   q.set('status',   params.status);
+  if (params.limit)    q.set('limit',    String(params.limit));
+  const res = await fetch(
+    `/yandex-api/v2/campaigns/${store.campaign_id}/shipments?${q}`,
+    { headers: { 'Api-Key': store.api_key, 'Accept': 'application/json' } },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Yandex shipments ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data?.result?.shipments ?? data?.shipments ?? [];
+}
+
+/**
+ * Доступные слоты приёмки ЯМ (следующие N дней).
+ * Реализовано как генерация календаря: ЯМ FBY принимает планируемый интервал,
+ * мы предлагаем ближайшие 14 рабочих дней как возможные окна.
+ */
+export function getYandexAvailableSlots(daysAhead = 14): Array<{ date: string; label: string }> {
+  const slots: Array<{ date: string; label: string }> = [];
+  const now = new Date();
+  const weekdays = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+  for (let i = 1; slots.length < daysAhead; i++) {
+    const d = new Date(now.getTime() + i * 86_400_000);
+    if (d.getDay() !== 0 && d.getDay() !== 6) { // без выходных
+      const dateStr = d.toISOString().slice(0, 10);
+      const label = `${weekdays[d.getDay()]} ${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')}`;
+      slots.push({ date: dateStr, label });
+    }
+  }
+  return slots;
+}
+
 // ── Returns (Возвраты) ─────────────────────────────────────────────────────
 
 /**

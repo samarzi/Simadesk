@@ -707,6 +707,22 @@ export const wbApi = {
     return resp?.supplies ?? [];
   },
 
+  /**
+   * GET /api/v3/orders/new — новые заказы, ожидающие добавления в поставку.
+   */
+  async getNewOrders(apiKey: string): Promise<any[]> {
+    const resp = await wbFetch<any>('/wb-marketplace/api/v3/orders/new', 'GET', apiKey);
+    return resp?.orders ?? [];
+  },
+
+  /**
+   * GET /api/v3/supplies/{supplyId}/orders — заказы конкретной поставки.
+   */
+  async getSupplyOrders(apiKey: string, supplyId: string): Promise<any[]> {
+    const resp = await wbFetch<any>(`/wb-marketplace/api/v3/supplies/${supplyId}/orders`, 'GET', apiKey);
+    return resp?.orders ?? [];
+  },
+
   // ── Analytics & Reports ────────────────────────────────────────────────────
 
   /**

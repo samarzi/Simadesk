@@ -25,6 +25,7 @@ const PAGE_TITLE: Record<string, string> = {
   yandex: 'Яндекс Маркет', settings: 'Настройки', profile: 'Профиль', reviews: 'Отзывы',
   chats: 'Чаты', docs: 'Редактор', 'sku-audit': 'Анализ SKU', 'orders-ozon': 'Заказы Ozon',
   'orders-wb': 'Заказы WB', 'orders-yandex': 'Заказы ЯМ', producers2: '',
+  supply: 'Поставки', advertising: 'Реклама',
 };
 
 // ── describe() по разделам ─────────────────────────────────────────────────────
@@ -101,6 +102,31 @@ function describeProducts(): string {
     out += `\n\nТы видишь выделенные товары. Пользователь может просить сравнить, найти дешевле, изменить цены.`;
   } else {
     out += ` Можно спрашивать про артикулы, цены, остатки, маркетплейсы. Если нужно работать с конкретными товарами — попроси пользователя выделить их в списке.`;
+  }
+  return out;
+}
+
+function describeSupply(): string {
+  const sm = w().supplyModule;
+  if (!sm) return 'Раздел Поставок. Управляет поставками Ozon FBO, Wildberries FBO и Яндекс FBY.';
+  const stats = sm.supplyStats ?? { draft: 0, sending: 0, delivered: 0, cancelled: 0 };
+  const supplies: any[] = sm.supplies ?? [];
+  const tab: string = sm.tab ?? 'ozon';
+  const tabLabel = tab === 'ozon' ? 'Ozon FBO' : tab === 'wb' ? 'Wildberries' : 'Яндекс FBY';
+  const total = stats.draft + stats.sending + stats.delivered + stats.cancelled;
+  let out = `Раздел Поставок. Активная вкладка: ${tabLabel}.`;
+  if (total) {
+    out += `\nПоставок загружено: ${total} (черновик: ${stats.draft}, в пути: ${stats.sending}, принято: ${stats.delivered}, отменено: ${stats.cancelled}).`;
+  } else {
+    out += '\nДанные ещё не загружены или поставок нет.';
+  }
+  out += `\n\nВозможности:
+- Ozon FBO: создать поставку, добавить товары по SKU, отправить, скачать штрихкоды, отменить, посмотреть состав.
+- Wildberries: создать поставку вручную или из новых заказов (wizard), добавить FBO-заказы, скачать QR-код.
+- Яндекс FBY: создать отгрузку с выбором окна приёмки, подтвердить отгрузку, скачать этикетки.
+- Сима может: показать доступные слоты ЯМ, создать отгрузку ЯМ на дату, создать WB-поставку из заказов.`;
+  if (supplies.length) {
+    out += `\n\nПоследние поставки:\n${supplies.slice(0, 5).map(s => `  • ${s.name} [${s.status}] (${s.itemsCount} товаров)`).join('\n')}`;
   }
   return out;
 }
@@ -210,6 +236,17 @@ Object.assign(SUGGESTIONS, {
     { label: '📋 Список поставщиков', prompt: 'Покажи список всех поставщиков и их условия' },
     { label: '📦 Планирование поставки', prompt: 'Помоги спланировать поставку с учётом текущих остатков' },
   ],
+  supply: [
+    { label: '📅 Слоты ЯМ на неделю', prompt: 'Какие даты доступны для отгрузки на Яндекс Маркет на ближайшие 7 дней?' },
+    { label: '🚚 Создать отгрузку ЯМ', prompt: 'Создай отгрузку на Яндекс Маркет на ближайший рабочий день' },
+    { label: '📦 WB из заказов', prompt: 'Создай поставку Wildberries из новых заказов' },
+    { label: '📊 Статус поставок', prompt: 'Сколько поставок в каком статусе сейчас?' },
+  ],
+  advertising: [
+    { label: '📊 Сводка по кампаниям', prompt: 'Дай сводку по рекламным кампаниям: CTR, ROI, бюджет' },
+    { label: '💸 Где лучший ROI', prompt: 'Какая кампания показывает лучший ROI?' },
+    { label: '⏸ Пауза убыточных', prompt: 'Какие кампании убыточны и их стоит остановить?' },
+  ],
 });
 
 // ── Сборка капабилити для страницы ───────────────────────────────────────────────
@@ -224,6 +261,7 @@ const DESCRIBERS: Record<string, () => string> = {
   tasks: describeTasks,
   'products-hub': describeProducts,
   reviews: describeReviews,
+  supply: describeSupply,
 };
 
 // ── Actions: главная / дашборд ────────────────────────────────────────────────
@@ -573,7 +611,57 @@ export function capabilityForPage(page: string): AiPageCapability | null {
     'yandex':        MARKETPLACES_ACTIONS,
     'producers':     PRODUCERS_ACTIONS,
   };
-  const actions = PAGE_ACTIONS[page] ?? [];
+  const SUPPLY_ACTIONS: AiAction[] = [
+    {
+      name: 'get_ym_slots',
+      description: 'Показать доступные слоты приёмки Яндекс Маркет FBY на ближайшие N дней. Используй когда пользователь спрашивает "какие даты доступны", "когда можно сдать", "слоты ЯМ".',
+      args: '{ days?: number }',
+      run: async (a: { days?: number }) => {
+        const { getYandexAvailableSlots } = await import('@/services/yandexApi');
+        const days = a?.days ?? 14;
+        const slots = getYandexAvailableSlots(days);
+        w().app?.navigateTo?.('supply');
+        return `Доступные рабочие дни для отгрузки ЯМ (ближайшие ${days} рабочих дней):\n${slots.map(s => `  • ${s.label} (${s.date})`).join('\n')}\n\nДля создания отгрузки скажи: "Создай отгрузку на [дату]"`;
+      },
+    },
+    {
+      name: 'create_ym_shipment',
+      description: 'Создать отгрузку Яндекс Маркет FBY на конкретную дату. Используй когда пользователь говорит "создай поставку [дата]", "запланируй отгрузку на [дату]".',
+      args: '{ date: string, windowDays?: number }',
+      run: async (a: { date: string; windowDays?: number }) => {
+        if (!a?.date) return 'Укажи дату в формате YYYY-MM-DD, например: 2026-08-10';
+        const sm = w().supplyModule;
+        if (!sm) { w().app?.navigateTo?.('supply'); return 'Открываю раздел Поставки. Повтори команду через секунду.'; }
+        const result = await sm.aiCreateYmShipment(a.date, a.windowDays ?? 2);
+        return result;
+      },
+    },
+    {
+      name: 'create_wb_supply_from_orders',
+      description: 'Создать поставку WB автоматически из всех новых заказов, ожидающих отгрузки.',
+      args: '{ name?: string }',
+      run: async (a: { name?: string }) => {
+        const sm = w().supplyModule;
+        if (!sm) { w().app?.navigateTo?.('supply'); return 'Открываю раздел Поставки. Повтори команду через секунду.'; }
+        const result = await sm.aiCreateWbSupplyFromNewOrders(a?.name);
+        return result;
+      },
+    },
+    {
+      name: 'get_supply_status',
+      description: 'Показать статистику и список поставок. Используй когда пользователь спрашивает "сколько поставок", "статус поставок", "что в черновике".',
+      args: '{}',
+      run: async () => {
+        const sm = w().supplyModule;
+        if (!sm) return 'Раздел Поставки ещё не открыт.';
+        const stats = sm.supplyStats ?? {};
+        const supplies: any[] = sm.supplies ?? [];
+        return `Поставки: черновик ${stats.draft ?? 0}, в пути ${stats.sending ?? 0}, принято ${stats.delivered ?? 0}, отменено ${stats.cancelled ?? 0}.\n${supplies.length ? supplies.slice(0, 5).map((s: any) => `• ${s.name} [${s.status}]`).join('\n') : 'Список пуст.'}`;
+      },
+    },
+  ];
+
+  const actions = PAGE_ACTIONS[page] ?? (page === 'supply' ? SUPPLY_ACTIONS : []);
 
   return { page, title, describe, actions, suggestions };
 }
