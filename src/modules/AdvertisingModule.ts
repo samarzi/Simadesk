@@ -121,14 +121,14 @@ function analyzeAi(campaigns: Campaign[]): AiHint[] {
 // ─── Help content ──────────────────────────────────────────────────────────────
 
 function buildHelpModal(): string {
-  return `<div id="ad-help-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;
+  return `<div id="ad-help-overlay" onclick="if(event.target===this)this.remove()" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;
     display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)">
     <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:16px;width:660px;
       max-width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px;
         border-bottom:1px solid var(--border);flex-shrink:0">
         <div style="font-size:16px;font-weight:800;color:var(--text)">Как работает раздел Реклама</div>
-        <button id="ad-help-x" style="background:none;border:none;color:var(--text2);cursor:pointer;
+        <button onclick="document.getElementById('ad-help-overlay').remove()" style="background:none;border:none;color:var(--text2);cursor:pointer;
           font-size:20px;padding:2px 6px;border-radius:6px;line-height:1">✕</button>
       </div>
       <div style="overflow-y:auto;padding:22px;display:flex;flex-direction:column;gap:20px">
@@ -1593,12 +1593,12 @@ export class AdvertisingModule {
   private showHelp() {
     document.getElementById('ad-help-overlay')?.remove();
     document.body.insertAdjacentHTML('beforeend', buildHelpModal());
-    const ov = document.getElementById('ad-help-overlay')!;
-    const xBtn = document.getElementById('ad-help-x')!;
-    const close = () => ov.remove();
-    xBtn.addEventListener('click', close);
-    ov.addEventListener('click', e => { if (e.target === ov) close(); });
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        document.getElementById('ad-help-overlay')?.remove();
+        document.removeEventListener('keydown', onKey);
+      }
+    };
     document.addEventListener('keydown', onKey);
   }
 
