@@ -517,6 +517,7 @@ export class DocsModule {
               "p[style-name='Intense Quote'] => blockquote.intense:fresh",
               "b => strong", "i => em", "u => u", "strike => s",
               "p[style-name='Centered'] => p.doc-center:fresh",
+              "br[type='page'] => div.docx-page-break:fresh",
             ],
             includeDefaultStyleMap: true,
           };
@@ -886,38 +887,96 @@ export class DocsModule {
 
   // ── Word ───────────────────────────────────────────────────────────────────
   private renderWord(doc: DocItem): string {
-    return `<div class="docs-word-toolbar">
-      <button class="dw-tool" data-cmd="undo" title="Отменить (Ctrl+Z)">↶</button>
-      <button class="dw-tool" data-cmd="redo" title="Повторить (Ctrl+Y)">↷</button>
+    const T = (cmd: string, title: string, content: string) =>
+      `<button class="dw-tool" data-cmd="${cmd}" title="${title}">${content}</button>`;
+    const SVG = (d: string, w = 14) =>
+      `<svg viewBox="0 0 16 16" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="1.6">${d}</svg>`;
+    return `
+    <div class="docs-word-toolbar">
+      <div class="dw-group">
+        <button class="dw-tool" data-cmd="undo" title="Отменить (Ctrl+Z)">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>
+        </button>
+        <button class="dw-tool" data-cmd="redo" title="Повторить (Ctrl+Y)">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0115-6.7l3 2.7"/></svg>
+        </button>
+      </div>
       <div class="dw-sep"></div>
-      <select class="dw-select" data-block-sel title="Стиль">
-        <option value="p">Обычный</option><option value="h1">Заголовок 1</option>
-        <option value="h2">Заголовок 2</option><option value="h3">Заголовок 3</option>
-        <option value="blockquote">Цитата</option><option value="pre">Код</option>
-      </select>
-      <select class="dw-select" data-size-sel title="Размер">
-        <option value="">Размер</option><option value="1">Мелкий</option>
-        <option value="3">Обычный</option><option value="5">Крупный</option><option value="7">Очень крупный</option>
-      </select>
+      <div class="dw-group">
+        <select class="dw-select dw-font-sel" data-cmd-font title="Шрифт">
+          <option value="">Шрифт</option>
+          <option value="Calibri, sans-serif">Calibri</option>
+          <option value="Arial, sans-serif">Arial</option>
+          <option value="'Times New Roman', serif">Times New Roman</option>
+          <option value="Georgia, serif">Georgia</option>
+          <option value="Verdana, sans-serif">Verdana</option>
+          <option value="'Courier New', monospace">Courier New</option>
+          <option value="'DM Sans', sans-serif">DM Sans</option>
+        </select>
+        <select class="dw-select dw-ptsize-sel" data-cmd-size title="Размер (пт)">
+          <option value="">Размер</option>
+          <option value="8pt">8</option><option value="9pt">9</option>
+          <option value="10pt">10</option><option value="11pt">11</option>
+          <option value="12pt">12</option><option value="14pt">14</option>
+          <option value="16pt">16</option><option value="18pt">18</option>
+          <option value="20pt">20</option><option value="24pt">24</option>
+          <option value="28pt">28</option><option value="36pt">36</option>
+          <option value="48pt">48</option><option value="72pt">72</option>
+        </select>
+      </div>
       <div class="dw-sep"></div>
-      <button class="dw-tool" data-cmd="bold" title="Жирный"><b>B</b></button>
-      <button class="dw-tool" data-cmd="italic" title="Курсив"><i>I</i></button>
-      <button class="dw-tool" data-cmd="underline" title="Подчёркнутый"><u>U</u></button>
-      <button class="dw-tool" data-cmd="strikeThrough" title="Зачёркнутый"><s>S</s></button>
-      <label class="dw-color" title="Цвет текста"><span>A</span><input type="color" data-color></label>
-      <label class="dw-color dw-hi" title="Заливка"><span>H</span><input type="color" data-hilite></label>
+      <div class="dw-group">
+        <button class="dw-tool dw-b" data-cmd="bold" title="Жирный (Ctrl+B)"><b style="font-size:13px;font-family:serif">B</b></button>
+        <button class="dw-tool dw-i" data-cmd="italic" title="Курсив (Ctrl+I)"><i style="font-size:13px;font-family:serif;font-style:italic">I</i></button>
+        <button class="dw-tool dw-u" data-cmd="underline" title="Подчёркнутый (Ctrl+U)"><u style="font-size:13px;font-family:serif">U</u></button>
+        <button class="dw-tool" data-cmd="strikeThrough" title="Зачёркнутый"><s style="font-size:13px;font-family:serif">S</s></button>
+      </div>
       <div class="dw-sep"></div>
-      <button class="dw-tool" data-cmd="justifyLeft" title="По левому краю">⇤</button>
-      <button class="dw-tool" data-cmd="justifyCenter" title="По центру">≡</button>
-      <button class="dw-tool" data-cmd="justifyRight" title="По правому краю">⇥</button>
+      <div class="dw-group">
+        <label class="dw-color-lbl" title="Цвет текста">
+          <div class="dw-color-ic"><span style="font-size:12px;font-family:serif;font-weight:700;line-height:1">A</span><span class="dw-fg-bar"></span></div>
+          <input type="color" data-color value="#111111">
+        </label>
+        <label class="dw-color-lbl" title="Выделение текста">
+          <div class="dw-color-ic"><span style="font-size:11px;line-height:1">H</span><span class="dw-hi-bar"></span></div>
+          <input type="color" data-hilite value="#ffff00">
+        </label>
+      </div>
       <div class="dw-sep"></div>
-      <button class="dw-tool" data-cmd="insertUnorderedList" title="Маркированный список">•</button>
-      <button class="dw-tool" data-cmd="insertOrderedList" title="Нумерованный список">1.</button>
-      <button class="dw-tool" data-cmd="outdent" title="Уменьшить отступ">⇤|</button>
-      <button class="dw-tool" data-cmd="indent" title="Увеличить отступ">|⇥</button>
+      <div class="dw-group">
+        ${T('justifyLeft','По левому краю', SVG('<line x1="1" y1="4" x2="15" y2="4"/><line x1="1" y1="8" x2="11" y2="8"/><line x1="1" y1="12" x2="15" y2="12"/>'))}
+        ${T('justifyCenter','По центру', SVG('<line x1="1" y1="4" x2="15" y2="4"/><line x1="3" y1="8" x2="13" y2="8"/><line x1="1" y1="12" x2="15" y2="12"/>'))}
+        ${T('justifyRight','По правому краю', SVG('<line x1="1" y1="4" x2="15" y2="4"/><line x1="5" y1="8" x2="15" y2="8"/><line x1="1" y1="12" x2="15" y2="12"/>'))}
+        ${T('justifyFull','По ширине', SVG('<line x1="1" y1="4" x2="15" y2="4"/><line x1="1" y1="8" x2="15" y2="8"/><line x1="1" y1="12" x2="15" y2="12"/>'))}
+      </div>
       <div class="dw-sep"></div>
-      <button class="dw-tool" data-link title="Ссылка">🔗</button>
-      <button class="dw-tool" data-cmd="removeFormat" title="Убрать форматирование">✕</button>
+      <div class="dw-group">
+        ${T('insertUnorderedList','Маркированный список', SVG('<circle cx="3" cy="5" r="1.5" fill="currentColor" stroke="none"/><circle cx="3" cy="9" r="1.5" fill="currentColor" stroke="none"/><circle cx="3" cy="13" r="1.5" fill="currentColor" stroke="none"/><line x1="6" y1="5" x2="15" y2="5"/><line x1="6" y1="9" x2="15" y2="9"/><line x1="6" y1="13" x2="15" y2="13"/>'))}
+        ${T('insertOrderedList','Нумерованный список', SVG('<text x="0" y="6" fill="currentColor" stroke="none" font-size="5" font-family="sans-serif">1.</text><text x="0" y="10" fill="currentColor" stroke="none" font-size="5" font-family="sans-serif">2.</text><text x="0" y="14" fill="currentColor" stroke="none" font-size="5" font-family="sans-serif">3.</text><line x1="7" y1="5" x2="15" y2="5"/><line x1="7" y1="9" x2="15" y2="9"/><line x1="7" y1="13" x2="15" y2="13"/>'))}
+        ${T('outdent','Уменьшить отступ', SVG('<line x1="1" y1="3" x2="15" y2="3"/><line x1="5" y1="7" x2="15" y2="7"/><line x1="5" y1="11" x2="15" y2="11"/><line x1="1" y1="15" x2="15" y2="15"/><polyline points="3,6 1,8 3,10"/>'))}
+        ${T('indent','Увеличить отступ', SVG('<line x1="1" y1="3" x2="15" y2="3"/><line x1="5" y1="7" x2="15" y2="7"/><line x1="5" y1="11" x2="15" y2="11"/><line x1="1" y1="15" x2="15" y2="15"/><polyline points="1,6 3,8 1,10"/>'))}
+      </div>
+      <div class="dw-sep"></div>
+      <div class="dw-group">
+        <select class="dw-select dw-style-sel" data-block-sel title="Стиль абзаца">
+          <option value="p">Обычный</option>
+          <option value="h1">Заголовок 1</option>
+          <option value="h2">Заголовок 2</option>
+          <option value="h3">Заголовок 3</option>
+          <option value="h4">Заголовок 4</option>
+          <option value="blockquote">Цитата</option>
+          <option value="pre">Код</option>
+        </select>
+      </div>
+      <div class="dw-sep"></div>
+      <div class="dw-group">
+        <button class="dw-tool" data-link title="Добавить ссылку">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+        </button>
+        <button class="dw-tool" data-cmd="removeFormat" title="Очистить форматирование">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><path d="M9.5 2.5h11l-3 6h-5"/><line x1="3" y1="22" x2="12" y2="22"/></svg>
+        </button>
+      </div>
     </div>
     <div class="docs-word-scroll">
       <div class="docs-word-editor" id="docs-word-editor" contenteditable="true" spellcheck="true" data-placeholder="Начните печатать…">${doc.content || ''}</div>
@@ -929,25 +988,81 @@ export class DocsModule {
     if (!editor) return;
     const commit = () => this.updateContent(doc.id, editor.innerHTML);
     editor.addEventListener('input', commit);
+
+    // Apply CSS-based font size to selection via span
+    const applyFontSize = (sizePt: string) => {
+      document.execCommand('styleWithCSS', false, 'true');
+      document.execCommand('fontSize', false, '7');
+      editor.querySelectorAll<HTMLElement>('font[size="7"]').forEach(el => {
+        const span = document.createElement('span');
+        span.style.fontSize = sizePt;
+        span.innerHTML = el.innerHTML;
+        el.replaceWith(span);
+      });
+    };
+
     this.root.querySelectorAll<HTMLButtonElement>('.dw-tool').forEach(btn => {
       btn.addEventListener('mousedown', e => e.preventDefault());
       btn.addEventListener('click', () => {
         editor.focus();
         const cmd = btn.dataset.cmd;
-        if (cmd) document.execCommand(cmd, false);
-        else if (btn.dataset.link !== undefined) {
+        if (cmd) {
+          document.execCommand('styleWithCSS', false, 'true');
+          document.execCommand(cmd, false);
+        } else if (btn.dataset.link !== undefined) {
           const url = prompt('URL ссылки:', 'https://');
           if (url) document.execCommand('createLink', false, url);
         }
         commit();
       });
     });
+
     const blockSel = this.root.querySelector<HTMLSelectElement>('[data-block-sel]');
-    blockSel?.addEventListener('change', () => { editor.focus(); if (blockSel.value) document.execCommand('formatBlock', false, blockSel.value); blockSel.value=''; commit(); });
-    const sizeSel = this.root.querySelector<HTMLSelectElement>('[data-size-sel]');
-    sizeSel?.addEventListener('change', () => { editor.focus(); if (sizeSel.value) document.execCommand('fontSize', false, sizeSel.value); sizeSel.value=''; commit(); });
-    this.root.querySelector<HTMLInputElement>('[data-color]')?.addEventListener('input', e => { editor.focus(); document.execCommand('foreColor', false, (e.target as HTMLInputElement).value); commit(); });
-    this.root.querySelector<HTMLInputElement>('[data-hilite]')?.addEventListener('input', e => { editor.focus(); const v=(e.target as HTMLInputElement).value; document.execCommand('hiliteColor',false,v)||document.execCommand('backColor',false,v); commit(); });
+    blockSel?.addEventListener('change', () => {
+      editor.focus();
+      if (blockSel.value) document.execCommand('formatBlock', false, blockSel.value);
+      blockSel.value = 'p';
+      commit();
+    });
+
+    const fontSel = this.root.querySelector<HTMLSelectElement>('[data-cmd-font]');
+    fontSel?.addEventListener('change', () => {
+      if (!fontSel.value) return;
+      editor.focus();
+      document.execCommand('styleWithCSS', false, 'true');
+      document.execCommand('fontName', false, fontSel.value);
+      fontSel.value = '';
+      commit();
+    });
+
+    const ptSel = this.root.querySelector<HTMLSelectElement>('[data-cmd-size]');
+    ptSel?.addEventListener('change', () => {
+      if (!ptSel.value) return;
+      editor.focus();
+      applyFontSize(ptSel.value);
+      ptSel.value = '';
+      commit();
+    });
+
+    this.root.querySelector<HTMLInputElement>('[data-color]')?.addEventListener('input', e => {
+      editor.focus();
+      const v = (e.target as HTMLInputElement).value;
+      document.execCommand('styleWithCSS', false, 'true');
+      document.execCommand('foreColor', false, v);
+      const bar = this.root.querySelector<HTMLElement>('.dw-fg-bar');
+      if (bar) bar.style.background = v;
+      commit();
+    });
+
+    this.root.querySelector<HTMLInputElement>('[data-hilite]')?.addEventListener('input', e => {
+      editor.focus();
+      const v = (e.target as HTMLInputElement).value;
+      document.execCommand('styleWithCSS', false, 'true');
+      document.execCommand('hiliteColor', false, v) || document.execCommand('backColor', false, v);
+      const bar = this.root.querySelector<HTMLElement>('.dw-hi-bar');
+      if (bar) bar.style.background = v;
+      commit();
+    });
   }
 
   // ── Excel ──────────────────────────────────────────────────────────────────

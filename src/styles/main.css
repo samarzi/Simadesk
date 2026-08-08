@@ -433,58 +433,97 @@ html, body {
 .docs-icon-btn:hover { color: #ff6b6b; border-color: #ff6b6b; }
 .docs-word-toolbar {
   display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
-  padding: 6px 12px; border-bottom: 1px solid var(--border);
-  background: var(--hover); flex-shrink: 0;
+  padding: 5px 10px; border-bottom: 1px solid var(--border);
+  background: var(--bg2); flex-shrink: 0; min-height: 40px;
 }
+.dw-group { display: flex; align-items: center; gap: 1px; }
 .dw-tool {
-  min-width: 30px; height: 28px; padding: 0 8px; border: 0; background: transparent;
-  color: var(--text); border-radius: 6px; cursor: pointer; font-family: inherit;
+  min-width: 28px; height: 26px; padding: 0 6px; border: 0; background: transparent;
+  color: var(--text); border-radius: 4px; cursor: pointer; font-family: inherit;
   font-size: 13px; display: inline-flex; align-items: center; justify-content: center;
+  transition: background .1s;
 }
-.dw-tool:hover { background: rgba(255,255,255,.08); }
-html.light .dw-tool:hover { background: rgba(0,0,0,.06); }
-.dw-sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+.dw-tool:hover { background: var(--hover); }
+.dw-tool.dw-active { background: rgba(99,102,241,.18); color: var(--accent); }
+html.light .dw-tool:hover { background: rgba(0,0,0,.07); }
+.dw-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+.dw-select {
+  height: 26px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--border);
+  background: var(--bg3); color: var(--text); font-family: inherit; font-size: 12px;
+  cursor: pointer; outline: none;
+}
+.dw-select:hover { border-color: var(--accent); }
+.dw-font-sel { width: 110px; }
+.dw-ptsize-sel { width: 60px; }
+.dw-style-sel { width: 94px; }
+.dw-color-lbl {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 26px; border-radius: 4px; cursor: pointer; position: relative;
+  color: var(--text);
+}
+.dw-color-lbl:hover { background: var(--hover); }
+.dw-color-ic {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; pointer-events: none;
+}
+.dw-fg-bar, .dw-hi-bar {
+  width: 14px; height: 3px; border-radius: 1px;
+}
+.dw-fg-bar { background: #111111; }
+.dw-hi-bar { background: #ffff00; }
+.dw-color-lbl input[type="color"] {
+  position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+}
+/* ── Word scroll + page ──────────────────────────────────────────── */
 .docs-word-scroll {
   flex: 1; overflow: auto;
   background: #2a2a2c;
-  padding: 32px 0;
-  display: flex; justify-content: center;
+  padding: 32px 0 64px;
+  display: flex; flex-direction: column; align-items: center; gap: 0;
 }
-html.light .docs-word-scroll { background: #dcdcdc; }
+html.light .docs-word-scroll { background: #c8c8c8; }
 .docs-word-editor {
-  width: 794px; /* A4: 210mm at 96dpi */
-  min-height: 1123px; /* A4: 297mm */
-  padding: 76px 76px; /* ≈ 2cm margins */
-  background: #fff;
-  color: #111;
-  box-shadow: 0 4px 24px rgba(0,0,0,.35);
-  font-size: 14px; line-height: 1.7; outline: none;
-  font-family: 'DM Sans', sans-serif;
-  border-radius: 2px;
+  width: 794px; /* A4 at 96dpi */
+  min-height: 1123px;
+  padding: 96px 96px; /* ≈ Word default margins */
+  background: #ffffff;
+  color: #000000;
+  box-shadow: 0 2px 12px rgba(0,0,0,.4), 0 0 0 1px rgba(0,0,0,.08);
+  font-size: 12pt; line-height: 1.6; outline: none;
+  font-family: Calibri, 'Segoe UI', Arial, sans-serif;
+  caret-color: #111;
 }
-html.light .docs-word-editor { box-shadow: 0 4px 16px rgba(0,0,0,.15); }
+html.light .docs-word-editor { box-shadow: 0 2px 8px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.06); }
 .docs-word-editor:empty::before {
-  content: attr(data-placeholder); color: var(--muted); pointer-events: none;
+  content: attr(data-placeholder); color: #aaa; pointer-events: none;
 }
-.docs-word-editor h1 { font-size: 26px; font-weight: 800; margin: 16px 0 8px; }
-.docs-word-editor h2 { font-size: 20px; font-weight: 700; margin: 14px 0 6px; }
-.docs-word-editor p { margin: 0 0 8px; }
-.docs-word-editor ul, .docs-word-editor ol { padding-left: 24px; margin: 0 0 8px; }
-.dw-select {
-  height: 28px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border);
-  background: transparent; color: var(--text); font-family: inherit; font-size: 12px;
-  cursor: pointer; outline: none;
+/* Word heading styles matching Word defaults */
+.docs-word-editor h1 { font-size: 16pt; font-weight: 700; color: #2f5496; margin: 12pt 0 3pt; line-height: 1.3; }
+.docs-word-editor h2 { font-size: 13pt; font-weight: 700; color: #2f5496; margin: 10pt 0 2pt; line-height: 1.3; }
+.docs-word-editor h3 { font-size: 12pt; font-weight: 700; color: #1f3864; margin: 8pt 0 2pt; }
+.docs-word-editor h4 { font-size: 11pt; font-weight: 700; color: #2f5496; margin: 8pt 0 2pt; }
+.docs-word-editor p { margin: 0 0 6pt; }
+.docs-word-editor ul, .docs-word-editor ol { padding-left: 28px; margin: 0 0 6pt; }
+.docs-word-editor blockquote { border-left: 3px solid #c0c0c0; margin: 8pt 0 8pt 12pt; padding-left: 12px; color: #444; font-style: italic; }
+.docs-word-editor pre { background: #f5f5f5; border: 1px solid #ddd; border-radius: 3px; padding: 8px 12px; font-family: 'Courier New', monospace; font-size: 10pt; overflow-x: auto; }
+.docs-word-editor table { border-collapse: collapse; width: 100%; margin: 6pt 0; }
+.docs-word-editor td, .docs-word-editor th { border: 1px solid #c0c0c0; padding: 4px 8px; }
+/* ── Page break visual separator ─────────────────────────────────── */
+.docs-word-editor .docx-page-break {
+  display: block;
+  height: 0;
+  margin: 56px -96px;
+  border: none;
+  border-top: 2px dashed rgba(150,150,150,.35);
+  position: relative;
+  pointer-events: none;
 }
-.dw-color {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; border-radius: 6px; cursor: pointer; position: relative;
-  color: var(--text); font-size: 13px; font-weight: 600;
-}
-.dw-color:hover { background: rgba(255,255,255,.08); }
-.dw-color span { position: relative; z-index: 1; }
-.dw-color.dw-hi span { background: yellow; color: #000; padding: 0 3px; border-radius: 2px; }
-.dw-color input[type="color"] {
-  position: absolute; inset: 0; opacity: 0; cursor: pointer;
+.docs-word-editor .docx-page-break::before {
+  content: 'Разрыв страницы';
+  position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
+  background: #fff; padding: 0 10px;
+  font-size: 10px; color: #aaa; letter-spacing: .04em;
+  font-family: Arial, sans-serif; font-style: normal; font-weight: 400;
+  white-space: nowrap;
 }
 .docs-export-sel {
   height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border);
