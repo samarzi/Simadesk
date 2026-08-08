@@ -485,12 +485,41 @@ html.light .docs-word-scroll { background: #c8c8c8; }
   width: 794px; /* A4 at 96dpi */
   min-height: 1123px;
   padding: 96px 96px; /* ≈ Word default margins */
-  background: #ffffff;
   color: #000000;
   box-shadow: 0 2px 12px rgba(0,0,0,.4), 0 0 0 1px rgba(0,0,0,.08);
   font-size: 12pt; line-height: 1.6; outline: none;
   font-family: Calibri, 'Segoe UI', Arial, sans-serif;
   caret-color: #111;
+  /* Page gap every 1123px: 1px border + 28px dark strip = looks like separate pages */
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(to bottom,
+      #ffffff 0,
+      #ffffff calc(1123px - 2px),
+      #888888 calc(1123px - 2px),
+      #888888 1123px,
+      #2a2a2c 1123px,
+      #2a2a2c calc(1123px + 28px),
+      #888888 calc(1123px + 28px),
+      #888888 calc(1123px + 30px),
+      #ffffff calc(1123px + 30px)
+    );
+  background-size: 100% 1153px;
+}
+html.light .docs-word-editor {
+  background-image:
+    linear-gradient(to bottom,
+      #ffffff 0,
+      #ffffff calc(1123px - 2px),
+      #999999 calc(1123px - 2px),
+      #999999 1123px,
+      #c8c8c8 1123px,
+      #c8c8c8 calc(1123px + 28px),
+      #999999 calc(1123px + 28px),
+      #999999 calc(1123px + 30px),
+      #ffffff calc(1123px + 30px)
+    );
+  background-size: 100% 1153px;
 }
 html.light .docs-word-editor { box-shadow: 0 2px 8px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.06); }
 .docs-word-editor:empty::before {
