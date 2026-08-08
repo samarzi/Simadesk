@@ -1,21 +1,12 @@
 import { ozonApi, ozonPerfApi } from '@/services/ozonApi';
 import {
-  getWbCampaigns,
-  createWbAdCampaign,
-  updateWbCampaign,
-  getWbAdBalance,
-  getWbCampaignDetails,
-  getWbFullStats,
-  updateWbCampaignBids,
-  setWbExcludedKeywords,
+  getWbCampaigns, createWbAdCampaign, updateWbCampaign,
+  getWbAdBalance, getWbCampaignDetails, getWbFullStats,
+  updateWbCampaignBids, setWbExcludedKeywords,
 } from '@/services/wbApi';
 import {
-  getYandexPromos,
-  getYandexPromoOffers,
-  removeYandexPromoOffers,
-  getYandexCampaignBids,
-  updateYandexCampaignBids,
-  getYandexRecommendedBids,
+  getYandexPromos, getYandexPromoOffers, removeYandexPromoOffers,
+  getYandexCampaignBids, updateYandexCampaignBids, getYandexRecommendedBids,
 } from '@/services/yandexApi';
 import { ozonDb } from '@/services/ozonDb';
 import { wbDb } from '@/services/wbDb';
@@ -25,12 +16,15 @@ import { esc } from '@/utils/format';
 import { showToast } from '@/utils/toast';
 
 type Tab = 'wb' | 'ozon' | 'yandex';
-type OzonSubTab = 'perf' | 'promo';
-type YmSubTab   = 'promo' | 'boost';
-type WbDetail   = 'bids' | 'keywords';
+type OzonSub = 'perf' | 'promo';
+type YmSub   = 'promo' | 'boost';
+type WbDetail = 'bids' | 'keywords';
+type SortKey  = 'name' | 'status' | 'budget' | 'spent' | 'clicks' | 'views' | 'orders' | 'roi';
 
 interface Campaign {
   id: string | number;
+  storeId: string;
+  storeName: string;
   name: string;
   status: string;
   type: string;
@@ -48,84 +42,217 @@ interface Campaign {
   dateTo?: string;
 }
 
-// ── Pure helpers ──────────────────────────────────────────────────────────────
-
-function fmt(n: number): string { return n.toLocaleString('ru-RU'); }
-
-function ctr(views: number, clicks: number): string {
-  return views > 0 ? (clicks / views * 100).toFixed(2) + '%' : '—';
+interface AiHint {
+  level: 'danger' | 'warn' | 'ok';
+  campaignId: string | number;
+  campaignName: string;
+  message: string;
+  action?: string;
 }
 
-function roiStr(roi: number): string {
-  return (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%';
-}
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
-function statusChip(s: string): string {
-  const map: Record<string, [string, string, string]> = {
-    active:   ['Активна',     '#22c55e', 'rgba(34,197,94,.12)'],
-    paused:   ['Пауза',       '#f59e0b', 'rgba(245,158,11,.12)'],
-    stopped:  ['Остановлена', '#ef4444', 'rgba(239,68,68,.12)'],
+const fmt = (n: number) => n.toLocaleString('ru-RU');
+const ctr = (v: number, c: number) => v > 0 ? (c / v * 100).toFixed(2) + '%' : '—';
+const roiStr = (r: number) => (r >= 0 ? '+' : '') + r.toFixed(1) + '%';
+
+function statusChip(s: string) {
+  const M: Record<string, [string, string, string]> = {
+    active:   ['Активна',     '#22c55e', 'rgba(34,197,94,.13)'],
+    paused:   ['Пауза',       '#f59e0b', 'rgba(245,158,11,.13)'],
+    stopped:  ['Остановлена', '#ef4444', 'rgba(239,68,68,.13)'],
     inactive: ['Неактивна',   '#71717a', 'var(--bg3)'],
-    upcoming: ['Скоро',       '#818cf8', 'rgba(129,140,248,.12)'],
+    upcoming: ['Скоро',       '#818cf8', 'rgba(129,140,248,.13)'],
   };
-  const [label, color, bg] = map[s] ?? [s, '#71717a', 'var(--bg3)'];
-  return `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;background:${bg};color:${color};white-space:nowrap">
-    <span style="width:5px;height:5px;border-radius:50%;background:${color};flex-shrink:0"></span>${esc(label)}
-  </span>`;
+  const [label, col, bg] = M[s] ?? [s, '#71717a', 'var(--bg3)'];
+  return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:20px;
+    font-size:11px;font-weight:700;background:${bg};color:${col};white-space:nowrap">
+    <span style="width:5px;height:5px;border-radius:50%;background:${col};flex-shrink:0"></span>${esc(label)}</span>`;
 }
 
-function skeleton(rows = 5): string {
-  const row = `<div style="height:38px;border-radius:6px;background:var(--bg3);animation:ad-pulse 1.5s ease-in-out infinite"></div>`;
-  return `<div style="padding:16px;display:flex;flex-direction:column;gap:6px">${Array(rows).fill(row).join('')}</div>`;
+function skeleton(n = 5) {
+  const r = `<div style="height:38px;border-radius:6px;background:var(--bg3);animation:adp 1.5s ease-in-out infinite"></div>`;
+  return `<div style="padding:16px;display:flex;flex-direction:column;gap:6px">${Array(n).fill(r).join('')}</div>`;
 }
 
-function emptyState(msg: string, hint = ''): string {
-  return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:180px;gap:8px;color:var(--text2)">
-    <div style="font-size:28px;opacity:.2">${I.chartBar()}</div>
-    <p style="margin:0;font-size:13px;font-weight:600;color:var(--text2)">${msg}</p>
-    ${hint ? `<p style="margin:0;font-size:12px;opacity:.6">${hint}</p>` : ''}
+function empty(msg: string, hint = '') {
+  return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+    min-height:200px;gap:8px;padding:32px">
+    <div style="font-size:32px;opacity:.15">${I.chartBar()}</div>
+    <p style="margin:0;font-size:13px;font-weight:700;color:var(--text2)">${msg}</p>
+    ${hint ? `<p style="margin:0;font-size:12px;color:var(--text3);text-align:center;max-width:320px;line-height:1.6">${hint}</p>` : ''}
   </div>`;
 }
 
-// ── Module ────────────────────────────────────────────────────────────────────
+// ─── AI analysis ──────────────────────────────────────────────────────────────
+
+function analyzeAi(campaigns: Campaign[]): AiHint[] {
+  const hints: AiHint[] = [];
+  for (const c of campaigns) {
+    if (c.status !== 'active') continue;
+    const cpc   = c.clicks > 0 ? c.spent / c.clicks : 0;
+    const ctrV  = c.views  > 0 ? c.clicks / c.views * 100 : 0;
+    const budgetUtil = c.budget > 0 ? c.spent / c.budget * 100 : 0;
+
+    if (c.roi < -30 && c.spent > 500) {
+      hints.push({ level: 'danger', campaignId: c.id, campaignName: c.name,
+        message: `ROI ${roiStr(c.roi)} — кампания убыточна (потрачено ${fmt(c.spent)} ₽)`,
+        action: 'pause' });
+    } else if (c.roi < -10 && c.spent > 200) {
+      hints.push({ level: 'warn', campaignId: c.id, campaignName: c.name,
+        message: `ROI ${roiStr(c.roi)} — низкая отдача, проверьте ставки и товары` });
+    }
+    if (c.views > 1000 && ctrV < 0.3) {
+      hints.push({ level: 'warn', campaignId: c.id, campaignName: c.name,
+        message: `CTR ${ctr(c.views, c.clicks)} при ${fmt(c.views)} показах — ставки занижены или объявление нерелевантно` });
+    }
+    if (budgetUtil > 95 && c.roi > 0) {
+      hints.push({ level: 'ok', campaignId: c.id, campaignName: c.name,
+        message: `Бюджет исчерпан на ${budgetUtil.toFixed(0)}%, ROI положительный — увеличьте дневной лимит` });
+    }
+    if (cpc > 200 && c.orders === 0) {
+      hints.push({ level: 'danger', campaignId: c.id, campaignName: c.name,
+        message: `CPC ${fmt(cpc)} ₽ без заказов — высокая стоимость клика без конверсий` });
+    }
+  }
+  return hints.slice(0, 8);
+}
+
+// ─── Help content ──────────────────────────────────────────────────────────────
+
+function buildHelpModal(): string {
+  return `<div id="ad-help-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;
+    display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)">
+    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:16px;width:660px;
+      max-width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px;
+        border-bottom:1px solid var(--border);flex-shrink:0">
+        <div style="font-size:16px;font-weight:800;color:var(--text)">Как работает раздел Реклама</div>
+        <button id="ad-help-x" style="background:none;border:none;color:var(--text2);cursor:pointer;
+          font-size:20px;padding:2px 6px;border-radius:6px;line-height:1">✕</button>
+      </div>
+      <div style="overflow-y:auto;padding:22px;display:flex;flex-direction:column;gap:20px">
+
+        <div style="background:var(--bg3);border-radius:12px;padding:16px">
+          <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:10px;display:flex;align-items:center;gap:8px">
+            <span style="background:rgba(124,58,237,.2);color:#a78bfa;padding:3px 10px;border-radius:20px;font-size:11px">WB</span>
+            Wildberries — Рекламные кампании
+          </div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.8;display:flex;flex-direction:column;gap:8px">
+            <div><b style="color:var(--text)">Что нужно:</b> API-ключ с правами на раздел «Реклама». Создаётся в Личном кабинете WB → Настройки → Доступ к API.</div>
+            <div><b style="color:var(--text)">Кампании</b> — загружаются за выбранный период. Нажмите «Загрузить» после выбора магазина и дат.</div>
+            <div><b style="color:var(--text)">Баланс кабинета</b> — показывается вверху как зелёный чип. Это рекламный баланс, не торговый.</div>
+            <div><b style="color:var(--text)">Бюджет строки</b> — дневной лимит. Кликните иконку карандаша в строке → введите новое значение → Enter.</div>
+            <div><b style="color:var(--text)">Ставки по товарам</b> — разверните строку кампании (▽) → вкладка «Ставки». Вводите новые ставки → «Сохранить».</div>
+            <div><b style="color:var(--text)">Минус-слова</b> — только для автокампаний (тип «Авто»). Разверните → «Минус-слова» → вводите по одному на строку.</div>
+            <div><b style="color:var(--text)">Создание кампании</b> — кнопка «+ Кампания». Для наполнения товарами используйте ЛК WB после создания.</div>
+          </div>
+        </div>
+
+        <div style="background:var(--bg3);border-radius:12px;padding:16px">
+          <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:10px;display:flex;align-items:center;gap:8px">
+            <span style="background:rgba(0,91,255,.12);color:#60a5fa;padding:3px 10px;border-radius:20px;font-size:11px">Ozon</span>
+            Ozon — Performance и Акции
+          </div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.8;display:flex;flex-direction:column;gap:8px">
+            <div><b style="color:var(--text)">Что нужно:</b> Client-ID и API-ключ из кабинета Ozon Seller → Настройки → API-ключи. Тот же ключ работает и для Performance.</div>
+            <div><b style="color:var(--text)">Performance-кампании</b> — продвижение через рекламный кабинет Ozon. Данные приходят через отдельный домен <code style="background:var(--bg);padding:1px 5px;border-radius:4px">performance.ozon.ru</code> (проксирован).</div>
+            <div><b style="color:var(--text)">Разворот Performance-кампании</b> — показывает SKU-объявления с текущими ставками. Вкл/выкл через ▶/⏸ в строке.</div>
+            <div><b style="color:var(--text)">Акции Ozon</b> — промоакции от Ozon (скидки, FlashSale). Разверните акцию чтобы увидеть участвующие товары и убрать ненужные.</div>
+          </div>
+        </div>
+
+        <div style="background:var(--bg3);border-radius:12px;padding:16px">
+          <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:10px;display:flex;align-items:center;gap:8px">
+            <span style="background:rgba(252,63,29,.1);color:#f87171;padding:3px 10px;border-radius:20px;font-size:11px">ЯМ</span>
+            Яндекс.Маркет — Акции и Буст
+          </div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.8;display:flex;flex-direction:column;gap:8px">
+            <div><b style="color:var(--text)">Что нужно:</b> API-ключ из Яндекс.Маркет ЛК → Настройки → Партнёрский API. Также нужны Business-ID и Campaign-ID (есть в настройках магазина).</div>
+            <div><b style="color:var(--text)">Акции</b> — промоакции ЯМ (скидки, промокоды). Разверните акцию → посмотрите или уберите офферы.</div>
+            <div><b style="color:var(--text)">Буст-продвижение</b> — ставки за клик по товарам в поиске ЯМ. Нажмите «Загрузить ставки» → отредактируйте значения → «Сохранить». Колонка «Рекомендованная» — подсказка от ЯМ API.</div>
+            <div><b style="color:var(--text)">Важно:</b> для Буста нужен Campaign-ID в настройках магазина. Если его нет — добавьте в разделе «Магазины → Яндекс.Маркет».</div>
+          </div>
+        </div>
+
+        <div style="background:var(--bg3);border-radius:12px;padding:16px">
+          <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:10px">
+            🤖 ИИ-советник
+          </div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.8;display:flex;flex-direction:column;gap:6px">
+            <div>После загрузки кампаний появляется панель ИИ-советника. Она автоматически анализирует:</div>
+            <div style="padding-left:12px;display:flex;flex-direction:column;gap:4px">
+              <div><span style="color:#ef4444">■</span> Убыточные кампании (ROI &lt; −30%) — рекомендует поставить на паузу</div>
+              <div><span style="color:#f59e0b">■</span> Низкий CTR при большом охвате — рекомендует поднять ставки</div>
+              <div><span style="color:#f59e0b">■</span> Высокий CPC без конверсий — рекомендует проверить релевантность</div>
+              <div><span style="color:#22c55e">■</span> Бюджет исчерпан при положительном ROI — рекомендует увеличить лимит</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="background:var(--bg3);border-radius:12px;padding:16px">
+          <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:10px">Все магазины</div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.8">
+            Переключатель <b style="color:var(--text)">«Все магазины»</b> загружает кампании из всех ваших магазинов на выбранном МП одновременно.
+            В таблице появляется колонка «Магазин». KPI-тайлы агрегируют данные по всем. Полезно для общего контроля рекламных расходов.
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>`;
+}
+
+// ─── module ───────────────────────────────────────────────────────────────────
 
 export class AdvertisingModule {
   private el: HTMLElement;
 
-  // MP selection
   private tab: Tab = 'wb';
-  private ozonSubTab: OzonSubTab = 'perf';
-  private ymSubTab: YmSubTab = 'promo';
+  private ozonSub: OzonSub = 'perf';
+  private ymSub: YmSub = 'promo';
 
-  // Store
-  private storeId = '';
-  private stores: Array<{ id: string; name: string; [k: string]: any }> = [];
+  private storeId = '';           // '' = all stores
+  private stores: any[] = [];
 
-  // Data
   private campaigns: Campaign[] = [];
+  private filtered: Campaign[] = [];
   private loading = false;
-  private adBalance: number | null = null;
+  private balances = new Map<string, number>(); // storeId → balance
 
-  // Date range (WB only)
   private dateFrom: string;
   private dateTo: string;
 
-  // Expanded rows state
-  private expanded = new Set<string | number>();
-  private wbDetailTab = new Map<string | number, WbDetail>(); // per-campaign
-  private detailLoading = new Set<string | number>();
-  private detailCache   = new Map<string | number, any>();    // bids/kw/offers
+  private searchQ = '';
+  private filterStatus = 'all';
+  private sortKey: SortKey = 'spent';
+  private sortDir: 1 | -1 = -1;
 
-  // Inline budget editing (WB)
-  private budgetEditing = new Set<string | number>();
+  // Expanded rows
+  private expanded = new Set<string>();
+  private wbDetailTab = new Map<string, WbDetail>();
+  private detailLoading = new Set<string>();
+  private detailCache = new Map<string, any>();
 
-  // YM Boost tab state
+  // Budget inline edit
+  private budgetEditing = new Set<string>();
+
+  // Bulk selection
+  private selected = new Set<string>();
+
+  // YM boost
   private ymBids: any[] = [];
-  private ymRecommended: any[] = [];
+  private ymRec:  any[] = [];
   private ymBidsLoading = false;
-  private ymBidEdits = new Map<string, string>(); // offerId → new bid string
+  private ymBidEdits = new Map<string, string>();
 
-  // Event cleanup
+  // AI
+  private aiHints: AiHint[] = [];
+  private aiOpen = false;
+
+  // Errors per store
+  private loadErrors: Array<{ storeName: string; message: string }> = [];
+
   private eventsAC = new AbortController();
 
   constructor(container: HTMLElement) {
@@ -139,470 +266,470 @@ export class AdvertisingModule {
     this.loadStores();
   }
 
-  // ── Styles ─────────────────────────────────────────────────────────────────
+  // ─── styles ──────────────────────────────────────────────────────────────────
 
-  private injectStyles(): void {
-    if (document.getElementById('ad-module-styles')) return;
+  private injectStyles() {
+    if (document.getElementById('ad-sty')) return;
     const s = document.createElement('style');
-    s.id = 'ad-module-styles';
+    s.id = 'ad-sty';
     s.textContent = `
-      @keyframes ad-pulse { 0%,100%{opacity:.4} 50%{opacity:.9} }
+@keyframes adp{0%,100%{opacity:.4}50%{opacity:.9}}
 
-      .ad-wrap { display:flex;flex-direction:column;height:100%;background:var(--bg2);font-family:inherit }
+.adw{display:flex;flex-direction:column;height:100%;background:var(--bg2)}
 
-      /* Header */
-      .ad-header {
-        display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;
-        padding:10px 20px;background:var(--bg);border-bottom:1px solid var(--border);
-        gap:10px;flex-shrink:0;min-height:52px
-      }
-      .ad-header-left  { display:flex;align-items:center;gap:10px;flex-wrap:wrap }
-      .ad-header-right { display:flex;align-items:center;gap:8px;flex-wrap:wrap }
-      .ad-logo-icon {
-        width:30px;height:30px;border-radius:8px;flex-shrink:0;
-        background:linear-gradient(135deg,#6366f1,#8b5cf6);
-        display:flex;align-items:center;justify-content:center;color:#fff
-      }
-      .ad-title { font-size:15px;font-weight:800;color:var(--text);letter-spacing:-.3px }
+/* header */
+.adh{display:flex;align-items:center;flex-wrap:wrap;padding:9px 18px;background:var(--bg);
+  border-bottom:1px solid var(--border);gap:8px;flex-shrink:0;min-height:50px}
+.adh-l{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1}
+.adh-r{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ad-logo{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);
+  display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0}
+.ad-title{font-size:14px;font-weight:800;color:var(--text);letter-spacing:-.2px}
 
-      /* MP tabs */
-      .ad-mp-tabs { display:flex;gap:2px }
-      .ad-mp-tab {
-        padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-size:12px;
-        font-weight:700;font-family:inherit;transition:all .15s;
-        background:transparent;color:var(--text2)
-      }
-      .ad-mp-tab:hover { background:var(--bg2);color:var(--text) }
-      .ad-mp-tab.active-wb     { background:rgba(124,58,237,.15);color:#a78bfa }
-      .ad-mp-tab.active-ozon   { background:rgba(0,91,255,.12);color:#60a5fa }
-      .ad-mp-tab.active-yandex { background:rgba(252,63,29,.1);color:#f87171 }
+/* MP tabs */
+.ad-mptabs{display:flex;gap:2px}
+.ad-mptab{padding:4px 12px;border-radius:8px;border:none;cursor:pointer;font-size:12px;
+  font-weight:700;font-family:inherit;transition:all .15s;background:transparent;color:var(--text2)}
+.ad-mptab:hover{background:var(--bg2);color:var(--text)}
+.ad-mptab.awb{background:rgba(124,58,237,.15);color:#a78bfa}
+.ad-mptab.aozon{background:rgba(0,91,255,.12);color:#60a5fa}
+.ad-mptab.aym{background:rgba(252,63,29,.1);color:#f87171}
 
-      /* Sub-controls bar */
-      .ad-sub {
-        display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;
-        padding:8px 20px;background:var(--bg);border-bottom:1px solid var(--border);
-        gap:8px;flex-shrink:0
-      }
-      .ad-sub-left  { display:flex;align-items:center;gap:8px;flex-wrap:wrap }
-      .ad-sub-right { display:flex;align-items:center;gap:8px;flex-wrap:wrap }
+/* store select */
+.ad-sel{padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;
+  color:var(--text);font-size:12px;font-family:inherit;outline:none;min-width:140px;height:28px}
 
-      /* Balance chip */
-      .ad-balance {
-        display:inline-flex;align-items:center;gap:6px;
-        padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;
-        background:rgba(34,197,94,.12);color:#22c55e;cursor:default
-      }
+/* all-stores toggle */
+.ad-all-tog{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:8px;
+  border:1px solid var(--border);cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;
+  background:transparent;color:var(--text2);transition:all .15s}
+.ad-all-tog:hover{background:var(--bg2)}
+.ad-all-tog.on{background:color-mix(in srgb,var(--accent) 12%,transparent);
+  color:var(--accent);border-color:color-mix(in srgb,var(--accent) 30%,transparent)}
 
-      /* Sub-tabs (Ozon: Performance/Акции, YM: Акции/Буст) */
-      .ad-subtabs { display:flex;gap:2px }
-      .ad-subtab {
-        padding:4px 14px;border-radius:8px;border:none;cursor:pointer;
-        font-size:12px;font-weight:600;font-family:inherit;
-        background:transparent;color:var(--text2);transition:all .15s
-      }
-      .ad-subtab:hover { background:var(--bg2);color:var(--text) }
-      .ad-subtab.active { background:var(--bg2);color:var(--text);font-weight:700 }
+/* help btn */
+.ad-help-btn{width:26px;height:26px;border-radius:50%;border:1px solid var(--border);
+  background:var(--bg3);color:var(--text2);font-size:12px;font-weight:800;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0}
+.ad-help-btn:hover{background:var(--accent);color:#000;border-color:var(--accent)}
 
-      /* Period inputs */
-      .ad-period { display:flex;align-items:center;gap:4px }
-      .ad-period input {
-        padding:4px 8px;background:var(--bg3);border:1px solid var(--border);
-        border-radius:6px;color:var(--text);font-size:12px;font-family:inherit;outline:none
-      }
-      .ad-period span { font-size:12px;color:var(--text3) }
+/* sub bar */
+.ads{display:flex;align-items:center;flex-wrap:wrap;padding:7px 18px;background:var(--bg);
+  border-bottom:1px solid var(--border);gap:8px;flex-shrink:0}
+.ads-l{display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1}
+.ads-r{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 
-      /* Stats tiles */
-      .ad-stats {
-        display:flex;gap:8px;padding:12px 20px;flex-wrap:nowrap;overflow-x:auto;
-        border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg)
-      }
-      .ad-stat {
-        flex:1;min-width:100px;background:var(--bg2);border:1px solid var(--border);
-        border-radius:10px;padding:10px 14px;
-      }
-      .ad-stat-label {
-        font-size:10px;text-transform:uppercase;letter-spacing:.5px;
-        color:var(--text3);margin-bottom:3px;white-space:nowrap
-      }
-      .ad-stat-value {
-        font-size:16px;font-weight:800;font-variant-numeric:tabular-nums;
-        white-space:nowrap;line-height:1.2
-      }
+/* balance chip */
+.ad-bal{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;
+  font-size:11px;font-weight:700;background:rgba(34,197,94,.12);color:#22c55e}
 
-      /* Body / scroll area */
-      .ad-body { flex:1;min-height:0;overflow:auto }
+/* period presets */
+.ad-preset{padding:3px 9px;border-radius:6px;border:1px solid var(--border);cursor:pointer;
+  font-size:11px;font-weight:600;font-family:inherit;background:transparent;color:var(--text2);transition:all .12s}
+.ad-preset:hover{background:var(--bg3);color:var(--text)}
+.ad-period input{padding:3px 7px;background:var(--bg3);border:1px solid var(--border);
+  border-radius:6px;color:var(--text);font-size:11px;font-family:inherit;outline:none}
+.ad-period-sep{font-size:11px;color:var(--text3)}
 
-      /* Campaign table */
-      .ad-table { width:100%;border-collapse:collapse;font-size:12px }
-      .ad-table thead { position:sticky;top:0;z-index:3;background:var(--bg) }
-      .ad-table thead th {
-        padding:9px 14px;text-align:left;font-size:10px;font-weight:700;
-        color:var(--text3);text-transform:uppercase;letter-spacing:.5px;
-        border-bottom:1px solid var(--border);white-space:nowrap
-      }
-      .ad-table thead th.r { text-align:right }
-      .ad-table tbody tr.ad-row { border-bottom:1px solid var(--border);transition:background .08s }
-      .ad-table tbody tr.ad-row:hover { background:var(--bg2) }
-      .ad-table tbody tr.ad-row.expanded-row { background:var(--bg2) }
-      .ad-table td { padding:10px 14px;color:var(--text);vertical-align:middle }
-      .ad-table td.r { text-align:right;font-variant-numeric:tabular-nums }
-      .ad-table td.dim { color:var(--text2) }
+/* sub-tabs */
+.ad-stabs{display:flex;gap:2px}
+.ad-stab{padding:3px 12px;border-radius:8px;border:none;cursor:pointer;font-size:11px;
+  font-weight:600;font-family:inherit;background:transparent;color:var(--text2);transition:all .12s}
+.ad-stab:hover{background:var(--bg2);color:var(--text)}
+.ad-stab.on{background:var(--bg2);color:var(--text);font-weight:800}
 
-      /* Expanded detail row */
-      .ad-detail-row td {
-        padding:0;background:var(--bg2);border-bottom:2px solid var(--border)
-      }
-      .ad-detail-inner {
-        padding:14px 20px 16px;border-top:1px solid var(--border)
-      }
+/* filter bar */
+.adf{display:flex;align-items:center;flex-wrap:wrap;padding:7px 18px;background:var(--bg2);
+  border-bottom:1px solid var(--border);gap:8px;flex-shrink:0}
+.adf-search{flex:1;min-width:160px;padding:5px 10px;background:var(--bg);
+  border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;
+  font-family:inherit;outline:none}
+.adf-search:focus{border-color:var(--accent)}
+.adf-status{padding:4px 8px;background:var(--bg3);border:1px solid var(--border);
+  border-radius:8px;color:var(--text);font-size:12px;font-family:inherit;outline:none;height:28px}
+.adf-sort{padding:4px 8px;background:var(--bg3);border:1px solid var(--border);
+  border-radius:8px;color:var(--text);font-size:12px;font-family:inherit;outline:none;height:28px}
+.adf-ai{display:flex;align-items:center;gap:5px;padding:3px 10px;border-radius:8px;
+  border:1px solid transparent;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;
+  transition:all .15s}
+.adf-ai.has-danger{background:rgba(239,68,68,.12);color:#ef4444;border-color:rgba(239,68,68,.25)}
+.adf-ai.has-warn{background:rgba(245,158,11,.12);color:#f59e0b;border-color:rgba(245,158,11,.25)}
+.adf-ai.has-ok{background:rgba(34,197,94,.1);color:#22c55e;border-color:rgba(34,197,94,.2)}
 
-      /* Detail sub-tabs (Ставки / Ключевые слова) */
-      .ad-detail-tabs { display:flex;gap:2px;margin-bottom:12px }
-      .ad-detail-tab {
-        padding:4px 12px;border-radius:6px;border:none;cursor:pointer;
-        font-size:11px;font-weight:600;font-family:inherit;
-        background:var(--bg3);color:var(--text2);transition:all .15s
-      }
-      .ad-detail-tab.active { background:var(--accent);color:#000 }
+/* bulk bar */
+.ad-bulk{display:flex;align-items:center;gap:8px;padding:6px 18px;
+  background:color-mix(in srgb,var(--accent) 8%,var(--bg));
+  border-bottom:1px solid color-mix(in srgb,var(--accent) 20%,var(--border));flex-shrink:0}
+.ad-bulk span{font-size:12px;font-weight:700;color:var(--text)}
 
-      /* Bid table inside expanded row */
-      .ad-bid-table { width:100%;border-collapse:collapse;font-size:12px }
-      .ad-bid-table th {
-        padding:6px 10px;text-align:left;font-size:10px;font-weight:700;
-        color:var(--text3);text-transform:uppercase;letter-spacing:.4px;
-        border-bottom:1px solid var(--border);background:var(--bg)
-      }
-      .ad-bid-table th.r { text-align:right }
-      .ad-bid-table td { padding:7px 10px;border-bottom:1px solid var(--border);color:var(--text) }
-      .ad-bid-table tr:last-child td { border-bottom:none }
-      .ad-bid-table tr:hover td { background:var(--bg3) }
+/* stats tiles */
+.ad-tiles{display:flex;gap:6px;padding:10px 18px;flex-wrap:nowrap;overflow-x:auto;
+  border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg)}
+.ad-tile{flex:1;min-width:90px;background:var(--bg2);border:1px solid var(--border);
+  border-radius:10px;padding:9px 12px}
+.ad-tile-l{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);
+  margin-bottom:2px;white-space:nowrap}
+.ad-tile-v{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.2}
 
-      /* Budget inline edit */
-      .ad-budget-cell { display:flex;align-items:center;gap:6px }
-      .ad-budget-val  { font-variant-numeric:tabular-nums }
-      .ad-budget-pen  {
-        opacity:0;transition:opacity .15s;cursor:pointer;color:var(--text3);
-        display:flex;align-items:center
-      }
-      .ad-table tbody tr:hover .ad-budget-pen { opacity:1 }
-      .ad-budget-inp {
-        width:80px;padding:3px 7px;background:var(--bg);border:1px solid var(--accent);
-        border-radius:6px;color:var(--text);font-size:12px;font-family:inherit;outline:none
-      }
-      .ad-budget-acts { display:flex;gap:4px }
-      .ad-budget-ok, .ad-budget-x {
-        padding:2px 6px;border-radius:5px;border:none;cursor:pointer;
-        font-size:11px;font-weight:700;font-family:inherit
-      }
-      .ad-budget-ok { background:var(--accent);color:#000 }
-      .ad-budget-x  { background:var(--bg3);color:var(--text2) }
+/* body */
+.ad-body{flex:1;min-height:0;overflow:auto}
 
-      /* Expand chevron */
-      .ad-expand-btn {
-        padding:3px 6px;border-radius:5px;border:none;cursor:pointer;
-        background:transparent;color:var(--text3);transition:all .15s;
-        display:flex;align-items:center
-      }
-      .ad-expand-btn:hover { background:var(--bg3);color:var(--text) }
-      .ad-expand-btn.open { color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent) }
-      .ad-expand-chevron { transition:transform .2s }
-      .ad-expand-btn.open .ad-expand-chevron { transform:rotate(180deg) }
+/* table */
+.adt{width:100%;border-collapse:collapse;font-size:12px}
+.adt thead{position:sticky;top:0;z-index:3;background:var(--bg)}
+.adt thead th{padding:8px 12px;text-align:left;font-size:10px;font-weight:700;
+  color:var(--text3);text-transform:uppercase;letter-spacing:.5px;
+  border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none}
+.adt thead th:hover{color:var(--text)}
+.adt thead th.r{text-align:right}
+.adt tbody tr.adr{border-bottom:1px solid var(--border);transition:background .08s}
+.adt tbody tr.adr:hover{background:var(--bg3)}
+.adt tbody tr.adr.sel{background:color-mix(in srgb,var(--accent) 6%,var(--bg2))}
+.adt tbody tr.adr.exp{background:var(--bg2)}
+.adt td{padding:9px 12px;color:var(--text);vertical-align:middle}
+.adt td.r{text-align:right;font-variant-numeric:tabular-nums}
+.adt td.dim{color:var(--text2)}
+.adt td.nm{font-size:10px;color:var(--text3)}
 
-      /* Minus-words editor */
-      .ad-minus-area {
-        width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);
-        border-radius:8px;color:var(--text);font-size:12px;font-family:inherit;
-        outline:none;resize:vertical;min-height:70px
-      }
-      .ad-minus-area:focus { border-color:var(--accent) }
+/* detail row */
+.ad-drow td{padding:0;background:var(--bg2);border-bottom:2px solid var(--border)}
+.ad-dinn{padding:14px 18px 16px;border-top:1px solid var(--border)}
+.ad-dtabs{display:flex;gap:2px;margin-bottom:10px}
+.ad-dtab{padding:3px 11px;border-radius:6px;border:none;cursor:pointer;font-size:11px;
+  font-weight:600;font-family:inherit;background:var(--bg3);color:var(--text2);transition:all .12s}
+.ad-dtab.on{background:var(--accent);color:#000}
 
-      /* Nginx setup guide */
-      .ad-nginx-guide {
-        margin:16px;padding:18px;background:var(--bg);border:1px solid var(--border);
-        border-radius:12px
-      }
-      .ad-nginx-guide pre {
-        background:var(--bg3);border:1px solid var(--border);border-radius:8px;
-        padding:12px;font-size:11px;overflow-x:auto;color:var(--text2);margin:8px 0 0
-      }
+/* mini table inside detail */
+.adm{width:100%;border-collapse:collapse;font-size:12px}
+.adm th{padding:5px 10px;text-align:left;font-size:10px;font-weight:700;color:var(--text3);
+  text-transform:uppercase;border-bottom:1px solid var(--border);background:var(--bg)}
+.adm th.r{text-align:right}
+.adm td{padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text)}
+.adm tr:last-child td{border-bottom:none}
+.adm tr:hover td{background:var(--bg3)}
 
-      /* Boost bids table */
-      .ad-boost-input {
-        width:80px;padding:4px 7px;background:var(--bg);border:1px solid var(--border);
-        border-radius:6px;color:var(--text);font-size:12px;font-family:inherit;outline:none
-      }
-      .ad-boost-input:focus { border-color:var(--accent) }
-      .ad-boost-input.changed { border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,var(--bg)) }
+/* inline budget */
+.ad-bud{display:flex;align-items:center;gap:5px}
+.ad-bud-v{font-variant-numeric:tabular-nums}
+.ad-bud-pen{opacity:0;cursor:pointer;color:var(--text3);transition:opacity .12s;display:flex;align-items:center}
+.adr:hover .ad-bud-pen{opacity:1}
+.ad-bud-inp{width:76px;padding:3px 6px;background:var(--bg);border:1px solid var(--accent);
+  border-radius:6px;color:var(--text);font-size:12px;font-family:inherit;outline:none}
+.ad-bok,.ad-bx{padding:2px 6px;border-radius:5px;border:none;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit}
+.ad-bok{background:var(--accent);color:#000}
+.ad-bx{background:var(--bg3);color:var(--text2)}
 
-      /* Select */
-      .ad-select {
-        padding:5px 10px;background:var(--bg3);border:1px solid var(--border);
-        border-radius:8px;color:var(--text);font-size:12px;font-family:inherit;outline:none;
-        min-width:160px;height:30px
-      }
-    `;
+/* expand btn */
+.ad-exp{padding:3px 5px;border-radius:5px;border:none;cursor:pointer;background:transparent;
+  color:var(--text3);transition:all .12s;display:flex;align-items:center}
+.ad-exp:hover{background:var(--bg3);color:var(--text)}
+.ad-exp.on{color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.ad-chev{transition:transform .2s}
+.ad-exp.on .ad-chev{transform:rotate(180deg)}
+
+/* boost input */
+.ad-bi{width:80px;padding:4px 7px;background:var(--bg);border:1px solid var(--border);
+  border-radius:6px;color:var(--text);font-size:12px;font-family:inherit;outline:none}
+.ad-bi:focus{border-color:var(--accent)}
+.ad-bi.ch{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,var(--bg))}
+
+/* minus textarea */
+.ad-minus{width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);
+  border-radius:8px;color:var(--text);font-size:12px;font-family:inherit;outline:none;
+  resize:vertical;min-height:68px;box-sizing:border-box}
+.ad-minus:focus{border-color:var(--accent)}
+
+/* AI panel */
+.ad-ai-panel{padding:12px 18px;border-bottom:1px solid var(--border);flex-shrink:0;
+  display:flex;flex-direction:column;gap:6px}
+.ad-ai-row{display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-radius:8px;
+  font-size:12px;background:var(--bg3)}
+.ad-ai-row.d{background:rgba(239,68,68,.07);border-left:3px solid #ef4444}
+.ad-ai-row.w{background:rgba(245,158,11,.07);border-left:3px solid #f59e0b}
+.ad-ai-row.o{background:rgba(34,197,94,.07);border-left:3px solid #22c55e}
+.ad-ai-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:3px}
+
+/* checkbox */
+.ad-cb{width:14px;height:14px;accent-color:var(--accent);cursor:pointer;flex-shrink:0}
+
+/* sort indicator */
+.ad-sort-i{font-size:9px;opacity:.6;margin-left:3px}
+`;
     document.head.appendChild(s);
   }
 
-  // ── Shell ──────────────────────────────────────────────────────────────────
+  // ─── shell ────────────────────────────────────────────────────────────────────
 
-  private buildShell(): void {
-    this.el.innerHTML = `
-      <div class="ad-wrap">
-        <div class="ad-header">
-          <div class="ad-header-left">
-            <div class="ad-logo-icon">${I.zap()}</div>
-            <span class="ad-title">Реклама</span>
-            <div class="ad-mp-tabs">
-              ${(['wb','ozon','yandex'] as Tab[]).map(t => `
-                <button class="ad-mp-tab ${this.tab === t ? 'active-'+t : ''}" data-mp="${t}">
-                  ${t === 'wb' ? 'Wildberries' : t === 'ozon' ? 'Ozon' : 'Яндекс.Маркет'}
-                </button>`).join('')}
-            </div>
-          </div>
-          <div class="ad-header-right">
-            <select class="ad-select" id="ad-store">
-              <option value="">Загрузка...</option>
-            </select>
-            <button class="rpr-btn rpr-btn-ghost" id="ad-refresh" style="display:flex;align-items:center;gap:5px">
-              ${I.refresh()} Загрузить
-            </button>
+  private buildShell() {
+    this.el.innerHTML = `<div class="adw">
+      <div class="adh">
+        <div class="adh-l">
+          <div class="ad-logo">${I.zap()}</div>
+          <span class="ad-title">Реклама</span>
+          <div class="ad-mptabs">
+            ${(['wb','ozon','yandex'] as Tab[]).map(t =>
+              `<button class="ad-mptab ${this.tab===t?'a'+t:''}" data-mp="${t}">
+                ${t==='wb'?'Wildberries':t==='ozon'?'Ozon':'Яндекс.Маркет'}
+              </button>`).join('')}
           </div>
         </div>
-
-        <div id="ad-sub"></div>
-        <div id="ad-stats"></div>
-        <div class="ad-body" id="ad-body">${skeleton()}</div>
-      </div>`;
-
+        <div class="adh-r">
+          <select class="ad-sel" id="ad-store"><option value="">Загрузка…</option></select>
+          <button class="ad-all-tog ${this.storeId===''?'on':''}" id="ad-all-tog">
+            ${I.eye()} Все
+          </button>
+          <button class="rpr-btn rpr-btn-ghost" id="ad-refresh" style="display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;font-size:12px">
+            ${I.refresh()} Загрузить
+          </button>
+          <button class="ad-help-btn" id="ad-help">?</button>
+        </div>
+      </div>
+      <div id="ad-sub"></div>
+      <div id="ad-filter" style="display:none"></div>
+      <div id="ad-bulk"  style="display:none"></div>
+      <div id="ad-tiles" style="display:none"></div>
+      <div id="ad-ai"    style="display:none"></div>
+      <div class="ad-body" id="ad-body">${empty('Выберите магазин и нажмите «Загрузить»','или включите «Все» чтобы загрузить данные по всем магазинам')}</div>
+    </div>`;
     this.bindAll();
     this.renderSub();
   }
 
-  // ── Sub-controls ───────────────────────────────────────────────────────────
+  // ─── sub bar ──────────────────────────────────────────────────────────────────
 
-  private renderSub(): void {
+  private renderSub() {
     const el = this.el.querySelector('#ad-sub') as HTMLElement;
     if (!el) return;
 
+    const balHtml = [...this.balances.entries()]
+      .map(([sid, b]) => {
+        const s = this.stores.find(x => x.id === sid);
+        const label = this.stores.length > 1 && s ? esc(s.name.slice(0, 12)) + ': ' : '';
+        return `<span class="ad-bal">${I.wallet()} ${label}${fmt(b)} ₽</span>`;
+      }).join('');
+
     if (this.tab === 'wb') {
-      const balHtml = this.adBalance !== null
-        ? `<span class="ad-balance">${I.wallet()} Кабинет: ${fmt(this.adBalance)} ₽</span>`
-        : '';
-      el.innerHTML = `
-        <div class="ad-sub">
-          <div class="ad-sub-left">
-            ${balHtml}
-            <div class="ad-period">
-              <input type="date" id="ad-from" value="${this.dateFrom}">
-              <span>—</span>
-              <input type="date" id="ad-to" value="${this.dateTo}">
-            </div>
+      el.innerHTML = `<div class="ads">
+        <div class="ads-l">
+          ${balHtml}
+          <div style="display:flex;align-items:center;gap:4px" class="ad-period">
+            <button class="ad-preset" data-days="7">7д</button>
+            <button class="ad-preset" data-days="30">30д</button>
+            <button class="ad-preset" data-days="90">90д</button>
+            <input type="date" id="ad-from" value="${this.dateFrom}">
+            <span class="ad-period-sep">—</span>
+            <input type="date" id="ad-to" value="${this.dateTo}">
           </div>
-          <div class="ad-sub-right">
-            <button class="rpr-btn rpr-btn-green" id="ad-create" style="display:flex;align-items:center;gap:5px">
-              ${I.plus()} Кампания
-            </button>
-          </div>
-        </div>`;
+        </div>
+        <div class="ads-r">
+          <button class="rpr-btn rpr-btn-green" id="ad-create" style="display:flex;align-items:center;gap:5px;height:28px;padding:0 12px;font-size:12px">
+            ${I.plus()} Кампания
+          </button>
+        </div>
+      </div>`;
     } else if (this.tab === 'ozon') {
-      el.innerHTML = `
-        <div class="ad-sub">
-          <div class="ad-sub-left">
-            <div class="ad-subtabs">
-              <button class="ad-subtab ${this.ozonSubTab==='perf'?'active':''}" data-osub="perf">Performance</button>
-              <button class="ad-subtab ${this.ozonSubTab==='promo'?'active':''}" data-osub="promo">Акции Ozon</button>
-            </div>
+      el.innerHTML = `<div class="ads">
+        <div class="ads-l">
+          <div class="ad-stabs">
+            <button class="ad-stab ${this.ozonSub==='perf'?'on':''}" data-osub="perf">Performance</button>
+            <button class="ad-stab ${this.ozonSub==='promo'?'on':''}" data-osub="promo">Акции Ozon</button>
           </div>
-        </div>`;
+          ${balHtml}
+        </div>
+      </div>`;
     } else {
-      el.innerHTML = `
-        <div class="ad-sub">
-          <div class="ad-sub-left">
-            <div class="ad-subtabs">
-              <button class="ad-subtab ${this.ymSubTab==='promo'?'active':''}" data-ymsub="promo">Акции</button>
-              <button class="ad-subtab ${this.ymSubTab==='boost'?'active':''}" data-ymsub="boost">Буст-продвижение</button>
-            </div>
+      el.innerHTML = `<div class="ads">
+        <div class="ads-l">
+          <div class="ad-stabs">
+            <button class="ad-stab ${this.ymSub==='promo'?'on':''}" data-ymsub="promo">Акции</button>
+            <button class="ad-stab ${this.ymSub==='boost'?'on':''}" data-ymsub="boost">Буст-продвижение</button>
           </div>
-          ${this.ymSubTab === 'boost' && this.storeId ? `
-            <div class="ad-sub-right">
-              <button class="rpr-btn rpr-btn-ghost" id="ym-load-bids" style="display:flex;align-items:center;gap:5px">
-                ${I.refresh()} Загрузить ставки
-              </button>
-            </div>` : ''}
-        </div>`;
+        </div>
+        ${this.ymSub==='boost'?`<div class="ads-r">
+          <button class="rpr-btn rpr-btn-ghost" id="ym-load-bids" style="display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;font-size:12px">
+            ${I.refresh()} Загрузить ставки
+          </button>
+        </div>`:''}
+      </div>`;
     }
   }
 
-  // ── Events ─────────────────────────────────────────────────────────────────
+  // ─── events ───────────────────────────────────────────────────────────────────
 
-  private bindAll(): void {
+  private bindAll() {
     this.eventsAC.abort();
     this.eventsAC = new AbortController();
     const { signal } = this.eventsAC;
 
     this.el.addEventListener('click', async (e) => {
-      const tgt = e.target as HTMLElement;
-      const btn = tgt.closest('button') as HTMLButtonElement | null;
+      const t = e.target as HTMLElement;
+      const btn = t.closest('button') as HTMLButtonElement | null;
+      const th  = t.closest('th[data-sort]') as HTMLElement | null;
+
+      // sort header
+      if (th) {
+        const k = th.dataset.sort as SortKey;
+        if (k === this.sortKey) this.sortDir = (this.sortDir === 1 ? -1 : 1) as 1 | -1;
+        else { this.sortKey = k; this.sortDir = -1; }
+        this.applyFilter(); return;
+      }
+
       if (!btn) return;
 
-      // ── MP tab ──
+      // MP tab
       const mp = btn.dataset.mp as Tab | undefined;
       if (mp && mp !== this.tab) {
-        this.tab = mp;
-        this.campaigns = [];
-        this.storeId = '';
-        this.expanded.clear();
-        this.detailCache.clear();
-        this.ymBids = [];
-        this.ymRecommended = [];
-        this.buildShell();
-        this.loadStores();
+        this.tab = mp; this.campaigns = []; this.filtered = [];
+        this.expanded.clear(); this.detailCache.clear();
+        this.ymBids = []; this.ymRec = []; this.aiHints = [];
+        this.loadErrors = [];
+        this.balances.clear(); this.selected.clear();
+        this.buildShell(); this.loadStores(); return;
+      }
+
+      // Ozon sub
+      const os = btn.dataset.osub as OzonSub | undefined;
+      if (os && os !== this.ozonSub) {
+        this.ozonSub = os; this.campaigns = []; this.filtered = [];
+        this.expanded.clear(); this.detailCache.clear(); this.aiHints = [];
+        this.renderSub(); this.renderFilterBar(); this.renderTiles();
+        this.renderAi(); this.flushBody(); return;
+      }
+
+      // YM sub
+      const ys = btn.dataset.ymsub as YmSub | undefined;
+      if (ys && ys !== this.ymSub) {
+        this.ymSub = ys; this.campaigns = []; this.filtered = [];
+        this.ymBids = []; this.ymRec = []; this.aiHints = [];
+        this.renderSub(); this.renderFilterBar(); this.renderTiles();
+        this.renderAi(); this.flushBody(); return;
+      }
+
+      // Period presets
+      if (btn.dataset.days) {
+        const d = Number(btn.dataset.days);
+        const now = new Date();
+        this.dateTo   = now.toISOString().slice(0, 10);
+        this.dateFrom = new Date(now.getTime() - d * 86_400_000).toISOString().slice(0, 10);
+        (this.el.querySelector('#ad-from') as HTMLInputElement).value = this.dateFrom;
+        (this.el.querySelector('#ad-to')   as HTMLInputElement).value = this.dateTo;
         return;
       }
 
-      // ── Ozon sub-tab ──
-      const osub = btn.dataset.osub as OzonSubTab | undefined;
-      if (osub && osub !== this.ozonSubTab) {
-        this.ozonSubTab = osub;
-        this.campaigns = [];
-        this.expanded.clear();
-        this.detailCache.clear();
-        this.renderSub();
-        this.flushBody();
+      if (btn.id === 'ad-all-tog') {
+        const isAll = this.storeId === '';
+        if (isAll) {
+          this.storeId = this.stores[0]?.id ?? '';
+          const sel = this.el.querySelector('#ad-store') as HTMLSelectElement;
+          if (sel) sel.value = this.storeId;
+        } else { this.storeId = ''; }
+        btn.classList.toggle('on', this.storeId === '');
+        this.campaigns = []; this.filtered = []; this.aiHints = [];
+        this.expanded.clear(); this.detailCache.clear(); this.selected.clear();
+        this.balances.clear();
+        this.renderSub(); this.renderTiles(); this.renderAi(); this.flushBody();
+        if (this.tab === 'wb') await this.loadBalance();
         return;
       }
 
-      // ── YM sub-tab ──
-      const ymsub = btn.dataset.ymsub as YmSubTab | undefined;
-      if (ymsub && ymsub !== this.ymSubTab) {
-        this.ymSubTab = ymsub;
-        this.campaigns = [];
-        this.expanded.clear();
-        this.ymBids = [];
-        this.renderSub();
-        this.flushBody();
-        return;
-      }
-
-      // ── Global actions ──
       if (btn.id === 'ad-refresh')   { await this.loadCampaigns(); return; }
       if (btn.id === 'ad-create')    { this.showCreateDialog(); return; }
       if (btn.id === 'ym-load-bids') { await this.loadYmBids(); return; }
+      if (btn.id === 'ad-help')      { this.showHelp(); return; }
+      if (btn.id === 'ad-help-x' || btn.id === 'ad-help-overlay') {
+        document.getElementById('ad-help-overlay')?.remove(); return;
+      }
+      if (btn.id === 'ad-ai-tog') { this.aiOpen = !this.aiOpen; this.renderAi(); return; }
 
-      // ── WB: budget inline edit ──
+      // Bulk actions
+      if (btn.id === 'ad-bulk-pause')  { await this.bulkPause(11); return; }
+      if (btn.id === 'ad-bulk-resume') { await this.bulkPause(9);  return; }
+      if (btn.id === 'ad-bulk-clear')  { this.selected.clear(); this.flushBody(); this.renderBulk(); return; }
+
+      // Row checkbox
+      if (btn.dataset.action === 'check') {
+        const id = btn.dataset.id!;
+        if (this.selected.has(id)) this.selected.delete(id); else this.selected.add(id);
+        this.renderBulk(); this.flushBody(); return;
+      }
+
+      // Budget
       if (btn.dataset.action === 'edit-budget') {
         this.budgetEditing.add(btn.dataset.id!);
         this.flushBody();
-        setTimeout(() => (this.el.querySelector(`#ad-b-inp-${btn.dataset.id}`) as HTMLInputElement)?.focus(), 0);
+        setTimeout(() => (this.el.querySelector(`#ad-bi-${btn.dataset.id}`) as HTMLInputElement)?.focus(), 10);
         return;
       }
-      if (btn.dataset.action === 'cancel-budget') {
-        this.budgetEditing.delete(btn.dataset.id!);
-        this.flushBody();
-        return;
-      }
+      if (btn.dataset.action === 'cancel-budget') { this.budgetEditing.delete(btn.dataset.id!); this.flushBody(); return; }
       if (btn.dataset.action === 'save-budget') {
-        const id = btn.dataset.id!;
-        const inp = this.el.querySelector(`#ad-b-inp-${id}`) as HTMLInputElement | null;
-        if (inp) await this.saveBudget(Number(id), Number(inp.value));
+        const inp = this.el.querySelector(`#ad-bi-${btn.dataset.id}`) as HTMLInputElement | null;
+        if (inp) await this.saveBudget(btn.dataset.id!, Number(inp.value));
         return;
       }
 
-      // ── WB: pause/resume ──
-      if (btn.dataset.action === 'pause')  { await this.toggleWbCampaign(Number(btn.dataset.id), 11); return; }
-      if (btn.dataset.action === 'resume') { await this.toggleWbCampaign(Number(btn.dataset.id), 9);  return; }
+      // WB pause/resume
+      if (btn.dataset.action === 'pause')  { await this.toggleWb(btn.dataset.id!, 11); return; }
+      if (btn.dataset.action === 'resume') { await this.toggleWb(btn.dataset.id!, 9);  return; }
 
-      // ── WB: expand row ──
+      // Expand WB row
       if (btn.dataset.action === 'expand') {
         const id = btn.dataset.id!;
-        if (this.expanded.has(id)) { this.expanded.delete(id); } else { this.expanded.add(id); }
+        if (this.expanded.has(id)) this.expanded.delete(id); else this.expanded.add(id);
         this.flushBody();
         if (this.expanded.has(id)) this.loadDetail(id);
         return;
       }
 
-      // ── WB detail: sub-tab switch ──
-      if (btn.dataset.action === 'detail-tab') {
+      // WB detail sub-tab
+      if (btn.dataset.action === 'dtab') {
+        this.wbDetailTab.set(btn.dataset.id!, btn.dataset.tab as WbDetail);
+        this.flushBody(); return;
+      }
+
+      if (btn.dataset.action === 'save-bids')     { await this.saveBids(btn.dataset.id!); return; }
+      if (btn.dataset.action === 'save-excluded')  { await this.saveExcluded(btn.dataset.id!); return; }
+
+      // Ozon perf expand
+      if (btn.dataset.action === 'exp-perf') {
         const id = btn.dataset.id!;
-        this.wbDetailTab.set(id, btn.dataset.tab as WbDetail);
+        if (this.expanded.has(id)) this.expanded.delete(id); else this.expanded.add(id);
         this.flushBody();
+        if (this.expanded.has(id)) this.loadPerfObjects(id);
         return;
       }
-
-      // ── WB: save bids ──
-      if (btn.dataset.action === 'save-bids') {
-        await this.saveBids(btn.dataset.id!);
-        return;
+      if (btn.dataset.action === 'tog-perf') {
+        await this.toggleOzonPerf(btn.dataset.id!, btn.dataset.status === 'active'); return;
       }
 
-      // ── WB: save minus-words ──
-      if (btn.dataset.action === 'save-excluded') {
+      // Ozon promo expand
+      if (btn.dataset.action === 'exp-promo') {
         const id = btn.dataset.id!;
-        const ta = this.el.querySelector(`#ad-excl-${id}`) as HTMLTextAreaElement | null;
-        if (!ta) return;
-        const words = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
-        try {
-          const store = this.stores.find(s => s.id === this.storeId) as any;
-          await setWbExcludedKeywords(store.api_key, Number(id), words);
-          showToast('Минус-слова сохранены', 'success');
-        } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
-        return;
-      }
-
-      // ── Ozon: expand promo row ──
-      if (btn.dataset.action === 'expand-promo') {
-        const id = btn.dataset.id!;
-        if (this.expanded.has(id)) { this.expanded.delete(id); } else { this.expanded.add(id); }
+        if (this.expanded.has(id)) this.expanded.delete(id); else this.expanded.add(id);
         this.flushBody();
-        if (this.expanded.has(id)) this.loadOzonPromoProducts(id, Number(btn.dataset.actionid));
+        if (this.expanded.has(id)) this.loadOzonPromoProducts(id, Number(btn.dataset.aid));
         return;
       }
-
-      // ── Ozon: remove promo product ──
       if (btn.dataset.action === 'rm-promo-product') {
-        await this.removeOzonPromoProduct(
-          btn.dataset.promoid!,
-          Number(btn.dataset.actionid),
-          Number(btn.dataset.productid),
-        );
-        return;
+        await this.rmOzonPromoProduct(btn.dataset.pid!, Number(btn.dataset.aid), Number(btn.dataset.prodid)); return;
       }
 
-      // ── Ozon Perf: expand ──
-      if (btn.dataset.action === 'expand-perf') {
+      // YM promo expand
+      if (btn.dataset.action === 'exp-ympromo') {
         const id = btn.dataset.id!;
-        if (this.expanded.has(id)) { this.expanded.delete(id); } else { this.expanded.add(id); }
-        this.flushBody();
-        if (this.expanded.has(id)) this.loadOzonPerfObjects(id);
-        return;
-      }
-
-      // ── Ozon Perf: toggle ──
-      if (btn.dataset.action === 'toggle-perf') {
-        await this.toggleOzonPerfCampaign(btn.dataset.id!, btn.dataset.status === 'active');
-        return;
-      }
-
-      // ── YM: expand promo ──
-      if (btn.dataset.action === 'expand-ym-promo') {
-        const id = btn.dataset.id!;
-        if (this.expanded.has(id)) { this.expanded.delete(id); } else { this.expanded.add(id); }
+        if (this.expanded.has(id)) this.expanded.delete(id); else this.expanded.add(id);
         this.flushBody();
         if (this.expanded.has(id)) this.loadYmPromoOffers(id, btn.dataset.promoid!);
         return;
       }
-
-      // ── YM: remove promo offer ──
       if (btn.dataset.action === 'rm-ym-offer') {
-        await this.removeYmPromoOffer(btn.dataset.promoid!, btn.dataset.offerid!);
-        return;
+        await this.rmYmOffer(btn.dataset.promoid!, btn.dataset.offerid!); return;
       }
 
-      // ── YM: save boost bids ──
-      if (btn.id === 'ym-save-bids') {
-        await this.saveYmBids();
-        return;
+      if (btn.id === 'ym-save-bids') { await this.saveYmBids(); return; }
+
+      // AI quick action
+      if (btn.dataset.action === 'ai-pause') {
+        await this.toggleWb(btn.dataset.id!, 11); return;
       }
     }, { signal });
 
@@ -610,137 +737,251 @@ export class AdvertisingModule {
       const t = e.target as HTMLSelectElement | HTMLInputElement;
       if (t.id === 'ad-store') {
         this.storeId = t.value;
-        this.campaigns = [];
-        this.expanded.clear();
-        this.detailCache.clear();
-        this.ymBids = [];
-        this.flushBody();
+        const allBtn = this.el.querySelector('#ad-all-tog');
+        allBtn?.classList.toggle('on', this.storeId === '');
+        this.campaigns = []; this.filtered = []; this.aiHints = [];
+        this.loadErrors = [];
+        this.expanded.clear(); this.detailCache.clear(); this.selected.clear();
+        this.balances.clear();
+        this.renderSub(); this.renderTiles(); this.renderAi(); this.flushBody();
         if (this.tab === 'wb' && this.storeId) this.loadBalance();
       }
       if (t.id === 'ad-from') this.dateFrom = t.value;
       if (t.id === 'ad-to')   this.dateTo   = t.value;
+      if (t.id === 'adf-status') { this.filterStatus = (t as HTMLSelectElement).value; this.applyFilter(); }
+      if (t.id === 'adf-sort') {
+        const val = (t as HTMLSelectElement).value;
+        const [k, d] = val.split(':');
+        this.sortKey = k as SortKey; this.sortDir = (d === 'asc' ? 1 : -1) as 1 | -1;
+        this.applyFilter();
+      }
     }, { signal });
 
     this.el.addEventListener('input', (e) => {
       const t = e.target as HTMLInputElement;
+      if (t.id === 'adf-search') { this.searchQ = t.value; this.applyFilter(); }
       if (t.dataset.boostid) {
         const cur = this.ymBids.find(b => (b.offerId ?? b.offer_id) === t.dataset.boostid);
-        const curVal = cur?.bid ?? 0;
-        t.classList.toggle('changed', t.value !== '' && Number(t.value) !== curVal);
+        t.classList.toggle('ch', t.value !== '' && Number(t.value) !== (cur?.bid ?? 0));
         this.ymBidEdits.set(t.dataset.boostid, t.value);
       }
     }, { signal });
 
-    // Budget input: Enter to save, Escape to cancel
     this.el.addEventListener('keydown', async (e) => {
       const t = e.target as HTMLInputElement;
-      if (!t.id?.startsWith('ad-b-inp-')) return;
-      const id = t.id.replace('ad-b-inp-', '');
-      if (e.key === 'Enter')  { e.preventDefault(); await this.saveBudget(Number(id), Number(t.value)); }
+      if (!t.id?.startsWith('ad-bi-')) return;
+      const id = t.id.replace('ad-bi-', '');
+      if (e.key === 'Enter')  { e.preventDefault(); await this.saveBudget(id, Number(t.value)); }
       if (e.key === 'Escape') { this.budgetEditing.delete(id); this.flushBody(); }
     }, { signal });
   }
 
-  // ── Flush helpers ──────────────────────────────────────────────────────────
+  // ─── render helpers ───────────────────────────────────────────────────────────
 
-  private flushBody(): void {
-    const body = this.el.querySelector('#ad-body');
-    if (body) body.innerHTML = this.renderBody();
-    this.renderStats();
+  private flushBody() {
+    const el = this.el.querySelector('#ad-body');
+    if (el) el.innerHTML = this.renderBody();
   }
 
-  private renderStats(): void {
-    const el = this.el.querySelector('#ad-stats') as HTMLElement | null;
+  private renderTiles() {
+    const el = this.el.querySelector('#ad-tiles') as HTMLElement;
     if (!el) return;
-    if (!this.campaigns.length) { el.innerHTML = ''; return; }
-    const budget  = this.campaigns.reduce((s, c) => s + c.budget,  0);
-    const spent   = this.campaigns.reduce((s, c) => s + c.spent,   0);
-    const revenue = this.campaigns.reduce((s, c) => s + c.revenue, 0);
-    const orders  = this.campaigns.reduce((s, c) => s + c.orders,  0);
-    const views   = this.campaigns.reduce((s, c) => s + c.views,   0);
-    const clicks  = this.campaigns.reduce((s, c) => s + c.clicks,  0);
+    if (!this.campaigns.length) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    const c = this.filtered.length ? this.filtered : this.campaigns;
+    const budget  = c.reduce((s, x) => s + x.budget, 0);
+    const spent   = c.reduce((s, x) => s + x.spent,  0);
+    const revenue = c.reduce((s, x) => s + x.revenue,0);
+    const orders  = c.reduce((s, x) => s + x.orders, 0);
+    const views   = c.reduce((s, x) => s + x.views,  0);
+    const clicks  = c.reduce((s, x) => s + x.clicks, 0);
     const roi     = spent > 0 ? (revenue - spent) / spent * 100 : 0;
+
     const tiles = this.tab === 'wb'
       ? [
-          ['Бюджет/д',  fmt(budget)  + ' ₽', '#818cf8'],
-          ['Потрачено', fmt(spent)   + ' ₽', '#f59e0b'],
-          ['Выручка',   fmt(revenue) + ' ₽', '#22c55e'],
-          ['Заказы',    String(orders),       '#3b82f6'],
-          ['CTR',       ctr(views, clicks),   '#a78bfa'],
-          ['ROI',       roiStr(roi),          roi >= 0 ? '#22c55e' : '#ef4444'],
+          ['Бюджет/д',  fmt(budget)   + ' ₽', '#818cf8'],
+          ['Потрачено', fmt(spent)    + ' ₽', '#f59e0b'],
+          ['Выручка',   fmt(revenue)  + ' ₽', '#22c55e'],
+          ['Заказы',    String(orders),        '#3b82f6'],
+          ['CTR',       ctr(views, clicks),    '#a78bfa'],
+          ['ROI',       roiStr(roi), roi >= 0 ? '#22c55e' : '#ef4444'],
         ]
       : [
-          ['Кампаний',  String(this.campaigns.length), '#818cf8'],
-          ['Активных',  String(this.campaigns.filter(c => c.status === 'active').length), '#22c55e'],
-          ['Показы',    fmt(views),  '#3b82f6'],
-          ['Клики',     fmt(clicks), '#a78bfa'],
-          ['Потрачено', fmt(spent) + ' ₽', '#f59e0b'],
-          ['CTR',       ctr(views, clicks), '#6366f1'],
+          ['Всего',    String(c.length), '#818cf8'],
+          ['Активных', String(c.filter(x => x.status==='active').length), '#22c55e'],
+          ['Показы',   fmt(views),   '#3b82f6'],
+          ['Клики',    fmt(clicks),  '#a78bfa'],
+          ['Расход',   fmt(spent) + ' ₽', '#f59e0b'],
+          ['CTR',      ctr(views, clicks), '#6366f1'],
         ];
-    el.innerHTML = `<div class="ad-stats">${
-      tiles.map(([label, val, color]) => `
-        <div class="ad-stat">
-          <div class="ad-stat-label">${label}</div>
-          <div class="ad-stat-value" style="color:${color}">${val}</div>
-        </div>`).join('')
-    }</div>`;
+    el.innerHTML = `<div class="ad-tiles">${tiles.map(([l,v,col]) =>
+      `<div class="ad-tile"><div class="ad-tile-l">${l}</div>
+       <div class="ad-tile-v" style="color:${col}">${v}</div></div>`).join('')}</div>`;
   }
 
-  // ── Data loading ───────────────────────────────────────────────────────────
+  private renderFilterBar() {
+    const el = this.el.querySelector('#ad-filter') as HTMLElement;
+    if (!el) return;
+    if (!this.campaigns.length) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    const aiLevel = this.aiHints.some(h => h.level==='danger') ? 'has-danger'
+      : this.aiHints.some(h => h.level==='warn') ? 'has-warn'
+      : this.aiHints.length ? 'has-ok' : '';
+    el.innerHTML = `<div class="adf">
+      <input class="adf-search" id="adf-search" placeholder="Поиск по названию…" value="${esc(this.searchQ)}">
+      <select class="adf-status" id="adf-status">
+        <option value="all" ${this.filterStatus==='all'?'selected':''}>Все статусы</option>
+        <option value="active"   ${this.filterStatus==='active'?'selected':''}>Активные</option>
+        <option value="paused"   ${this.filterStatus==='paused'?'selected':''}>На паузе</option>
+        <option value="inactive" ${this.filterStatus==='inactive'?'selected':''}>Неактивные</option>
+      </select>
+      <select class="adf-sort" id="adf-sort">
+        <option value="spent:-1"  ${this.sortKey==='spent'&&this.sortDir===-1?'selected':''}>Расход ↓</option>
+        <option value="roi:-1"    ${this.sortKey==='roi'  &&this.sortDir===-1?'selected':''}>ROI ↓</option>
+        <option value="views:-1"  ${this.sortKey==='views'&&this.sortDir===-1?'selected':''}>Показы ↓</option>
+        <option value="clicks:-1" ${this.sortKey==='clicks'&&this.sortDir===-1?'selected':''}>Клики ↓</option>
+        <option value="orders:-1" ${this.sortKey==='orders'&&this.sortDir===-1?'selected':''}>Заказы ↓</option>
+        <option value="name:1"    ${this.sortKey==='name' &&this.sortDir===1?'selected':''}>Название А-Я</option>
+      </select>
+      ${aiLevel ? `<button class="adf-ai ${aiLevel}" id="ad-ai-tog">
+        🤖 ИИ-советник (${this.aiHints.length})
+      </button>` : ''}
+    </div>`;
+  }
 
-  private async loadStores(): Promise<void> {
+  private renderAi() {
+    const el = this.el.querySelector('#ad-ai') as HTMLElement;
+    if (!el) return;
+    if (!this.aiHints.length || !this.aiOpen) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    el.innerHTML = `<div class="ad-ai-panel">${this.aiHints.map(h => {
+      const cls = h.level === 'danger' ? 'd' : h.level === 'warn' ? 'w' : 'o';
+      const col  = h.level === 'danger' ? '#ef4444' : h.level === 'warn' ? '#f59e0b' : '#22c55e';
+      return `<div class="ad-ai-row ${cls}">
+        <div class="ad-ai-dot" style="background:${col}"></div>
+        <div style="flex:1">
+          <div style="font-weight:700;color:var(--text);margin-bottom:2px;font-size:11px">${esc(h.campaignName)}</div>
+          <div style="color:var(--text2)">${h.message}</div>
+        </div>
+        ${h.action==='pause'&&this.tab==='wb' ? `<button class="rpr-btn rpr-btn-ghost" style="padding:2px 8px;font-size:11px;flex-shrink:0" data-action="ai-pause" data-id="${h.campaignId}">⏸ Пауза</button>` : ''}
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  private renderBulk() {
+    const el = this.el.querySelector('#ad-bulk') as HTMLElement;
+    if (!el) return;
+    if (!this.selected.size || this.tab !== 'wb') { el.style.display = 'none'; return; }
+    el.style.display = '';
+    el.innerHTML = `<div class="ad-bulk">
+      <span>Выбрано: ${this.selected.size}</span>
+      <button class="rpr-btn rpr-btn-ghost" id="ad-bulk-pause"  style="height:26px;padding:0 10px;font-size:11px">⏸ Пауза</button>
+      <button class="rpr-btn rpr-btn-ghost" id="ad-bulk-resume" style="height:26px;padding:0 10px;font-size:11px">▶ Запустить</button>
+      <button class="rpr-btn rpr-btn-ghost" id="ad-bulk-clear"  style="height:26px;padding:0 10px;font-size:11px">✕ Сбросить</button>
+    </div>`;
+  }
+
+  private applyFilter() {
+    let data = [...this.campaigns];
+    if (this.searchQ.trim()) {
+      const q = this.searchQ.toLowerCase();
+      data = data.filter(c => c.name.toLowerCase().includes(q));
+    }
+    if (this.filterStatus !== 'all') {
+      data = data.filter(c => c.status === this.filterStatus);
+    }
+    const k = this.sortKey;
+    data.sort((a, b) => {
+      const va = (a as any)[k] ?? 0;
+      const vb = (b as any)[k] ?? 0;
+      if (typeof va === 'string') return this.sortDir * va.localeCompare(vb);
+      return this.sortDir * (va - vb);
+    });
+    this.filtered = data;
+    this.renderTiles();
+    this.flushBody();
+  }
+
+  // ─── loading stores ───────────────────────────────────────────────────────────
+
+  private async loadStores() {
     const sel = this.el.querySelector('#ad-store') as HTMLSelectElement | null;
-    if (!sel) return;
     try {
-      if (this.tab === 'wb')      this.stores = await wbDb.getStores();
+      if (this.tab === 'wb')     this.stores = await wbDb.getStores();
       else if (this.tab === 'ozon') this.stores = await ozonDb.getStores();
-      else                          this.stores = await yandexDb.getStores();
+      else                           this.stores = await yandexDb.getStores();
     } catch { this.stores = []; }
 
+    if (!sel) return;
     if (!this.stores.length) {
       sel.innerHTML = '<option value="">Нет магазинов</option>';
       this.storeId = '';
-      this.flushBody();
-      return;
+      this.flushBody(); return;
     }
-    sel.innerHTML = '<option value="">— Магазин —</option>' +
-      this.stores.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
-    if (this.stores.length === 1) {
+    sel.innerHTML = this.stores.map(s =>
+      `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
+    if (!this.storeId && this.stores.length === 1) {
       this.storeId = this.stores[0].id;
       sel.value = this.storeId;
-      if (this.tab === 'wb') await this.loadBalance();
+    } else if (this.storeId) {
+      sel.value = this.storeId;
     }
+    const allBtn = this.el.querySelector('#ad-all-tog');
+    allBtn?.classList.toggle('on', this.storeId === '');
+    if (this.tab === 'wb') await this.loadBalance();
     this.flushBody();
   }
 
-  private async loadBalance(): Promise<void> {
+  private async loadBalance() {
     if (this.tab !== 'wb') return;
-    const store = this.stores.find(s => s.id === this.storeId) as any;
-    if (!store) return;
-    this.adBalance = await getWbAdBalance(store.api_key);
+    this.balances.clear();
+    const targets = this.storeId
+      ? this.stores.filter(s => s.id === this.storeId)
+      : this.stores;
+    await Promise.allSettled(targets.map(async (s: any) => {
+      const b = await getWbAdBalance(s.api_key);
+      if (b > 0) this.balances.set(s.id, b);
+    }));
     this.renderSub();
   }
 
-  private async loadCampaigns(): Promise<void> {
-    if (!this.storeId) { showToast('Выберите магазин', 'warning'); return; }
-    this.loading = true;
-    this.campaigns = [];
-    this.expanded.clear();
+  // ─── load campaigns ───────────────────────────────────────────────────────────
+
+  private async loadCampaigns() {
+    const targets = this.storeId
+      ? this.stores.filter(s => s.id === this.storeId)
+      : this.stores;
+    if (!targets.length) { showToast('Нет магазинов', 'warning'); return; }
+
+    this.loading = true; this.campaigns = []; this.filtered = [];
+    this.loadErrors = [];
+    this.expanded.clear(); this.detailCache.clear(); this.aiHints = [];
+    this.selected.clear();
+    this.renderFilterBar(); this.renderTiles(); this.renderAi(); this.renderBulk();
     this.flushBody();
 
     try {
-      const store = this.stores.find(s => s.id === this.storeId) as any;
-
-      if (this.tab === 'wb') {
-        await this._loadWbCampaigns(store);
-      } else if (this.tab === 'ozon') {
-        if (this.ozonSubTab === 'perf') await this._loadOzonPerfCampaigns(store);
-        else await this._loadOzonPromos(store);
-      } else {
-        await this._loadYmPromos(store);
+      const results = await Promise.allSettled(targets.map(s => this.loadForStore(s)));
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        if (r.status === 'fulfilled') {
+          this.campaigns.push(...r.value);
+        } else {
+          const msg = (r.reason as any)?.message ?? String(r.reason);
+          this.loadErrors.push({ storeName: targets[i].name, message: msg });
+          console.warn('[Ads] store load failed:', r.reason);
+        }
       }
-
-      showToast(`Загружено: ${this.campaigns.length}`, 'success');
+      this.aiHints = analyzeAi(this.campaigns);
+      this.applyFilter();
+      this.renderFilterBar();
+      this.renderAi();
+      this.renderBulk();
+      if (this.campaigns.length) {
+        showToast(`Загружено: ${this.campaigns.length}`, 'success');
+      } else if (this.loadErrors.length) {
+        showToast(`Ошибка загрузки: ${this.loadErrors[0].message.slice(0, 80)}`, 'error');
+      }
     } catch (err: any) {
       showToast(`Ошибка: ${err.message}`, 'error');
     } finally {
@@ -749,800 +990,669 @@ export class AdvertisingModule {
     }
   }
 
-  private async _loadWbCampaigns(store: any): Promise<void> {
+  private async loadForStore(store: any): Promise<Campaign[]> {
+    if (this.tab === 'wb')     return this._wbStore(store);
+    if (this.tab === 'ozon')   return this.ozonSub === 'perf' ? this._ozonPerfStore(store) : this._ozonPromoStore(store);
+    return this._ymPromoStore(store);
+  }
+
+  private async _wbStore(store: any): Promise<Campaign[]> {
     const list = await getWbCampaigns(store.api_key);
-    const campaignIds = list.map((c: any) => ({
-      id: c.advertId,
-      interval: { begin: this.dateFrom, end: this.dateTo },
-    }));
-
-    let fullStats: any[] = [];
-    if (campaignIds.length) {
-      fullStats = await getWbFullStats(store.api_key, campaignIds);
-    }
-
+    const ids = list.map((c: any) => ({ id: c.advertId, interval: { begin: this.dateFrom, end: this.dateTo } }));
+    const fullStats = ids.length ? await getWbFullStats(store.api_key, ids) : [];
     const statMap = new Map<number, any>();
-    for (const row of fullStats) {
-      statMap.set(row.advertId ?? row.id, row);
-    }
+    for (const r of fullStats) statMap.set(r.advertId ?? r.id, r);
 
-    for (const c of list) {
+    return list.map((c: any) => {
       const st = statMap.get(c.advertId) ?? {};
-      const views  = st.views  ?? st.shows ?? 0;
+      const views = st.views ?? st.shows ?? 0;
       const clicks = st.clicks ?? 0;
-      const spent  = st.sum    ?? 0;
+      const spent  = st.sum ?? 0;
       const orders = st.orders ?? 0;
       const revenue = orders * (st.avgPrice ?? 0);
-      this.campaigns.push({
-        id: c.advertId,
+      return {
+        id: c.advertId, storeId: store.id, storeName: store.name,
         name: c.name ?? `Кампания ${c.advertId}`,
         status: c.status === 9 ? 'active' : c.status === 11 ? 'paused' : 'stopped',
         type: c.type === 8 ? 'Авто' : c.type === 6 ? 'Поиск' : c.type === 7 ? 'Каталог' : 'Карточка',
-        typeCode: c.type,
-        budget: c.dailyBudget ?? 0,
-        spent,
-        clicks,
-        views,
-        orders,
-        revenue,
+        typeCode: c.type, budget: c.dailyBudget ?? 0,
+        spent, clicks, views, orders, revenue,
         roi: spent > 0 ? (revenue - spent) / spent * 100 : 0,
-      });
-    }
+      } as Campaign;
+    });
   }
 
-  private async _loadOzonPerfCampaigns(store: any): Promise<void> {
+  private async _ozonPerfStore(store: any): Promise<Campaign[]> {
     const list = await ozonPerfApi.getCampaigns(store.client_id, store.api_key);
     const ids = list.map((c: any) => String(c.id));
     const stats = ids.length
-      ? await ozonPerfApi.getStats(store.client_id, store.api_key, {
-          campaigns: ids,
-          dateFrom: this.dateFrom,
-          dateTo: this.dateTo,
-        })
+      ? await ozonPerfApi.getStats(store.client_id, store.api_key, { campaigns: ids, dateFrom: this.dateFrom, dateTo: this.dateTo })
       : [];
-    const statMap = new Map<string, any>();
-    for (const s of stats) statMap.set(String(s.campaign?.id ?? s.id), s);
-
-    for (const c of list) {
-      const st = statMap.get(String(c.id)) ?? {};
-      const spent  = st.moneySpent ?? st.money_spent ?? 0;
-      const views  = st.views      ?? st.impressions ?? 0;
-      const clicks = st.clicks     ?? 0;
-      this.campaigns.push({
-        id: String(c.id),
+    const sm = new Map<string, any>();
+    for (const s of stats) sm.set(String(s.campaign?.id ?? s.id), s);
+    return list.map((c: any) => {
+      const st = sm.get(String(c.id)) ?? {};
+      return {
+        id: String(c.id), storeId: store.id, storeName: store.name,
         name: c.title ?? c.name ?? `Кампания ${c.id}`,
         status: c.state === 'RUNNING' || c.state === 'ACTIVE' ? 'active' : c.state === 'STOPPED' ? 'paused' : 'inactive',
         type: c.advObjectType ?? c.type ?? 'SKU',
         budget: c.dailyBudget ?? c.budget ?? 0,
-        spent,
-        clicks,
-        views,
-        orders: st.orders ?? 0,
-        revenue: 0,
-        roi: 0,
-      });
-    }
+        spent: st.moneySpent ?? st.money_spent ?? 0,
+        clicks: st.clicks ?? 0, views: st.views ?? st.impressions ?? 0,
+        orders: st.orders ?? 0, revenue: 0, roi: 0,
+      } as Campaign;
+    });
   }
 
-  private async _loadOzonPromos(store: any): Promise<void> {
+  private async _ozonPromoStore(store: any): Promise<Campaign[]> {
     const list = await ozonApi.getPromotions({ client_id: store.client_id, api_key: store.api_key });
-    for (const p of list) {
-      this.campaigns.push({
-        id: String(p.action_id ?? p.id),
-        name: p.title ?? p.name ?? 'Акция Ozon',
-        status: p.is_active ? 'active' : 'inactive',
-        type: p.action_type ?? 'Промо',
-        budget: 0, spent: 0, clicks: 0, views: 0, orders: 0, revenue: 0, roi: 0,
-        actionId: p.action_id ?? p.id,
-        dateFrom: p.date_start,
-        dateTo: p.date_end,
-      });
-    }
+    return list.map((p: any) => ({
+      id: String(p.action_id ?? p.id), storeId: store.id, storeName: store.name,
+      name: p.title ?? p.name ?? 'Акция Ozon',
+      status: p.is_active ? 'active' : 'inactive',
+      type: p.action_type ?? 'Промо',
+      budget: 0, spent: 0, clicks: 0, views: 0, orders: 0, revenue: 0, roi: 0,
+      actionId: p.action_id ?? p.id,
+      dateFrom: p.date_start, dateTo: p.date_end,
+    }) as Campaign);
   }
 
-  private async _loadYmPromos(store: any): Promise<void> {
+  private async _ymPromoStore(store: any): Promise<Campaign[]> {
     const businessId = store.business_id ? Number(store.business_id) : 0;
     const list = await getYandexPromos(store, businessId);
-    for (const p of list) {
-      this.campaigns.push({
-        id: p.id,
-        name: p.name ?? 'Акция',
-        status: p.status === 'ACTIVE' ? 'active' : p.status === 'UPCOMING' ? 'upcoming' : 'inactive',
-        type: p.promoType ?? 'PROMO',
-        budget: 0, spent: 0, clicks: 0, views: 0, orders: 0, revenue: 0, roi: 0,
-        promoId: p.id,
-        dateFrom: p.startDate,
-        dateTo: p.endDate,
-      });
-    }
+    return list.map((p: any) => ({
+      id: p.id, storeId: store.id, storeName: store.name,
+      name: p.name ?? 'Акция',
+      status: p.status === 'ACTIVE' ? 'active' : p.status === 'UPCOMING' ? 'upcoming' : 'inactive',
+      type: p.promoType ?? 'PROMO',
+      budget: 0, spent: 0, clicks: 0, views: 0, orders: 0, revenue: 0, roi: 0,
+      promoId: p.id, dateFrom: p.startDate, dateTo: p.endDate,
+    }) as Campaign);
   }
 
-  // ── WB detail (bids + keywords) ────────────────────────────────────────────
-
-  private async loadDetail(campaignId: string | number): Promise<void> {
-    if (this.detailCache.has(campaignId) || this.detailLoading.has(campaignId)) return;
-    this.detailLoading.add(campaignId);
-    this.flushBody();
-    const store = this.stores.find(s => s.id === this.storeId) as any;
-    const details = await getWbCampaignDetails(store.api_key, Number(campaignId));
-    this.detailCache.set(campaignId, details ?? {});
-    this.detailLoading.delete(campaignId);
-    this.flushBody();
-  }
-
-  private async saveBids(campaignId: string | number): Promise<void> {
-    const nmList: Array<{ nm: number; bid: number }> = [];
-
-    const rows = this.el.querySelectorAll<HTMLInputElement>(`[data-bidsave="${campaignId}"]`);
-    rows.forEach(inp => {
-      const val = Number(inp.value);
-      if (!isNaN(val) && val > 0) nmList.push({ nm: Number(inp.dataset.nm), bid: val });
-    });
-
-    if (!nmList.length) { showToast('Нет изменений', 'warning'); return; }
-    try {
-      const store = this.stores.find(s => s.id === this.storeId) as any;
-      await updateWbCampaignBids(store.api_key, Number(campaignId), nmList);
-      showToast(`Ставки обновлены (${nmList.length})`, 'success');
-      this.detailCache.delete(campaignId);
-      await this.loadDetail(campaignId);
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
-  }
-
-  private async saveBudget(campaignId: number, budget: number): Promise<void> {
-    if (!budget || budget < 50) { showToast('Минимальный бюджет 50 ₽', 'warning'); return; }
-    try {
-      const store = this.stores.find(s => s.id === this.storeId) as any;
-      await updateWbCampaign(store.api_key, campaignId, { dailyBudget: budget * 100 });
-      const camp = this.campaigns.find(c => c.id === campaignId);
-      if (camp) camp.budget = budget;
-      this.budgetEditing.delete(String(campaignId));
-      showToast('Бюджет обновлён', 'success');
-      this.flushBody();
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
-  }
-
-  private async toggleWbCampaign(advertId: number, status: 9 | 11): Promise<void> {
-    try {
-      const store = this.stores.find(s => s.id === this.storeId) as any;
-      await updateWbCampaign(store.api_key, advertId, { status });
-      const camp = this.campaigns.find(c => c.id === advertId);
-      if (camp) camp.status = status === 9 ? 'active' : 'paused';
-      this.flushBody();
-      showToast(status === 11 ? 'Кампания на паузе' : 'Кампания запущена', 'success');
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
-  }
-
-  // ── Ozon Performance objects ───────────────────────────────────────────────
-
-  private async loadOzonPerfObjects(campaignId: string): Promise<void> {
-    if (this.detailCache.has(campaignId) || this.detailLoading.has(campaignId)) return;
-    this.detailLoading.add(campaignId);
-    this.flushBody();
-    const store = this.stores.find(s => s.id === this.storeId) as any;
-    const objects = await ozonPerfApi.getCampaignObjects(store.client_id, store.api_key, campaignId);
-    this.detailCache.set(campaignId, objects);
-    this.detailLoading.delete(campaignId);
-    this.flushBody();
-  }
-
-  private async toggleOzonPerfCampaign(campaignId: string, isActive: boolean): Promise<void> {
-    try {
-      const store = this.stores.find(s => s.id === this.storeId) as any;
-      await ozonPerfApi.toggleCampaign(store.client_id, store.api_key, campaignId, !isActive);
-      const camp = this.campaigns.find(c => c.id === campaignId);
-      if (camp) camp.status = isActive ? 'paused' : 'active';
-      this.flushBody();
-      showToast(isActive ? 'Кампания приостановлена' : 'Кампания запущена', 'success');
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
-  }
-
-  // ── Ozon Promo product management ─────────────────────────────────────────
-
-  private async loadOzonPromoProducts(promoKey: string, actionId: number): Promise<void> {
-    if (this.detailCache.has(promoKey) || this.detailLoading.has(promoKey)) return;
-    this.detailLoading.add(promoKey);
-    this.flushBody();
-    const store = this.stores.find(s => s.id === this.storeId) as any;
-    const data = await ozonApi.getPromoProducts({ client_id: store.client_id, api_key: store.api_key }, actionId);
-    this.detailCache.set(promoKey, data);
-    this.detailLoading.delete(promoKey);
-    this.flushBody();
-  }
-
-  private async removeOzonPromoProduct(promoKey: string, actionId: number, productId: number): Promise<void> {
-    try {
-      const store = this.stores.find(s => s.id === this.storeId) as any;
-      await ozonApi.deactivatePromoProducts({ client_id: store.client_id, api_key: store.api_key }, actionId, [productId]);
-      const data = this.detailCache.get(promoKey);
-      if (data) data.activated = data.activated.filter((p: any) => p.id !== productId);
-      this.flushBody();
-      showToast('Товар убран из акции', 'success');
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
-  }
-
-  // ── YM Promo offer management ──────────────────────────────────────────────
-
-  private async loadYmPromoOffers(key: string, promoId: string): Promise<void> {
-    if (this.detailCache.has(key) || this.detailLoading.has(key)) return;
-    this.detailLoading.add(key);
-    this.flushBody();
-    const store = this.stores.find(s => s.id === this.storeId) as any;
-    const businessId = Number(store.business_id ?? 0);
-    const offers = await getYandexPromoOffers(store.api_key, businessId, promoId);
-    this.detailCache.set(key, offers);
-    this.detailLoading.delete(key);
-    this.flushBody();
-  }
-
-  private async removeYmPromoOffer(promoId: string, offerId: string): Promise<void> {
-    try {
-      const store = this.stores.find(s => s.id === this.storeId) as any;
-      const businessId = Number(store.business_id ?? 0);
-      await removeYandexPromoOffers(store.api_key, businessId, promoId, [offerId]);
-      // Remove from cache
-      for (const [k, v] of this.detailCache) {
-        if (Array.isArray(v)) {
-          this.detailCache.set(k, v.filter((o: any) => (o.offerId ?? o.offer_id) !== offerId));
-        }
-      }
-      this.flushBody();
-      showToast('Оффер убран из акции', 'success');
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
-  }
-
-  // ── YM Boost bids ──────────────────────────────────────────────────────────
-
-  private async loadYmBids(): Promise<void> {
-    const store = this.stores.find(s => s.id === this.storeId) as any;
-    if (!store?.campaign_id) { showToast('Нет campaign_id в настройках магазина', 'warning'); return; }
-    this.ymBidsLoading = true;
-    this.flushBody();
-    const [bids, rec] = await Promise.all([
-      getYandexCampaignBids(store.api_key, Number(store.campaign_id)),
-      getYandexRecommendedBids(store.api_key, Number(store.campaign_id)),
-    ]);
-    this.ymBids = bids;
-    this.ymRecommended = rec;
-    this.ymBidsLoading = false;
-    this.flushBody();
-  }
-
-  private async saveYmBids(): Promise<void> {
-    const store = this.stores.find(s => s.id === this.storeId) as any;
-    if (!store?.campaign_id) return;
-    const bids: Array<{ offerId: string; bid: number }> = [];
-    this.ymBidEdits.forEach((val, offerId) => {
-      const n = Number(val);
-      if (!isNaN(n) && n > 0) bids.push({ offerId, bid: n });
-    });
-    if (!bids.length) { showToast('Нет изменений', 'warning'); return; }
-    try {
-      await updateYandexCampaignBids(store.api_key, Number(store.campaign_id), bids);
-      this.ymBidEdits.clear();
-      showToast(`Ставки сохранены (${bids.length})`, 'success');
-      await this.loadYmBids();
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
-  }
-
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ─── render body ──────────────────────────────────────────────────────────────
 
   private renderBody(): string {
     if (this.loading) return skeleton(6);
-    if (!this.storeId) return emptyState('Выберите магазин', 'для загрузки данных рекламы');
+    if (!this.stores.length)
+      return empty('Нет магазинов', 'Добавьте магазин в раздел «Магазины» и вернитесь сюда');
 
-    if (this.tab === 'wb')      return this.renderWbTable();
-    if (this.tab === 'ozon')    return this.ozonSubTab === 'perf' ? this.renderOzonPerfTable() : this.renderOzonPromoTable();
-    if (this.tab === 'yandex')  return this.ymSubTab === 'boost' ? this.renderYmBoostTable() : this.renderYmPromoTable();
-    return '';
+    if (!this.campaigns.length && this.loadErrors.length) {
+      const scopeHint = this.tab === 'wb'
+        ? 'Токен WB должен иметь право <b>«Реклама»</b> (создаётся отдельно в ЛК WB → Настройки → Доступ к API → Рекламная статистика).'
+        : this.tab === 'ozon'
+        ? 'Клиент Ozon Performance использует отдельный ключ — проверьте <b>client_id</b> и <b>api_key</b> в настройках магазина.'
+        : 'Для ЯМ нужен <b>business_id</b> в настройках магазина (ЯМ → Настройки → О магазине → Идентификатор бизнеса).';
+      return `<div style="padding:20px;display:flex;flex-direction:column;gap:12px">
+        ${this.loadErrors.map(e => `
+          <div style="background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.25);border-radius:12px;padding:16px">
+            <div style="font-size:12px;font-weight:800;color:#ef4444;margin-bottom:6px">
+              ⚠️ Ошибка загрузки: ${esc(e.storeName)}
+            </div>
+            <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:8px;word-break:break-word">${esc(e.message)}</div>
+            <div style="font-size:11px;color:var(--text3);line-height:1.6">${scopeHint}</div>
+          </div>`).join('')}
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="rpr-btn rpr-btn-ghost" id="ad-refresh" style="display:flex;align-items:center;gap:5px;height:28px;padding:0 12px;font-size:12px">
+            ${I.refresh()} Попробовать снова
+          </button>
+          <button class="ad-help-btn" id="ad-help" style="width:auto;height:28px;border-radius:8px;padding:0 12px;font-size:12px">
+            ? Инструкция
+          </button>
+        </div>
+      </div>`;
+    }
+
+    if (!this.campaigns.length && !this.loading)
+      return empty('Нажмите «Загрузить»', 'Выберите магазин или включите «Все», затем нажмите кнопку «Загрузить»');
+    const data = this.filtered.length ? this.filtered : this.campaigns;
+    if (!data.length) return empty('Ничего не найдено', 'Попробуйте изменить фильтр');
+
+    const multiStore = !this.storeId || this.stores.length > 1;
+
+    if (this.tab === 'wb')    return this.renderWbTable(data, multiStore);
+    if (this.tab === 'ozon')  return this.ozonSub === 'perf'
+      ? this.renderPerfTable(data, multiStore)
+      : this.renderPromoTable(data, multiStore, 'ozon');
+    // yandex
+    if (this.ymSub === 'boost') return this.renderBoostTable();
+    return this.renderPromoTable(data, multiStore, 'ym');
   }
 
-  // ── WB table ───────────────────────────────────────────────────────────────
+  // ─── WB table ────────────────────────────────────────────────────────────────
 
-  private renderWbTable(): string {
-    if (!this.campaigns.length)
-      return emptyState('Нет кампаний', 'Нажмите «Загрузить» или создайте первую кампанию');
+  private renderWbTable(data: Campaign[], ms: boolean): string {
+    const rows = data.map(c => {
+      const key = String(c.id);
+      const isExp = this.expanded.has(key);
+      const isSel = this.selected.has(key);
+      const dtab  = this.wbDetailTab.get(key) ?? 'bids';
+      const isAuto = c.typeCode === 8;
+      const roiCol = c.roi >= 0 ? '#22c55e' : '#ef4444';
+      const isBE   = this.budgetEditing.has(key);
 
-    const rows = this.campaigns.map(c => {
-      const isExpanded = this.expanded.has(String(c.id));
-      const detailTab  = this.wbDetailTab.get(String(c.id)) ?? 'bids';
-      const isAuto     = c.typeCode === 8;
-      const roiColor   = c.roi >= 0 ? '#22c55e' : '#ef4444';
-      const isBudgEdit = this.budgetEditing.has(String(c.id));
-
-      const budgetCell = isBudgEdit
-        ? `<div class="ad-budget-cell">
-            <input class="ad-budget-inp" id="ad-b-inp-${c.id}" type="number" min="50" value="${c.budget}" placeholder="₽">
-            <div class="ad-budget-acts">
-              <button class="ad-budget-ok" data-action="save-budget" data-id="${c.id}">${I.check()}</button>
-              <button class="ad-budget-x"  data-action="cancel-budget" data-id="${c.id}">✕</button>
-            </div>
+      const budCell = isBE
+        ? `<div class="ad-bud">
+            <input class="ad-bud-inp" id="ad-bi-${key}" type="number" min="50" value="${c.budget}">
+            <button class="ad-bok" data-action="save-budget" data-id="${key}">${I.check()}</button>
+            <button class="ad-bx"  data-action="cancel-budget" data-id="${key}">✕</button>
           </div>`
-        : `<div class="ad-budget-cell">
-            <span class="ad-budget-val">${c.budget ? fmt(c.budget) + ' ₽' : '—'}</span>
-            <span class="ad-budget-pen" data-action="edit-budget" data-id="${c.id}">${I.edit()}</span>
+        : `<div class="ad-bud">
+            <span class="ad-bud-v">${c.budget ? fmt(c.budget) + ' ₽' : '—'}</span>
+            <span class="ad-bud-pen" data-action="edit-budget" data-id="${key}">${I.edit()}</span>
           </div>`;
 
       const pauseBtn = c.status === 'active'
-        ? `<button class="rpr-btn rpr-btn-ghost" style="padding:3px 8px;font-size:11px" data-action="pause"  data-id="${c.id}">⏸</button>`
-        : `<button class="rpr-btn rpr-btn-ghost" style="padding:3px 8px;font-size:11px" data-action="resume" data-id="${c.id}">▶</button>`;
+        ? `<button class="rpr-btn rpr-btn-ghost" style="padding:2px 7px;font-size:11px" data-action="pause"  data-id="${key}">⏸</button>`
+        : `<button class="rpr-btn rpr-btn-ghost" style="padding:2px 7px;font-size:11px" data-action="resume" data-id="${key}">▶</button>`;
 
-      const expandBtn = `<button class="ad-expand-btn ${isExpanded ? 'open' : ''}" data-action="expand" data-id="${c.id}">
-        <span class="ad-expand-chevron">${I.chevronDown()}</span>
-      </button>`;
+      const expBtn = `<button class="ad-exp ${isExp?'on':''}" data-action="expand" data-id="${key}">
+        <span class="ad-chev">${I.chevronDown()}</span></button>`;
 
-      const mainRow = `<tr class="ad-row ${isExpanded ? 'expanded-row' : ''}">
-        <td style="font-weight:600;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</td>
+      const cb = `<input type="checkbox" class="ad-cb" data-action="check" data-id="${key}" ${isSel?'checked':''} style="pointer-events:none">`;
+
+      const main = `<tr class="adr ${isSel?'sel':''} ${isExp?'exp':''}">
+        <td style="width:32px"><button data-action="check" data-id="${key}" style="background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center">${cb}</button></td>
+        ${ms ? `<td class="nm" style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.storeName)}</td>` : ''}
+        <td style="font-weight:600;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</td>
         <td>${statusChip(c.status)}</td>
-        <td class="dim" style="font-size:11px">${esc(c.type)}</td>
-        <td>${budgetCell}</td>
+        <td class="dim nm">${esc(c.type)}</td>
+        <td>${budCell}</td>
         <td class="r dim">${c.spent ? fmt(c.spent) + ' ₽' : '—'}</td>
         <td class="r dim">${fmt(c.views)}</td>
         <td class="r dim">${fmt(c.clicks)}</td>
         <td class="r dim">${c.orders}</td>
-        <td class="r" style="font-weight:700;color:${roiColor}">${roiStr(c.roi)}</td>
-        <td style="white-space:nowrap">${pauseBtn} ${expandBtn}</td>
+        <td class="r" style="font-weight:700;color:${roiCol}">${roiStr(c.roi)}</td>
+        <td style="white-space:nowrap">${pauseBtn} ${expBtn}</td>
       </tr>`;
 
-      if (!isExpanded) return mainRow;
+      if (!isExp) return main;
 
-      const detailHtml = this.detailLoading.has(String(c.id))
-        ? skeleton(3)
-        : this._renderWbDetail(c, detailTab);
+      const detail = this.detailLoading.has(key) ? skeleton(2) : this._wbDetail(c, dtab, isAuto);
+      const dtabHtml = `<div class="ad-dtabs">
+        <button class="ad-dtab ${dtab==='bids'?'on':''}" data-action="dtab" data-id="${key}" data-tab="bids">Ставки по товарам</button>
+        <button class="ad-dtab ${dtab==='keywords'?'on':''}" data-action="dtab" data-id="${key}" data-tab="keywords">
+          ${isAuto ? 'Минус-слова' : 'Ключевые слова'}</button>
+      </div>`;
 
-      const tabButtons = `
-        <div class="ad-detail-tabs">
-          <button class="ad-detail-tab ${detailTab==='bids'?'active':''}" data-action="detail-tab" data-id="${c.id}" data-tab="bids">Ставки по товарам</button>
-          <button class="ad-detail-tab ${detailTab==='keywords'?'active':''}" data-action="detail-tab" data-id="${c.id}" data-tab="keywords">
-            ${isAuto ? 'Минус-слова' : 'Ключевые слова'}
-          </button>
-        </div>`;
+      const detRow = `<tr class="ad-drow"><td colspan="${ms?12:11}">
+        <div class="ad-dinn">${dtabHtml}${detail}</div>
+      </td></tr>`;
 
-      const detailRow = `<tr class="ad-detail-row">
-        <td colspan="10">
-          <div class="ad-detail-inner">${tabButtons}${detailHtml}</div>
-        </td>
-      </tr>`;
-
-      return mainRow + detailRow;
+      return main + detRow;
     }).join('');
 
-    return `<table class="ad-table">
-      <thead><tr>
-        <th>Кампания</th>
-        <th>Статус</th>
-        <th>Тип</th>
-        <th>Бюджет/д</th>
-        <th class="r">Потрачено</th>
-        <th class="r">Показы</th>
-        <th class="r">Клики</th>
-        <th class="r">Заказы</th>
-        <th class="r">ROI</th>
-        <th></th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    return `<table class="adt"><thead><tr>
+      <th style="width:32px"></th>
+      ${ms?'<th>Магазин</th>':''}
+      <th data-sort="name">Кампания</th>
+      <th>Статус</th>
+      <th>Тип</th>
+      <th data-sort="budget">Бюджет/д</th>
+      <th class="r" data-sort="spent">Потрачено</th>
+      <th class="r" data-sort="views">Показы</th>
+      <th class="r" data-sort="clicks">Клики</th>
+      <th class="r" data-sort="orders">Заказы</th>
+      <th class="r" data-sort="roi">ROI</th>
+      <th></th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
   }
 
-  private _renderWbDetail(c: Campaign, tab: WbDetail): string {
-    const detail = this.detailCache.get(String(c.id));
-    if (!detail) return `<p style="color:var(--text2);font-size:12px">Нет данных. Разверните строку снова.</p>`;
+  private _wbDetail(c: Campaign, tab: WbDetail, isAuto: boolean): string {
+    const key = String(c.id);
+    const d = this.detailCache.get(key);
+    if (!d) return `<p style="font-size:12px;color:var(--text2)">Данные загружаются…</p>`;
 
     if (tab === 'bids') {
-      const nms: any[] = detail.params?.nms ?? detail.nms ?? [];
-      if (!nms.length) return `<p style="color:var(--text2);font-size:12px">Нет товаров в кампании.</p>`;
-      return `
-        <div style="overflow-x:auto">
-          <table class="ad-bid-table">
-            <thead><tr>
-              <th>nmId</th>
-              <th>Ставка сейчас</th>
-              <th>Новая ставка, ₽</th>
-            </tr></thead>
-            <tbody>
-              ${nms.map((nm: any) => `<tr>
-                <td><code style="font-size:11px;color:var(--accent)">${nm.nm ?? nm.nmId ?? nm}</code></td>
-                <td>${nm.bid ?? nm.cpm ?? '—'} ₽</td>
-                <td>
-                  <input type="number" min="1" placeholder="Новая ставка"
-                    class="ad-boost-input" style="width:110px"
-                    data-bidsave="${c.id}" data-nm="${nm.nm ?? nm.nmId ?? nm}">
-                </td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
+      const nms: any[] = d.params?.nms ?? d.nms ?? [];
+      if (!nms.length) return `<p style="font-size:12px;color:var(--text2)">Нет товаров в кампании.</p>`;
+      return `<div style="overflow-x:auto"><table class="adm">
+        <thead><tr><th>nmId</th><th>Текущая ставка</th><th>Новая ставка, ₽</th></tr></thead>
+        <tbody>${nms.map((n: any) =>
+          `<tr><td><code style="font-size:11px;color:var(--accent)">${n.nm ?? n.nmId ?? n}</code></td>
+           <td>${n.bid ?? n.cpm ?? '—'} ₽</td>
+           <td><input type="number" min="1" class="ad-bi" style="width:100px"
+             data-bidsave="${key}" data-nm="${n.nm ?? n.nmId ?? n}" placeholder="Ставка"></td>
+          </tr>`).join('')}
+        </tbody></table></div>
         <div style="margin-top:10px">
-          <button class="rpr-btn rpr-btn-green" style="display:flex;align-items:center;gap:5px" data-action="save-bids" data-id="${c.id}">
-            ${I.check()} Сохранить ставки
-          </button>
+          <button class="rpr-btn rpr-btn-green" style="display:flex;align-items:center;gap:5px;height:28px;padding:0 12px;font-size:12px"
+            data-action="save-bids" data-id="${key}">${I.check()} Сохранить ставки</button>
         </div>`;
     }
 
-    // keywords / minus-words tab
-    const isAuto = c.typeCode === 8;
     if (isAuto) {
-      const excluded: string[] = detail.autoParams?.excludedKeywords ?? [];
-      return `
-        <p style="font-size:12px;color:var(--text2);margin-bottom:6px">
-          Минус-слова для автокампании — каждое слово с новой строки
-        </p>
-        <textarea class="ad-minus-area" id="ad-excl-${c.id}" placeholder="телефон&#10;чехол&#10;...">${excluded.join('\n')}</textarea>
+      const excl: string[] = d.autoParams?.excludedKeywords ?? [];
+      return `<p style="font-size:12px;color:var(--text2);margin-bottom:6px">По одному слову на строку:</p>
+        <textarea class="ad-minus" id="ad-excl-${key}">${excl.join('\n')}</textarea>
         <div style="margin-top:8px">
-          <button class="rpr-btn rpr-btn-green" style="display:flex;align-items:center;gap:5px" data-action="save-excluded" data-id="${c.id}">
-            ${I.check()} Сохранить минус-слова
-          </button>
+          <button class="rpr-btn rpr-btn-green" style="display:flex;align-items:center;gap:5px;height:28px;padding:0 12px;font-size:12px"
+            data-action="save-excluded" data-id="${key}">${I.check()} Сохранить</button>
         </div>`;
     }
 
-    const kws: any[] = detail.keywords ?? [];
-    if (!kws.length) return `<p style="color:var(--text2);font-size:12px">Нет ключевых слов.</p>`;
-    return `
-      <div style="overflow-x:auto">
-        <table class="ad-bid-table">
-          <thead><tr>
-            <th>Ключевое слово</th>
-            <th class="r">Клики</th>
-            <th class="r">Показы</th>
-            <th class="r">Расход</th>
-          </tr></thead>
-          <tbody>
-            ${kws.map((k: any) => `<tr>
-              <td>${esc(k.keyword ?? k.word ?? '')}</td>
-              <td style="text-align:right">${k.clicks ?? 0}</td>
-              <td style="text-align:right">${fmt(k.views ?? k.shows ?? 0)}</td>
-              <td style="text-align:right">${k.sum ? fmt(k.sum) + ' ₽' : '—'}</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
+    const kws: any[] = d.keywords ?? [];
+    if (!kws.length) return `<p style="font-size:12px;color:var(--text2)">Нет ключевых слов.</p>`;
+    return `<div style="overflow-x:auto"><table class="adm">
+      <thead><tr><th>Слово</th><th class="r">Клики</th><th class="r">Показы</th><th class="r">Расход</th></tr></thead>
+      <tbody>${kws.map((k: any) =>
+        `<tr><td>${esc(k.keyword ?? k.word ?? '')}</td>
+         <td class="r">${k.clicks ?? 0}</td>
+         <td class="r">${fmt(k.views ?? k.shows ?? 0)}</td>
+         <td class="r">${k.sum ? fmt(k.sum) + ' ₽' : '—'}</td></tr>`).join('')}
+      </tbody></table></div>`;
   }
 
-  // ── Ozon Performance table ─────────────────────────────────────────────────
+  // ─── Ozon Perf table ──────────────────────────────────────────────────────────
 
-  private renderOzonPerfTable(): string {
-    if (!this.campaigns.length)
-      return `
-        <div class="ad-nginx-guide">
-          <div style="font-size:14px;font-weight:700;margin-bottom:8px;color:var(--text)">
-            ${I.zap()} Ozon Performance API
-          </div>
-          <p style="font-size:12px;color:var(--text2);line-height:1.7;margin-bottom:10px">
-            Performance-кампании работают через отдельный домен <code>performance.ozon.ru</code>.
-            Прокси уже добавлен в nginx — нажмите «Загрузить» чтобы проверить подключение.
-          </p>
-          <p style="font-size:12px;color:var(--text2);line-height:1.7">
-            Если видите ошибку — проверьте, что nginx перезапущен после последнего деплоя.
-          </p>
-          <div style="margin-top:10px">
-            <button class="rpr-btn rpr-btn-green" id="ad-refresh" style="display:flex;align-items:center;gap:5px">
-              ${I.refresh()} Загрузить кампании
-            </button>
-          </div>
-        </div>`;
+  private renderPerfTable(data: Campaign[], ms: boolean): string {
+    const rows = data.map(c => {
+      const key = String(c.id);
+      const isExp = this.expanded.has(key);
+      const togBtn = c.status === 'active'
+        ? `<button class="rpr-btn rpr-btn-ghost" style="padding:2px 7px;font-size:11px" data-action="tog-perf" data-id="${key}" data-status="active">⏸</button>`
+        : `<button class="rpr-btn rpr-btn-ghost" style="padding:2px 7px;font-size:11px" data-action="tog-perf" data-id="${key}" data-status="inactive">▶</button>`;
+      const expBtn = `<button class="ad-exp ${isExp?'on':''}" data-action="exp-perf" data-id="${key}">
+        <span class="ad-chev">${I.chevronDown()}</span></button>`;
 
-    const rows = this.campaigns.map(c => {
-      const isExpanded = this.expanded.has(String(c.id));
-      const toggleBtn = c.status === 'active'
-        ? `<button class="rpr-btn rpr-btn-ghost" style="padding:3px 8px;font-size:11px" data-action="toggle-perf" data-id="${c.id}" data-status="active">⏸</button>`
-        : `<button class="rpr-btn rpr-btn-ghost" style="padding:3px 8px;font-size:11px" data-action="toggle-perf" data-id="${c.id}" data-status="inactive">▶</button>`;
-
-      const expandBtn = `<button class="ad-expand-btn ${isExpanded?'open':''}" data-action="expand-perf" data-id="${c.id}">
-        <span class="ad-expand-chevron">${I.chevronDown()}</span>
-      </button>`;
-
-      const mainRow = `<tr class="ad-row ${isExpanded?'expanded-row':''}">
+      const main = `<tr class="adr ${isExp?'exp':''}">
+        ${ms?`<td class="nm">${esc(c.storeName)}</td>`:''}
         <td style="font-weight:600">${esc(c.name)}</td>
         <td>${statusChip(c.status)}</td>
-        <td class="dim" style="font-size:11px">${esc(c.type)}</td>
-        <td class="r dim">${c.budget ? fmt(c.budget) + ' ₽' : '—'}</td>
-        <td class="r dim">${c.spent ? fmt(c.spent) + ' ₽' : '—'}</td>
+        <td class="dim nm">${esc(c.type)}</td>
+        <td class="r dim">${c.budget?fmt(c.budget)+' ₽':'—'}</td>
+        <td class="r dim">${c.spent?fmt(c.spent)+' ₽':'—'}</td>
         <td class="r dim">${fmt(c.views)}</td>
         <td class="r dim">${fmt(c.clicks)}</td>
-        <td class="r dim">${ctr(c.views, c.clicks)}</td>
-        <td style="white-space:nowrap">${toggleBtn} ${expandBtn}</td>
+        <td class="r dim">${ctr(c.views,c.clicks)}</td>
+        <td style="white-space:nowrap">${togBtn} ${expBtn}</td>
       </tr>`;
 
-      if (!isExpanded) return mainRow;
-
-      const detailContent = this.detailLoading.has(String(c.id))
-        ? skeleton(2)
-        : this._renderOzonPerfObjects(String(c.id));
-
-      const detailRow = `<tr class="ad-detail-row"><td colspan="9">
-        <div class="ad-detail-inner">${detailContent}</div>
+      if (!isExp) return main;
+      const detail = this.detailLoading.has(key) ? skeleton(2) : this._perfObjects(key);
+      return main + `<tr class="ad-drow"><td colspan="${ms?10:9}">
+        <div class="ad-dinn">${detail}</div>
       </td></tr>`;
-
-      return mainRow + detailRow;
     }).join('');
 
-    return `<table class="ad-table">
-      <thead><tr>
-        <th>Кампания</th><th>Статус</th><th>Тип</th>
-        <th class="r">Бюджет</th><th class="r">Потрачено</th>
-        <th class="r">Показы</th><th class="r">Клики</th><th class="r">CTR</th>
-        <th></th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    return `<table class="adt"><thead><tr>
+      ${ms?'<th>Магазин</th>':''}
+      <th data-sort="name">Кампания</th><th>Статус</th><th>Тип</th>
+      <th class="r" data-sort="budget">Бюджет</th>
+      <th class="r" data-sort="spent">Потрачено</th>
+      <th class="r" data-sort="views">Показы</th>
+      <th class="r" data-sort="clicks">Клики</th>
+      <th class="r">CTR</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
   }
 
-  private _renderOzonPerfObjects(campaignId: string): string {
-    const objects: any[] = this.detailCache.get(campaignId) ?? [];
-    if (!objects.length) return `<p style="color:var(--text2);font-size:12px">Нет объявлений или данные не загружены.</p>`;
-    return `
-      <div style="overflow-x:auto">
-        <table class="ad-bid-table">
-          <thead><tr>
-            <th>SKU</th><th>Статус</th><th class="r">Ставка</th>
-          </tr></thead>
-          <tbody>${objects.map((o: any) => `<tr>
-            <td><code style="font-size:11px;color:var(--accent)">${o.sku ?? o.id ?? '—'}</code></td>
-            <td>${statusChip(o.state === 'ACTIVE' ? 'active' : 'inactive')}</td>
-            <td style="text-align:right">${o.bid ? fmt(o.bid) + ' ₽' : '—'}</td>
-          </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
+  private _perfObjects(key: string): string {
+    const obs: any[] = this.detailCache.get(key) ?? [];
+    if (!obs.length) return `<p style="font-size:12px;color:var(--text2)">Нет объявлений.</p>`;
+    return `<div style="overflow-x:auto"><table class="adm">
+      <thead><tr><th>SKU</th><th>Статус</th><th class="r">Ставка</th></tr></thead>
+      <tbody>${obs.map((o: any) =>
+        `<tr><td><code style="font-size:11px;color:var(--accent)">${o.sku??o.id??'—'}</code></td>
+         <td>${statusChip(o.state==='ACTIVE'?'active':'inactive')}</td>
+         <td class="r">${o.bid?fmt(o.bid)+' ₽':'—'}</td></tr>`).join('')}
+      </tbody></table></div>`;
   }
 
-  // ── Ozon Promo table ───────────────────────────────────────────────────────
+  // ─── Promo table (Ozon + YM) ──────────────────────────────────────────────────
 
-  private renderOzonPromoTable(): string {
-    if (!this.campaigns.length)
-      return emptyState('Нет акций', 'Нажмите «Загрузить»');
+  private renderPromoTable(data: Campaign[], ms: boolean, src: 'ozon' | 'ym'): string {
+    const rows = data.map(c => {
+      const key = String(c.id);
+      const isExp = this.expanded.has(key);
+      const isOzon = src === 'ozon';
+      const act  = isOzon ? 'exp-promo' : 'exp-ympromo';
+      const extra = isOzon ? `data-aid="${c.actionId??''}"` : `data-promoid="${esc(String(c.promoId??c.id))}"`;
 
-    const rows = this.campaigns.map(c => {
-      const isExpanded = this.expanded.has(String(c.id));
-      const expandBtn = `<button class="ad-expand-btn ${isExpanded?'open':''}" data-action="expand-promo" data-id="${c.id}" data-actionid="${c.actionId ?? ''}">
-        <span class="ad-expand-chevron">${I.chevronDown()}</span>
-      </button>`;
+      const expBtn = `<button class="ad-exp ${isExp?'on':''}" data-action="${act}" data-id="${key}" ${extra}>
+        <span class="ad-chev">${I.chevronDown()}</span></button>`;
 
-      const mainRow = `<tr class="ad-row ${isExpanded?'expanded-row':''}">
-        <td><code style="font-size:11px;color:var(--text3)">${esc(String(c.id))}</code></td>
-        <td style="font-weight:600">${esc(c.name)}</td>
-        <td class="dim" style="font-size:11px">${esc(c.type)}</td>
+      const main = `<tr class="adr ${isExp?'exp':''}">
+        ${ms?`<td class="nm">${esc(c.storeName)}</td>`:''}
+        <td style="font-weight:600;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</td>
+        <td class="dim nm">${esc(c.type)}</td>
         <td>${statusChip(c.status)}</td>
-        <td class="dim" style="font-size:11px">${c.dateFrom ? c.dateFrom.slice(0,10) + ' — ' + (c.dateTo ?? '').slice(0,10) : '—'}</td>
-        <td>${expandBtn}</td>
+        <td class="dim nm">${c.dateFrom?c.dateFrom.slice(0,10)+' — '+(c.dateTo??'').slice(0,10):'—'}</td>
+        <td>${expBtn}</td>
       </tr>`;
 
-      if (!isExpanded) return mainRow;
-
-      const detailContent = this.detailLoading.has(String(c.id))
-        ? skeleton(2)
-        : this._renderOzonPromoProducts(String(c.id), c.actionId);
-
-      const detailRow = `<tr class="ad-detail-row"><td colspan="6">
-        <div class="ad-detail-inner">${detailContent}</div>
+      if (!isExp) return main;
+      const cols = ms ? 6 : 5;
+      const detail = this.detailLoading.has(key) ? skeleton(2)
+        : isOzon ? this._ozonPromoProducts(key, c.actionId)
+        : this._ymPromoOffers(key, String(c.promoId ?? c.id));
+      return main + `<tr class="ad-drow"><td colspan="${cols}">
+        <div class="ad-dinn">${detail}</div>
       </td></tr>`;
-
-      return mainRow + detailRow;
     }).join('');
 
-    return `<table class="ad-table">
-      <thead><tr>
-        <th>ID</th><th>Акция</th><th>Тип</th><th>Статус</th><th>Период</th><th></th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    return `<table class="adt"><thead><tr>
+      ${ms?'<th>Магазин</th>':''}
+      <th data-sort="name">Акция</th><th>Тип</th><th>Статус</th><th>Период</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
   }
 
-  private _renderOzonPromoProducts(promoKey: string, actionId?: number): string {
-    const data = this.detailCache.get(promoKey) as { activated: any[]; available: any[] } | undefined;
-    if (!data) return `<p style="color:var(--text2);font-size:12px">Нет данных.</p>`;
-    if (!data.activated.length) return `<p style="color:var(--text2);font-size:12px">В акции нет активных товаров.</p>`;
-    return `
-      <p style="font-size:11px;color:var(--text3);margin-bottom:8px">
-        Участвует в акции: ${data.activated.length} товаров
-      </p>
-      <div style="overflow-x:auto">
-        <table class="ad-bid-table">
-          <thead><tr>
-            <th>ID товара</th><th class="r">Промо-цена</th><th></th>
-          </tr></thead>
-          <tbody>${data.activated.map((p: any) => `<tr>
-            <td><code style="font-size:11px;color:var(--accent)">${p.id ?? p.product_id}</code></td>
-            <td style="text-align:right">${p.price ? fmt(p.price) + ' ₽' : '—'}</td>
-            <td>
-              <button class="rpr-btn rpr-btn-ghost" style="padding:2px 8px;font-size:11px;color:var(--err)"
-                data-action="rm-promo-product" data-promoid="${promoKey}" data-actionid="${actionId ?? ''}" data-productid="${p.id ?? p.product_id}">
-                Убрать
-              </button>
-            </td>
+  private _ozonPromoProducts(key: string, actionId?: number): string {
+    const d = this.detailCache.get(key) as { activated: any[]; available: any[] } | undefined;
+    if (!d) return `<p style="font-size:12px;color:var(--text2)">Нет данных.</p>`;
+    if (!d.activated.length) return `<p style="font-size:12px;color:var(--text2)">В акции нет товаров.</p>`;
+    return `<p style="font-size:11px;color:var(--text3);margin-bottom:8px">Участвует: ${d.activated.length} товаров</p>
+      <div style="overflow-x:auto"><table class="adm">
+        <thead><tr><th>ID</th><th class="r">Промо-цена</th><th></th></tr></thead>
+        <tbody>${d.activated.map((p: any) =>
+          `<tr><td><code style="color:var(--accent);font-size:11px">${p.id??p.product_id}</code></td>
+           <td class="r">${p.price?fmt(p.price)+' ₽':'—'}</td>
+           <td><button class="rpr-btn rpr-btn-ghost" style="padding:1px 8px;font-size:11px;color:#ef4444"
+             data-action="rm-promo-product" data-pid="${key}" data-aid="${actionId??''}" data-prodid="${p.id??p.product_id}">Убрать</button></td>
           </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
+        </tbody></table></div>`;
   }
 
-  // ── YM Promo table ─────────────────────────────────────────────────────────
-
-  private renderYmPromoTable(): string {
-    if (!this.campaigns.length)
-      return emptyState('Нет акций', 'Нажмите «Загрузить»');
-
-    const rows = this.campaigns.map(c => {
-      const isExpanded = this.expanded.has(String(c.id));
-      const expandBtn = `<button class="ad-expand-btn ${isExpanded?'open':''}" data-action="expand-ym-promo" data-id="${c.id}" data-promoid="${esc(String(c.promoId ?? c.id))}">
-        <span class="ad-expand-chevron">${I.chevronDown()}</span>
-      </button>`;
-
-      const mainRow = `<tr class="ad-row ${isExpanded?'expanded-row':''}">
-        <td style="font-weight:600;max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</td>
-        <td class="dim" style="font-size:11px">${esc(c.type)}</td>
-        <td>${statusChip(c.status)}</td>
-        <td class="dim" style="font-size:11px">${c.dateFrom ? c.dateFrom.slice(0,10) + ' — ' + (c.dateTo ?? '').slice(0,10) : '—'}</td>
-        <td>${expandBtn}</td>
-      </tr>`;
-
-      if (!isExpanded) return mainRow;
-
-      const detailContent = this.detailLoading.has(String(c.id))
-        ? skeleton(2)
-        : this._renderYmPromoOffers(String(c.id), String(c.promoId ?? c.id));
-
-      const detailRow = `<tr class="ad-detail-row"><td colspan="5">
-        <div class="ad-detail-inner">${detailContent}</div>
-      </td></tr>`;
-
-      return mainRow + detailRow;
-    }).join('');
-
-    return `<table class="ad-table">
-      <thead><tr>
-        <th>Акция</th><th>Тип</th><th>Статус</th><th>Период</th><th></th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-  }
-
-  private _renderYmPromoOffers(key: string, promoId: string): string {
+  private _ymPromoOffers(key: string, promoId: string): string {
     const offers: any[] = this.detailCache.get(key) ?? [];
-    if (!Array.isArray(offers)) return `<p style="color:var(--text2);font-size:12px">Нет данных.</p>`;
-    if (!offers.length) return `<p style="color:var(--text2);font-size:12px">В акции нет офферов.</p>`;
-    return `
-      <p style="font-size:11px;color:var(--text3);margin-bottom:8px">
-        Офферов в акции: ${offers.length}
-      </p>
-      <div style="overflow-x:auto">
-        <table class="ad-bid-table">
-          <thead><tr>
-            <th>Offer ID</th><th class="r">Промо-цена</th><th></th>
-          </tr></thead>
-          <tbody>${offers.map((o: any) => {
-            const oid = o.offerId ?? o.offer_id ?? '';
-            return `<tr>
-              <td><code style="font-size:11px;color:var(--accent)">${esc(oid)}</code></td>
-              <td style="text-align:right">${o.promoPrice ?? o.promo_price ? fmt(o.promoPrice ?? o.promo_price) + ' ₽' : '—'}</td>
-              <td>
-                <button class="rpr-btn rpr-btn-ghost" style="padding:2px 8px;font-size:11px;color:var(--err)"
-                  data-action="rm-ym-offer" data-promoid="${esc(promoId)}" data-offerid="${esc(oid)}">
-                  Убрать
-                </button>
-              </td>
-            </tr>`;
-          }).join('')}
-          </tbody>
-        </table>
-      </div>`;
+    if (!Array.isArray(offers)) return `<p style="font-size:12px;color:var(--text2)">Нет данных.</p>`;
+    if (!offers.length) return `<p style="font-size:12px;color:var(--text2)">В акции нет офферов.</p>`;
+    return `<p style="font-size:11px;color:var(--text3);margin-bottom:8px">Офферов: ${offers.length}</p>
+      <div style="overflow-x:auto"><table class="adm">
+        <thead><tr><th>Offer ID</th><th class="r">Промо-цена</th><th></th></tr></thead>
+        <tbody>${offers.map((o: any) => {
+          const oid = o.offerId ?? o.offer_id ?? '';
+          return `<tr><td><code style="color:var(--accent);font-size:11px">${esc(oid)}</code></td>
+            <td class="r">${(o.promoPrice??o.promo_price)?fmt(o.promoPrice??o.promo_price)+' ₽':'—'}</td>
+            <td><button class="rpr-btn rpr-btn-ghost" style="padding:1px 8px;font-size:11px;color:#ef4444"
+              data-action="rm-ym-offer" data-promoid="${esc(promoId)}" data-offerid="${esc(oid)}">Убрать</button></td>
+          </tr>`;
+        }).join('')}
+        </tbody></table></div>`;
   }
 
-  // ── YM Boost bids table ────────────────────────────────────────────────────
+  // ─── YM Boost table ───────────────────────────────────────────────────────────
 
-  private renderYmBoostTable(): string {
+  private renderBoostTable(): string {
     if (this.ymBidsLoading) return skeleton(6);
-    if (!this.storeId)
-      return emptyState('Выберите магазин', 'для загрузки ставок');
-
-    if (!this.ymBids.length)
-      return `<div style="padding:16px">
-        ${emptyState('Нет данных по ставкам', 'Нажмите «Загрузить ставки»')}
-      </div>`;
+    if (!this.ymBids.length) {
+      const store = this.stores.find(s => s.id === this.storeId);
+      if (store && !store.campaign_id) {
+        return `<div style="padding:20px">
+          <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:18px;max-width:480px">
+            <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:8px">⚠️ Нужен Campaign ID</div>
+            <p style="font-size:12px;color:var(--text2);line-height:1.7;margin:0 0 8px">
+              Для управления ставками Буста нужен <b>Campaign ID</b> магазина.
+              Добавьте его в разделе <b>Магазины → Яндекс.Маркет</b> в поле «ID кампании».
+            </p>
+            <p style="font-size:11px;color:var(--text3);margin:0">
+              Campaign ID находится в URL кабинета: partner.market.yandex.ru/campaigns/<b>12345678</b>/...
+            </p>
+          </div>
+        </div>`;
+      }
+      return empty('Нет данных по ставкам', 'Нажмите «Загрузить ставки» выше');
+    }
 
     const recMap = new Map<string, any>();
-    for (const r of this.ymRecommended) recMap.set(r.offerId ?? r.offer_id ?? '', r);
+    for (const r of this.ymRec) recMap.set(r.offerId ?? r.offer_id ?? '', r);
 
     const rows = this.ymBids.map(b => {
       const oid = b.offerId ?? b.offer_id ?? '';
       const rec = recMap.get(oid);
-      const curBid = b.bid ?? 0;
-      const recBid = rec?.bid ?? rec?.recommendedBid ?? null;
+      const cur = b.bid ?? 0;
+      const recV = rec?.bid ?? rec?.recommendedBid ?? null;
       const edited = this.ymBidEdits.get(oid) ?? '';
-
       return `<tr>
         <td><code style="font-size:11px;color:var(--accent)">${esc(oid)}</code></td>
-        <td class="r">${curBid ? fmt(curBid) + ' ₽' : '—'}</td>
-        <td class="r dim">${recBid ? fmt(recBid) + ' ₽' : '—'}</td>
-        <td>
-          <input type="number" min="0" placeholder="${curBid || ''}"
-            class="ad-boost-input ${edited && Number(edited) !== curBid ? 'changed' : ''}"
-            value="${edited}"
-            data-boostid="${esc(oid)}">
-        </td>
+        <td class="r">${cur ? fmt(cur) + ' ₽' : '—'}</td>
+        <td class="r dim">${recV ? fmt(recV) + ' ₽' : '—'}</td>
+        <td><input type="number" min="0" class="ad-bi ${edited&&Number(edited)!==cur?'ch':''}"
+          value="${edited}" placeholder="${cur||''}" data-boostid="${esc(oid)}"></td>
       </tr>`;
     }).join('');
 
-    return `<div style="padding:0 0 12px">
-      <div style="overflow-x:auto">
-        <table class="ad-table">
-          <thead><tr>
-            <th>Offer ID</th>
-            <th class="r">Текущая</th>
-            <th class="r">Рекомендованная</th>
-            <th>Новая ставка, ₽</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      <div style="padding:12px 20px;border-top:1px solid var(--border)">
-        <button class="rpr-btn rpr-btn-green" id="ym-save-bids" style="display:flex;align-items:center;gap:5px">
+    return `<div>
+      <div style="overflow-x:auto"><table class="adt">
+        <thead><tr>
+          <th>Offer ID</th>
+          <th class="r">Текущая ставка</th>
+          <th class="r">Рекомендованная</th>
+          <th style="min-width:120px">Новая ставка, ₽</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <div style="padding:12px 18px;border-top:1px solid var(--border)">
+        <button class="rpr-btn rpr-btn-green" id="ym-save-bids" style="display:flex;align-items:center;gap:5px;height:28px;padding:0 14px;font-size:12px">
           ${I.check()} Сохранить ставки
         </button>
       </div>
     </div>`;
   }
 
-  // ── Create campaign dialog (WB) ────────────────────────────────────────────
+  // ─── data ops ────────────────────────────────────────────────────────────────
 
-  private showCreateDialog(): void {
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
-    overlay.innerHTML = `
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:24px;width:400px;max-width:100%">
+  private async loadDetail(key: string) {
+    if (this.detailCache.has(key) || this.detailLoading.has(key)) return;
+    this.detailLoading.add(key); this.flushBody();
+    const c = this.campaigns.find(x => String(x.id) === key);
+    if (!c) return;
+    const store = this.stores.find(s => s.id === c.storeId) as any;
+    const d = await getWbCampaignDetails(store.api_key, Number(c.id));
+    this.detailCache.set(key, d ?? {});
+    this.detailLoading.delete(key); this.flushBody();
+  }
+
+  private async loadPerfObjects(key: string) {
+    if (this.detailCache.has(key) || this.detailLoading.has(key)) return;
+    this.detailLoading.add(key); this.flushBody();
+    const c = this.campaigns.find(x => String(x.id) === key);
+    if (!c) return;
+    const store = this.stores.find(s => s.id === c.storeId) as any;
+    const obs = await ozonPerfApi.getCampaignObjects(store.client_id, store.api_key, key);
+    this.detailCache.set(key, obs);
+    this.detailLoading.delete(key); this.flushBody();
+  }
+
+  private async loadOzonPromoProducts(key: string, actionId: number) {
+    if (this.detailCache.has(key) || this.detailLoading.has(key)) return;
+    this.detailLoading.add(key); this.flushBody();
+    const c = this.campaigns.find(x => String(x.id) === key);
+    if (!c) return;
+    const store = this.stores.find(s => s.id === c.storeId) as any;
+    const d = await ozonApi.getPromoProducts({ client_id: store.client_id, api_key: store.api_key }, actionId);
+    this.detailCache.set(key, d);
+    this.detailLoading.delete(key); this.flushBody();
+  }
+
+  private async loadYmPromoOffers(key: string, promoId: string) {
+    if (this.detailCache.has(key) || this.detailLoading.has(key)) return;
+    this.detailLoading.add(key); this.flushBody();
+    const c = this.campaigns.find(x => String(x.id) === key);
+    if (!c) return;
+    const store = this.stores.find(s => s.id === c.storeId) as any;
+    const offers = await getYandexPromoOffers(store.api_key, Number(store.business_id ?? 0), promoId);
+    this.detailCache.set(key, offers);
+    this.detailLoading.delete(key); this.flushBody();
+  }
+
+  private async loadYmBids() {
+    const store = this.stores.find(s => s.id === this.storeId) as any;
+    if (!store) { showToast('Выберите конкретный магазин', 'warning'); return; }
+    if (!store.campaign_id) { showToast('Нет Campaign ID. Добавьте его в настройки магазина', 'warning'); return; }
+    this.ymBidsLoading = true; this.flushBody();
+    const [bids, rec] = await Promise.all([
+      getYandexCampaignBids(store.api_key, Number(store.campaign_id)),
+      getYandexRecommendedBids(store.api_key, Number(store.campaign_id)),
+    ]);
+    this.ymBids = bids; this.ymRec = rec;
+    this.ymBidsLoading = false; this.flushBody();
+  }
+
+  private async toggleWb(key: string, status: 9 | 11) {
+    const c = this.campaigns.find(x => String(x.id) === key);
+    if (!c) return;
+    const store = this.stores.find(s => s.id === c.storeId) as any;
+    await updateWbCampaign(store.api_key, Number(c.id), { status });
+    c.status = status === 9 ? 'active' : 'paused';
+    this.applyFilter();
+    showToast(status === 11 ? 'Пауза' : 'Запущена', 'success');
+  }
+
+  private async bulkPause(status: 9 | 11) {
+    const ids = [...this.selected];
+    await Promise.allSettled(ids.map(id => this.toggleWb(id, status)));
+    this.selected.clear(); this.renderBulk();
+    showToast(`${ids.length} кампаний: ${status===11?'пауза':'запущены'}`, 'success');
+  }
+
+  private async saveBudget(key: string, budget: number) {
+    if (!budget || budget < 50) { showToast('Минимум 50 ₽', 'warning'); return; }
+    const c = this.campaigns.find(x => String(x.id) === key);
+    if (!c) return;
+    const store = this.stores.find(s => s.id === c.storeId) as any;
+    await updateWbCampaign(store.api_key, Number(c.id), { dailyBudget: budget * 100 });
+    c.budget = budget;
+    this.budgetEditing.delete(key);
+    showToast('Бюджет обновлён', 'success'); this.flushBody();
+  }
+
+  private async saveBids(key: string) {
+    const nmList: Array<{ nm: number; bid: number }> = [];
+    this.el.querySelectorAll<HTMLInputElement>(`[data-bidsave="${key}"]`).forEach(inp => {
+      const v = Number(inp.value);
+      if (!isNaN(v) && v > 0) nmList.push({ nm: Number(inp.dataset.nm), bid: v });
+    });
+    if (!nmList.length) { showToast('Нет изменений', 'warning'); return; }
+    const c = this.campaigns.find(x => String(x.id) === key);
+    if (!c) return;
+    const store = this.stores.find(s => s.id === c.storeId) as any;
+    await updateWbCampaignBids(store.api_key, Number(c.id), nmList);
+    showToast(`Ставки обновлены: ${nmList.length}`, 'success');
+    this.detailCache.delete(key); await this.loadDetail(key);
+  }
+
+  private async saveExcluded(key: string) {
+    const ta = this.el.querySelector(`#ad-excl-${key}`) as HTMLTextAreaElement | null;
+    if (!ta) return;
+    const words = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+    const c = this.campaigns.find(x => String(x.id) === key);
+    if (!c) return;
+    const store = this.stores.find(s => s.id === c.storeId) as any;
+    await setWbExcludedKeywords(store.api_key, Number(c.id), words);
+    showToast('Минус-слова сохранены', 'success');
+  }
+
+  private async toggleOzonPerf(key: string, isActive: boolean) {
+    const c = this.campaigns.find(x => String(x.id) === key);
+    if (!c) return;
+    const store = this.stores.find(s => s.id === c.storeId) as any;
+    await ozonPerfApi.toggleCampaign(store.client_id, store.api_key, key, !isActive);
+    c.status = isActive ? 'paused' : 'active';
+    this.applyFilter();
+    showToast(isActive ? 'Приостановлена' : 'Запущена', 'success');
+  }
+
+  private async rmOzonPromoProduct(promoKey: string, actionId: number, productId: number) {
+    const c = this.campaigns.find(x => String(x.id) === promoKey);
+    if (!c) return;
+    const store = this.stores.find(s => s.id === c.storeId) as any;
+    await ozonApi.deactivatePromoProducts({ client_id: store.client_id, api_key: store.api_key }, actionId, [productId]);
+    const d = this.detailCache.get(promoKey);
+    if (d) d.activated = d.activated.filter((p: any) => p.id !== productId);
+    this.flushBody(); showToast('Убран из акции', 'success');
+  }
+
+  private async rmYmOffer(promoId: string, offerId: string) {
+    const c = this.campaigns.find(x => String(x.promoId ?? x.id) === promoId);
+    if (!c) return;
+    const store = this.stores.find(s => s.id === c.storeId) as any;
+    await removeYandexPromoOffers(store.api_key, Number(store.business_id ?? 0), promoId, [offerId]);
+    for (const [k, v] of this.detailCache) {
+      if (Array.isArray(v)) this.detailCache.set(k, v.filter((o: any) => (o.offerId ?? o.offer_id) !== offerId));
+    }
+    this.flushBody(); showToast('Убран из акции', 'success');
+  }
+
+  private async saveYmBids() {
+    const store = this.stores.find(s => s.id === this.storeId) as any;
+    if (!store?.campaign_id) return;
+    const bids: Array<{ offerId: string; bid: number }> = [];
+    this.ymBidEdits.forEach((val, oid) => {
+      const n = Number(val); if (!isNaN(n) && n > 0) bids.push({ offerId: oid, bid: n });
+    });
+    if (!bids.length) { showToast('Нет изменений', 'warning'); return; }
+    await updateYandexCampaignBids(store.api_key, Number(store.campaign_id), bids);
+    this.ymBidEdits.clear();
+    showToast(`Ставки сохранены: ${bids.length}`, 'success');
+    await this.loadYmBids();
+  }
+
+  // ─── help & create dialog ─────────────────────────────────────────────────────
+
+  private showHelp() {
+    document.getElementById('ad-help-overlay')?.remove();
+    document.body.insertAdjacentHTML('beforeend', buildHelpModal());
+    const ov = document.getElementById('ad-help-overlay')!;
+    ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+  }
+
+  private showCreateDialog() {
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)';
+    ov.innerHTML = `
+      <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:16px;padding:24px;width:420px;max-width:100%">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-          <div style="font-size:15px;font-weight:800;color:var(--text)">Новая кампания WB</div>
-          <button id="ad-dlg-x" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:18px;line-height:1">✕</button>
+          <div style="font-size:15px;font-weight:800;color:var(--text)">Новая WB-кампания</div>
+          <button id="dlg-x" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:20px;padding:2px 8px">✕</button>
         </div>
-        <form id="ad-dlg-form" style="display:flex;flex-direction:column;gap:14px">
+        <form id="dlg-form" style="display:flex;flex-direction:column;gap:14px">
+          ${[
+            ['name',   'Название кампании', 'text',   '', 'Летняя кампания'],
+            ['budget', 'Дневной бюджет, ₽', 'number', 'min="100"', '1000'],
+          ].map(([n,l,t,a,p]) => `<div>
+            <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:5px">${l}</label>
+            <input name="${n}" type="${t}" ${a} required placeholder="${p}" style="width:100%;box-sizing:border-box;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;outline:none">
+          </div>`).join('')}
           <div>
-            <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:5px">Название</label>
-            <input name="name" required placeholder="Название кампании" style="width:100%;box-sizing:border-box;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;outline:none">
-          </div>
-          <div>
-            <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:5px">Дневной бюджет, ₽</label>
-            <input name="budget" type="number" min="100" required placeholder="500" style="width:100%;box-sizing:border-box;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;outline:none">
-          </div>
-          <div>
-            <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:5px">Тип кампании</label>
+            <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:5px">Тип</label>
             <select name="type" style="width:100%;box-sizing:border-box;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;outline:none">
               <option value="8">Автоматическая</option>
               <option value="6">Поиск</option>
               <option value="7">Каталог</option>
             </select>
           </div>
-          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
-            <button type="button" id="ad-dlg-cancel" class="rpr-btn rpr-btn-ghost">Отмена</button>
+          <div style="padding:10px;background:rgba(99,102,241,.08);border-radius:8px;font-size:11px;color:var(--text2);line-height:1.6">
+            💡 После создания добавьте товары (nmId) через Личный кабинет WB или разверните строку кампании здесь.
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button type="button" id="dlg-cancel" class="rpr-btn rpr-btn-ghost">Отмена</button>
             <button type="submit" class="rpr-btn rpr-btn-green" style="display:flex;align-items:center;gap:5px">${I.plus()} Создать</button>
           </div>
         </form>
       </div>`;
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.querySelector('#dlg-x')?.addEventListener('click', close);
+    ov.querySelector('#dlg-cancel')?.addEventListener('click', close);
+    ov.addEventListener('click', e => { if (e.target === ov) close(); });
 
-    document.body.appendChild(overlay);
-    const close = () => overlay.remove();
-    overlay.querySelector('#ad-dlg-x')?.addEventListener('click', close);
-    overlay.querySelector('#ad-dlg-cancel')?.addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-
-    (overlay.querySelector('#ad-dlg-form') as HTMLFormElement).addEventListener('submit', async (e) => {
+    (ov.querySelector('#dlg-form') as HTMLFormElement).addEventListener('submit', async e => {
       e.preventDefault();
       const fd = new FormData(e.target as HTMLFormElement);
       close();
-      try {
-        const store = this.stores.find(s => s.id === this.storeId) as any;
-        await createWbAdCampaign(store.api_key, {
-          name:        fd.get('name') as string,
-          subjectId:   0,
-          type:        Number(fd.get('type')),
-          nms:         [],
-          dailyBudget: Number(fd.get('budget')) * 100,
-        });
-        showToast('Кампания создана', 'success');
-        await this.loadCampaigns();
-      } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
+      const store = this.stores.find(s => s.id === this.storeId) as any ?? this.stores[0];
+      if (!store) return;
+      await createWbAdCampaign(store.api_key, {
+        name: fd.get('name') as string,
+        subjectId: 0, type: Number(fd.get('type')),
+        nms: [], dailyBudget: Number(fd.get('budget')) * 100,
+      });
+      showToast('Кампания создана', 'success');
+      await this.loadCampaigns();
     });
   }
 
-  show(): void { this.el.style.display = 'flex'; }
-  hide(): void { this.el.style.display = 'none'; }
+  show() { this.el.style.display = 'flex'; }
+  hide() { this.el.style.display = 'none'; }
 }

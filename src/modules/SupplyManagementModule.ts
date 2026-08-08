@@ -6,6 +6,7 @@ import {
   getYandexAvailableSlots,
   getYandexShipmentLabels,
   getYandexSkuStats,
+  getYandexReturns,
 } from '@/services/yandexApi';
 import { ozonDb } from '@/services/ozonDb';
 import { wbDb } from '@/services/wbDb';
@@ -35,19 +36,19 @@ interface RecoItem {
 }
 
 const STATUS: Record<string, { text: string; color: string }> = {
-  draft:              { text: 'Черновик',    color: '#6b7280' },
-  awaiting_deliver:   { text: 'Ожидание',    color: '#f59e0b' },
-  sent:               { text: 'Отправлена',  color: '#f59e0b' },
-  delivering:         { text: 'В пути',      color: '#3b82f6' },
-  delivered:          { text: 'Принята',     color: '#10b981' },
-  received:           { text: 'Получена',    color: '#10b981' },
-  cancelled:          { text: 'Отменена',    color: '#ef4444' },
-  done:               { text: 'Завершена',   color: '#10b981' },
-  CREATED:            { text: 'Создана',     color: '#6b7280' },
-  ACCEPTED:           { text: 'Принята',     color: '#10b981' },
-  READY_TO_TRANSFER:  { text: 'Готова',      color: '#f59e0b' },
-  TRANSFERRED:        { text: 'Передана',    color: '#3b82f6' },
-  CANCELLED_BY_PARTNER: { text: 'Отменена', color: '#ef4444' },
+  draft:               { text: 'Черновик',   color: '#6b7280' },
+  awaiting_deliver:    { text: 'Ожидание',   color: '#f59e0b' },
+  sent:                { text: 'Отправлена', color: '#f59e0b' },
+  delivering:          { text: 'В пути',     color: '#3b82f6' },
+  delivered:           { text: 'Принята',    color: '#10b981' },
+  received:            { text: 'Получена',   color: '#10b981' },
+  cancelled:           { text: 'Отменена',   color: '#ef4444' },
+  done:                { text: 'Завершена',  color: '#10b981' },
+  CREATED:             { text: 'Создана',    color: '#6b7280' },
+  ACCEPTED:            { text: 'Принята',    color: '#10b981' },
+  READY_TO_TRANSFER:   { text: 'Готова',     color: '#f59e0b' },
+  TRANSFERRED:         { text: 'Передана',   color: '#3b82f6' },
+  CANCELLED_BY_PARTNER:{ text: 'Отменена',   color: '#ef4444' },
 };
 
 function chip(s: string): string {
@@ -56,7 +57,7 @@ function chip(s: string): string {
 }
 
 function urgencyBadge(daysLeft: number): string {
-  if (daysLeft <= 0) return `<span class="sp-badge sp-badge-red">OOS</span>`;
+  if (daysLeft <= 0)  return `<span class="sp-badge sp-badge-red">OOS</span>`;
   if (daysLeft <= 7)  return `<span class="sp-badge sp-badge-red">${daysLeft}д</span>`;
   if (daysLeft <= 14) return `<span class="sp-badge sp-badge-orange">${daysLeft}д</span>`;
   if (daysLeft <= 30) return `<span class="sp-badge sp-badge-yellow">${daysLeft}д</span>`;
@@ -79,6 +80,7 @@ export class SupplyManagementModule {
   private stores: Array<Record<string, any>> = [];
   private supplies: Supply[] = [];
   private loading = false;
+  private error = '';                 // inline error shown in list area
   private detail: Supply | null = null;
   private detailItems: Array<{ name: string; qty: number; sku?: string }> = [];
   private detailReturns: Array<{ name: string; qty: number; reason?: string; date?: string }> = [];
@@ -88,7 +90,8 @@ export class SupplyManagementModule {
   private recoLoading = false;
   private showReco = false;
   private searchQuery = '';
-  private statusFilter: string = '';
+  private statusFilter = '';
+  private busy = false;               // global action in progress
 
   supplyStats = { draft: 0, sending: 0, delivered: 0, cancelled: 0 };
 
@@ -100,7 +103,7 @@ export class SupplyManagementModule {
     this.loadStores();
   }
 
-  // ── Shell & Layout ──────────────────────────────────────────────────────────
+  // ── Shell ────────────────────────────────────────────────────────────────────
 
   private buildShell(): void {
     this.el.innerHTML = `
@@ -120,9 +123,7 @@ export class SupplyManagementModule {
             ${this.renderHeaderActions()}
           </div>
         </div>
-
         <div id="sp-kpi"></div>
-
         <div class="sp-content" id="sp-content">
           ${this.renderContent()}
         </div>
@@ -134,16 +135,17 @@ export class SupplyManagementModule {
     const wizBtn = this.tab === 'wb'
       ? `<button class="sp-btn sp-btn-purple" id="sp-wizard">${I.truck()} Из заказов</button>`
       : '';
-    const recoBtn = `<button class="sp-btn ${this.showReco ? 'sp-btn-active' : 'sp-btn-ghost'}" id="sp-reco" title="Рекомендации пополнения">
+    const recoBtn = `<button class="sp-btn ${this.showReco ? 'sp-btn-active' : 'sp-btn-ghost'}" id="sp-reco">
       ${I.info()} Пополнение</button>`;
     return `
       <select id="sp-store" class="sp-select">
         <option value="">Загрузка...</option>
       </select>
       ${wizBtn}
-      <button class="sp-btn sp-btn-primary" id="sp-create">${I.plus()} Создать</button>
+      <button class="sp-btn sp-btn-primary" id="sp-create" ${this.busy ? 'disabled' : ''}>${I.plus()} Создать</button>
       ${recoBtn}
-      <button class="sp-btn sp-btn-ghost" id="sp-refresh" title="Обновить">${I.refresh()}</button>`;
+      <button class="sp-btn sp-btn-ghost" id="sp-refresh" title="Обновить">${I.refresh()}</button>
+      <button class="sp-btn sp-btn-ghost sp-help-btn" id="sp-help" title="Как работают поставки">?</button>`;
   }
 
   private renderContent(): string {
@@ -157,32 +159,17 @@ export class SupplyManagementModule {
         ${this.renderFilterBar()}
         ${this.renderList()}
       </div>
-      ${this.showReco ? `<div class="sp-reco-pane" id="sp-reco-pane">
-        ${this.renderReco()}
-      </div>` : ''}
+      ${this.showReco ? `<div class="sp-reco-pane" id="sp-reco-pane">${this.renderReco()}</div>` : ''}
     </div>`;
   }
 
   private renderFilterBar(): string {
-    if (!this.supplies.length && !this.loading) return '';
-    const statusOptions: Array<[string, string]> = [
-      ['', 'Все статусы'],
-      ['draft', 'Черновик'],
-      ['sending', 'В пути'],
-      ['delivered', 'Принято'],
-      ['cancelled', 'Отменено'],
-    ];
+    if ((!this.supplies.length && !this.loading && !this.error) || !this.storeId) return '';
     return `<div class="sp-filter-bar">
-      <input
-        id="sp-search"
-        class="sp-search"
-        placeholder="Поиск по названию или ID…"
-        value="${esc(this.searchQuery)}"
-      >
+      <input id="sp-search" class="sp-search" placeholder="Поиск по названию или ID…" value="${esc(this.searchQuery)}">
       <select id="sp-status-filter" class="sp-select" style="min-width:130px">
-        ${statusOptions.map(([v, l]) =>
-          `<option value="${v}" ${this.statusFilter === v ? 'selected' : ''}>${l}</option>`
-        ).join('')}
+        ${[['','Все статусы'],['draft','Черновик'],['sending','В пути'],['delivered','Принято'],['cancelled','Отменено']]
+          .map(([v,l]) => `<option value="${v}" ${this.statusFilter===v?'selected':''}>${l}</option>`).join('')}
       </select>
       ${(this.searchQuery || this.statusFilter) ? `<button class="sp-btn sp-btn-ghost" id="sp-clear-filter" style="padding:4px 8px">✕</button>` : ''}
     </div>`;
@@ -217,29 +204,61 @@ export class SupplyManagementModule {
       return `<div class="sp-empty">
         <div class="sp-empty-icon">${I.truck()}</div>
         <p>Выберите магазин для загрузки поставок</p>
+        <button class="sp-btn sp-btn-ghost" id="sp-help" style="margin-top:8px">? Как это работает</button>
       </div>`;
     }
     if (this.loading) return this.renderSkeleton();
+    if (this.error) {
+      return `<div class="sp-error-block">
+        <div class="sp-error-icon">⚠️</div>
+        <div class="sp-error-text">${esc(this.error)}</div>
+        <div class="sp-error-actions">
+          <button class="sp-btn sp-btn-primary" id="sp-refresh">Попробовать снова</button>
+          <button class="sp-btn sp-btn-ghost" id="sp-help">? Инструкция</button>
+        </div>
+      </div>`;
+    }
     if (!this.supplies.length) {
       return `<div class="sp-empty">
         <div class="sp-empty-icon">${I.truck()}</div>
-        <p>Поставок нет</p>
+        <p>${this.emptyText()}</p>
         <div class="sp-empty-actions">
           <button class="sp-btn sp-btn-primary" id="sp-create-empty">${I.plus()} Создать поставку</button>
           ${this.tab === 'wb' ? `<button class="sp-btn sp-btn-purple" id="sp-wizard-empty">${I.truck()} Из заказов</button>` : ''}
+          <button class="sp-btn sp-btn-ghost" id="sp-help">? Как создать</button>
         </div>
       </div>`;
     }
     const filtered = this.filteredSupplies();
     if (!filtered.length) {
       return `<div class="sp-empty" style="height:120px">
-        <p style="font-size:13px">Нет поставок, подходящих под фильтр</p>
-        <button class="sp-btn sp-btn-ghost" id="sp-clear-filter" style="margin-top:6px">Сбросить фильтр</button>
+        <p style="font-size:13px">Нет поставок под этот фильтр</p>
+        <button class="sp-btn sp-btn-ghost" id="sp-clear-filter" style="margin-top:6px">Сбросить</button>
       </div>`;
     }
-    return `<div class="sp-supply-list">
-      ${filtered.map(s => this.renderSupplyRow(s)).join('')}
-    </div>`;
+    return `<div class="sp-supply-list">${filtered.map(s => this.renderSupplyRow(s)).join('')}</div>`;
+  }
+
+  private emptyText(): string {
+    if (this.tab === 'ozon') return 'Поставок Ozon FBO нет. Убедитесь, что у магазина подключён FBO-склад.';
+    if (this.tab === 'wb') return 'Поставок WB нет. Создайте поставку или используйте «Из заказов».';
+    return 'Отгрузок Яндекс FBY нет. Создайте первую отгрузку.';
+  }
+
+  private filteredSupplies(): Supply[] {
+    const statusGroupMap: Record<string, string[]> = {
+      draft:     ['draft', 'CREATED', 'awaiting_deliver'],
+      sending:   ['sent', 'delivering', 'READY_TO_TRANSFER', 'TRANSFERRED'],
+      delivered: ['delivered', 'received', 'done', 'ACCEPTED'],
+      cancelled: ['cancelled', 'CANCELLED_BY_PARTNER'],
+    };
+    const allowed = this.statusFilter ? statusGroupMap[this.statusFilter] : null;
+    const q = this.searchQuery.toLowerCase().trim();
+    return this.supplies.filter(s => {
+      if (allowed && !allowed.includes(s.status)) return false;
+      if (q && !s.name.toLowerCase().includes(q) && !s.id.toLowerCase().includes(q)) return false;
+      return true;
+    });
   }
 
   private renderSupplyRow(s: Supply): string {
@@ -253,8 +272,7 @@ export class SupplyManagementModule {
           <div class="sp-supply-name">${esc(s.name)}</div>
           <div class="sp-supply-meta">
             <code class="sp-supply-id">${esc(s.id)}</code>
-            <span>·</span>
-            <span>${date}</span>
+            <span>·</span><span>${date}</span>
           </div>
         </div>
       </div>
@@ -268,22 +286,6 @@ export class SupplyManagementModule {
         <div class="sp-chevron">›</div>
       </div>
     </div>`;
-  }
-
-  private filteredSupplies(): Supply[] {
-    const statusGroupMap: Record<string, string[]> = {
-      draft:     ['draft', 'CREATED', 'awaiting_deliver'],
-      sending:   ['sent', 'delivering', 'READY_TO_TRANSFER', 'TRANSFERRED'],
-      delivered: ['delivered', 'received', 'done', 'ACCEPTED'],
-      cancelled: ['cancelled', 'CANCELLED_BY_PARTNER'],
-    };
-    const allowedStatuses = this.statusFilter ? statusGroupMap[this.statusFilter] : null;
-    const q = this.searchQuery.toLowerCase().trim();
-    return this.supplies.filter(s => {
-      if (allowedStatuses && !allowedStatuses.includes(s.status)) return false;
-      if (q && !s.name.toLowerCase().includes(q) && !s.id.toLowerCase().includes(q)) return false;
-      return true;
-    });
   }
 
   private renderSkeleton(): string {
@@ -302,15 +304,12 @@ export class SupplyManagementModule {
           ${this.recoLoading ? `${I.loader()} Загрузка...` : `${I.refresh()} Обновить`}
         </button>
       </div>
-
       ${this.recoLoading ? `<div class="sp-reco-loading">${Array(4).fill(`<div class="sp-skeleton" style="height:56px;margin-bottom:8px"></div>`).join('')}</div>` : ''}
-
       ${!this.recoLoading && !this.recoItems.length ? `
         <div class="sp-reco-empty">
           <p>Нажмите «Обновить» для загрузки аналитики остатков</p>
           <p style="font-size:11px;color:var(--text3);margin-top:4px">Анализ скорости продаж за 30 дней</p>
         </div>` : ''}
-
       ${this.recoItems.length ? `
         <div class="sp-reco-legend">
           <span class="sp-badge sp-badge-red">0–7д</span> срочно &nbsp;
@@ -326,10 +325,8 @@ export class SupplyManagementModule {
               </div>
               <div class="sp-reco-item-sub">
                 <span>Остаток: <b>${r.stock}</b> шт.</span>
-                <span>·</span>
-                <span>~${r.dailySales.toFixed(1)}/д</span>
-                <span>·</span>
-                <span>Рекомендую: <b>${Math.ceil(r.dailySales * 30)}</b> шт.</span>
+                <span>·</span><span>~${r.dailySales.toFixed(1)}/д</span>
+                <span>·</span><span>Рек.: <b>${Math.ceil(r.dailySales * 30)}</b> шт.</span>
               </div>
               ${stockBar(r.daysLeft)}
             </div>`).join('')}
@@ -342,9 +339,8 @@ export class SupplyManagementModule {
   private renderDetail(): string {
     const s = this.detail!;
     const isDraft = s.status === 'draft' || s.status === 'CREATED';
-    const canSend = isDraft || s.status === 'awaiting_deliver';
+    const canSend = isDraft || s.status === 'awaiting_deliver' || s.status === 'READY_TO_TRANSFER';
     return `<div class="sp-detail">
-
       <div class="sp-detail-topbar">
         <button class="sp-btn sp-btn-ghost" id="sp-back">← Назад</button>
         <div class="sp-detail-title">
@@ -352,22 +348,22 @@ export class SupplyManagementModule {
           ${chip(s.status)}
         </div>
         <div class="sp-detail-actions">
-          <button class="sp-btn sp-btn-primary" id="sp-send" ${canSend ? '' : 'disabled'}>
-            ${I.send()} ${this.tab === 'yandex' ? 'Подтвердить' : 'Отправить'}
+          <button class="sp-btn sp-btn-primary" id="sp-send" ${canSend && !this.busy ? '' : 'disabled'}>
+            ${this.busy ? I.loader() : I.send()} ${this.tab === 'yandex' ? 'Подтвердить' : 'Отправить'}
           </button>
-          <button class="sp-btn sp-btn-ghost" id="sp-barcodes">${I.download()} Этикетки</button>
+          <button class="sp-btn sp-btn-ghost" id="sp-barcodes" ${this.busy ? 'disabled' : ''}>${I.download()} Этикетки</button>
           ${isDraft && this.tab === 'ozon' ? `<button class="sp-btn sp-btn-ghost" id="sp-add-items">${I.plus()} Товары</button>` : ''}
-          ${isDraft ? `<button class="sp-btn sp-btn-danger" id="sp-cancel">${I.trash()}</button>` : ''}
+          ${isDraft ? `<button class="sp-btn sp-btn-danger" id="sp-cancel" ${this.busy ? 'disabled' : ''}>${I.trash()}</button>` : ''}
         </div>
       </div>
 
       <div class="sp-detail-meta-cards">
         ${[
-          ['ID', `<code style="font-size:11px">${esc(s.id)}</code>`],
+          ['ID', `<code style="font-size:11px;user-select:all">${esc(s.id)}</code>`],
           ['Товаров', `<span style="font-size:20px;font-weight:800;color:var(--text)">${s.itemsCount}</span>`],
           ['Создана', new Date(s.createdAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })],
-          ['Тип', this.tab === 'ozon' ? 'Ozon FBO' : this.tab === 'wb' ? 'WB FBO' : 'ЯМ FBY'],
-        ].map(([l, v]) => `<div class="sp-meta-card"><div class="sp-meta-label">${l}</div><div class="sp-meta-val">${v}</div></div>`).join('')}
+          ['Тип', this.tab === 'ozon' ? 'Ozon FBO' : this.tab === 'wb' ? 'WB FBW' : 'ЯМ FBY'],
+        ].map(([l,v]) => `<div class="sp-meta-card"><div class="sp-meta-label">${l}</div><div class="sp-meta-val">${v}</div></div>`).join('')}
       </div>
 
       <div class="sp-detail-tabs">
@@ -377,9 +373,7 @@ export class SupplyManagementModule {
           </button>`).join('')}
       </div>
 
-      <div class="sp-detail-body">
-        ${this.renderDetailTabContent()}
-      </div>
+      <div class="sp-detail-body">${this.renderDetailTabContent()}</div>
     </div>`;
   }
 
@@ -392,14 +386,20 @@ export class SupplyManagementModule {
   private renderDetailOverview(): string {
     const s = this.detail!;
     const st = STATUS[s.status] ?? { text: s.status, color: '#6b7280' };
-    const steps = this.tab === 'yandex'
-      ? [['CREATED','Создана'],['READY_TO_TRANSFER','Готова'],['TRANSFERRED','Передана'],['ACCEPTED','Принята']]
-      : this.tab === 'ozon'
-        ? [['draft','Черновик'],['awaiting_deliver','Ожидание'],['delivering','В пути'],['delivered','Принята']]
-        : [['draft','Черновик'],['done','Завершена']];
 
-    const currentIdx = steps.findIndex(([key]) => key === s.status);
-    const progressPct = steps.length > 1 ? Math.max(0, Math.min(100, (currentIdx / (steps.length - 1)) * 100)) : 0;
+    const steps: [string, string][] =
+      this.tab === 'yandex'
+        ? [['CREATED','Создана'],['READY_TO_TRANSFER','Готова'],['TRANSFERRED','Передана'],['ACCEPTED','Принята']]
+        : this.tab === 'ozon'
+          ? [['draft','Черновик'],['awaiting_deliver','Ожидание'],['delivering','В пути'],['delivered','Принята']]
+          : [['draft','Черновик'],['done','Завершена']];
+
+    const currentIdx = steps.findIndex(([k]) => k === s.status);
+    const progressPct = steps.length > 1 && currentIdx >= 0
+      ? Math.max(0, Math.min(100, (currentIdx / (steps.length - 1)) * 100))
+      : currentIdx < 0 ? 0 : 100;
+
+    const tips = this.getStatusTips(s.status);
 
     return `<div class="sp-detail-overview">
       <div class="sp-progress-section">
@@ -408,32 +408,49 @@ export class SupplyManagementModule {
           <div class="sp-progress-fill" style="width:${progressPct}%;background:${st.color}"></div>
         </div>
         <div class="sp-progress-steps">
-          ${steps.map(([_key, label], idx) => `
+          ${steps.map(([_k, label], idx) => `
             <div class="sp-progress-step ${idx <= currentIdx ? 'done' : ''}" style="${idx <= currentIdx ? `--c:${st.color}` : ''}">
               <div class="sp-step-dot"></div>
               <div class="sp-step-label">${label}</div>
             </div>`).join('')}
         </div>
       </div>
-
-      <div class="sp-tips">
-        ${this.tab === 'wb' && (s.status === 'draft') ? `
-          <div class="sp-tip">
-            ${I.info()} Добавьте FBO-заказы в поставку через WB ЛК или используйте «Из заказов» при создании.
-            После добавления нажмите «Отправить» для передачи на склад WB.
-          </div>` : ''}
-        ${this.tab === 'ozon' && s.status === 'draft' ? `
-          <div class="sp-tip">
-            ${I.info()} Добавьте товары через кнопку «Товары» (введите SKU и количество).
-            После заполнения нажмите «Отправить» для FBO-приёмки.
-          </div>` : ''}
-        ${this.tab === 'yandex' ? `
-          <div class="sp-tip">
-            ${I.info()} Яндекс FBY: заказы добавляются автоматически по складу.
-            Нажмите «Подтвердить» для передачи отгрузки в ЯМ.
-          </div>` : ''}
-      </div>
+      ${tips ? `<div class="sp-tips">${tips.map(t => `<div class="sp-tip">${I.info()} ${t}</div>`).join('')}</div>` : ''}
     </div>`;
+  }
+
+  private getStatusTips(status: string): string[] {
+    if (this.tab === 'ozon') {
+      if (status === 'draft' || status === 'awaiting_deliver') return [
+        'Добавьте товары через кнопку «Товары» — вводите <b>числовой SKU Ozon</b> и количество.',
+        'SKU найдёте в личном кабинете Ozon: Товары → карточка товара → FBO SKU.',
+        'После добавления нажмите «Отправить» — поставка перейдёт в статус «Ожидание».',
+        'Физически доставьте товар на FBO-склад Ozon в оговорённые сроки.',
+      ];
+      if (status === 'delivering') return ['Поставка в пути. Ожидайте приёмки на складе Ozon.'];
+      if (status === 'delivered') return ['Поставка принята складом Ozon. Товары скоро появятся в остатках.'];
+    }
+    if (this.tab === 'wb') {
+      if (status === 'draft') return [
+        'Добавляйте FBW-заказы в поставку через «Из заказов» или вручную в ЛК WB.',
+        'Когда товар готов, нажмите «Отправить» — поставка будет передана в доставку.',
+        'Скачайте QR-код (кнопка «Этикетки») — он нужен для сдачи на ПВЗ WB.',
+        'Привезите товары в любой ПВЗ WB и отсканируйте QR-код поставки.',
+      ];
+      if (status === 'done') return ['Поставка завершена — товары приняты WB на хранение.'];
+    }
+    if (this.tab === 'yandex') {
+      if (status === 'CREATED') return [
+        'Яндекс Маркет автоматически добавит заказы в вашу отгрузку по расписанию.',
+        'Нажмите «Подтвердить» — отгрузка будет подтверждена в ЯМ.',
+        'Доставьте товары на склад ЯМ в указанное окно приёмки.',
+      ];
+      if (status === 'READY_TO_TRANSFER' || status === 'TRANSFERRED') return [
+        'Отгрузка подтверждена. Привезите товары на склад ЯМ в указанные даты.',
+      ];
+      if (status === 'ACCEPTED') return ['Отгрузка принята Яндекс Маркетом.'];
+    }
+    return [];
   }
 
   private renderDetailItems(): string {
@@ -441,14 +458,16 @@ export class SupplyManagementModule {
       return `<div class="sp-loading-inline">${I.loader()} Загружаем состав поставки...</div>`;
     }
     if (!this.detailItems.length) {
-      return `<div class="sp-empty" style="height:120px">
+      return `<div class="sp-empty" style="height:140px">
         <p style="font-size:13px">Состав пуст или данные недоступны</p>
         ${this.tab === 'ozon' ? `<button class="sp-btn sp-btn-primary" id="sp-add-items" style="margin-top:8px">${I.plus()} Добавить товары</button>` : ''}
+        ${this.tab === 'wb' ? `<p style="font-size:11px;color:var(--text2);margin-top:6px">Состав добавляется через ЛК WB или кнопку «Из заказов»</p>` : ''}
       </div>`;
     }
+    const total = this.detailItems.reduce((s, i) => s + i.qty, 0);
     return `<div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <span style="font-size:12px;color:var(--text2)">${this.detailItems.length} позиций</span>
+        <span style="font-size:12px;color:var(--text2)">${this.detailItems.length} позиций · ${total} шт.</span>
         <button class="sp-btn sp-btn-ghost" id="sp-export-csv" style="padding:3px 10px;font-size:11px">${I.download()} CSV</button>
       </div>
       <table class="sp-table">
@@ -473,8 +492,11 @@ export class SupplyManagementModule {
       return `<div class="sp-loading-inline">${I.loader()} Загружаем возвраты...</div>`;
     }
     if (!this.detailReturns.length) {
+      const msg = this.tab === 'yandex'
+        ? 'Данные о возвратах FBY недоступны через API.'
+        : 'Возвратов не найдено за последние 90 дней.';
       return `<div class="sp-empty" style="height:120px">
-        <p style="font-size:13px;color:#10b981">Возвратов не найдено</p>
+        <p style="font-size:13px;color:#10b981">${msg}</p>
       </div>`;
     }
     const total = this.detailReturns.reduce((s, r) => s + r.qty, 0);
@@ -512,33 +534,24 @@ export class SupplyManagementModule {
       if (btn) {
         const tabVal = btn.dataset.tab as Tab | undefined;
         if (tabVal) {
-          this.tab = tabVal;
-          this.storeId = '';
-          this.supplies = [];
-          this.detail = null;
-          this.detailItems = [];
-          this.detailReturns = [];
-          this.recoItems = [];
-          this.supplyStats = { draft: 0, sending: 0, delivered: 0, cancelled: 0 };
-          this.rebuildHeaderActions();
-          this.flush();
-          this.loadStores();
+          this.tab = tabVal; this.storeId = ''; this.supplies = []; this.detail = null;
+          this.detailItems = []; this.detailReturns = []; this.recoItems = []; this.error = '';
+          this.supplyStats = { draft:0, sending:0, delivered:0, cancelled:0 };
+          this.searchQuery = ''; this.statusFilter = '';
+          this.rebuildHeaderActions(); this.flush(); this.loadStores();
           return;
         }
-
         const dtTab = btn.dataset.detailTab as DetailTab | undefined;
         if (dtTab) {
           this.detailTab = dtTab;
           if (dtTab === 'items' && !this.detailItems.length && !this.detailItemsLoading) this.loadDetailItems();
           if (dtTab === 'returns' && !this.detailReturns.length && !this.detailReturnsLoading) this.loadDetailReturns();
-          this.flush();
-          return;
+          this.flush(); return;
         }
-
         switch (btn.id) {
           case 'sp-create': case 'sp-create-empty': this.openCreateDialog(); break;
           case 'sp-wizard': case 'sp-wizard-empty': this.openWbWizard(); break;
-          case 'sp-refresh': this.loadSupplies(); break;
+          case 'sp-refresh': this.error = ''; this.loadSupplies(); break;
           case 'sp-back': this.detail = null; this.detailItems = []; this.detailReturns = []; this.flush(); break;
           case 'sp-send': this.sendSupply(); break;
           case 'sp-barcodes': this.downloadBarcodes(); break;
@@ -548,10 +561,10 @@ export class SupplyManagementModule {
           case 'sp-reco-load': this.loadReco(); break;
           case 'sp-export-csv': this.exportCsv(); break;
           case 'sp-clear-filter': this.searchQuery = ''; this.statusFilter = ''; this.flush(); break;
+          case 'sp-help': this.openHelpModal(); break;
         }
       }
 
-      // quick-send must be checked BEFORE the generic row open to avoid double-fire
       if (row) {
         const action = row.dataset.action;
         const id = row.dataset.id;
@@ -570,29 +583,18 @@ export class SupplyManagementModule {
 
     this.el.addEventListener('input', (e) => {
       const inp = e.target as HTMLInputElement;
-      if (inp.id === 'sp-search') {
-        this.searchQuery = inp.value;
-        this.flush();
-      }
+      if (inp.id === 'sp-search') { this.searchQuery = inp.value; this.flush(); }
     });
 
     this.el.addEventListener('change', (e) => {
       const sel = e.target as HTMLSelectElement;
       if (sel.id === 'sp-store') {
-        this.storeId = sel.value;
-        this.supplies = [];
-        this.supplyStats = { draft: 0, sending: 0, delivered: 0, cancelled: 0 };
-        this.detail = null;
-        this.recoItems = [];
-        this.searchQuery = '';
-        this.statusFilter = '';
-        if (this.storeId) this.loadSupplies();
-        else this.flush();
+        this.storeId = sel.value; this.supplies = []; this.detail = null;
+        this.recoItems = []; this.error = ''; this.searchQuery = ''; this.statusFilter = '';
+        this.supplyStats = { draft:0, sending:0, delivered:0, cancelled:0 };
+        if (this.storeId) this.loadSupplies(); else this.flush();
       }
-      if (sel.id === 'sp-status-filter') {
-        this.statusFilter = sel.value;
-        this.flush();
-      }
+      if (sel.id === 'sp-status-filter') { this.statusFilter = sel.value; this.flush(); }
     });
   }
 
@@ -622,9 +624,7 @@ export class SupplyManagementModule {
 
     if (!this.stores.length) {
       sel.innerHTML = '<option value="">Нет магазинов</option>';
-      this.storeId = '';
-      this.flush();
-      return;
+      this.storeId = ''; this.flush(); return;
     }
     sel.innerHTML = '<option value="">— Магазин —</option>' +
       this.stores.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
@@ -641,57 +641,82 @@ export class SupplyManagementModule {
 
   private async loadSupplies(): Promise<void> {
     if (!this.storeId) return;
-    this.loading = true;
-    this.flush();
+    this.loading = true; this.error = ''; this.flush();
     try {
       this.supplies = [];
       const store = this.stores.find(s => s.id === this.storeId)!;
 
       if (this.tab === 'ozon') {
         let list: any[] = [];
-        try { list = await ozonApi.getSupplies({ client_id: store.client_id, api_key: store.api_key }); }
-        catch (err: any) {
-          if (err.message?.includes('404') || err.status === 404)
-            showToast('FBO поставки недоступны — нет FBO-склада у этого магазина', 'info');
-          else throw err;
+        try {
+          list = await ozonApi.getSupplies({ client_id: store.client_id, api_key: store.api_key });
+        } catch (err: any) {
+          if (err.message?.includes('404') || String(err.status) === '404') {
+            this.error = 'У этого магазина нет FBO-склада Ozon. Подключите FBO в Seller Portal → Склады → Добавить склад Ozon.';
+          } else {
+            this.error = `Ошибка Ozon API: ${err.message}`;
+          }
         }
         this.supplies = list.map(s => ({
-          id: s.supply_order_id ?? s.id ?? '',
-          name: s.name ?? `Поставка ${s.supply_order_id}`,
+          id: String(s.supply_order_id ?? s.id ?? ''),
+          name: s.name ?? `Поставка ${s.supply_order_id ?? s.id}`,
           status: s.status ?? 'draft',
           createdAt: s.created_at ?? new Date().toISOString(),
           itemsCount: s.items_count ?? s.items?.length ?? 0,
         }));
 
       } else if (this.tab === 'wb') {
-        const list = await wbApi.getWbSupplies(store.api_key);
-        this.supplies = list.map(s => ({
-          id: s.id,
-          name: s.name ?? `Поставка ${s.id}`,
-          status: s.done ? 'done' : 'draft',
-          createdAt: s.createdAt ?? new Date().toISOString(),
-          itemsCount: s.orderCount ?? 0,
-        }));
+        try {
+          const list = await wbApi.getWbSupplies(store.api_key);
+          this.supplies = list.map(s => ({
+            id: String(s.id ?? ''),
+            name: s.name ?? `Поставка ${s.id}`,
+            status: s.done ? 'done' : 'draft',
+            createdAt: s.createdAt ?? new Date().toISOString(),
+            itemsCount: s.orderCount ?? 0,
+          }));
+        } catch (err: any) {
+          this.error = `Ошибка WB API: ${err.message}. Проверьте права токена (нужны права «Поставки»).`;
+        }
 
       } else {
-        const list = await getYandexShipments(store as any, {
-          dateFrom: new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10),
-        });
-        this.supplies = list.map((s: any) => ({
-          id: String(s.id ?? ''),
-          name: s.externalId ? `Отгрузка #${s.externalId}` : `Отгрузка ЯМ-${s.id}`,
-          status: s.status ?? 'CREATED',
-          createdAt: s.planIntervalFrom ?? new Date().toISOString(),
-          itemsCount: s.ordersCount ?? s.orderIds?.length ?? 0,
-        }));
+        // Yandex
+        const campaign_id = store.campaign_id;
+        if (!campaign_id) {
+          this.error = 'У магазина не заполнен Campaign ID. Откройте Настройки → Магазины → Яндекс и укажите ID кампании (находится в ЯМ → Настройки → О магазине).';
+        } else {
+          try {
+            const list = await getYandexShipments(store as any, {
+              dateFrom: new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10),
+            });
+            this.supplies = list.map((s: any) => ({
+              id: String(s.id ?? ''),
+              name: s.externalId ? `Отгрузка #${s.externalId}` : s.planIntervalFrom ? `Отгрузка ${s.planIntervalFrom.slice(0,10)}` : `Отгрузка ЯМ-${s.id}`,
+              status: s.status ?? 'CREATED',
+              createdAt: s.planIntervalFrom ?? new Date().toISOString(),
+              itemsCount: s.ordersCount ?? s.orderIds?.length ?? 0,
+            }));
+          } catch (err: any) {
+            const msg = String(err.message ?? '');
+            if (msg.includes('404') || msg.includes('NOT_FOUND')) {
+              this.error = 'Этот магазин Яндекс Маркет не использует схему FBY (Fulfillment by Yandex). ' +
+                'Вкладка «Поставки» работает только с FBY-магазинами. ' +
+                'Если ваш магазин работает по DBS или Экспресс — управляйте отгрузками напрямую в ЛК Яндекс Маркет. ' +
+                'Если вы уверены что магазин FBY, проверьте правильность Campaign ID в настройках.';
+            } else if (msg.includes('403') || msg.includes('FORBIDDEN')) {
+              this.error = 'Нет доступа к отгрузкам ЯМ. Проверьте что API-ключ имеет права на управление отгрузками (FBY).';
+            } else {
+              this.error = `Ошибка ЯМ API: ${msg}`;
+            }
+          }
+        }
       }
 
       this.calcStats();
     } catch (err: any) {
-      showToast(`Ошибка загрузки: ${err.message}`, 'error');
+      this.error = `Ошибка: ${err.message}`;
     } finally {
-      this.loading = false;
-      this.flush();
+      this.loading = false; this.flush();
     }
   }
 
@@ -699,37 +724,37 @@ export class SupplyManagementModule {
 
   private async loadDetailItems(): Promise<void> {
     if (!this.detail) return;
-    this.detailItemsLoading = true;
-    this.flush();
+    this.detailItemsLoading = true; this.flush();
     try {
       const store = this.stores.find(s => s.id === this.storeId)!;
 
       if (this.tab === 'ozon') {
         const d = await ozonApi.getSupplyDetails({ client_id: store.client_id, api_key: store.api_key }, this.detail.id);
-        const items: any[] = d?.items ?? d?.supply_order_items ?? [];
+        // Ozon API can return items in different shapes
+        const items: any[] = d?.items ?? d?.supply_order_items ?? d?.result?.items ?? [];
         this.detailItems = items.map((i: any) => ({
-          name: i.name ?? i.product_name ?? `SKU ${i.sku}`,
-          qty: i.quantity ?? 0,
-          sku: String(i.sku ?? i.offer_id ?? ''),
+          name: i.name ?? i.product_name ?? `SKU ${i.sku ?? i.offer_id ?? ''}`,
+          qty: i.quantity ?? i.quant ?? 0,
+          sku: String(i.sku ?? i.offer_id ?? i.product_id ?? ''),
         }));
 
       } else if (this.tab === 'wb') {
         const orders = await wbApi.getSupplyOrders(store.api_key, this.detail.id);
         this.detailItems = orders.map((o: any) => ({
-          name: o.article ?? o.offerId ?? `Заказ ${o.id}`,
+          name: o.article ?? o.offerId ?? o.supplierArticle ?? `Заказ ${o.id}`,
           qty: 1,
           sku: String(o.nmId ?? o.nm_id ?? o.id ?? ''),
         }));
 
       } else {
+        // YM: no direct shipment-items endpoint, show empty with note
         this.detailItems = [];
       }
     } catch (err: any) {
       this.detailItems = [];
       showToast(`Состав: ${err.message}`, 'warning');
     } finally {
-      this.detailItemsLoading = false;
-      this.flush();
+      this.detailItemsLoading = false; this.flush();
     }
   }
 
@@ -737,8 +762,7 @@ export class SupplyManagementModule {
 
   private async loadDetailReturns(): Promise<void> {
     if (!this.detail) return;
-    this.detailReturnsLoading = true;
-    this.flush();
+    this.detailReturnsLoading = true; this.flush();
     try {
       const store = this.stores.find(s => s.id === this.storeId)!;
 
@@ -752,23 +776,21 @@ export class SupplyManagementModule {
         const allReturns = [...fboReturns, ...fbsResult.returns];
         const filtered = itemSkus.size > 0
           ? allReturns.filter((r: any) => itemSkus.has(String(r.sku ?? r.offer_id ?? '')))
-          : allReturns.slice(0, 50);  // no items loaded: show recent returns as proxy
+          : allReturns.slice(0, 50);
         this.detailReturns = filtered.map((r: any) => ({
-          name: r.product_name ?? r.name ?? `SKU ${r.sku}`,
+          name: r.product_name ?? r.name ?? `SKU ${r.sku ?? ''}`,
           qty: r.quantity ?? 1,
-          reason: r.return_reason ?? r.reason_name ?? r.reason,
+          reason: r.return_reason ?? r.reason_name ?? r.reason ?? '—',
           date: r.accepted_at ?? r.created_at,
         }));
 
       } else if (this.tab === 'wb') {
-        // Use proper returns endpoint (fetchWbReturns), not sales analytics
         const dateFrom = new Date(Date.now() - 90 * 86_400_000).toISOString();
         const [returns, supplyOrders] = await Promise.all([
           fetchWbReturns(store.api_key, dateFrom),
           wbApi.getSupplyOrders(store.api_key, this.detail.id).catch(() => []),
         ]);
         const orderNmIds = new Set(supplyOrders.map((o: any) => o.nmId ?? o.nm_id));
-        // Filter by nmId if supply has orders, otherwise show recent returns as proxy
         const filtered = orderNmIds.size > 0
           ? returns.filter(r => r.nmId != null && orderNmIds.has(r.nmId))
           : returns.slice(0, 50);
@@ -780,40 +802,45 @@ export class SupplyManagementModule {
         }));
 
       } else {
-        // Yandex: no returns API for FBY, show placeholder
-        this.detailReturns = [];
+        // Yandex: use getYandexReturns (global for this campaign)
+        try {
+          const dateFrom = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
+          const returns = await getYandexReturns(store as any, { dateFrom });
+          this.detailReturns = returns.slice(0, 50).map((r: any) => ({
+            name: r.item?.offerName ?? r.item?.offerId ?? `Заказ ${r.orderId}`,
+            qty: r.item?.count ?? 1,
+            reason: r.returnDecision ?? r.status ?? '—',
+            date: r.creationDate ?? r.returnDate,
+          }));
+        } catch {
+          this.detailReturns = [];
+        }
       }
     } catch {
       this.detailReturns = [];
     } finally {
-      this.detailReturnsLoading = false;
-      this.flush();
+      this.detailReturnsLoading = false; this.flush();
     }
   }
 
   // ── Data: recommendations ────────────────────────────────────────────────────
 
   private async loadReco(): Promise<void> {
-    this.recoLoading = true;
-    this.flush();
+    this.recoLoading = true; this.flush();
     try {
       const w = window as any;
       const stockItems: any[] = w.stockModule?.items ?? [];
       const mpFilter = this.tab === 'ozon' ? 'ozon' : this.tab === 'wb' ? 'wb' : 'yandex';
-      const storeFilter = this.storeId;
 
-      let baseItems = stockItems.filter(i =>
-        i.mp === mpFilter && (!storeFilter || i.storeId === storeFilter),
+      const baseItems = stockItems.filter(i =>
+        i.mp === mpFilter && (!this.storeId || i.storeId === this.storeId),
       );
 
       if (!baseItems.length) {
-        showToast('Загрузите остатки в разделе «Остатки» для аналитики пополнения', 'info');
-        this.recoLoading = false;
-        this.flush();
-        return;
+        showToast('Загрузите остатки в разделе «Остатки» для аналитики', 'info');
+        this.recoLoading = false; this.flush(); return;
       }
 
-      // Try to get velocity data from API
       let velocityMap: Map<string, number> = new Map();
       try {
         const store = this.stores.find(s => s.id === this.storeId) ?? this.stores[0];
@@ -836,13 +863,11 @@ export class SupplyManagementModule {
               const stats = await getYandexSkuStats(store as any, { dateFrom, dateTo, offerIds });
               for (const s of stats) {
                 const key = s.shopSku ?? s.offerId ?? '';
-                const sold = (s.orderedItems ?? 0) / 30;
-                if (key) velocityMap.set(key, sold);
+                if (key) velocityMap.set(key, (s.orderedItems ?? 0) / 30);
               }
             }
 
           } else if (this.tab === 'ozon') {
-            // Use getStocksDynamics — needs numeric productIds from StockModule
             const productIds: number[] = baseItems
               .map(i => Number(i.productId ?? i.product_id))
               .filter(id => id > 0)
@@ -856,13 +881,13 @@ export class SupplyManagementModule {
               );
               for (const d of dynamics) {
                 const key = String(d.product_id ?? d.sku ?? '');
-                const sold = d.items?.reduce?.((s: number, item: any) => s + (item.quantity_sold ?? 0), 0) ?? 0;
+                const sold = d.items?.reduce?.((acc: number, item: any) => acc + (item.quantity_sold ?? 0), 0) ?? 0;
                 if (key && sold > 0) velocityMap.set(key, sold / 30);
               }
             }
           }
         }
-      } catch { /* velocity stays empty — fallback to stock level only */ }
+      } catch { /* fallback to stock-only */ }
 
       this.recoItems = baseItems
         .map(i => {
@@ -870,27 +895,17 @@ export class SupplyManagementModule {
           const key = String(i.productId ?? i.product_id ?? i.nmId ?? i.offerId ?? i.offer_id ?? '');
           const dailySales = velocityMap.get(key) ?? (stock > 0 ? stock / 45 : 0.1);
           const daysLeft = dailySales > 0 ? Math.round(stock / dailySales) : 999;
-          return {
-            name: (i.name ?? i.offerId ?? 'Товар').slice(0, 50),
-            sku: key,
-            stock,
-            dailySales,
-            daysLeft,
-            mp: mpFilter,
-          } as RecoItem;
+          return { name: (i.name ?? i.offerId ?? 'Товар').slice(0, 50), sku: key, stock, dailySales, daysLeft, mp: mpFilter } as RecoItem;
         })
         .filter(i => i.daysLeft <= 60)
         .sort((a, b) => a.daysLeft - b.daysLeft)
         .slice(0, 20);
 
-      if (!this.recoItems.length) {
-        showToast('Все товары в норме — остатков хватает на 60+ дней', 'success');
-      }
+      if (!this.recoItems.length) showToast('Все товары в норме — остатков хватает на 60+ дней', 'success');
     } catch (err: any) {
       showToast(`Ошибка анализа: ${err.message}`, 'error');
     } finally {
-      this.recoLoading = false;
-      this.flush();
+      this.recoLoading = false; this.flush();
     }
   }
 
@@ -900,13 +915,18 @@ export class SupplyManagementModule {
     if (!this.storeId) { showToast('Выберите магазин', 'warning'); return; }
     if (this.tab === 'yandex') { this.openYmDialog(); return; }
 
-    const ov = this.modal(`Новая поставка ${this.tab === 'ozon' ? 'Ozon FBO' : 'WB'}`);
+    const ov = this.modal(`Новая поставка ${this.tab === 'ozon' ? 'Ozon FBO' : 'WB FBW'}`);
     ov.body.innerHTML = `
       <form id="sp-dlg-form" class="sp-form">
         <div class="sp-field">
           <label class="sp-label">Название поставки</label>
-          <input name="name" required placeholder="Название" class="sp-input" autofocus>
+          <input name="name" required placeholder="Например: Поставка июль 2026" class="sp-input" autofocus>
         </div>
+        ${this.tab === 'ozon' ? `<div class="sp-help-note">
+          После создания откроется состав поставки — там добавите товары по SKU.
+        </div>` : `<div class="sp-help-note">
+          После создания добавьте FBW-заказы через ЛК WB или используйте «Из заказов» при создании.
+        </div>`}
         <div class="sp-form-footer">
           <button type="button" class="sp-btn sp-btn-ghost" data-close>Отмена</button>
           <button type="submit" class="sp-btn sp-btn-primary">${I.plus()} Создать</button>
@@ -921,22 +941,28 @@ export class SupplyManagementModule {
   }
 
   private openYmDialog(): void {
+    const store = this.stores.find(s => s.id === this.storeId)!;
+    if (!store.campaign_id) {
+      this.openHelpModal('yandex');
+      showToast('У магазина не задан Campaign ID — смотри инструкцию', 'warning');
+      return;
+    }
     const slots = getYandexAvailableSlots(14);
     const ov = this.modal('Новая отгрузка Яндекс FBY');
     ov.body.innerHTML = `
       <form id="sp-dlg-form" class="sp-form">
         <div class="sp-field">
-          <label class="sp-label">Выберите дату начала приёмки</label>
+          <label class="sp-label">Дата начала приёмки</label>
           <div class="sp-slots">
             ${slots.map((sl, i) => `
               <label class="sp-slot-label">
-                <input type="radio" name="slotFrom" value="${sl.date}" ${i === 0 ? 'checked' : ''} style="display:none">
+                <input type="radio" name="slotFrom" value="${sl.date}" ${i===0?'checked':''} style="display:none">
                 <span class="sp-slot">${sl.label}</span>
               </label>`).join('')}
           </div>
         </div>
         <div class="sp-field">
-          <label class="sp-label">Длительность окна</label>
+          <label class="sp-label">Длительность окна приёмки</label>
           <select name="window" class="sp-input">
             <option value="1">1 день</option>
             <option value="2" selected>2 дня</option>
@@ -946,8 +972,9 @@ export class SupplyManagementModule {
         </div>
         <div class="sp-field">
           <label class="sp-label">Внешний ID (необязательно)</label>
-          <input name="externalId" placeholder="Ваш номер" class="sp-input">
+          <input name="externalId" placeholder="Ваш номер для учёта" class="sp-input">
         </div>
+        <div class="sp-help-note">ЯМ автоматически добавит заказы в вашу отгрузку по расписанию. После создания подтвердите её кнопкой «Подтвердить».</div>
         <div class="sp-form-footer">
           <button type="button" class="sp-btn sp-btn-ghost" data-close>Отмена</button>
           <button type="submit" class="sp-btn sp-btn-primary">${I.plus()} Создать отгрузку</button>
@@ -967,25 +994,35 @@ export class SupplyManagementModule {
   private async openWbWizard(): Promise<void> {
     if (!this.storeId) { showToast('Выберите магазин', 'warning'); return; }
     const store = this.stores.find(s => s.id === this.storeId)!;
-    const ov = this.modal('Создать поставку WB из заказов');
-    ov.body.innerHTML = `<div class="sp-loading-inline">${I.loader()} Загружаем новые заказы...</div>`;
+    const ov = this.modal('Создать поставку WB из новых заказов');
+    ov.body.innerHTML = `<div class="sp-loading-inline">${I.loader()} Загружаем новые FBW-заказы...</div>`;
 
     let orders: any[] = [];
-    try { orders = await wbApi.getNewOrders(store.api_key); }
-    catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); ov.el.remove(); return; }
-
-    if (!orders.length) {
-      ov.body.innerHTML = `<div class="sp-empty" style="height:80px"><p>Новых заказов нет</p></div>
-        <div class="sp-form-footer"><button class="sp-btn sp-btn-ghost" data-close>Закрыть</button></div>`;
+    try {
+      orders = await wbApi.getNewOrders(store.api_key);
+    } catch (err: any) {
+      ov.body.innerHTML = `<div class="sp-error-block" style="margin:0">
+        <div class="sp-error-text">${esc(err.message)}</div>
+        <p style="font-size:12px;color:var(--text2);margin-top:8px">Проверьте, что токен WB имеет права «Поставки» и магазин работает по схеме FBW.</p>
+      </div>
+      <div class="sp-form-footer"><button class="sp-btn sp-btn-ghost" data-close>Закрыть</button></div>`;
       return;
     }
 
-    // Group orders by article for readability
+    if (!orders.length) {
+      ov.body.innerHTML = `<div class="sp-empty" style="height:80px">
+        <p>Новых FBW-заказов нет</p>
+        <p style="font-size:11px;color:var(--text2);margin-top:6px">Заказы появятся когда покупатели оформят их на WB</p>
+      </div>
+      <div class="sp-form-footer"><button class="sp-btn sp-btn-ghost" data-close>Закрыть</button></div>`;
+      return;
+    }
+
     const grouped: Map<string, { article: string; count: number; ids: number[] }> = new Map();
     for (const o of orders) {
-      const art = String(o.article ?? o.offerId ?? o.id ?? '');
-      const existing = grouped.get(art);
-      if (existing) { existing.count++; existing.ids.push(o.id); }
+      const art = String(o.article ?? o.offerId ?? o.supplierArticle ?? o.id ?? '');
+      const ex = grouped.get(art);
+      if (ex) { ex.count++; ex.ids.push(o.id); }
       else grouped.set(art, { article: art, count: 1, ids: [o.id] });
     }
     const groups = [...grouped.values()];
@@ -1043,10 +1080,13 @@ export class SupplyManagementModule {
     ov.body.innerHTML = `
       <form id="sp-items-form" class="sp-form">
         <div class="sp-field">
-          <label class="sp-label">Введите SKU и количество (одна строка = один товар)</label>
-          <textarea name="items" rows="6" class="sp-input" placeholder="12345678:10&#10;87654321:5" style="resize:vertical"></textarea>
+          <label class="sp-label">SKU и количество (каждый товар с новой строки)</label>
+          <textarea name="items" rows="6" class="sp-input" placeholder="12345678:10&#10;87654321:5" style="resize:vertical;font-family:monospace"></textarea>
         </div>
-        <div style="font-size:11px;color:var(--text2)">Формат: числовой SKU Ozon двоеточие количество</div>
+        <div class="sp-help-note">
+          Формат: <code>числовой_SKU:количество</code><br>
+          FBO SKU найдёте в Ozon Seller → Товары → карточка → раздел «Характеристики» → FBO SKU (числовой).
+        </div>
         <div class="sp-form-footer">
           <button type="button" class="sp-btn sp-btn-ghost" data-close>Отмена</button>
           <button type="submit" class="sp-btn sp-btn-primary">${I.plus()} Добавить</button>
@@ -1067,23 +1107,167 @@ export class SupplyManagementModule {
         const store = this.stores.find(s => s.id === this.storeId)!;
         await ozonApi.addProductsToSupply({ client_id: store.client_id, api_key: store.api_key }, this.detail!.id, items);
         showToast(`Добавлено ${items.length} позиций`, 'success');
-        this.detailItems = [];
-        this.detailTab = 'items';
+        this.detailItems = []; this.detailTab = 'items';
         await this.loadDetailItems();
       } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
     });
   }
 
+  // ── Help modal ────────────────────────────────────────────────────────────────
+
+  private openHelpModal(defaultTab: Tab = this.tab): void {
+    const ov = this.modal('Как работают поставки');
+    ov.el.querySelector('.sp-modal')!.classList.add('sp-modal-wide');
+
+    let activeTab = defaultTab;
+    const render = () => {
+      ov.body.innerHTML = `
+        <div class="sp-help-tabs">
+          ${(['ozon','wb','yandex'] as Tab[]).map(t => `
+            <button class="sp-help-tab ${t===activeTab?'active':''}" data-htab="${t}">
+              ${t==='ozon'?'Ozon FBO':t==='wb'?'Wildberries FBW':'Яндекс FBY'}
+            </button>`).join('')}
+        </div>
+        <div class="sp-help-body">
+          ${activeTab==='ozon' ? this.helpOzon() : activeTab==='wb' ? this.helpWb() : this.helpYm()}
+        </div>`;
+      ov.body.querySelectorAll('[data-htab]').forEach(btn => {
+        btn.addEventListener('click', () => { activeTab = (btn as HTMLElement).dataset.htab as Tab; render(); });
+      });
+    };
+    render();
+  }
+
+  private helpOzon(): string {
+    return `
+      <div class="sp-help-section">
+        <h3>Что такое Ozon FBO?</h3>
+        <p>FBO (Fulfillment by Ozon) — модель, при которой вы отгружаете товары на склад Ozon, а Ozon сам хранит, упаковывает и доставляет их покупателям.</p>
+      </div>
+      <div class="sp-help-section">
+        <h3>Предварительные требования</h3>
+        <ul>
+          <li>В <b>Ozon Seller Portal</b> подключён FBO-склад: раздел <b>Склады → Добавить склад Ozon</b></li>
+          <li>API-ключ в настройках SimaDesk имеет права <b>«Поставки»</b></li>
+          <li>Товары загружены в Ozon и имеют <b>FBO SKU</b> (числовой)</li>
+        </ul>
+      </div>
+      <div class="sp-help-section">
+        <h3>Как создать поставку — пошагово</h3>
+        <ol>
+          <li>Нажмите <b>«Создать»</b>, введите название поставки</li>
+          <li>Откроется карточка поставки в статусе «Черновик»</li>
+          <li>Перейдите во вкладку <b>«Состав»</b>, нажмите <b>«+ Товары»</b></li>
+          <li>Введите <b>числовой FBO SKU</b> и количество (SKU есть в карточке товара Ozon Seller → Характеристики)</li>
+          <li>Нажмите <b>«Отправить»</b> — поставка перейдёт в «Ожидание»</li>
+          <li>Физически привезите товар на FBO-склад Ozon в согласованные сроки</li>
+          <li>После приёмки статус изменится на <b>«Принята»</b></li>
+        </ol>
+      </div>
+      <div class="sp-help-section">
+        <h3>Частые проблемы</h3>
+        <ul>
+          <li><b>Ошибка 404</b> — нет FBO-склада. Подключите в Seller Portal → Склады</li>
+          <li><b>Ошибка 403</b> — у API-ключа нет прав на поставки. Создайте ключ с нужными правами</li>
+          <li><b>«Нет товаров в составе»</b> — добавьте SKU через кнопку «+ Товары» в карточке поставки</li>
+        </ul>
+      </div>`;
+  }
+
+  private helpWb(): string {
+    return `
+      <div class="sp-help-section">
+        <h3>Что такое WB FBW?</h3>
+        <p>FBW (Fulfillment by Wildberries) — вы привозите товары на склад WB, WB хранит их и отправляет покупателям. Называется также «FBO на WB».</p>
+      </div>
+      <div class="sp-help-section">
+        <h3>Предварительные требования</h3>
+        <ul>
+          <li>Токен WB в настройках SimaDesk должен иметь права <b>«Поставки»</b></li>
+          <li>В WB ЛК у вас активирована схема работы <b>FBW</b></li>
+          <li>Покупатели уже оформили заказы (или создавайте поставку без заказов)</li>
+        </ul>
+      </div>
+      <div class="sp-help-section">
+        <h3>Способ 1: Из новых заказов (рекомендуется)</h3>
+        <ol>
+          <li>Нажмите <b>«Из заказов»</b> — загрузятся новые FBW-заказы</li>
+          <li>Выберите нужные артикулы и задайте название поставки</li>
+          <li>Нажмите <b>«Создать поставку»</b></li>
+          <li>В карточке поставки нажмите <b>«Отправить»</b></li>
+          <li>Скачайте <b>QR-код (Этикетки)</b> — он нужен на ПВЗ WB</li>
+          <li>Привезите товары в любой ПВЗ/склад WB, предъявите QR-код</li>
+        </ol>
+      </div>
+      <div class="sp-help-section">
+        <h3>Способ 2: Вручную</h3>
+        <ol>
+          <li>Нажмите <b>«Создать»</b>, задайте название</li>
+          <li>Добавьте заказы в поставку через <b>ЛК WB → Поставки</b></li>
+          <li>Вернитесь в SimaDesk и нажмите «Отправить»</li>
+        </ol>
+      </div>
+      <div class="sp-help-section">
+        <h3>Частые проблемы</h3>
+        <ul>
+          <li><b>«Нет новых заказов»</b> — заказы ещё не поступили или уже добавлены в другую поставку</li>
+          <li><b>Ошибка API</b> — проверьте что токен WB имеет права «Поставки» (не только «Контент»)</li>
+          <li><b>Статус не меняется</b> — WB обновляет статусы асинхронно, обновите список через несколько минут</li>
+        </ul>
+      </div>`;
+  }
+
+  private helpYm(): string {
+    return `
+      <div class="sp-help-section">
+        <h3>Что такое Яндекс FBY?</h3>
+        <p>FBY (Fulfillment by Yandex) — вы отгружаете товары на склад Яндекса, Яндекс хранит и доставляет их. Это основная схема хранения на ЯМ.</p>
+      </div>
+      <div class="sp-help-section">
+        <h3>Предварительные требования</h3>
+        <ul>
+          <li>В настройках магазина в SimaDesk заполнен <b>Campaign ID</b></li>
+          <li>Где взять Campaign ID: <b>Яндекс Маркет → Настройки → О магазине → ID кампании</b></li>
+          <li>API-ключ должен иметь права для работы с отгрузками</li>
+          <li>Магазин работает по схеме <b>FBY</b> в ЯМ</li>
+        </ul>
+      </div>
+      <div class="sp-help-section">
+        <h3>Как создать отгрузку — пошагово</h3>
+        <ol>
+          <li>Нажмите <b>«Создать»</b></li>
+          <li>Выберите <b>дату начала приёмки</b> — ближайший рабочий день когда привезёте товар</li>
+          <li>Выберите <b>длительность окна</b> — сколько дней у вас займёт доставка (обычно 1–2 дня)</li>
+          <li>Нажмите <b>«Создать отгрузку»</b></li>
+          <li>ЯМ автоматически добавит заказы в отгрузку по плановому интервалу</li>
+          <li>Нажмите <b>«Подтвердить»</b> — отгрузка будет подтверждена</li>
+          <li>Привезите товары на <b>склад Яндекса</b> в указанное окно</li>
+          <li>Скачайте <b>Этикетки</b> — потребуются при сдаче на склад</li>
+        </ol>
+      </div>
+      <div class="sp-help-section">
+        <h3>Частые проблемы</h3>
+        <ul>
+          <li><b>«Campaign ID не задан»</b> — откройте Настройки → Магазины → ваш ЯМ магазин → укажите Campaign ID</li>
+          <li><b>Нет отгрузок</b> — возможно, у магазина нет активных заказов в этом периоде</li>
+          <li><b>Ошибка подтверждения</b> — отгрузку нельзя подтвердить раньше определённого срока, попробуйте позже</li>
+        </ul>
+      </div>`;
+  }
+
   // ── API Actions ───────────────────────────────────────────────────────────────
 
   private async createSupply(name: string): Promise<void> {
+    this.busy = true; this.flush();
     try {
       const store = this.stores.find(s => s.id === this.storeId)!;
       let newId = '';
       if (this.tab === 'ozon') {
-        const wh = await ozonApi.getWarehouses({ client_id: store.client_id, api_key: store.api_key });
-        if (!wh.length) throw new Error('Нет FBO складов Ozon');
-        const res = await ozonApi.createSupply({ client_id: store.client_id, api_key: store.api_key }, wh[0].warehouse_id, name);
+        const warehouses = await ozonApi.getWarehouses({ client_id: store.client_id, api_key: store.api_key });
+        if (!warehouses.length) throw new Error('У магазина нет складов Ozon. Подключите FBO-склад в Seller Portal.');
+        // Try to find an FBO warehouse by name; fall back to first
+        const fboWh = warehouses.find(w => /fbo/i.test(w.name)) ?? warehouses[0];
+        const res = await ozonApi.createSupply({ client_id: store.client_id, api_key: store.api_key }, fboWh.warehouse_id, name);
         newId = res.supplyId;
       } else {
         const res = await wbApi.createWbSupply(store.api_key, name);
@@ -1091,71 +1275,82 @@ export class SupplyManagementModule {
       }
       showToast('Поставка создана', 'success');
       await this.loadSupplies();
-      // Navigate directly into the new supply
       if (newId) {
         const found = this.supplies.find(s => s.id === newId);
-        if (found) { this.detail = found; this.detailTab = 'overview'; this.flush(); }
+        if (found) { this.detail = found; this.detailTab = 'overview'; }
       }
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
-  }
-
-  private exportCsv(): void {
-    if (!this.detailItems.length) return;
-    const rows = [['Название', 'SKU / Артикул', 'Количество']];
-    for (const item of this.detailItems) {
-      rows.push([item.name, item.sku ?? '', String(item.qty)]);
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    } finally {
+      this.busy = false; this.flush();
     }
-    const csv = rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    Object.assign(document.createElement('a'), {
-      href: url,
-      download: `supply_${this.detail?.id ?? 'export'}.csv`,
-    }).click();
-    URL.revokeObjectURL(url);
-    showToast('CSV скачан', 'success');
   }
 
   private async createYmShipment(dateFrom: string, dateTo: string, externalId?: string): Promise<void> {
+    this.busy = true; this.flush();
     try {
       const store = this.stores.find(s => s.id === this.storeId)!;
-      if (!store.campaign_id) throw new Error('campaign_id не задан');
+      if (!store.campaign_id) throw new Error('campaign_id не задан — укажите в настройках магазина');
       await yandexApi.createShipment(store.api_key, Number(store.campaign_id), {
-        planIntervalFrom: dateFrom, planIntervalTo: dateTo,
+        planIntervalFrom: dateFrom,
+        planIntervalTo: dateTo,
         ...(externalId ? { externalId } : {}),
       });
       showToast('Отгрузка ЯМ создана', 'success');
       await this.loadSupplies();
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    } finally {
+      this.busy = false; this.flush();
+    }
   }
 
   private async createWbSupplyFromOrders(name: string, orderIds: number[], apiKey: string): Promise<void> {
+    this.busy = true; this.flush();
     try {
       const { supplyId } = await wbApi.createWbSupply(apiKey, name);
+      if (!supplyId) throw new Error('WB не вернул ID поставки');
       await wbApi.addOrdersToSupply(apiKey, supplyId, orderIds);
       showToast(`Поставка «${name}» создана с ${orderIds.length} заказами`, 'success');
       await this.loadSupplies();
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
+      const found = this.supplies.find(s => s.id === supplyId);
+      if (found) { this.detail = found; this.detailTab = 'overview'; }
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    } finally {
+      this.busy = false; this.flush();
+    }
   }
 
   private async sendSupply(): Promise<void> {
-    if (!this.detail || !confirm('Отправить/подтвердить поставку?')) return;
+    if (!this.detail) return;
+    const confirmMsg = this.tab === 'yandex'
+      ? 'Подтвердить отгрузку в Яндекс Маркет?'
+      : 'Отправить поставку? После отправки редактирование будет невозможно.';
+    if (!confirm(confirmMsg)) return;
+    this.busy = true; this.flush();
     try {
       const store = this.stores.find(s => s.id === this.storeId)!;
       if (this.tab === 'ozon')
         await ozonApi.sendSupply({ client_id: store.client_id, api_key: store.api_key }, this.detail.id);
       else if (this.tab === 'wb')
         await wbApi.deliverSupply(store.api_key, this.detail.id);
-      else
+      else {
+        if (!store.campaign_id) throw new Error('campaign_id не задан');
         await yandexApi.confirmShipment(store.api_key, Number(store.campaign_id), Number(this.detail.id));
-      showToast('Поставка отправлена', 'success');
-      this.detail.status = this.tab === 'yandex' ? 'TRANSFERRED' : 'sending';
-      this.flush();
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
+      }
+      showToast('Поставка отправлена/подтверждена', 'success');
+      this.detail.status = this.tab === 'yandex' ? 'TRANSFERRED' : this.tab === 'ozon' ? 'awaiting_deliver' : 'done';
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    } finally {
+      this.busy = false; this.flush();
+    }
   }
 
   private async downloadBarcodes(): Promise<void> {
     if (!this.detail) return;
+    this.busy = true; this.flush();
     try {
       let blob: Blob;
       const store = this.stores.find(s => s.id === this.storeId)!;
@@ -1168,29 +1363,50 @@ export class SupplyManagementModule {
       const url = URL.createObjectURL(blob);
       Object.assign(document.createElement('a'), { href: url, download: `supply_${this.detail.id}.pdf` }).click();
       URL.revokeObjectURL(url);
-      showToast('Файл скачан', 'success');
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
+      showToast('Этикетки скачаны', 'success');
+    } catch (err: any) {
+      showToast(`Ошибка скачивания: ${err.message}`, 'error');
+    } finally {
+      this.busy = false; this.flush();
+    }
   }
 
   private async cancelSupply(): Promise<void> {
-    if (!this.detail || !confirm('Отменить поставку?')) return;
+    if (!this.detail || !confirm('Отменить поставку? Это действие необратимо.')) return;
+    if (this.tab !== 'ozon') { showToast('Отмена через API доступна только для Ozon', 'info'); return; }
+    this.busy = true; this.flush();
     try {
-      if (this.tab !== 'ozon') { showToast('Отмена доступна только для Ozon', 'info'); return; }
       const store = this.stores.find(s => s.id === this.storeId)!;
       await ozonApi.cancelSupply({ client_id: store.client_id, api_key: store.api_key }, this.detail.id);
       showToast('Поставка отменена', 'success');
       this.detail = null; this.detailItems = []; this.detailReturns = [];
       await this.loadSupplies();
-    } catch (err: any) { showToast(`Ошибка: ${err.message}`, 'error'); }
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    } finally {
+      this.busy = false; this.flush();
+    }
   }
 
-  // ── Stats ────────────────────────────────────────────────────────────────────
+  private exportCsv(): void {
+    if (!this.detailItems.length) return;
+    const rows = [['Название', 'SKU / Артикул', 'Количество']];
+    for (const item of this.detailItems) rows.push([item.name, item.sku ?? '', String(item.qty)]);
+    const csv = rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    Object.assign(document.createElement('a'), { href: url, download: `supply_${this.detail?.id ?? 'export'}.csv` }).click();
+    URL.revokeObjectURL(url);
+    showToast('CSV скачан', 'success');
+  }
+
+  // ── Stats ─────────────────────────────────────────────────────────────────────
 
   private calcStats(): void {
-    const draft = new Set(['draft', 'CREATED', 'awaiting_deliver']);
-    const send  = new Set(['sent', 'delivering', 'READY_TO_TRANSFER', 'TRANSFERRED']);
-    const done  = new Set(['delivered', 'received', 'done', 'ACCEPTED']);
-    const cncl  = new Set(['cancelled', 'CANCELLED_BY_PARTNER']);
+    const draft = new Set(['draft','CREATED','awaiting_deliver']);
+    const send  = new Set(['sent','delivering','READY_TO_TRANSFER','TRANSFERRED']);
+    const done  = new Set(['delivered','received','done','ACCEPTED']);
+    const cncl  = new Set(['cancelled','CANCELLED_BY_PARTNER']);
     this.supplyStats = {
       draft:     this.supplies.filter(s => draft.has(s.status)).length,
       sending:   this.supplies.filter(s => send.has(s.status)).length,
@@ -1199,7 +1415,7 @@ export class SupplyManagementModule {
     };
   }
 
-  // ── AI Public API ────────────────────────────────────────────────────────────
+  // ── AI Public API ─────────────────────────────────────────────────────────────
 
   getYmSlots(daysAhead = 14) { return getYandexAvailableSlots(daysAhead); }
 
@@ -1223,7 +1439,7 @@ export class SupplyManagementModule {
     return `Создана поставка "${supplyName}" с ${orders.length} заказами`;
   }
 
-  // ── Modal helper ─────────────────────────────────────────────────────────────
+  // ── Modal helper ──────────────────────────────────────────────────────────────
 
   private modal(title: string): { el: HTMLDivElement; body: HTMLDivElement } {
     const el = document.createElement('div');
@@ -1243,14 +1459,13 @@ export class SupplyManagementModule {
     return { el, body: el.querySelector('.sp-modal-body') as HTMLDivElement };
   }
 
-  // ── CSS ──────────────────────────────────────────────────────────────────────
+  // ── CSS ───────────────────────────────────────────────────────────────────────
 
   private injectStyles(): void {
     if (document.getElementById('sp-styles')) return;
     const s = document.createElement('style');
     s.id = 'sp-styles';
     s.textContent = `
-      /* Root */
       .sp-root { display:flex;flex-direction:column;height:100%;min-height:0;font-family:inherit }
 
       /* Header */
@@ -1264,8 +1479,7 @@ export class SupplyManagementModule {
       .sp-logo-icon {
         width:32px;height:32px;border-radius:9px;
         background:linear-gradient(135deg,#f59e0b,#d97706);
-        display:flex;align-items:center;justify-content:center;
-        color:#fff;font-size:14px;flex-shrink:0
+        display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;flex-shrink:0
       }
       .sp-logo-text { font-size:15px;font-weight:800;color:var(--text);white-space:nowrap }
 
@@ -1284,20 +1498,24 @@ export class SupplyManagementModule {
         font-size:12px;font-weight:600;cursor:pointer;border:none;transition:all .15s;white-space:nowrap
       }
       .sp-btn-primary { background:#f59e0b;color:#fff }
-      .sp-btn-primary:hover { background:#d97706 }
+      .sp-btn-primary:hover:not(:disabled) { background:#d97706 }
       .sp-btn-purple { background:#6366f122;color:#6366f1;border:1px solid #6366f133 }
-      .sp-btn-purple:hover { background:#6366f133 }
+      .sp-btn-purple:hover:not(:disabled) { background:#6366f133 }
       .sp-btn-ghost { background:var(--bg3);color:var(--text2);border:1px solid var(--border) }
-      .sp-btn-ghost:hover { color:var(--text);background:var(--bg2) }
+      .sp-btn-ghost:hover:not(:disabled) { color:var(--text);background:var(--bg2) }
       .sp-btn-active { background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44 }
       .sp-btn-danger { background:#ef444422;color:#ef4444;border:1px solid #ef444433 }
-      .sp-btn-danger:hover { background:#ef444433 }
-      .sp-btn:disabled { opacity:.5;cursor:default }
+      .sp-btn-danger:hover:not(:disabled) { background:#ef444433 }
+      .sp-btn:disabled { opacity:.45;cursor:default }
       .sp-btn-icon {
         display:inline-flex;align-items:center;padding:4px;border-radius:6px;border:none;
         background:none;cursor:pointer;color:var(--text2);opacity:.6;transition:opacity .15s
       }
       .sp-btn-icon:hover { opacity:1 }
+      .sp-help-btn {
+        width:30px;height:30px;padding:0;border-radius:50%;font-size:14px;font-weight:800;
+        display:flex;align-items:center;justify-content:center
+      }
 
       /* Select */
       .sp-select {
@@ -1305,7 +1523,19 @@ export class SupplyManagementModule {
         border-radius:8px;color:var(--text);padding:0 8px;min-width:160px;cursor:pointer
       }
 
-      /* KPI bar */
+      /* Filter bar */
+      .sp-filter-bar {
+        display:flex;align-items:center;gap:8px;padding:8px 12px;
+        border-bottom:1px solid var(--border);background:var(--bg2);flex-wrap:wrap;flex-shrink:0
+      }
+      .sp-search {
+        flex:1;min-width:160px;height:30px;padding:0 10px;font-size:12px;
+        background:var(--bg3);border:1px solid var(--border);border-radius:8px;
+        color:var(--text);outline:none;font-family:inherit;transition:border-color .15s
+      }
+      .sp-search:focus { border-color:#f59e0b }
+
+      /* KPI */
       .sp-kpi-bar {
         display:flex;gap:8px;padding:10px 16px;flex-wrap:wrap;
         border-bottom:1px solid var(--border);background:var(--bg);flex-shrink:0
@@ -1317,26 +1547,14 @@ export class SupplyManagementModule {
       .sp-kpi-label { font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:2px }
       .sp-kpi-val { font-size:22px;font-weight:800;font-variant-numeric:tabular-nums }
 
-      /* Content layout */
+      /* Content */
       .sp-content { flex:1;overflow:hidden;display:flex;flex-direction:column }
       .sp-body-wrap { display:flex;flex:1;overflow:hidden }
-      .sp-list-pane { flex:1;overflow-y:auto;padding:0 }
+      .sp-list-pane { flex:1;overflow-y:auto;display:flex;flex-direction:column }
       .sp-reco-pane {
         width:280px;flex-shrink:0;border-left:1px solid var(--border);
         overflow-y:auto;background:var(--bg2)
       }
-
-      /* Filter bar */
-      .sp-filter-bar {
-        display:flex;align-items:center;gap:8px;padding:8px 12px;
-        border-bottom:1px solid var(--border);background:var(--bg2);flex-wrap:wrap
-      }
-      .sp-search {
-        flex:1;min-width:160px;height:30px;padding:0 10px;font-size:12px;
-        background:var(--bg3);border:1px solid var(--border);border-radius:8px;
-        color:var(--text);outline:none;font-family:inherit;transition:border-color .15s
-      }
-      .sp-search:focus { border-color:#f59e0b }
 
       /* Supply list */
       .sp-supply-list { display:flex;flex-direction:column }
@@ -1363,9 +1581,7 @@ export class SupplyManagementModule {
       }
 
       /* Badges */
-      .sp-badge {
-        display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.3px
-      }
+      .sp-badge { display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.3px }
       .sp-badge-red    { background:#ef444422;color:#ef4444 }
       .sp-badge-orange { background:#f9731622;color:#f97316 }
       .sp-badge-yellow { background:#eab30822;color:#ca8a04 }
@@ -1379,14 +1595,23 @@ export class SupplyManagementModule {
       }
       @keyframes sp-pulse { 0%,100%{opacity:.6} 50%{opacity:1} }
 
-      /* Empty state */
+      /* Empty */
       .sp-empty {
         display:flex;flex-direction:column;align-items:center;justify-content:center;
-        height:200px;gap:10px;color:var(--text2);text-align:center;padding:20px
+        height:200px;gap:10px;color:var(--text2);text-align:center;padding:20px;flex:1
       }
       .sp-empty-icon { font-size:36px;opacity:.25 }
       .sp-empty p { margin:0;font-size:14px }
-      .sp-empty-actions { display:flex;gap:8px;margin-top:4px }
+      .sp-empty-actions { display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;justify-content:center }
+
+      /* Error block */
+      .sp-error-block {
+        display:flex;flex-direction:column;align-items:center;justify-content:center;
+        gap:12px;padding:24px;text-align:center;flex:1
+      }
+      .sp-error-icon { font-size:32px }
+      .sp-error-text { font-size:13px;color:var(--text);max-width:400px;line-height:1.5 }
+      .sp-error-actions { display:flex;gap:8px }
 
       /* Detail */
       .sp-detail { display:flex;flex-direction:column;height:100%;overflow:hidden }
@@ -1407,8 +1632,6 @@ export class SupplyManagementModule {
       }
       .sp-meta-label { font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:4px }
       .sp-meta-val { font-size:13px;color:var(--text) }
-
-      /* Detail tabs */
       .sp-detail-tabs {
         display:flex;gap:0;border-bottom:1px solid var(--border);flex-shrink:0;
         padding:0 16px;background:var(--bg)
@@ -1436,7 +1659,7 @@ export class SupplyManagementModule {
       .sp-tips { display:flex;flex-direction:column;gap:8px }
       .sp-tip {
         font-size:12px;color:var(--text2);background:var(--bg2);border:1px solid var(--border);
-        border-radius:8px;padding:10px 12px;line-height:1.5
+        border-radius:8px;padding:10px 12px;line-height:1.6
       }
 
       /* Table */
@@ -1445,27 +1668,23 @@ export class SupplyManagementModule {
         text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--text2);
         padding:8px 10px;border-bottom:1px solid var(--border);font-weight:600
       }
-      .sp-table td {
-        padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px;color:var(--text)
-      }
+      .sp-table td { padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px;color:var(--text) }
       .sp-table tr:last-child td { border-bottom:none }
       .sp-table tr:hover td { background:var(--bg3) }
 
-      /* Reco panel */
+      /* Reco */
       .sp-reco { padding:12px;display:flex;flex-direction:column;gap:8px }
       .sp-reco-header { display:flex;align-items:center;justify-content:space-between }
       .sp-reco-loading { display:flex;flex-direction:column;gap:8px }
       .sp-reco-empty { font-size:12px;color:var(--text2);line-height:1.5 }
       .sp-reco-legend { display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2) }
       .sp-reco-list { display:flex;flex-direction:column;gap:8px }
-      .sp-reco-item {
-        background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px
-      }
+      .sp-reco-item { background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px }
       .sp-reco-item-top { display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:3px }
       .sp-reco-name { font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 }
       .sp-reco-item-sub { font-size:11px;color:var(--text2);display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px }
 
-      /* Loading inline */
+      /* Loading */
       .sp-loading-inline { display:flex;align-items:center;gap:8px;color:var(--text2);font-size:13px;padding:16px }
 
       /* Modal */
@@ -1476,9 +1695,9 @@ export class SupplyManagementModule {
       .sp-modal {
         background:var(--bg2);border:1px solid var(--border);border-radius:16px;
         width:460px;max-width:92vw;max-height:85vh;overflow:hidden;
-        display:flex;flex-direction:column;
-        box-shadow:0 20px 60px rgba(0,0,0,.3)
+        display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)
       }
+      .sp-modal-wide { width:600px }
       .sp-modal-head {
         display:flex;align-items:center;justify-content:space-between;
         padding:16px 20px;border-bottom:1px solid var(--border);
@@ -1498,6 +1717,11 @@ export class SupplyManagementModule {
       }
       .sp-input:focus { border-color:#f59e0b }
       .sp-form-footer { display:flex;gap:8px;justify-content:flex-end;margin-top:4px }
+      .sp-help-note {
+        font-size:11px;color:var(--text2);background:var(--bg3);border-radius:8px;
+        padding:8px 10px;line-height:1.6;border:1px solid var(--border)
+      }
+      .sp-help-note code { background:var(--bg2);padding:1px 4px;border-radius:3px;font-size:11px }
 
       /* Slots */
       .sp-slots { display:flex;flex-wrap:wrap;gap:6px }
@@ -1510,6 +1734,25 @@ export class SupplyManagementModule {
         cursor:pointer;transition:all .15s
       }
       .sp-slot:hover { border-color:var(--text2) }
+
+      /* Help modal */
+      .sp-help-tabs {
+        display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:0
+      }
+      .sp-help-tab {
+        padding:8px 14px;border:none;background:none;font-size:12px;font-weight:600;
+        color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;
+        margin-bottom:-1px;transition:all .15s
+      }
+      .sp-help-tab.active { color:#f59e0b;border-bottom-color:#f59e0b }
+      .sp-help-tab:hover:not(.active) { color:var(--text) }
+      .sp-help-body { display:flex;flex-direction:column;gap:16px }
+      .sp-help-section h3 { font-size:13px;font-weight:700;color:var(--text);margin:0 0 8px }
+      .sp-help-section p { font-size:13px;color:var(--text2);line-height:1.6;margin:0 }
+      .sp-help-section ul, .sp-help-section ol { margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px }
+      .sp-help-section li { font-size:13px;color:var(--text2);line-height:1.5 }
+      .sp-help-section b, .sp-help-section strong { color:var(--text) }
+      .sp-help-section code { background:var(--bg3);padding:1px 5px;border-radius:3px;font-size:12px }
     `;
     document.head.appendChild(s);
   }
