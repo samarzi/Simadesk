@@ -154,6 +154,7 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
 
     <div class="an2-kpi-grid">
       ${renderKpiCard({ label: 'Выручка', value: k.revenue, prev: prevKpi?.revenue, tint: 'rgba(212,240,0,.18)', sparkline: sparkRev })}
+      ${renderKpiCard({ label: 'Прибыль без себестоимости', value: k.net_profit + k.cogs, prev: prevKpi != null ? prevKpi.net_profit + prevKpi.cogs : null, tint: 'rgba(16,185,129,.18)' })}
       ${renderKpiCard({ label: 'Чистая прибыль', value: k.net_profit, prev: prevKpi?.net_profit, tint: 'rgba(34,197,94,.18)', sparkline: sparkProfit })}
       ${renderKpiCard({ label: 'Маржа', value: k.margin_pct, prev: prevKpi?.margin_pct, format: 'pct', tint: 'rgba(96,165,250,.18)' })}
       ${renderKpiCard({ label: 'Заказов доставлено', value: k.orders_delivered, prev: prevKpi?.orders_delivered, format: 'int', tint: 'rgba(167,139,250,.18)' })}
