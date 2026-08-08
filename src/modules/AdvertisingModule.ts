@@ -1594,7 +1594,13 @@ export class AdvertisingModule {
     document.getElementById('ad-help-overlay')?.remove();
     document.body.insertAdjacentHTML('beforeend', buildHelpModal());
     const ov = document.getElementById('ad-help-overlay')!;
-    ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+    const close = () => ov.remove();
+    ov.addEventListener('click', e => {
+      const t = e.target as HTMLElement;
+      if (t === ov || t.id === 'ad-help-x' || t.closest('#ad-help-x')) close();
+    });
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+    document.addEventListener('keydown', onKey);
   }
 
   private showCreateDialog() {

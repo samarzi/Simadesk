@@ -671,7 +671,7 @@ export class SupplyManagementModule {
           this.supplies = list.map(s => ({
             id: String(s.id ?? ''),
             name: s.name ?? `Поставка ${s.id}`,
-            status: s.done ? 'done' : 'draft',
+            status: s.done ? 'done' : s.closedAt ? 'delivering' : 'draft',
             createdAt: s.createdAt ?? new Date().toISOString(),
             itemsCount: s.orderCount ?? 0,
           }));
@@ -1291,13 +1291,17 @@ export class SupplyManagementModule {
     try {
       const store = this.stores.find(s => s.id === this.storeId)!;
       if (!store.campaign_id) throw new Error('campaign_id не задан — укажите в настройках магазина');
-      await yandexApi.createShipment(store.api_key, Number(store.campaign_id), {
+      const { id: newId } = await yandexApi.createShipment(store.api_key, Number(store.campaign_id), {
         planIntervalFrom: dateFrom,
         planIntervalTo: dateTo,
         ...(externalId ? { externalId } : {}),
       });
       showToast('Отгрузка ЯМ создана', 'success');
       await this.loadSupplies();
+      if (newId) {
+        const found = this.supplies.find(s => s.id === String(newId));
+        if (found) { this.detail = found; this.detailTab = 'overview'; }
+      }
     } catch (err: any) {
       showToast(`Ошибка: ${err.message}`, 'error');
     } finally {
