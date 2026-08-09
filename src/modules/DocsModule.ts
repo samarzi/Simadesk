@@ -39,9 +39,9 @@ interface DocItem {
   updated_at: number;
 }
 
-const STORAGE_KEY  = 'docs_v1';
-const RECENT_KEY   = 'docs_recent_v1';
-const ACTIVE_KEY   = 'docs_active_v1';
+const STORAGE_KEY  = 'docs_v2';    // v2 = company-scoped
+const RECENT_KEY   = 'docs_recent_v2';
+const ACTIVE_KEY   = 'docs_active_v2';
 const MAX_DOCS     = 20;
 const MAX_RECENT   = 10;
 const XL_ROWS = 50;
@@ -56,6 +56,7 @@ export class DocsModule {
   private root!: HTMLElement;
   private docs: DocItem[] = [];
   private activeId: string | null = null;
+  private loadedCompanyId: string | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private activeSheetIdx: number = 0;
   private xlVirtData: CellData[][] | null = null;
@@ -72,13 +73,28 @@ export class DocsModule {
 
   constructor(root: HTMLElement) {
     this.root = root;
+    this.loadedCompanyId = companyService.getActiveId();
     this.load();
     window.addEventListener('beforeunload', () => this.flushSave());
-    // Load from DB in background — merges any docs not in localStorage
     this.syncFromDb();
   }
 
-  show(): void { this.root.style.display = ''; this.render(); }
+  show(): void {
+    this.root.style.display = '';
+    const cid = companyService.getActiveId();
+    if (cid !== this.loadedCompanyId) {
+      // Company switched — reset local state and reload for the new company
+      this.flushSave();
+      this.docs = [];
+      this.recent = [];
+      this.activeId = null;
+      this.activeSheetIdx = 0;
+      this.loadedCompanyId = cid;
+      this.load();
+      this.syncFromDb();
+    }
+    this.render();
+  }
   hide(): void { this.flushSave(); this.root.style.display = 'none'; document.getElementById('dx-fill-handle')?.remove(); }
 
   /** Публичный геттер: id активного документа (для внешних вызовов после aiCreateDoc). */
@@ -94,13 +110,17 @@ export class DocsModule {
     return `Создан новый ${type === 'excel' ? 'Excel' : 'Word'}-документ${title ? ` «${title}»` : ''}.`;
   }
 
-  // ── Storage ────────────────────────────────────────────────────────────────
+  // ── Storage (company-scoped keys) ─────────────────────────────────────────
+  private sk(): string { const c = companyService.getActiveId(); return c ? `${STORAGE_KEY}_${c}` : STORAGE_KEY; }
+  private rk(): string { const c = companyService.getActiveId(); return c ? `${RECENT_KEY}_${c}` : RECENT_KEY; }
+  private ak(): string { const c = companyService.getActiveId(); return c ? `${ACTIVE_KEY}_${c}` : ACTIVE_KEY; }
+
   private load(): void {
-    try { const raw = localStorage.getItem(STORAGE_KEY); this.docs = raw ? JSON.parse(raw) : []; }
+    try { const raw = localStorage.getItem(this.sk()); this.docs = raw ? JSON.parse(raw) : []; }
     catch { this.docs = []; }
-    try { const raw = localStorage.getItem(RECENT_KEY); this.recent = raw ? JSON.parse(raw) : []; }
+    try { const raw = localStorage.getItem(this.rk()); this.recent = raw ? JSON.parse(raw) : []; }
     catch { this.recent = []; }
-    const savedActive = localStorage.getItem(ACTIVE_KEY);
+    const savedActive = localStorage.getItem(this.ak());
     if (savedActive && this.docs.some(d => d.id === savedActive)) {
       this.activeId = savedActive;
     } else if (!this.activeId && this.docs.length) {
@@ -110,13 +130,13 @@ export class DocsModule {
 
   private save(): void {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.docs));
-      if (this.activeId) localStorage.setItem(ACTIVE_KEY, this.activeId);
+      localStorage.setItem(this.sk(), JSON.stringify(this.docs));
+      if (this.activeId) localStorage.setItem(this.ak(), this.activeId);
     } catch (e) {
       debug.warn('[DocsModule] save failed', e);
       try {
         const slim = this.docs.map(d => ({ ...d, content: d.content.length > 50000 ? d.content.slice(0, 50000) : d.content }));
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
+        localStorage.setItem(this.sk(), JSON.stringify(slim));
       } catch { /* ignore */ }
     }
   }
@@ -170,7 +190,7 @@ export class DocsModule {
   }
 
   private saveRecent(): void {
-    try { localStorage.setItem(RECENT_KEY, JSON.stringify(this.recent)); }
+    try { localStorage.setItem(this.rk(), JSON.stringify(this.recent)); }
     catch { /* ignore */ }
   }
 
