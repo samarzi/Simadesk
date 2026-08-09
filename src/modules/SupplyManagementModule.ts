@@ -85,6 +85,7 @@ export class SupplyManagementModule {
   private detailItems: Array<{ name: string; qty: number; sku?: string }> = [];
   private detailReturns: Array<{ name: string; qty: number; reason?: string; date?: string }> = [];
   private detailItemsLoading = false;
+  private detailItemsUnavailable = false;
   private detailReturnsLoading = false;
   private recoItems: RecoItem[] = [];
   private recoLoading = false;
@@ -544,7 +545,7 @@ export class SupplyManagementModule {
         const dtTab = btn.dataset.detailTab as DetailTab | undefined;
         if (dtTab) {
           this.detailTab = dtTab;
-          if (dtTab === 'items' && !this.detailItems.length && !this.detailItemsLoading) this.loadDetailItems();
+          if (dtTab === 'items' && !this.detailItems.length && !this.detailItemsLoading && !this.detailItemsUnavailable) this.loadDetailItems();
           if (dtTab === 'returns' && !this.detailReturns.length && !this.detailReturnsLoading) this.loadDetailReturns();
           this.flush(); return;
         }
@@ -571,12 +572,18 @@ export class SupplyManagementModule {
         if (action === 'quick-send' && id) {
           e.stopPropagation();
           const found = this.supplies.find(s => s.id === id);
-          if (found) { this.detail = found; this.sendSupply(); }
+          if (found) {
+            this.detail = found;
+            this.detailItems = [];
+            this.detailReturns = [];
+            this.detailTab = 'overview';
+            this.sendSupply();
+          }
           return;
         }
         if (action === 'open' && id) {
           const found = this.supplies.find(s => s.id === id);
-          if (found) { this.detail = found; this.detailTab = 'overview'; this.detailItems = []; this.detailReturns = []; this.flush(); }
+          if (found) { this.detail = found; this.detailTab = 'overview'; this.detailItems = []; this.detailReturns = []; this.detailItemsUnavailable = false; this.flush(); }
         }
       }
     });
@@ -671,7 +678,7 @@ export class SupplyManagementModule {
           this.supplies = list.map(s => ({
             id: String(s.id ?? ''),
             name: s.name ?? `Поставка ${s.id}`,
-            status: s.done ? 'done' : s.closedAt ? 'delivering' : 'draft',
+            status: s.done ? 'done' : 'draft',
             createdAt: s.createdAt ?? new Date().toISOString(),
             itemsCount: s.orderCount ?? 0,
           }));
@@ -747,8 +754,9 @@ export class SupplyManagementModule {
         }));
 
       } else {
-        // YM: no direct shipment-items endpoint, show empty with note
+        // YM: no direct shipment-items endpoint
         this.detailItems = [];
+        this.detailItemsUnavailable = true;
       }
     } catch (err: any) {
       this.detailItems = [];
@@ -769,11 +777,24 @@ export class SupplyManagementModule {
       if (this.tab === 'ozon') {
         // Load supply items first to filter returns by SKU
         const itemSkus = new Set(this.detailItems.map(i => i.sku).filter(Boolean));
-        const [fboReturns, fbsResult] = await Promise.all([
-          ozonApi.getFboReturns({ client_id: store.client_id, api_key: store.api_key }, { limit: 500 }).catch(() => []),
-          ozonApi.getFbsReturns({ client_id: store.client_id, api_key: store.api_key }, { limit: 500 }).catch(() => ({ returns: [] })),
-        ]);
-        const allReturns = [...fboReturns, ...fbsResult.returns];
+        const creds = { client_id: store.client_id, api_key: store.api_key };
+        // FBO returns: paginate by offset
+        const fboReturns: any[] = [];
+        for (let offset = 0; ; offset += 100) {
+          const page = await ozonApi.getFboReturns(creds, { limit: 100, offset }).catch(() => []);
+          fboReturns.push(...page);
+          if (page.length < 100) break;
+        }
+        // FBS returns: paginate by cursor (last_id)
+        const fbsReturns: any[] = [];
+        let last_id = '';
+        while (true) {
+          const res = await ozonApi.getFbsReturns(creds, { limit: 100, last_id }).catch(() => ({ returns: [], last_id: '', has_next: false }));
+          fbsReturns.push(...res.returns);
+          if (!res.has_next) break;
+          last_id = res.last_id;
+        }
+        const allReturns = [...fboReturns, ...fbsReturns];
         const filtered = itemSkus.size > 0
           ? allReturns.filter((r: any) => itemSkus.has(String(r.sku ?? r.offer_id ?? '')))
           : allReturns.slice(0, 50);

@@ -993,6 +993,7 @@ export class AdvertisingModule {
   private async loadForStore(store: any): Promise<Campaign[]> {
     if (this.tab === 'wb')     return this._wbStore(store);
     if (this.tab === 'ozon')   return this.ozonSub === 'perf' ? this._ozonPerfStore(store) : this._ozonPromoStore(store);
+    if (this.ymSub === 'boost') return [];
     return this._ymPromoStore(store);
   }
 
@@ -1060,7 +1061,7 @@ export class AdvertisingModule {
 
   private async _ymPromoStore(store: any): Promise<Campaign[]> {
     const businessId = store.business_id ? Number(store.business_id) : 0;
-    const list = await getYandexPromos(store, businessId);
+    const list = await getYandexPromos(store.api_key, businessId);
     return list.map((p: any) => ({
       id: p.id, storeId: store.id, storeName: store.name,
       name: p.name ?? 'Акция',
@@ -1140,7 +1141,7 @@ export class AdvertisingModule {
           </div>`
         : `<div class="ad-bud">
             <span class="ad-bud-v">${c.budget ? fmt(c.budget) + ' ₽' : '—'}</span>
-            <span class="ad-bud-pen" data-action="edit-budget" data-id="${key}">${I.edit()}</span>
+            <button class="ad-bud-pen" data-action="edit-budget" data-id="${key}" style="background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center">${I.edit()}</button>
           </div>`;
 
       const pauseBtn = c.status === 'active'
@@ -1435,45 +1436,61 @@ export class AdvertisingModule {
   private async loadDetail(key: string) {
     if (this.detailCache.has(key) || this.detailLoading.has(key)) return;
     this.detailLoading.add(key); this.flushBody();
-    const c = this.campaigns.find(x => String(x.id) === key);
-    if (!c) return;
-    const store = this.stores.find(s => s.id === c.storeId) as any;
-    const d = await getWbCampaignDetails(store.api_key, Number(c.id));
-    this.detailCache.set(key, d ?? {});
-    this.detailLoading.delete(key); this.flushBody();
+    try {
+      const c = this.campaigns.find(x => String(x.id) === key);
+      if (!c) return;
+      const store = this.stores.find(s => s.id === c.storeId) as any;
+      if (!store) return;
+      const d = await getWbCampaignDetails(store.api_key, Number(c.id));
+      this.detailCache.set(key, d ?? {});
+    } finally {
+      this.detailLoading.delete(key); this.flushBody();
+    }
   }
 
   private async loadPerfObjects(key: string) {
     if (this.detailCache.has(key) || this.detailLoading.has(key)) return;
     this.detailLoading.add(key); this.flushBody();
-    const c = this.campaigns.find(x => String(x.id) === key);
-    if (!c) return;
-    const store = this.stores.find(s => s.id === c.storeId) as any;
-    const obs = await ozonPerfApi.getCampaignObjects(store.client_id, store.api_key, key);
-    this.detailCache.set(key, obs);
-    this.detailLoading.delete(key); this.flushBody();
+    try {
+      const c = this.campaigns.find(x => String(x.id) === key);
+      if (!c) return;
+      const store = this.stores.find(s => s.id === c.storeId) as any;
+      if (!store) return;
+      const obs = await ozonPerfApi.getCampaignObjects(store.client_id, store.api_key, key);
+      this.detailCache.set(key, obs);
+    } finally {
+      this.detailLoading.delete(key); this.flushBody();
+    }
   }
 
   private async loadOzonPromoProducts(key: string, actionId: number) {
     if (this.detailCache.has(key) || this.detailLoading.has(key)) return;
     this.detailLoading.add(key); this.flushBody();
-    const c = this.campaigns.find(x => String(x.id) === key);
-    if (!c) return;
-    const store = this.stores.find(s => s.id === c.storeId) as any;
-    const d = await ozonApi.getPromoProducts({ client_id: store.client_id, api_key: store.api_key }, actionId);
-    this.detailCache.set(key, d);
-    this.detailLoading.delete(key); this.flushBody();
+    try {
+      const c = this.campaigns.find(x => String(x.id) === key);
+      if (!c) return;
+      const store = this.stores.find(s => s.id === c.storeId) as any;
+      if (!store) return;
+      const d = await ozonApi.getPromoProducts({ client_id: store.client_id, api_key: store.api_key }, actionId);
+      this.detailCache.set(key, d);
+    } finally {
+      this.detailLoading.delete(key); this.flushBody();
+    }
   }
 
   private async loadYmPromoOffers(key: string, promoId: string) {
     if (this.detailCache.has(key) || this.detailLoading.has(key)) return;
     this.detailLoading.add(key); this.flushBody();
-    const c = this.campaigns.find(x => String(x.id) === key);
-    if (!c) return;
-    const store = this.stores.find(s => s.id === c.storeId) as any;
-    const offers = await getYandexPromoOffers(store.api_key, Number(store.business_id ?? 0), promoId);
-    this.detailCache.set(key, offers);
-    this.detailLoading.delete(key); this.flushBody();
+    try {
+      const c = this.campaigns.find(x => String(x.id) === key);
+      if (!c) return;
+      const store = this.stores.find(s => s.id === c.storeId) as any;
+      if (!store) return;
+      const offers = await getYandexPromoOffers(store.api_key, Number(store.business_id ?? 0), promoId);
+      this.detailCache.set(key, offers);
+    } finally {
+      this.detailLoading.delete(key); this.flushBody();
+    }
   }
 
   private async loadYmBids() {
@@ -1481,9 +1498,10 @@ export class AdvertisingModule {
     if (!store) { showToast('Выберите конкретный магазин', 'warning'); return; }
     if (!store.campaign_id) { showToast('Нет Campaign ID. Добавьте его в настройки магазина', 'warning'); return; }
     this.ymBidsLoading = true; this.flushBody();
+    const sig = this.eventsAC.signal;
     const [bids, rec] = await Promise.all([
-      getYandexCampaignBids(store.api_key, Number(store.campaign_id)),
-      getYandexRecommendedBids(store.api_key, Number(store.campaign_id)),
+      getYandexCampaignBids(store.api_key, Number(store.campaign_id), sig),
+      getYandexRecommendedBids(store.api_key, Number(store.campaign_id), sig),
     ]);
     this.ymBids = bids; this.ymRec = rec;
     this.ymBidsLoading = false; this.flushBody();

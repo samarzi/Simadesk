@@ -699,12 +699,16 @@ export const wbApi = {
   /**
    * GET /api/v3/supplies — список поставок.
    */
-  async getWbSupplies(
-    apiKey: string,
-    limit = 100,
-  ): Promise<any[]> {
-    const resp = await wbFetch<any>(`/wb-marketplace/api/v3/supplies?limit=${limit}`, 'GET', apiKey);
-    return resp?.supplies ?? [];
+  async getWbSupplies(apiKey: string): Promise<any[]> {
+    const all: any[] = [];
+    let next: string | undefined;
+    do {
+      const url = `/wb-marketplace/api/v3/supplies?limit=100${next ? `&next=${next}` : ''}`;
+      const resp = await wbFetch<any>(url, 'GET', apiKey);
+      all.push(...(resp?.supplies ?? []));
+      next = resp?.next;
+    } while (next);
+    return all;
   },
 
   /**

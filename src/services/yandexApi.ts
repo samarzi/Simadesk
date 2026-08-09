@@ -1398,22 +1398,17 @@ export async function processYandexReturn(
  * GET /v2/businesses/{businessId}/promos
  */
 export async function getYandexPromos(
-  store: YandexStore,
+  apiKey: string,
   businessId: number,
+  signal?: AbortSignal,
 ): Promise<any[]> {
-  const res = await fetch(`/yandex-api/v2/businesses/${businessId}/promos`, {
-    method: 'GET',
-    headers: {
-      'Api-Key': store.api_key,
-      'Accept': 'application/json',
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Yandex promos ${res.status}: ${text.slice(0, 200)}`);
-  }
-  const data = await res.json();
-  return data?.result?.promos ?? data?.promos ?? [];
+  const resp = await yandexFetch<any>(
+    `/v2/businesses/${businessId}/promos`,
+    'POST', apiKey,
+    { limit: 500, offset: 0 },
+    signal,
+  );
+  return resp?.result?.promos ?? resp?.promos ?? [];
 }
 
 // ── Advertising: промо-офферы ───────────────────────────────────────────────
@@ -1427,15 +1422,22 @@ export async function getYandexPromoOffers(
   promoId: string,
   signal?: AbortSignal,
 ): Promise<any[]> {
-  try {
+  const all: any[] = [];
+  const limit = 200;
+  let offset = 0;
+  while (true) {
     const resp = await yandexFetch<any>(
       `/v2/businesses/${businessId}/promos/offers`,
       'POST', apiKey,
-      { promoId, limit: 200, offset: 0 },
+      { promoId, limit, offset },
       signal,
     );
-    return resp?.result?.offers ?? resp?.offers ?? [];
-  } catch { return []; }
+    const items: any[] = resp?.result?.offers ?? resp?.offers ?? [];
+    all.push(...items);
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  return all;
 }
 
 /**

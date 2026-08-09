@@ -1611,13 +1611,26 @@ ${candidates.join('\n')}`;
         </div>`;
       const customTitle = g.variants.find(v => v.custom_title)?.custom_title ?? '';
 
+      const eyeIcon = allHidden
+        ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`
+        : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+
       return `<tr class="${allHidden?'vs-prod-hidden':''}" data-vc="${esc(vc)}">
         <td style="padding:8px 10px 8px 14px">${img}</td>
         <td>
-          <div class="vs-prod-name">${esc(g.title)}</div>
-          ${g.key && !g.key.startsWith('__') ? `<div class="vs-prod-art">${esc(g.key)}</div>` : ''}
-          <input type="text" class="vs-title-inp vs-url-inp" data-vc="${esc(vc)}"
-            placeholder="Название на витрине (если нужно изменить)" value="${esc(customTitle)}" style="width:220px;margin-top:5px">
+          <div style="display:flex;align-items:flex-start;gap:6px">
+            <div style="flex:1;min-width:0">
+              <div class="vs-prod-name">${esc(g.title)}</div>
+              ${g.key && !g.key.startsWith('__') ? `<div class="vs-prod-art">${esc(g.key)}</div>` : ''}
+              <input type="text" class="vs-title-inp vs-url-inp" data-vc="${esc(vc)}"
+                placeholder="Название на витрине (если нужно изменить)" value="${esc(customTitle)}" style="width:200px;margin-top:5px">
+            </div>
+            <button class="vs-hide-all-btn" data-vc="${esc(vc)}" data-hidden="${allHidden?'1':'0'}"
+              title="${allHidden?'Показать товар':'Скрыть товар полностью'}"
+              style="flex-shrink:0;margin-top:2px;padding:4px 7px;border-radius:6px;border:1px solid var(--border);background:${allHidden?'rgba(255,107,107,.12)':'var(--bg2)'};color:${allHidden?'#ff6b6b':'var(--text3)'};cursor:pointer;display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap">
+              ${eyeIcon} ${allHidden?'Скрыт':'Скрыть'}
+            </button>
+          </div>
         </td>
         <td style="min-width:260px">
           <div style="border-top:1px solid var(--border)">${mpCells}${sharedRow}</div>
@@ -1730,6 +1743,38 @@ ${candidates.join('\n')}`;
       }
       if (act === 'up'   && idx > 0)                          { await this.swapBn(idx, idx-1); return; }
       if (act === 'down' && idx < this.banners.length-1)      { await this.swapBn(idx, idx+1); return; }
+    });
+
+    document.getElementById('vs-ptbody')?.addEventListener('click', async (e) => {
+      const btn = (e.target as HTMLElement).closest('.vs-hide-all-btn') as HTMLElement | null;
+      if (!btn) return;
+      const vc = btn.dataset.vc!;
+      const nowHidden = btn.dataset.hidden === '1';
+      const newHidden = !nowHidden;
+      const groupProds = this.products.filter(x => {
+        const k = x.vendor_code.trim().toLowerCase() || `__${x.source}:${x.source_id}`;
+        return k === vc;
+      });
+      if (!groupProds.length) return;
+      for (const p of groupProds) p.is_hidden = newHidden;
+      await Promise.all(groupProds.map(p =>
+        storefrontDb.setOverride(this.companyId, p.source, p.source_id, { is_hidden: newHidden }),
+      ));
+      // Update row visuals without full re-render
+      const row = btn.closest('tr') as HTMLTableRowElement | null;
+      if (row) {
+        row.classList.toggle('vs-prod-hidden', newHidden);
+        btn.dataset.hidden = newHidden ? '1' : '0';
+        btn.title = newHidden ? 'Показать товар' : 'Скрыть товар полностью';
+        btn.style.background = newHidden ? 'rgba(255,107,107,.12)' : 'var(--bg2)';
+        btn.style.color = newHidden ? '#ff6b6b' : 'var(--text3)';
+        const eyeOpen  = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+        const eyeClosed = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+        btn.innerHTML = `${newHidden ? eyeClosed : eyeOpen} ${newHidden ? 'Скрыт' : 'Скрыть'}`;
+        // Sync per-MP checkboxes
+        row.querySelectorAll<HTMLInputElement>('.vs-vis').forEach(chk => { chk.checked = !newHidden; });
+      }
+      showToast(newHidden ? 'Товар скрыт из магазина' : 'Товар снова виден покупателям', 'success');
     });
 
     document.getElementById('vs-ptbody')?.addEventListener('change', async (e) => {

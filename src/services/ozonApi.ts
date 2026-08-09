@@ -161,9 +161,7 @@ async function ozonPost<T>(
     });
     if (res.ok) {
       const ct = res.headers.get('content-type') ?? '';
-      if (res.status === 204 || !ct.includes('application/json')) {
-        try { return await res.json() as T; } catch { return undefined as T; }
-      }
+      if (res.status === 204 || !ct.includes('application/json')) return undefined as T;
       return res.json() as Promise<T>;
     }
     const text = await res.text();
@@ -1312,12 +1310,20 @@ export const ozonApi = {
   async getSupplies(
     creds: Creds,
     status?: 'draft' | 'awaiting_deliver' | 'delivering' | 'delivered' | 'cancelled',
-    limit = 100,
   ): Promise<any[]> {
-    const body: any = { limit, offset: 0 };
-    if (status) body.status = status;
-    const resp = await ozonPost<any>('/v1/supply-order/list', body, creds);
-    return resp?.result?.supply_orders ?? resp?.supply_orders ?? [];
+    const all: any[] = [];
+    const limit = 100;
+    let offset = 0;
+    while (true) {
+      const body: any = { limit, offset };
+      if (status) body.status = status;
+      const resp = await ozonPost<any>('/v1/supply-order/list', body, creds);
+      const page: any[] = resp?.result?.supply_orders ?? resp?.supply_orders ?? [];
+      all.push(...page);
+      if (page.length < limit) break;
+      offset += limit;
+    }
+    return all;
   },
 
   /**
@@ -1409,20 +1415,6 @@ export const ozonApi = {
   },
 
   /**
-   * POST /v1/actions/products/activate — добавить товары в акцию.
-   */
-  async activateProductsInPromotion(
-    creds: Creds,
-    actionId: number,
-    productIds: number[],
-  ): Promise<void> {
-    await ozonPost('/v1/actions/products/activate', {
-      action_id: actionId,
-      product_ids: productIds,
-    }, creds);
-  },
-
-  /**
    * GET /v1/actions — список доступных акций Ozon.
    */
   async getPromotions(creds: Creds): Promise<any[]> {
@@ -1437,15 +1429,20 @@ export const ozonApi = {
     creds: Creds,
     actionId: number,
   ): Promise<{ activated: any[]; available: any[] }> {
-    const resp = await ozonPost<any>('/v1/actions/products', {
-      action_id: actionId,
-      limit: 100,
-      offset: 0,
-    }, creds);
-    return {
-      activated: resp?.result?.activated_products ?? [],
-      available: resp?.result?.products ?? [],
-    };
+    const activated: any[] = [];
+    const available: any[] = [];
+    const limit = 100;
+    let offset = 0;
+    while (true) {
+      const resp = await ozonPost<any>('/v1/actions/products', { action_id: actionId, limit, offset }, creds);
+      const act: any[] = resp?.result?.activated_products ?? [];
+      const avl: any[] = resp?.result?.products ?? [];
+      activated.push(...act);
+      available.push(...avl);
+      if (act.length < limit && avl.length < limit) break;
+      offset += limit;
+    }
+    return { activated, available };
   },
 
   /**
@@ -1683,23 +1680,29 @@ async function ozonPerfFetch<T>(
   clientId: string,
   apiKey: string,
   body?: unknown,
+  signal?: AbortSignal,
+  retries = 3,
 ): Promise<T> {
-  const res = await fetch(`${PERF_PROXY}${endpoint}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      'Client-Id': clientId,
-      'Api-Key': apiKey,
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (res.ok) {
-    const ct = res.headers.get('content-type') ?? '';
-    if (res.status === 204 || !ct.includes('application/json')) return undefined as T;
-    return res.json() as Promise<T>;
+  let lastErr: Error = new Error('unknown');
+  for (let attempt = 0; attempt < retries; attempt++) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    if (attempt > 0) await sleep(Math.min(2000 * Math.pow(2, attempt - 1), 16000));
+    const res = await fetch(`${PERF_PROXY}${endpoint}`, {
+      method, signal,
+      headers: { 'Content-Type': 'application/json', 'Client-Id': clientId, 'Api-Key': apiKey },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    if (res.ok) {
+      const ct = res.headers.get('content-type') ?? '';
+      if (res.status === 204 || !ct.includes('application/json')) return undefined as T;
+      return res.json() as Promise<T>;
+    }
+    const text = await res.text();
+    console.error(`[OzonPerf] ${endpoint} → ${res.status}:`, text.slice(0, 300));
+    lastErr = new Error(`Ozon Performance ${res.status} (${endpoint}): ${text.slice(0, 150)}`);
+    if (!RETRYABLE.has(res.status)) throw lastErr;
   }
-  const text = await res.text();
-  throw new Error(`Ozon Performance ${res.status} (${endpoint}): ${text.slice(0, 200)}`);
+  throw lastErr;
 }
 
 export const ozonPerfApi = {
@@ -1710,7 +1713,10 @@ export const ozonPerfApi = {
     try {
       const resp = await ozonPerfFetch<any>('GET', '/api/1/campaign', clientId, apiKey);
       return resp?.list ?? resp?.items ?? [];
-    } catch { return []; }
+    } catch (err: any) {
+      console.error('[ozonPerfApi] getCampaigns failed:', err?.message);
+      return [];
+    }
   },
 
   /**
@@ -1723,8 +1729,21 @@ export const ozonPerfApi = {
   ): Promise<any[]> {
     try {
       const resp = await ozonPerfFetch<any>('POST', '/api/1/statistics/campaign', clientId, apiKey, params);
-      return resp?.rows ?? resp?.list ?? resp?.statistics ?? [];
-    } catch { return []; }
+      const list: any[] = resp?.list ?? [];
+      return list.map((entry: any) => {
+        const rows: any[] = entry.statisticsDataByDate ?? [];
+        return {
+          ...entry.campaign,
+          moneySpent: rows.reduce((s, r) => s + (r.moneySpent ?? 0), 0),
+          clicks:     rows.reduce((s, r) => s + (r.clicks     ?? 0), 0),
+          views:      rows.reduce((s, r) => s + (r.views ?? r.impressions ?? 0), 0),
+          orders:     rows.reduce((s, r) => s + (r.orders     ?? 0), 0),
+        };
+      });
+    } catch (err: any) {
+      console.error('[ozonPerfApi] getStats failed:', err?.message);
+      return [];
+    }
   },
 
   /**
@@ -1743,7 +1762,10 @@ export const ozonPerfApi = {
     try {
       const resp = await ozonPerfFetch<any>('GET', `/api/1/campaign/${campaignId}/objects`, clientId, apiKey);
       return resp?.list ?? resp?.objects ?? [];
-    } catch { return []; }
+    } catch (err: any) {
+      console.error('[ozonPerfApi] getCampaignObjects failed:', err?.message);
+      return [];
+    }
   },
 
   /**
@@ -1753,6 +1775,9 @@ export const ozonPerfApi = {
     try {
       const resp = await ozonPerfFetch<any>('GET', '/api/1/budget', clientId, apiKey);
       return resp?.money ?? resp?.balance ?? 0;
-    } catch { return 0; }
+    } catch (err: any) {
+      console.error('[ozonPerfApi] getBalance failed:', err?.message);
+      return 0;
+    }
   },
 };

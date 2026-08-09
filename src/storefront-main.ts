@@ -593,15 +593,20 @@ html { scrollbar-gutter: stable; }
 
 // ─── Fetch ────────────────────────────────────────────────────────────────────
 
-async function fetchStoreData(slug: string): Promise<StoreData | null> {
+async function fetchStoreData(slug: string, signal?: AbortSignal): Promise<StoreData | null> {
   const res = await fetch(`${REST_URL}/rpc/get_storefront`, {
     method: 'POST',
     headers: { 'Content-Type':'application/json', apikey:API_KEY, Authorization:`Bearer ${API_KEY}` },
     body: JSON.stringify({ p_slug: slug }),
+    signal,
   });
   const json = await res.json();
   if (!json || json.error || !json.settings) return null;
-  return json as StoreData;
+  const d = json as StoreData;
+  // Ensure arrays are always arrays
+  if (!Array.isArray(d.products)) d.products = [];
+  if (!Array.isArray(d.banners))  d.banners  = [];
+  return d;
 }
 
 // ─── Carousel ─────────────────────────────────────────────────────────────────
@@ -1830,15 +1835,21 @@ async function init(): Promise<void> {
   }
 
   const hideProgress = () => { if (progress) progress.style.opacity = '0'; };
-
-  let data: StoreData | null = null;
-  try { data = await fetchStoreData(slug); }
-  catch {
+  const showNetError = () => {
     hideProgress();
     root.innerHTML = `<div style="min-height:100vh;background:hsl(var(--background));display:flex;align-items:center;justify-content:center;text-align:center;padding:2rem">
       <div><div style="display:flex;justify-content:center;margin-bottom:1rem;color:hsl(var(--foreground)/.2)"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0119 12.55M5 12.55a10.94 10.94 0 015.17-2.39M10.71 5.05A16 16 0 0122.56 9M1.42 9a15.91 15.91 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01"/></svg></div><h1 style="font-size:1.25rem;font-weight:900;color:hsl(var(--foreground));margin-bottom:.5rem">Ошибка соединения</h1>
       <p style="color:hsl(var(--muted-foreground));margin-bottom:1.5rem">Проверьте подключение к интернету</p>
       <button onclick="location.reload()" style="background:linear-gradient(135deg,#00FFCC,#00CCAA);color:#000;font-weight:800;padding:.75rem 2rem;border-radius:.875rem;border:none;cursor:pointer;font-size:.9rem">Обновить</button></div></div>`;
+  };
+
+  let data: StoreData | null = null;
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 15000);
+    data = await fetchStoreData(slug, ctrl.signal).finally(() => clearTimeout(tid));
+  } catch {
+    showNetError();
     return;
   }
 
@@ -1853,9 +1864,18 @@ async function init(): Promise<void> {
 
   hideProgress();
 
-  const showStock = !!data.settings.show_stock;
-  const hideOos   = !!data.settings.hide_out_of_stock;
-  const groups = groupProducts(data.products, hideOos);
+  let showStock: boolean;
+  let hideOos: boolean;
+  let groups: GroupedProduct[];
+  try {
+    showStock = !!data.settings?.show_stock;
+    hideOos   = !!data.settings?.hide_out_of_stock;
+    groups = groupProducts(data.products ?? [], hideOos);
+  } catch (e) {
+    console.error('storefront render error', e);
+    showNetError();
+    return;
+  }
 
   // Build variant map: group.key → {items, groupId}
   const variantMap = new Map<string, { items: VariantItem[]; groupId: string }>();

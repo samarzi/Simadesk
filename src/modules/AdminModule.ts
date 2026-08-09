@@ -1,14 +1,25 @@
 /**
- * Админ-панель SimaDesk (v4 — минимальная).
+ * Админ-панель SimaDesk (v5).
  *
- * Плоский список из 7 разделов, без групп, без сворачивания меню,
- * без командной палитры и хоткеев — просто клик по пункту. Разделы,
- * которые логически об одном и том же, объединены на одной странице:
- *  • Дашборд = сводка (KPI) + графики (было 2 отдельных пункта)
- *  • Биллинг = подписки + промокоды (было 2 отдельных пункта)
- *  • Настройки = конфигурация + редактор страниц сайта (было 2 пункта)
- * Вся серверная логика (RPC, поддержка, AI-автоответы) не менялась —
- * переработана только структура разделов и подача.
+ * Полный пересмотр структуры под реальные задачи управления платформой:
+ * плоское меню из 10 разделов (без групп, без сворачивания, без командной
+ * палитры — просто клик по пункту), с явным разделением того, что раньше
+ * было смешано:
+ *  • Дашборд — сводные показатели и графики роста
+ *  • Пользователи / Компании — управление аккаунтами
+ *  • Тарифы — тарифная шкала и цены пакетов AI (было частью «Настроек»)
+ *  • Подписки — назначение/продление доступа по компаниям
+ *  • Промокоды — скидочные коды
+ *  • Бухгалтерия — новый раздел: доход платформы (MRR, ARPU), доход по
+ *    тарифам, ближайшие продления, эффект промокодов. Считается только из
+ *    реальных данных (активные подписки, их фактическая цена), без выдумок —
+ *    отдельной таблицы платежей ЮKassa в БД нет, есть только последний
+ *    статус подписки на компанию.
+ *  • Поддержка — живой чат с AI-автоответами
+ *  • Настройки — права администраторов, AI-ассистент, аккаунты проверяющих,
+ *    страницы сайта
+ *  • Дорожная карта — внутренний трекер задач разработки
+ * Серверная логика (RPC, поддержка, AI-автоответы) не менялась.
  */
 
 import {
@@ -29,21 +40,28 @@ import { AI_BOOST_PACKAGES, setAiBoostPriceOverrides } from '@/services/aiTokenQ
 import { icon } from './admin/icons';
 import { areaChart, groupedBars, hBars, donut } from './admin/charts';
 
-type AdminTab = 'overview' | 'users' | 'companies' | 'billing' | 'support' | 'settings' | 'roadmap';
-type BillingView = 'subscriptions' | 'promos';
+type AdminTab =
+  | 'overview' | 'users' | 'companies' | 'plans' | 'subscriptions'
+  | 'promos' | 'accounting' | 'support' | 'settings' | 'roadmap';
 
 interface TabMeta { title: string; desc: string; icon: string }
 
-const TABS: AdminTab[] = ['overview', 'users', 'companies', 'billing', 'support', 'settings', 'roadmap'];
+const TABS: AdminTab[] = [
+  'overview', 'users', 'companies', 'plans', 'subscriptions',
+  'promos', 'accounting', 'support', 'settings', 'roadmap',
+];
 
 const TAB_META: Record<AdminTab, TabMeta> = {
-  overview:  { title: 'Дашборд',      icon: 'dashboard', desc: 'Ключевые показатели и динамика роста платформы' },
-  users:     { title: 'Пользователи', icon: 'users',     desc: 'Все зарегистрированные аккаунты, блокировки и пробный период' },
-  companies: { title: 'Компании',     icon: 'building',  desc: 'Организации на платформе, их оборот и подписки' },
-  billing:   { title: 'Биллинг',      icon: 'card',      desc: 'Подписки, продление доступа и промокоды' },
-  support:   { title: 'Поддержка',    icon: 'chat',      desc: 'Обращения пользователей, живой чат и AI-автоответы' },
-  settings:  { title: 'Настройки',    icon: 'settings',  desc: 'Тарифы, права администраторов, AI и страницы сайта' },
-  roadmap:   { title: 'Дорожная карта', icon: 'roadmap', desc: 'Задачи разработки: приоритеты, статусы и дедупликация' },
+  overview:      { title: 'Дашборд',       icon: 'dashboard', desc: 'Ключевые показатели и динамика роста платформы' },
+  users:         { title: 'Пользователи',  icon: 'users',     desc: 'Все зарегистрированные аккаунты, блокировки и пробный период' },
+  companies:     { title: 'Компании',      icon: 'building',  desc: 'Организации на платформе, их оборот и подписки' },
+  plans:         { title: 'Тарифы',        icon: 'card',      desc: 'Тарифная шкала и цены пакетов AI-токенов' },
+  subscriptions: { title: 'Подписки',      icon: 'calendar',  desc: 'Назначение тарифов и продление доступа по компаниям' },
+  promos:        { title: 'Промокоды',     icon: 'tag',       desc: 'Создание скидочных кодов и статистика их использования' },
+  accounting:    { title: 'Бухгалтерия',   icon: 'ruble',     desc: 'Доход платформы, ближайшие продления, эффект промокодов' },
+  support:       { title: 'Поддержка',     icon: 'chat',      desc: 'Обращения пользователей, живой чат и AI-автоответы' },
+  settings:      { title: 'Настройки',     icon: 'settings',  desc: 'Права администраторов, AI-ассистент и страницы сайта' },
+  roadmap:       { title: 'Дорожная карта', icon: 'roadmap',  desc: 'Задачи разработки: приоритеты, статусы и дедупликация' },
 };
 
 const PLAN_COLORS: Record<string, string> = {
@@ -95,23 +113,27 @@ export class AdminModule {
   private companiesTotal = 0;
   private companySearch = '';
 
-  /* биллинг */
-  private billingView: BillingView = 'subscriptions';
+  /* тарифы */
   private plans: PlanConfig[] = [];
+  private aiBoostPrices: Record<string, number> = {};
+
+  /* подписки */
   private apiCompanies: AdminCompanyWithApi[] = [];
   private apiSearch = '';
   private apiFilter: 'all' | 'active' | 'trial' | 'expired' = 'all';
   private inlineEdit: string | null = null;
+  private picker: PickerState = { userId: '', userName: '', companyId: '', companyName: '' };
+  private _cleanups: Array<() => void> = [];
+
+  /* промокоды */
   private promos: PromoCode[] = [];
   private promoRedemptions: PromoRedemption[] = [];
   private activePromo: PromoCode | null = null;
   private loadingRedemptions = false;
-  private picker: PickerState = { userId: '', userName: '', companyId: '', companyName: '' };
-  private _cleanups: Array<() => void> = [];
 
   /* настройки */
-  private aiBoostPrices: Record<string, number> = {};
   private siteContent: SiteContent[] = [];
+  private platformAdmins: AnalyticsData['admins'] = [];
 
   /* поддержка — живой чат */
   private liveChats: AdminSupportChat[] = [];
@@ -191,13 +213,25 @@ export class AdminModule {
           const r = await adminService.getCompanies(this.companySearch);
           this.companies = r.companies; this.companiesTotal = r.total; break;
         }
-        case 'billing': {
-          const [plans, apiCos, promos] = await Promise.all([
+        case 'plans': {
+          const [plans, prices] = await Promise.all([adminService.getPlanConfigs(), adminService.getAiBoostPrices()]);
+          this.plans = plans; this.aiBoostPrices = prices; break;
+        }
+        case 'subscriptions': {
+          const [plans, apiCos] = await Promise.all([
             adminService.getPlanConfigs(),
             adminService.getCompaniesWithApi(this.apiSearch),
+          ]);
+          this.plans = plans; this.apiCompanies = apiCos; break;
+        }
+        case 'promos': this.promos = await adminService.getPromos(); break;
+        case 'accounting': {
+          const [stats, apiCos, promos] = await Promise.all([
+            adminService.getStats(),
+            adminService.getCompaniesWithApi(''),
             adminService.getPromos(),
           ]);
-          this.plans = plans; this.apiCompanies = apiCos; this.promos = promos; break;
+          this.stats = stats; this.apiCompanies = apiCos; this.promos = promos; break;
         }
         case 'support': {
           // Ошибку списка чатов показываем внутри вкладки, а не роняем весь loadTab —
@@ -213,12 +247,10 @@ export class AdminModule {
           break;
         }
         case 'settings': {
-          const [plans, prices, content] = await Promise.all([
-            adminService.getPlanConfigs(),
-            adminService.getAiBoostPrices(),
-            adminService.getSiteContent(),
-          ]);
-          this.plans = plans; this.aiBoostPrices = prices; this.siteContent = content; break;
+          const [content, analytics] = await Promise.all([adminService.getSiteContent(), adminService.getAnalytics()]);
+          this.siteContent = content;
+          this.platformAdmins = analytics?.admins ?? [];
+          break;
         }
         case 'roadmap': this.roadmapTasks = await roadmapDb.getTasks(); break;
       }
@@ -301,13 +333,16 @@ export class AdminModule {
 
   private renderTabContent(): string {
     switch (this.tab) {
-      case 'overview':  return this.renderOverview();
-      case 'users':     return this.renderUsers();
-      case 'companies': return this.renderCompanies();
-      case 'billing':   return this.renderBilling();
-      case 'support':   return this.renderSupport();
-      case 'settings':  return this.renderSettings();
-      case 'roadmap':   return this.renderRoadmap();
+      case 'overview':      return this.renderOverview();
+      case 'users':         return this.renderUsers();
+      case 'companies':     return this.renderCompanies();
+      case 'plans':         return this.renderPlans();
+      case 'subscriptions': return this.renderSubscriptions();
+      case 'promos':        return this.renderPromos();
+      case 'accounting':    return this.renderAccounting();
+      case 'support':       return this.renderSupport();
+      case 'settings':      return this.renderSettings();
+      case 'roadmap':       return this.renderRoadmap();
     }
   }
 
@@ -317,7 +352,7 @@ export class AdminModule {
       <div class="ap-skel ap-skel-block"></div>`;
   }
 
-  // ── ДАШБОРД (сводка + аналитика на одной странице) ─────────────────────
+  // ── ДАШБОРД ─────────────────────────────────────────────────────────────
 
   private renderOverview(): string {
     if (!this.stats && !this.analytics) {
@@ -355,11 +390,11 @@ export class AdminModule {
         </div>
         <div class="ap-card">
           <div class="ap-card-title">Быстрые действия</div>
-          <button class="ap-quick" data-tab="users">${icon('users', 16)}<span>Управление пользователями</span></button>
-          <button class="ap-quick" data-tab="companies">${icon('building', 16)}<span>Управление компаниями</span></button>
+          <button class="ap-quick" data-tab="users">${icon('users', 16)}<span>Пользователи</span></button>
+          <button class="ap-quick" data-tab="companies">${icon('building', 16)}<span>Компании</span></button>
+          <button class="ap-quick" data-tab="subscriptions">${icon('calendar', 16)}<span>Продлить подписку</span></button>
+          <button class="ap-quick" data-tab="accounting">${icon('ruble', 16)}<span>Бухгалтерия и доход</span></button>
           <button class="ap-quick" data-tab="support">${icon('chat', 16)}<span>Обращения в поддержку</span>${s.open_tickets > 0 ? `<span class="ap-nav-badge">${s.open_tickets}</span>` : ''}</button>
-          <button class="ap-quick" data-tab="billing">${icon('card', 16)}<span>Подписки и промокоды</span></button>
-          <button class="ap-quick" data-tab="settings">${icon('settings', 16)}<span>Настроить тарифы и AI</span></button>
         </div>
       </div>` : `<div class="ap-banner error">${icon('warn', 18)}<div class="ap-banner-body">Не удалось загрузить статистику.</div></div>`;
 
@@ -408,37 +443,14 @@ export class AdminModule {
         </div>
 
         <div class="ap-card">
-          <div class="ap-card-title">Топ компаний по обороту</div>
+          <div class="ap-card-title">Топ клиентов по обороту</div>
+          <div class="ap-card-desc">Оборот продавцов на маркетплейсах (не доход SimaDesk)</div>
           <div class="ap-chart">${hBars(a.revenue_by_company, C.emerald, n => adminService.fmt(n))}</div>
         </div>
 
         <div class="ap-card">
           <div class="ap-card-title">Распределение по тарифам</div>
           ${donut(a.plans_dist, PLAN_COLORS, PLAN_LABELS)}
-        </div>
-
-        <div class="ap-card ap-span-2">
-          <div class="ap-card-title">Администраторы платформы</div>
-          <div class="ap-table-wrap" style="margin-top:14px">
-            <table class="ap-table">
-              <thead><tr><th>Пользователь</th><th>Роль</th><th>Добавлен</th><th style="width:56px"></th></tr></thead>
-              <tbody>${a.admins.length === 0
-                ? `<tr><td colspan="4" class="ap-empty-cell">Нет данных</td></tr>`
-                : a.admins.map(ad => {
-                    const rm = ROLE_META[ad.role] ?? { label: ad.role, color: '#64748b' };
-                    return `<tr class="ap-tr">
-                      <td>
-                        <div class="ap-ident-name">${this.esc(ad.first_name)} ${this.esc(ad.last_name ?? '')}</div>
-                        <div class="ap-ident-sub">${ad.telegram_username ? '@' + this.esc(ad.telegram_username) : ''}</div>
-                      </td>
-                      <td><span class="ap-badge" style="background:color-mix(in srgb, ${rm.color} 16%, transparent);color:${rm.color}">${rm.label}</span></td>
-                      <td class="ap-td-muted">${adminService.fmtDate(ad.created_at)}</td>
-                      <td><button class="ap-icon-btn sm danger" data-action="revoke-role" data-uid="${ad.user_id}" title="Отозвать права">${icon('ban', 14)}</button></td>
-                    </tr>`;
-                  }).join('')}
-              </tbody>
-            </table>
-          </div>
         </div>
       </div>`;
   }
@@ -575,18 +587,64 @@ export class AdminModule {
       </tr>`;
   }
 
-  // ── БИЛЛИНГ (подписки + промокоды) ──────────────────────────────────────
+  // ── ТАРИФЫ ──────────────────────────────────────────────────────────────
 
-  private renderBilling(): string {
-    const switcher = `
-      <div class="ap-segment" style="margin-bottom:16px">
-        <button class="${this.billingView === 'subscriptions' ? 'active' : ''}" data-billing-view="subscriptions">${icon('card', 14)} Подписки</button>
-        <button class="${this.billingView === 'promos' ? 'active' : ''}" data-billing-view="promos">${icon('tag', 14)} Промокоды</button>
+  private renderPlans(): string {
+    return `
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div class="ap-card">
+          <div class="ap-card-title">Тарифная шкала</div>
+          <div class="ap-card-desc">Цены и пороги оборота. Изменения синхронизируются на странице /info автоматически.</div>
+          <div class="ap-table-wrap" style="margin-top:14px">
+            <table class="ap-table">
+              <thead><tr><th>Тариф</th><th>Оборот от, ₽</th><th>Оборот до, ₽</th><th>Цена/мес, ₽</th><th style="width:120px"></th></tr></thead>
+              <tbody>${this.plans.length === 0
+                ? `<tr><td colspan="5" class="ap-empty-cell">Загрузка…</td></tr>`
+                : this.plans.map(p => {
+                    const col = PLAN_COLORS[p.key] ?? '#64748b';
+                    return `<tr class="ap-tr">
+                      <td><span class="ap-badge" style="background:color-mix(in srgb, ${col} 16%, transparent);color:${col}">${this.esc(p.label)}</span></td>
+                      <td><input class="ap-input ap-input-sm" id="plan-min-${p.key}" type="number" value="${p.revenue_min}" min="0"></td>
+                      <td><input class="ap-input ap-input-sm" id="plan-max-${p.key}" type="number" value="${p.revenue_max ?? ''}" placeholder="без предела"></td>
+                      <td><input class="ap-input ap-input-sm" id="plan-price-${p.key}" type="number" value="${p.price_rub}" min="0"></td>
+                      <td><button class="ap-btn ap-btn-primary ap-btn-sm" data-action="save-plan" data-plan="${p.key}">Сохранить</button></td>
+                    </tr>`;
+                  }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="ap-card">
+          <div class="ap-card-title">Цены пакетов AI-токенов</div>
+          <div class="ap-card-desc">Сохраняются в Supabase и сразу отображаются на странице «Тариф и оплата».</div>
+          <div class="ap-table-wrap" style="margin-top:14px">
+            <table class="ap-table">
+              <thead><tr><th>Пакет</th><th>Токенов/день</th><th>Цена/мес, ₽</th><th style="width:110px"></th></tr></thead>
+              <tbody>${AI_BOOST_PACKAGES.map(pkg => {
+                const price = this.aiBoostPrices[pkg.key] ?? pkg.priceRub;
+                const dayK = Math.round(pkg.tokensPerDay / 1000);
+                return `<tr class="ap-tr">
+                  <td><span class="ap-badge violet">${this.esc(pkg.label)}</span></td>
+                  <td class="ap-td-muted">${dayK.toLocaleString('ru')}К</td>
+                  <td><input class="ap-input ap-input-sm" id="ai-boost-price-${pkg.key}" type="number" value="${price}" min="0" style="width:100px"></td>
+                  <td><button class="ap-btn ap-btn-primary ap-btn-sm" data-action="save-ai-boost-price" data-pkg="${pkg.key}">Сохранить</button></td>
+                </tr>`;
+              }).join('')}</tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="ap-link-row" style="max-width:340px">
+          ${icon('external', 15)}
+          <a href="/info" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;flex:1">Открыть страницу тарифов /info</a>
+        </div>
       </div>`;
-    return switcher + (this.billingView === 'promos' ? this.renderPromosView() : this.renderSubscriptionsView());
   }
 
-  private renderSubscriptionsView(): string {
+  // ── ПОДПИСКИ ────────────────────────────────────────────────────────────
+
+  private renderSubscriptions(): string {
     const now = Date.now();
     const labels: Record<string, string> = { all: 'Все', active: 'Активные', trial: 'Пробный', expired: 'Без доступа' };
     const filterBtns = (['all', 'active', 'trial', 'expired'] as const)
@@ -764,7 +822,9 @@ export class AdminModule {
       </div>`;
   }
 
-  private renderPromosView(): string {
+  // ── ПРОМОКОДЫ ───────────────────────────────────────────────────────────
+
+  private renderPromos(): string {
     if (this.activePromo) return this.renderPromoDetail(this.activePromo);
 
     const totalRedemptions = this.promos.reduce((s, p) => s + (p.redemption_count ?? p.use_count ?? 0), 0);
@@ -914,6 +974,107 @@ export class AdminModule {
         <table class="ap-table">
           <thead><tr><th>Пользователь</th><th>Компания</th><th>Когда применён</th></tr></thead>
           <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  // ── БУХГАЛТЕРИЯ ─────────────────────────────────────────────────────────
+  //
+  // Считается только из того, что реально есть в БД: активные подписки
+  // (company → plan_key, price_rub, current_period_end) и промокоды.
+  // Отдельной таблицы платежей ЮKassa на платформе нет — есть только
+  // последний статус подписки на компанию, поэтому историю транзакций
+  // показать нельзя, но денежную картину «сейчас» и «что дальше» — можно.
+
+  private renderAccounting(): string {
+    if (!this.stats) {
+      return this.emptyState('alert', 'Данные недоступны', 'Не удалось загрузить показатели. Нажмите «Обновить».');
+    }
+
+    const now = Date.now();
+    const active = this.apiCompanies.filter(c => {
+      const sub = c.subscription;
+      return sub?.status === 'active' && !!sub.current_period_end && new Date(sub.current_period_end).getTime() > now;
+    });
+
+    const mrr = this.stats.mrr;
+    const arpu = this.stats.active_subs > 0 ? Math.round(mrr / this.stats.active_subs) : 0;
+    const upcoming30 = active.filter(c => {
+      const days = Math.ceil((new Date(c.subscription!.current_period_end!).getTime() - now) / 86_400_000);
+      return days <= 30;
+    });
+    const upcoming30Sum = upcoming30.reduce((s, c) => s + (c.subscription!.price_rub || 0), 0);
+
+    // Доход по тарифам — сумма фактической цены подписки (не прайс-листа, чтобы учесть скидки).
+    const byPlan = new Map<string, number>();
+    for (const c of active) {
+      const key = c.subscription!.plan_key;
+      byPlan.set(key, (byPlan.get(key) ?? 0) + (c.subscription!.price_rub || 0));
+    }
+    const revenueByPlan = [...byPlan.entries()]
+      .map(([key, revenue]) => ({ name: PLAN_LABELS[key] ?? key, revenue }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    // Эффект промокодов — только то, что можно посчитать честно: рублёвые скидки × использования.
+    // Процентные скидки без суммы заказа в рубли не переводим, показываем отдельным счётчиком.
+    const rubDiscountTotal = this.promos.reduce((s, p) => {
+      const uses = p.redemption_count ?? p.use_count ?? 0;
+      return s + (p.discount_rub ? p.discount_rub * uses : 0);
+    }, 0);
+    const pctRedemptions = this.promos.reduce((s, p) => {
+      const uses = p.redemption_count ?? p.use_count ?? 0;
+      return s + (p.discount_percent ? uses : 0);
+    }, 0);
+    const activePromoCount = this.promos.filter(p => p.is_active).length;
+
+    const ledger = [...active].sort((a, b) =>
+      new Date(a.subscription!.current_period_end!).getTime() - new Date(b.subscription!.current_period_end!).getTime());
+
+    return `
+      <div class="ap-kpis">
+        ${[
+          { label: 'MRR',                    value: adminService.fmtMoney(mrr),          icon: 'ruble',    color: C.emerald, sub: `${this.stats.active_subs} плательщиков` },
+          { label: 'Средний чек (ARPU)',      value: adminService.fmtMoney(arpu),         icon: 'trend',    color: C.indigo,  sub: 'доход / активные подписки' },
+          { label: 'К продлению за 30 дней',  value: adminService.fmtMoney(upcoming30Sum), icon: 'calendar', color: C.amber,   sub: `${upcoming30.length} компаний` },
+          { label: 'Скидки по промокодам',    value: adminService.fmtMoney(rubDiscountTotal), icon: 'tag',  color: C.violet,  sub: `${activePromoCount} кодов активно` },
+        ].map(k => `
+          <div class="ap-kpi" style="--kpi-color:${k.color}">
+            <div class="ap-kpi-top">
+              <div class="ap-kpi-icon">${icon(k.icon, 16)}</div>
+              <div class="ap-kpi-label">${k.label}</div>
+            </div>
+            <div class="ap-kpi-value">${k.value}</div>
+            <div class="ap-kpi-sub">${k.sub}</div>
+          </div>`).join('')}
+      </div>
+
+      <div class="ap-grid-2">
+        <div class="ap-card">
+          <div class="ap-card-title">Доход по тарифам</div>
+          <div class="ap-card-desc">Фактическая сумма активных подписок по каждому тарифу</div>
+          <div class="ap-chart">${revenueByPlan.length ? hBars(revenueByPlan, C.emerald, n => adminService.fmt(n)) : '<div class="ap-chart-empty">Нет активных подписок</div>'}</div>
+        </div>
+        <div class="ap-card">
+          <div class="ap-card-title">Эффект промокодов</div>
+          <div class="ap-card-desc">Только рублёвые скидки переводятся в сумму — процентные без суммы заказа честно посчитать нельзя</div>
+          <div style="margin-top:8px">
+            ${this.statRow('Выдано скидок, ₽ (сумма)', rubDiscountTotal, C.emerald)}
+            ${this.statRow('Активаций по % скидкам', pctRedemptions, C.indigo)}
+            ${this.statRow('Активных кодов', activePromoCount, C.violet)}
+            ${this.statRow('Всего кодов', this.promos.length, C.blue)}
+          </div>
+        </div>
+      </div>
+
+      <div class="ap-section-title">Активные подписки — по сроку продления</div>
+      <div class="ap-table-wrap">
+        <table class="ap-table">
+          <thead><tr>
+            <th>Компания</th><th>Владелец</th><th>API</th><th>Тариф</th><th>Действует до</th><th style="width:104px"></th>
+          </tr></thead>
+          <tbody>${ledger.length === 0
+            ? `<tr><td colspan="6" class="ap-empty-cell">Нет активных платящих компаний</td></tr>`
+            : ledger.map(c => this.renderApiCompanyRow(c, now)).join('')}</tbody>
         </table>
       </div>`;
   }
@@ -1520,7 +1681,7 @@ ${this.SIMADESK_KNOWLEDGE}
     } catch { el.innerHTML = `${icon('zap', 13)} —`; }
   }
 
-  // ── НАСТРОЙКИ (конфигурация + страницы сайта) ───────────────────────────
+  // ── НАСТРОЙКИ ───────────────────────────────────────────────────────────
 
   private renderSettings(): string {
     const pages: Array<{ key: string; title: string; link: string }> = [
@@ -1556,34 +1717,33 @@ ${this.SIMADESK_KNOWLEDGE}
         </div>`;
     }).join('');
 
+    const adminsTable = `
+      <div class="ap-table-wrap" style="margin-top:14px">
+        <table class="ap-table">
+          <thead><tr><th>Пользователь</th><th>Роль</th><th>Добавлен</th><th style="width:56px"></th></tr></thead>
+          <tbody>${this.platformAdmins.length === 0
+            ? `<tr><td colspan="4" class="ap-empty-cell">Нет данных</td></tr>`
+            : this.platformAdmins.map(ad => {
+                const rm = ROLE_META[ad.role] ?? { label: ad.role, color: '#64748b' };
+                return `<tr class="ap-tr">
+                  <td>
+                    <div class="ap-ident-name">${this.esc(ad.first_name)} ${this.esc(ad.last_name ?? '')}</div>
+                    <div class="ap-ident-sub">${ad.telegram_username ? '@' + this.esc(ad.telegram_username) : ''}</div>
+                  </td>
+                  <td><span class="ap-badge" style="background:color-mix(in srgb, ${rm.color} 16%, transparent);color:${rm.color}">${rm.label}</span></td>
+                  <td class="ap-td-muted">${adminService.fmtDate(ad.created_at)}</td>
+                  <td><button class="ap-icon-btn sm danger" data-action="revoke-role" data-uid="${ad.user_id}" title="Отозвать права">${icon('ban', 14)}</button></td>
+                </tr>`;
+              }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
     return `
       <div class="ap-settings">
         <div class="ap-card ap-wide">
-          <div class="ap-card-title">Тарифная шкала</div>
-          <div class="ap-card-desc">Цены и пороги оборота. Изменения синхронизируются на странице /info автоматически.</div>
-          <div class="ap-table-wrap" style="margin-top:14px">
-            <table class="ap-table">
-              <thead><tr><th>Тариф</th><th>Оборот от, ₽</th><th>Оборот до, ₽</th><th>Цена/мес, ₽</th><th style="width:120px"></th></tr></thead>
-              <tbody>${this.plans.length === 0
-                ? `<tr><td colspan="5" class="ap-empty-cell">Загрузка…</td></tr>`
-                : this.plans.map(p => {
-                    const col = PLAN_COLORS[p.key] ?? '#64748b';
-                    return `<tr class="ap-tr">
-                      <td><span class="ap-badge" style="background:color-mix(in srgb, ${col} 16%, transparent);color:${col}">${this.esc(p.label)}</span></td>
-                      <td><input class="ap-input ap-input-sm" id="plan-min-${p.key}" type="number" value="${p.revenue_min}" min="0"></td>
-                      <td><input class="ap-input ap-input-sm" id="plan-max-${p.key}" type="number" value="${p.revenue_max ?? ''}" placeholder="без предела"></td>
-                      <td><input class="ap-input ap-input-sm" id="plan-price-${p.key}" type="number" value="${p.price_rub}" min="0"></td>
-                      <td><button class="ap-btn ap-btn-primary ap-btn-sm" data-action="save-plan" data-plan="${p.key}">Сохранить</button></td>
-                    </tr>`;
-                  }).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="ap-card">
           <div class="ap-card-title">Права администратора</div>
-          <div class="ap-card-desc">Выдача доступа к этой панели</div>
+          <div class="ap-card-desc">Выдача и отзыв доступа к этой панели</div>
           <div class="ap-form">
             <div class="ap-field">
               <label class="ap-label">Пользователь</label>
@@ -1599,6 +1759,7 @@ ${this.SIMADESK_KNOWLEDGE}
             </div>
             <button class="ap-btn ap-btn-primary" id="grant-admin-btn">Выдать права</button>
           </div>
+          ${adminsTable}
         </div>
 
         <div class="ap-card">
@@ -1650,26 +1811,6 @@ ${this.SIMADESK_KNOWLEDGE}
                 <span class="ap-status-msg" id="reviewer-save-status"></span>
               </div>
             </div>
-          </div>
-        </div>
-
-        <div class="ap-card">
-          <div class="ap-card-title">Цены пакетов AI-токенов</div>
-          <div class="ap-card-desc">Сохраняются в Supabase и сразу отображаются на странице «Тариф и оплата».</div>
-          <div class="ap-table-wrap" style="margin-top:14px">
-            <table class="ap-table">
-              <thead><tr><th>Пакет</th><th>Токенов/день</th><th>Цена/мес, ₽</th><th style="width:110px"></th></tr></thead>
-              <tbody>${AI_BOOST_PACKAGES.map(pkg => {
-                const price = this.aiBoostPrices[pkg.key] ?? pkg.priceRub;
-                const dayK = Math.round(pkg.tokensPerDay / 1000);
-                return `<tr class="ap-tr">
-                  <td><span class="ap-badge violet">${this.esc(pkg.label)}</span></td>
-                  <td class="ap-td-muted">${dayK.toLocaleString('ru')}К</td>
-                  <td><input class="ap-input ap-input-sm" id="ai-boost-price-${pkg.key}" type="number" value="${price}" min="0" style="width:100px"></td>
-                  <td><button class="ap-btn ap-btn-primary ap-btn-sm" data-action="save-ai-boost-price" data-pkg="${pkg.key}">Сохранить</button></td>
-                </tr>`;
-              }).join('')}</tbody>
-            </table>
           </div>
         </div>
 
@@ -1808,14 +1949,6 @@ ${this.SIMADESK_KNOWLEDGE}
     this.el.querySelector('#ap-exit')?.addEventListener('click', () => window.app?.navigateTo?.('profile'));
     this.el.querySelector('#ap-refresh')?.addEventListener('click', () => this.loadTab());
     this.el.querySelector('#ap-refresh-empty')?.addEventListener('click', () => this.loadTab());
-
-    this.el.querySelectorAll<HTMLElement>('[data-billing-view]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        this.billingView = btn.dataset.billingView as BillingView;
-        this.activePromo = null;
-        this.render();
-      });
-    });
 
     this.debouncedSearch('#ap-user-search', v => { this.userSearch = v; this.loadTab(); });
     this.debouncedSearch('#ap-company-search', v => { this.companySearch = v; this.loadTab(); });
@@ -2056,8 +2189,7 @@ ${this.SIMADESK_KNOWLEDGE}
         try {
           await adminService.extendSubscription(cid, 30);
           showToast(`Подписка ${co ? `«${co.name}» ` : ''}продлена на 30 дней`, 'success');
-          this.apiCompanies = await adminService.getCompaniesWithApi(this.apiSearch);
-          this.render();
+          this.loadTab();
         } catch (e) { showToast('Ошибка: ' + this.errText(e), 'error'); }
         return;
       }
@@ -2161,8 +2293,7 @@ ${this.SIMADESK_KNOWLEDGE}
       await adminService.setSubscriptionEnd(cid, endDateISO);
       showToast(toastMsg, 'success');
       this.inlineEdit = null;
-      this.apiCompanies = await adminService.getCompaniesWithApi(this.apiSearch);
-      this.render();
+      this.loadTab();
     } catch (e) { showToast('Ошибка: ' + this.errText(e), 'error'); }
   }
 
@@ -2188,8 +2319,7 @@ ${this.SIMADESK_KNOWLEDGE}
       await adminService.setSubscription(uid, cid, plan.key, plan.price_rub, months);
       showToast(`Подписка «${plan.label}» назначена`, 'success');
       this.picker = { userId: '', userName: '', companyId: '', companyName: '' };
-      this.apiCompanies = await adminService.getCompaniesWithApi(this.apiSearch);
-      this.render();
+      this.loadTab();
     } catch (e) { showToast('Ошибка: ' + this.errText(e), 'error'); }
   }
 
