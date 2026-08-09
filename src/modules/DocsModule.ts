@@ -1003,10 +1003,55 @@ export class DocsModule {
     </div>`;
   }
 
+  // Insert visual page separators between block elements at every PAGE_H px.
+  // Separators are stripped before saving so they never pollute the stored HTML.
+  private setupPageSeparators(editor: HTMLElement): void {
+    const PAGE_H = 1123;
+    let busy = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const refresh = () => {
+      if (busy) return;
+      busy = true;
+      editor.querySelectorAll('.dw-pg-sep').forEach(el => el.remove());
+
+      const children = Array.from(editor.children) as HTMLElement[];
+      let curPage = 0;
+      for (const el of children) {
+        const elPage = Math.floor(el.offsetTop / PAGE_H);
+        if (elPage > curPage) {
+          for (let p = curPage + 1; p <= elPage; p++) {
+            const sep = document.createElement('div');
+            sep.className = 'dw-pg-sep';
+            sep.contentEditable = 'false';
+            el.parentNode!.insertBefore(sep, el);
+          }
+          curPage = elPage;
+        }
+      }
+      setTimeout(() => { busy = false; }, 400);
+    };
+
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(refresh, 200);
+    };
+
+    schedule();
+    new ResizeObserver(() => { if (!busy) schedule(); }).observe(editor);
+    editor.addEventListener('input', schedule);
+  }
+
   private bindWord(doc: DocItem): void {
     const editor = this.root.querySelector<HTMLElement>('#docs-word-editor');
     if (!editor) return;
-    const commit = () => this.updateContent(doc.id, editor.innerHTML);
+
+    // Strip page separators before saving — they must never be persisted
+    const commit = () => {
+      const clone = editor.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll('.dw-pg-sep').forEach(el => el.remove());
+      this.updateContent(doc.id, clone.innerHTML);
+    };
     editor.addEventListener('input', commit);
 
     // Apply CSS-based font size to selection via span
@@ -1083,6 +1128,8 @@ export class DocsModule {
       if (bar) bar.style.background = v;
       commit();
     });
+
+    this.setupPageSeparators(editor);
   }
 
   // ── Excel ──────────────────────────────────────────────────────────────────
