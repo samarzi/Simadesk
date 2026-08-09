@@ -1070,7 +1070,7 @@ export class AdminModule {
       <div class="ap-table-wrap">
         <table class="ap-table">
           <thead><tr>
-            <th>Компания</th><th>Владелец</th><th>API</th><th>Тариф</th><th>Действует до</th><th style="width:104px"></th>
+            <th>Компания</th><th>Владелец</th><th>API</th><th>Тариф · дней осталось</th><th>Действует до</th><th style="width:104px"></th>
           </tr></thead>
           <tbody>${ledger.length === 0
             ? `<tr><td colspan="6" class="ap-empty-cell">Нет активных платящих компаний</td></tr>`
