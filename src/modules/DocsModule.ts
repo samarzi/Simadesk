@@ -999,66 +999,87 @@ export class DocsModule {
       </div>
     </div>
     <div class="docs-word-scroll">
-      <div class="docs-word-editor" id="docs-word-editor" contenteditable="true" spellcheck="true" data-placeholder="Начните печатать…">${doc.content || ''}</div>
+      <div class="docs-word-pages" id="docs-word-pages">
+        <div class="docs-word-page" contenteditable="true" spellcheck="true" data-placeholder="Начните печатать…">${doc.content || ''}</div>
+      </div>
     </div>`;
   }
 
-  // Insert visual page separators between block elements at every PAGE_H px.
-  // Separators are stripped before saving so they never pollute the stored HTML.
-  private setupPageSeparators(editor: HTMLElement): void {
-    const PAGE_H = 1123;
-    let busy = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+  // Distribute block-level children across separate page divs.
+  // Each .docs-word-page is a self-contained white A4 box; pages after the first
+  // are created dynamically. Called once after initial render.
+  private reflowWordPages(pagesDiv: HTMLElement): void {
+    // offsetTop is from the page's border-top. With 96px top-padding,
+    // content starts at ~96px. Page height is 1123px, bottom padding 96px,
+    // so content bottom is at 1027px. Move any child whose top >= 1027px to next page.
+    const THRESHOLD = 1027;
+    let pageIdx = 0;
 
-    const refresh = () => {
-      if (busy) return;
-      busy = true;
-      editor.querySelectorAll('.dw-pg-sep').forEach(el => el.remove());
+    while (pageIdx < 200) {
+      const pages = Array.from(pagesDiv.querySelectorAll<HTMLElement>('.docs-word-page'));
+      if (pageIdx >= pages.length) break;
 
-      const children = Array.from(editor.children) as HTMLElement[];
-      let curPage = 0;
-      for (const el of children) {
-        const elPage = Math.floor(el.offsetTop / PAGE_H);
-        if (elPage > curPage) {
-          for (let p = curPage + 1; p <= elPage; p++) {
-            const sep = document.createElement('div');
-            sep.className = 'dw-pg-sep';
-            sep.contentEditable = 'false';
-            el.parentNode!.insertBefore(sep, el);
-          }
-          curPage = elPage;
-        }
+      const currentPage = pages[pageIdx];
+      const children = Array.from(currentPage.children) as HTMLElement[];
+
+      // Need at least 2 children to split (always keep one on current page)
+      if (children.length <= 1) { pageIdx++; continue; }
+
+      let overflowIdx = -1;
+      for (let i = 1; i < children.length; i++) {
+        if (children[i].offsetTop >= THRESHOLD) { overflowIdx = i; break; }
       }
-      setTimeout(() => { busy = false; }, 400);
-    };
 
-    const schedule = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(refresh, 200);
-    };
+      if (overflowIdx === -1) { pageIdx++; continue; }
 
-    schedule();
-    new ResizeObserver(() => { if (!busy) schedule(); }).observe(editor);
-    editor.addEventListener('input', schedule);
+      // Get or create next page
+      let nextPage = pages[pageIdx + 1];
+      if (!nextPage) {
+        nextPage = document.createElement('div');
+        nextPage.className = 'docs-word-page';
+        nextPage.contentEditable = 'true';
+        nextPage.setAttribute('spellcheck', 'true');
+        pagesDiv.appendChild(nextPage);
+      }
+
+      // Prepend overflowing children to next page
+      const anchor = nextPage.firstChild;
+      for (const child of children.slice(overflowIdx)) {
+        nextPage.insertBefore(child, anchor);
+      }
+
+      pageIdx++;
+    }
   }
 
   private bindWord(doc: DocItem): void {
-    const editor = this.root.querySelector<HTMLElement>('#docs-word-editor');
-    if (!editor) return;
+    const pagesDiv = this.root.querySelector<HTMLElement>('#docs-word-pages');
+    if (!pagesDiv) return;
 
-    // Strip page separators before saving — they must never be persisted
+    // Track whichever page was last focused so toolbar commands target it
+    let activeEditor: HTMLElement | null = null;
+    const getEd = (): HTMLElement =>
+      activeEditor || pagesDiv.querySelector<HTMLElement>('.docs-word-page')!;
+
+    pagesDiv.addEventListener('focusin', e => {
+      const page = (e.target as HTMLElement).closest<HTMLElement>('.docs-word-page');
+      if (page) activeEditor = page;
+    });
+
+    // Collect content from all pages for persistence
     const commit = () => {
-      const clone = editor.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll('.dw-pg-sep').forEach(el => el.remove());
-      this.updateContent(doc.id, clone.innerHTML);
+      const pages = pagesDiv.querySelectorAll('.docs-word-page');
+      const html = Array.from(pages).map(p => p.innerHTML).join('');
+      this.updateContent(doc.id, html);
     };
-    editor.addEventListener('input', commit);
+    pagesDiv.addEventListener('input', commit);
 
     // Apply CSS-based font size to selection via span
     const applyFontSize = (sizePt: string) => {
+      const ed = getEd();
       document.execCommand('styleWithCSS', false, 'true');
       document.execCommand('fontSize', false, '7');
-      editor.querySelectorAll<HTMLElement>('font[size="7"]').forEach(el => {
+      ed.querySelectorAll<HTMLElement>('font[size="7"]').forEach(el => {
         const span = document.createElement('span');
         span.style.fontSize = sizePt;
         span.innerHTML = el.innerHTML;
@@ -1069,7 +1090,8 @@ export class DocsModule {
     this.root.querySelectorAll<HTMLButtonElement>('.dw-tool').forEach(btn => {
       btn.addEventListener('mousedown', e => e.preventDefault());
       btn.addEventListener('click', () => {
-        editor.focus();
+        const ed = getEd();
+        ed.focus();
         const cmd = btn.dataset.cmd;
         if (cmd) {
           document.execCommand('styleWithCSS', false, 'true');
@@ -1084,7 +1106,8 @@ export class DocsModule {
 
     const blockSel = this.root.querySelector<HTMLSelectElement>('[data-block-sel]');
     blockSel?.addEventListener('change', () => {
-      editor.focus();
+      const ed = getEd();
+      ed.focus();
       if (blockSel.value) document.execCommand('formatBlock', false, blockSel.value);
       blockSel.value = 'p';
       commit();
@@ -1093,7 +1116,8 @@ export class DocsModule {
     const fontSel = this.root.querySelector<HTMLSelectElement>('[data-cmd-font]');
     fontSel?.addEventListener('change', () => {
       if (!fontSel.value) return;
-      editor.focus();
+      const ed = getEd();
+      ed.focus();
       document.execCommand('styleWithCSS', false, 'true');
       document.execCommand('fontName', false, fontSel.value);
       fontSel.value = '';
@@ -1103,14 +1127,16 @@ export class DocsModule {
     const ptSel = this.root.querySelector<HTMLSelectElement>('[data-cmd-size]');
     ptSel?.addEventListener('change', () => {
       if (!ptSel.value) return;
-      editor.focus();
+      const ed = getEd();
+      ed.focus();
       applyFontSize(ptSel.value);
       ptSel.value = '';
       commit();
     });
 
     this.root.querySelector<HTMLInputElement>('[data-color]')?.addEventListener('input', e => {
-      editor.focus();
+      const ed = getEd();
+      ed.focus();
       const v = (e.target as HTMLInputElement).value;
       document.execCommand('styleWithCSS', false, 'true');
       document.execCommand('foreColor', false, v);
@@ -1120,7 +1146,8 @@ export class DocsModule {
     });
 
     this.root.querySelector<HTMLInputElement>('[data-hilite]')?.addEventListener('input', e => {
-      editor.focus();
+      const ed = getEd();
+      ed.focus();
       const v = (e.target as HTMLInputElement).value;
       document.execCommand('styleWithCSS', false, 'true');
       document.execCommand('hiliteColor', false, v) || document.execCommand('backColor', false, v);
@@ -1129,7 +1156,10 @@ export class DocsModule {
       commit();
     });
 
-    this.setupPageSeparators(editor);
+    // Distribute content into separate page divs after initial layout
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => this.reflowWordPages(pagesDiv));
+    });
   }
 
   // ── Excel ──────────────────────────────────────────────────────────────────

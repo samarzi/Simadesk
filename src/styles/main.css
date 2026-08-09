@@ -473,18 +473,20 @@ html.light .dw-tool:hover { background: rgba(0,0,0,.07); }
 .dw-color-lbl input[type="color"] {
   position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
 }
-/* ── Word scroll + page ──────────────────────────────────────────── */
+/* ── Word scroll + pages ─────────────────────────────────────────── */
 .docs-word-scroll {
   flex: 1; overflow: auto;
   background: #2a2a2c;
-  padding: 32px 0 64px;
-  display: flex; flex-direction: column; align-items: center; gap: 0;
 }
 html.light .docs-word-scroll { background: #c8c8c8; }
-.docs-word-editor {
+.docs-word-pages {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 32px; padding: 32px 0 64px; min-height: 100%;
+}
+.docs-word-page {
   width: 794px; /* A4 at 96dpi */
   min-height: 1123px;
-  padding: 96px 96px; /* ≈ Word default margins */
+  padding: 96px; /* ≈ Word default margins */
   color: #000000;
   box-shadow: 0 2px 12px rgba(0,0,0,.4), 0 0 0 1px rgba(0,0,0,.08);
   font-size: 12pt; line-height: 1.6; outline: none;
@@ -492,60 +494,35 @@ html.light .docs-word-scroll { background: #c8c8c8; }
   caret-color: #111;
   background: #ffffff;
   position: relative;
+  box-sizing: border-box;
 }
-html.light .docs-word-editor { box-shadow: 0 2px 8px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.06); }
-.docs-word-editor:empty::before {
+html.light .docs-word-page { box-shadow: 0 2px 8px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.06); }
+.docs-word-page:empty::before {
   content: attr(data-placeholder); color: #aaa; pointer-events: none;
 }
-/* ── JS-injected page separators ─────────────────────────────────── */
-.docs-word-editor .dw-pg-sep {
-  display: block;
-  height: 36px;
-  margin: 16px -96px;
-  background: #2a2a2c;
-  border-top: 2px solid #555;
-  border-bottom: 2px solid #555;
-  position: relative;
-  user-select: none;
-  pointer-events: none;
-}
-.docs-word-editor .dw-pg-sep::after {
-  content: '— страница —';
-  position: absolute; top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 10px; color: #777; letter-spacing: .06em;
-  font-family: Arial, sans-serif; white-space: nowrap;
-}
-html.light .docs-word-editor .dw-pg-sep { background: #c0c0c0; border-color: #999; }
-html.light .docs-word-editor .dw-pg-sep::after { color: #666; }
-/* Word heading styles matching Word defaults */
-.docs-word-editor h1 { font-size: 16pt; font-weight: 700; color: #2f5496; margin: 12pt 0 3pt; line-height: 1.3; }
-.docs-word-editor h2 { font-size: 13pt; font-weight: 700; color: #2f5496; margin: 10pt 0 2pt; line-height: 1.3; }
-.docs-word-editor h3 { font-size: 12pt; font-weight: 700; color: #1f3864; margin: 8pt 0 2pt; }
-.docs-word-editor h4 { font-size: 11pt; font-weight: 700; color: #2f5496; margin: 8pt 0 2pt; }
-.docs-word-editor p { margin: 0 0 6pt; }
-.docs-word-editor ul, .docs-word-editor ol { padding-left: 28px; margin: 0 0 6pt; }
-.docs-word-editor blockquote { border-left: 3px solid #c0c0c0; margin: 8pt 0 8pt 12pt; padding-left: 12px; color: #444; font-style: italic; }
-.docs-word-editor pre { background: #f5f5f5; border: 1px solid #ddd; border-radius: 3px; padding: 8px 12px; font-family: 'Courier New', monospace; font-size: 10pt; overflow-x: auto; }
-.docs-word-editor table { border-collapse: collapse; width: 100%; margin: 6pt 0; }
-.docs-word-editor td, .docs-word-editor th { border: 1px solid #c0c0c0; padding: 4px 8px; }
-/* ── Page break visual separator ─────────────────────────────────── */
-.docs-word-editor .docx-page-break {
-  display: block;
-  height: 0;
-  margin: 56px -96px;
-  border: none;
+/* Word heading styles */
+.docs-word-page h1 { font-size: 16pt; font-weight: 700; color: #2f5496; margin: 12pt 0 3pt; line-height: 1.3; }
+.docs-word-page h2 { font-size: 13pt; font-weight: 700; color: #2f5496; margin: 10pt 0 2pt; line-height: 1.3; }
+.docs-word-page h3 { font-size: 12pt; font-weight: 700; color: #1f3864; margin: 8pt 0 2pt; }
+.docs-word-page h4 { font-size: 11pt; font-weight: 700; color: #2f5496; margin: 8pt 0 2pt; }
+.docs-word-page p { margin: 0 0 6pt; }
+.docs-word-page ul, .docs-word-page ol { padding-left: 28px; margin: 0 0 6pt; }
+.docs-word-page blockquote { border-left: 3px solid #c0c0c0; margin: 8pt 0 8pt 12pt; padding-left: 12px; color: #444; font-style: italic; }
+.docs-word-page pre { background: #f5f5f5; border: 1px solid #ddd; border-radius: 3px; padding: 8px 12px; font-family: 'Courier New', monospace; font-size: 10pt; overflow-x: auto; }
+.docs-word-page table { border-collapse: collapse; width: 100%; margin: 6pt 0; }
+.docs-word-page td, .docs-word-page th { border: 1px solid #c0c0c0; padding: 4px 8px; }
+/* ── Explicit Word page-break marker ─────────────────────────────── */
+.docs-word-page .docx-page-break {
+  display: block; height: 0; border: none;
   border-top: 2px dashed rgba(150,150,150,.35);
-  position: relative;
-  pointer-events: none;
+  margin: 24px 0; position: relative; pointer-events: none;
 }
-.docs-word-editor .docx-page-break::before {
+.docs-word-page .docx-page-break::before {
   content: 'Разрыв страницы';
   position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
   background: #fff; padding: 0 10px;
   font-size: 10px; color: #aaa; letter-spacing: .04em;
-  font-family: Arial, sans-serif; font-style: normal; font-weight: 400;
-  white-space: nowrap;
+  font-family: Arial, sans-serif; white-space: nowrap;
 }
 .docs-export-sel {
   height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border);
