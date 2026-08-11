@@ -72,8 +72,9 @@ html.light .ap {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: var(--ap-panel);
+  background: color-mix(in srgb, var(--ap-panel) 60%, var(--ap-surface));
   border-right: 1px solid var(--ap-line);
+  box-shadow: 1px 0 0 var(--ap-line), 4px 0 24px rgba(0,0,0,.08);
   position: relative;
   z-index: 5;
 }
@@ -83,61 +84,63 @@ html.light .ap {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 16px 16px 14px;
-  min-height: 62px;
+  padding: 18px 16px 16px;
+  min-height: 66px;
 }
 .ap-brand-mark {
-  width: 34px; height: 34px;
-  border-radius: 10px;
+  width: 36px; height: 36px;
+  border-radius: 11px;
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  background: var(--accent);
+  background: linear-gradient(150deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #22c55e));
   color: #0a0a0a;
+  box-shadow: 0 4px 14px var(--accent-dim), inset 0 1px 0 rgba(255,255,255,.35);
 }
 .ap-brand-text { min-width: 0; overflow: hidden; }
 .ap-brand-title {
-  font-size: 13.5px; font-weight: 700; color: var(--text);
-  letter-spacing: -.2px; white-space: nowrap; line-height: 1.25;
+  font-size: 14px; font-weight: 800; color: var(--text);
+  letter-spacing: -.3px; white-space: nowrap; line-height: 1.25;
 }
 .ap-brand-sub {
-  font-size: 10.5px; font-weight: 600; color: var(--text3);
-  text-transform: uppercase; letter-spacing: .7px; white-space: nowrap;
+  font-size: 10px; font-weight: 700; color: var(--text3);
+  text-transform: uppercase; letter-spacing: 1px; white-space: nowrap;
 }
 
-/* Навигация — плоский список, без групп и подсказок */
+/* Навигация — плоский список из закруглённых «таблеток», без групп и подсказок */
 .ap-nav {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 6px 12px 12px;
-  display: flex; flex-direction: column; gap: 1px;
+  padding: 4px 10px 12px;
+  display: flex; flex-direction: column; gap: 3px;
 }
 .ap-nav-item {
   display: flex; align-items: center; gap: 10px;
   width: 100%;
-  padding: 8px 10px 8px 12px;
-  border: none; background: none;
-  border-left: 2.5px solid transparent;
-  border-radius: 0 var(--ap-radius-sm) var(--ap-radius-sm) 0;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
   color: var(--text2);
-  font: inherit; font-size: 13px; font-weight: 500;
+  font: inherit; font-size: 13px; font-weight: 550;
   cursor: pointer;
   text-align: left;
-  transition: background .13s, color .13s, border-color .13s;
+  transition: background .14s, color .14s, box-shadow .14s, transform .1s;
 }
 .ap-nav-item > span:first-of-type {
   flex: 1; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.ap-nav-item svg { transition: transform .13s; }
+.ap-nav-item svg { transition: transform .14s; opacity: .85; }
 .ap-nav-item:hover { background: var(--hover); color: var(--text); }
+.ap-nav-item:active { transform: scale(.98); }
 .ap-nav-item.active {
-  background: var(--accent-dim);
-  border-left-color: var(--accent);
-  color: var(--accent-text);
-  font-weight: 650;
+  background: var(--accent);
+  color: #0a0a0a;
+  font-weight: 700;
+  box-shadow: 0 3px 10px var(--accent-dim);
 }
-.ap-nav-item.active svg { transform: scale(1.05); }
+.ap-nav-item.active svg { opacity: 1; transform: scale(1.05); }
 .ap-nav-badge {
   flex: 0 0 auto;
   font-size: 10.5px; font-weight: 700;
@@ -147,7 +150,7 @@ html.light .ap {
   background: var(--ap-raised); color: var(--text2);
   border: 1px solid var(--ap-line);
 }
-.ap-nav-item.active .ap-nav-badge { background: var(--ap-surface); }
+.ap-nav-item.active .ap-nav-badge { background: rgba(10,10,10,.16); color: #0a0a0a; border-color: transparent; }
 
 /* Подвал рейла */
 .ap-rail-foot {
@@ -158,8 +161,8 @@ html.light .ap {
 .ap-identity {
   display: flex; align-items: center; gap: 10px;
   padding: 7px 8px;
-  border-radius: var(--ap-radius-sm);
-  background: var(--ap-surface);
+  border-radius: 11px;
+  background: var(--ap-panel);
   border: 1px solid var(--ap-line);
   min-width: 0;
 }
