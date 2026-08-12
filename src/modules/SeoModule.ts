@@ -125,7 +125,9 @@ export class SeoModule {
     try {
       const pos = await fetchWbSearchPosition(parseInt(t.productId), t.keyword);
       this.recordPosition(t, pos);
-    } catch { /* network */ }
+    } catch (err: any) {
+      console.warn('[SeoModule] checkPosition failed:', t.keyword, err?.message);
+    }
     this.checking.delete(id); this.render();
   }
 

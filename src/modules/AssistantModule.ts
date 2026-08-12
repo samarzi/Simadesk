@@ -2995,6 +2995,47 @@ export class AssistantModule {
     return ttsBtn;
   }
 
+  /** Promotes a streaming bubble to a finished message in-place — no DOM flash. Returns TTS button. */
+  private finalizeStreamBubble(msgEl: HTMLElement, displayText: string, rawText: string): HTMLElement | null {
+    msgEl.classList.remove('streaming');
+    const bubble = msgEl.querySelector('.sd-ap-msg-bubble');
+    if (!bubble) return null;
+    bubble.innerHTML = `
+      ${renderMarkdown(displayText)}
+      <div class="sd-ap-msg-footer">
+        <button class="msg-copy-btn" title="Копировать">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+        </button>
+        <button class="msg-tts-btn" title="Озвучить">
+          <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <svg class="pause-icon" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>
+          </svg>
+        </button>
+      </div>`;
+    const copyBtn = bubble.querySelector<HTMLElement>('.msg-copy-btn');
+    copyBtn?.addEventListener('click', (e) => {
+      const plain = rawText.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/^#{1,3}\s+/gm, '').trim();
+      navigator.clipboard.writeText(plain).catch(() => {});
+      const btn = e.currentTarget as HTMLElement;
+      btn.classList.add('copied');
+      btn.title = 'Скопировано!';
+      showToast('Скопировано', 'success');
+      setTimeout(() => { btn.classList.remove('copied'); btn.title = 'Копировать'; }, 1500);
+    });
+    const ttsBtn = bubble.querySelector<HTMLElement>('.msg-tts-btn');
+    ttsBtn?.addEventListener('click', () => {
+      if (ttsBtn!.classList.contains('speaking')) {
+        this.stopMsgTts();
+      } else {
+        this.startMsgTts(rawText, ttsBtn!);
+      }
+    });
+    return ttsBtn;
+  }
+
   private addTypingIndicator(): HTMLElement {
     const el = document.createElement('div');
     el.className = 'sd-ap-msg assistant sd-ap-typing-msg';
@@ -3756,6 +3797,7 @@ export class AssistantModule {
     this.setInputEnabled(false);
 
     // Streaming bubble — появится как только придёт первый чанк
+    let streamMsgEl: HTMLElement | null = null;
     let streamBubble: HTMLElement | null = null;
 
     const onChunk = (partial: string) => {
@@ -3765,6 +3807,7 @@ export class AssistantModule {
         el.className = 'sd-ap-msg assistant streaming';
         el.innerHTML = `<div class="sd-ap-msg-avatar">С</div><div class="sd-ap-msg-bubble"><div class="sd-ap-stream-text"></div><div class="sd-ap-msg-footer"></div></div>`;
         this.messagesEl?.appendChild(el);
+        streamMsgEl = el;
         streamBubble = el.querySelector('.sd-ap-stream-text');
       }
       if (streamBubble) streamBubble.innerHTML = renderMarkdown(partial);
@@ -3787,13 +3830,6 @@ export class AssistantModule {
       const useStreaming = !images.length;
       const reply: string = await this.callAi(messages, images.length ? images : undefined, useStreaming ? onChunk : undefined);
 
-      // Remove streaming bubble — final reply will be added below via normal path
-      const sb = streamBubble as HTMLElement | null;
-      if (sb) {
-        sb.closest('.sd-ap-msg')?.remove();
-        streamBubble = null;
-      }
-
       this.removeTypingIndicator(typing);
       this.history.push({ role: 'assistant', content: reply });
 
@@ -3801,9 +3837,14 @@ export class AssistantModule {
       // Модель иногда оборачивает JSON в ```json ... ``` — нормализуем перед парсингом.
       const replyNorm = reply.replace(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g, '$1');
 
+      // Для action-веток стриминговый пузырь содержит сырой JSON — убираем его.
+      // Для обычного текста пузырь будет промоутнут на месте (без мигания).
+      const cleanStream = () => { streamMsgEl?.remove(); streamMsgEl = null; streamBubble = null; };
+
       // Новый формат: plan — показываем карточку подтверждения
       const pageActPlan = this.parsePageActionPlan(replyNorm);
       if (pageActPlan) {
+        cleanStream();
         const textPart = pageActPlan.raw ? replyNorm.split(pageActPlan.raw).join('').trim() : '';
         if (textPart) this.addAssistantMessage(textPart);
         this.addActionPlanCard(pageActPlan.name, pageActPlan.args, pageActPlan.plan, text);
@@ -3814,6 +3855,7 @@ export class AssistantModule {
       // Цепочка действий — выполняем шаги последовательно
       const chainAct = this.parseChainAction(replyNorm);
       if (chainAct) {
+        cleanStream();
         await this.executeChain(chainAct, text);
         return;
       }
@@ -3821,6 +3863,7 @@ export class AssistantModule {
       // Старый формат page_action — для совместимости (выполняем сразу)
       const pageAct = this.parsePageAction(replyNorm);
       if (pageAct) {
+        cleanStream();
         const textPart = pageAct.raw ? replyNorm.split(pageAct.raw).join('').trim() : '';
         if (textPart) this.addAssistantMessage(textPart);
         await this.executePageAction(pageAct.name, pageAct.args, text);
@@ -3829,25 +3872,22 @@ export class AssistantModule {
 
       // open_support action
       if (/"action"\s*:\s*"open_support"/.test(reply)) {
+        cleanStream();
         this.addAssistantMessage('Конечно! Переключаю на поддержку SimaDesk — там ответит живой оператор.');
         setTimeout(() => this.switchSupportMode('support'), 600);
         this.setStatus('Готова');
         return;
       }
 
-      // Parse nav action from LLM reply
+      // Fix 3: используем extractBalancedJson вместо хрупкого regex [^}]*
       let navAction: NavAction | undefined;
-      const jsonMatch = reply.match(/\{[^}]*"action"\s*:\s*"navigate"[^}]*\}/);
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[0]) as NavAction;
-          if (parsed.action === 'navigate' && parsed.page) {
-            navAction = parsed;
-          }
-        } catch { /* ignore */ }
+      const navFound = this.extractBalancedJson(replyNorm, '"navigate"');
+      if (navFound?.value?.action === 'navigate' && navFound.value.page) {
+        navAction = navFound.value as NavAction;
       }
 
       if (navAction) {
+        cleanStream();
         const label = navAction.label || navAction.page;
         this.addAssistantMessage(`Открываю «${label}»…`, navAction);
         setTimeout(() => this.navigateTo(navAction!.page), 400);
@@ -3855,14 +3895,22 @@ export class AssistantModule {
         // Check for task actions
         const taskAction = this.parseTaskAction(reply);
         if (taskAction) {
+          cleanStream();
           const displayText = reply.replace(/\{[\s\S]*?\}/g, '').trim();
           if (displayText) {
             this.addAssistantMessage(displayText);
           }
           await this.handleTaskAction(taskAction);
         } else {
+          // Обычный текст — промоутим стриминговый пузырь на месте (Fix 1)
           const { text: displayText, suggestions: followUps } = this.parseFollowUpSuggestions(reply);
-          const ttsBtn = this.addAssistantMessage(displayText);
+          let ttsBtn: HTMLElement | null;
+          if (streamMsgEl) {
+            ttsBtn = this.finalizeStreamBubble(streamMsgEl, displayText, reply);
+            streamMsgEl = null; streamBubble = null;
+          } else {
+            ttsBtn = this.addAssistantMessage(displayText);
+          }
           if (this.ttsEnabled && ttsBtn) this.startMsgTts(displayText, ttsBtn);
           if (followUps.length) this.addFollowUpSuggestions(followUps);
         }

@@ -726,8 +726,8 @@ export const ozonApi = {
       const failed = items.filter(r => r.updated === false && r.errors?.length);
       if (failed.length) {
         const details = failed.map(r => {
-          const errs = (r.errors ?? []).map(e =>
-            e?.code ? `${e.code}${(e instanceof Error ? e.message : String(e)) ? ': ' + (e instanceof Error ? e.message : String(e)) : ''}` : JSON.stringify(e)
+          const errs = (r.errors ?? []).map((e: any) =>
+            e?.code ? `${e.code}${e.message ? ': ' + e.message : ''}` : JSON.stringify(e)
           ).join(', ');
           return `${r.offer_id}: ${errs}`;
         }).join('; ');
@@ -1003,7 +1003,7 @@ export const ozonApi = {
     // import возвращает { result: { task_id } } — задача принята, ошибок нет
     const taskErrors: any[] = resp?.result?.errors ?? resp?.errors ?? [];
     if (taskErrors.length) {
-      throw new Error(taskErrors.map((e: any) => (e instanceof Error ? e.message : String(e)) ?? e.error ?? String(e)).join('; '));
+      throw new Error(taskErrors.map((e: any) => e.message ?? e.error ?? JSON.stringify(e)).join('; '));
     }
   },
 
@@ -1013,7 +1013,7 @@ export const ozonApi = {
       barcodes: [{ sku, barcode }],
     }, creds);
     const errors: any[] = resp?.errors ?? [];
-    if (errors.length) throw new Error(errors.map((e: any) => e.error ?? (e instanceof Error ? e.message : String(e)) ?? String(e)).join('; '));
+    if (errors.length) throw new Error(errors.map((e: any) => e.error ?? e.message ?? JSON.stringify(e)).join('; '));
   },
 
   // ── Reviews ──────────────────────────────────────────────────────────────
@@ -1750,9 +1750,8 @@ export const ozonPerfApi = {
    * PATCH /api/1/campaign/{id} — пауза/запуск кампании.
    */
   async toggleCampaign(clientId: string, apiKey: string, campaignId: string, activate: boolean): Promise<void> {
-    await ozonPerfFetch('PATCH', `/api/1/campaign/${campaignId}`, clientId, apiKey, {
-      state: activate ? 'ACTIVATE' : 'DEACTIVATE',
-    });
+    const action = activate ? 'activate' : 'deactivate';
+    await ozonPerfFetch('POST', `/api/1/campaign/${campaignId}/${action}`, clientId, apiKey);
   },
 
   /**

@@ -987,9 +987,11 @@ export class OzonOrdersModule {
         }
       }
       // Возвраты — параллельно и без блокировки
-      ozonOrdersApi.getRfbsReturns(creds, 50, 0, signal)
-        .then(rets => { allReturns.push(...rets); this.returns.set('fbs', [...allReturns]); })
-        .catch((e) => debug.warn('[OzonOrdersModule] swallowed error', e));
+      fetchAllPages(
+        (lim, off, sig) => ozonOrdersApi.getRfbsReturns(creds, lim, off as number, sig),
+        50, signal,
+      ).then(rets => { allReturns.push(...rets); this.returns.set('fbs', [...allReturns]); })
+       .catch((e) => debug.warn('[OzonOrdersModule] rfbs returns error:', e));
     }));
     this.postings.set('fbs', allFbs.sort((a, b) =>
       (b.created_at ?? '').localeCompare(a.created_at ?? '')));

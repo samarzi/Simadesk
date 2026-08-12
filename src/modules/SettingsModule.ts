@@ -122,7 +122,7 @@ export class SettingsModule {
               </div>
             </div>
             <div style="display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap">
-              ${this.extensionConnected !== true ? `<a href="/simadesk-extension.zip" download class="btn btn-primary" style="text-decoration:none;white-space:nowrap">⬇ Скачать</a>` : ''}
+              ${this.extensionConnected !== true ? `<a href="/simadesk-extension.zip" download class="btn btn-primary" style="text-decoration:none;white-space:nowrap">⬇ Скачать v1.5</a>` : ''}
               <button class="btn" id="ext-recheck-btn" style="white-space:nowrap">
                 ${this.extensionConnected === null ? '⏳' : '🔄'} Проверить снова
               </button>

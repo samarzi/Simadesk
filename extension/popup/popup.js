@@ -330,6 +330,8 @@ function recordTokens(count) {
   simaUsedToday += count;
   chrome.storage.local.set({ sima_used_today: simaUsedToday });
   updateQuotaBar();
+  // Синхронизируем расход токенов обратно в SimaDesk (Fix 2: двусторонняя синхронизация)
+  chrome.runtime.sendMessage({ type: 'sima-token-write', count }).catch(() => {});
 }
 function updateQuotaBar() {
   const bar = document.getElementById('sima-quota-bar');

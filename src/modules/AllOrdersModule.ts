@@ -313,7 +313,7 @@ export class AllOrdersModule {
       to:    now.toISOString(),
       ymFrom: ymDateOnly(from),
       ymTo:   ymDateOnly(now),
-      wbFrom: from.toISOString().slice(0, 19),
+      wbFrom: from.toISOString().slice(0, 19) + '+00:00',
     };
   }
 

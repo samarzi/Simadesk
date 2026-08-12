@@ -202,6 +202,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  // Fix 2: расширение сообщает о потраченных токенах → пишем в localStorage SimaDesk
+  if (msg.type === 'sima-token-write') {
+    const count = msg.count;
+    if (count > 0) {
+      const today = new Date().toISOString().slice(0, 10);
+      chrome.tabs.query({ url: ['https://simadesk.ru/*', 'http://localhost:*/*'] }, (tabs) => {
+        for (const tab of tabs) {
+          if (tab.id != null) {
+            chrome.tabs.sendMessage(tab.id, { type: 'sima-token-write', count, date: today }).catch(() => {});
+          }
+        }
+      });
+    }
+    return;
+  }
+
   // SimaDesk key + quota sync from bridge
   if (msg.type === 'sima-sync') {
     const updates = {};

@@ -1498,23 +1498,32 @@ export class AdvertisingModule {
     if (!store) { showToast('Выберите конкретный магазин', 'warning'); return; }
     if (!store.campaign_id) { showToast('Нет Campaign ID. Добавьте его в настройки магазина', 'warning'); return; }
     this.ymBidsLoading = true; this.flushBody();
-    const sig = this.eventsAC.signal;
-    const [bids, rec] = await Promise.all([
-      getYandexCampaignBids(store.api_key, Number(store.campaign_id), sig),
-      getYandexRecommendedBids(store.api_key, Number(store.campaign_id), sig),
-    ]);
-    this.ymBids = bids; this.ymRec = rec;
-    this.ymBidsLoading = false; this.flushBody();
+    try {
+      const sig = this.eventsAC.signal;
+      const [bids, rec] = await Promise.all([
+        getYandexCampaignBids(store.api_key, Number(store.campaign_id), sig),
+        getYandexRecommendedBids(store.api_key, Number(store.campaign_id), sig),
+      ]);
+      this.ymBids = bids; this.ymRec = rec;
+    } catch (err: any) {
+      showToast(`Ошибка загрузки ставок: ${err.message}`, 'error');
+    } finally {
+      this.ymBidsLoading = false; this.flushBody();
+    }
   }
 
   private async toggleWb(key: string, status: 9 | 11) {
     const c = this.campaigns.find(x => String(x.id) === key);
     if (!c) return;
     const store = this.stores.find(s => s.id === c.storeId) as any;
-    await updateWbCampaign(store.api_key, Number(c.id), { status });
-    c.status = status === 9 ? 'active' : 'paused';
-    this.applyFilter();
-    showToast(status === 11 ? 'Пауза' : 'Запущена', 'success');
+    try {
+      await updateWbCampaign(store.api_key, Number(c.id), { status });
+      c.status = status === 9 ? 'active' : 'paused';
+      this.applyFilter();
+      showToast(status === 11 ? 'Пауза' : 'Запущена', 'success');
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    }
   }
 
   private async bulkPause(status: 9 | 11) {
@@ -1529,10 +1538,14 @@ export class AdvertisingModule {
     const c = this.campaigns.find(x => String(x.id) === key);
     if (!c) return;
     const store = this.stores.find(s => s.id === c.storeId) as any;
-    await updateWbCampaign(store.api_key, Number(c.id), { dailyBudget: budget * 100 });
-    c.budget = budget;
-    this.budgetEditing.delete(key);
-    showToast('Бюджет обновлён', 'success'); this.flushBody();
+    try {
+      await updateWbCampaign(store.api_key, Number(c.id), { dailyBudget: budget * 100 });
+      c.budget = budget;
+      this.budgetEditing.delete(key);
+      showToast('Бюджет обновлён', 'success'); this.flushBody();
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    }
   }
 
   private async saveBids(key: string) {
@@ -1545,9 +1558,13 @@ export class AdvertisingModule {
     const c = this.campaigns.find(x => String(x.id) === key);
     if (!c) return;
     const store = this.stores.find(s => s.id === c.storeId) as any;
-    await updateWbCampaignBids(store.api_key, Number(c.id), nmList);
-    showToast(`Ставки обновлены: ${nmList.length}`, 'success');
-    this.detailCache.delete(key); await this.loadDetail(key);
+    try {
+      await updateWbCampaignBids(store.api_key, Number(c.id), nmList);
+      showToast(`Ставки обновлены: ${nmList.length}`, 'success');
+      this.detailCache.delete(key); await this.loadDetail(key);
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    }
   }
 
   private async saveExcluded(key: string) {
@@ -1557,39 +1574,55 @@ export class AdvertisingModule {
     const c = this.campaigns.find(x => String(x.id) === key);
     if (!c) return;
     const store = this.stores.find(s => s.id === c.storeId) as any;
-    await setWbExcludedKeywords(store.api_key, Number(c.id), words);
-    showToast('Минус-слова сохранены', 'success');
+    try {
+      await setWbExcludedKeywords(store.api_key, Number(c.id), words);
+      showToast('Минус-слова сохранены', 'success');
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    }
   }
 
   private async toggleOzonPerf(key: string, isActive: boolean) {
     const c = this.campaigns.find(x => String(x.id) === key);
     if (!c) return;
     const store = this.stores.find(s => s.id === c.storeId) as any;
-    await ozonPerfApi.toggleCampaign(store.client_id, store.api_key, key, !isActive);
-    c.status = isActive ? 'paused' : 'active';
-    this.applyFilter();
-    showToast(isActive ? 'Приостановлена' : 'Запущена', 'success');
+    try {
+      await ozonPerfApi.toggleCampaign(store.client_id, store.api_key, key, !isActive);
+      c.status = isActive ? 'paused' : 'active';
+      this.applyFilter();
+      showToast(isActive ? 'Приостановлена' : 'Запущена', 'success');
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    }
   }
 
   private async rmOzonPromoProduct(promoKey: string, actionId: number, productId: number) {
     const c = this.campaigns.find(x => String(x.id) === promoKey);
     if (!c) return;
     const store = this.stores.find(s => s.id === c.storeId) as any;
-    await ozonApi.deactivatePromoProducts({ client_id: store.client_id, api_key: store.api_key }, actionId, [productId]);
-    const d = this.detailCache.get(promoKey);
-    if (d) d.activated = d.activated.filter((p: any) => p.id !== productId);
-    this.flushBody(); showToast('Убран из акции', 'success');
+    try {
+      await ozonApi.deactivatePromoProducts({ client_id: store.client_id, api_key: store.api_key }, actionId, [productId]);
+      const d = this.detailCache.get(promoKey);
+      if (d) d.activated = d.activated.filter((p: any) => p.id !== productId);
+      this.flushBody(); showToast('Убран из акции', 'success');
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    }
   }
 
   private async rmYmOffer(promoId: string, offerId: string) {
     const c = this.campaigns.find(x => String(x.promoId ?? x.id) === promoId);
     if (!c) return;
     const store = this.stores.find(s => s.id === c.storeId) as any;
-    await removeYandexPromoOffers(store.api_key, Number(store.business_id ?? 0), promoId, [offerId]);
-    for (const [k, v] of this.detailCache) {
-      if (Array.isArray(v)) this.detailCache.set(k, v.filter((o: any) => (o.offerId ?? o.offer_id) !== offerId));
+    try {
+      await removeYandexPromoOffers(store.api_key, Number(store.business_id ?? 0), promoId, [offerId]);
+      for (const [k, v] of this.detailCache) {
+        if (Array.isArray(v)) this.detailCache.set(k, v.filter((o: any) => (o.offerId ?? o.offer_id) !== offerId));
+      }
+      this.flushBody(); showToast('Убран из акции', 'success');
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
     }
-    this.flushBody(); showToast('Убран из акции', 'success');
   }
 
   private async saveYmBids() {
@@ -1600,10 +1633,14 @@ export class AdvertisingModule {
       const n = Number(val); if (!isNaN(n) && n > 0) bids.push({ offerId: oid, bid: n });
     });
     if (!bids.length) { showToast('Нет изменений', 'warning'); return; }
-    await updateYandexCampaignBids(store.api_key, Number(store.campaign_id), bids);
-    this.ymBidEdits.clear();
-    showToast(`Ставки сохранены: ${bids.length}`, 'success');
-    await this.loadYmBids();
+    try {
+      await updateYandexCampaignBids(store.api_key, Number(store.campaign_id), bids);
+      this.ymBidEdits.clear();
+      showToast(`Ставки сохранены: ${bids.length}`, 'success');
+      await this.loadYmBids();
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    }
   }
 
   // ─── help & create dialog ─────────────────────────────────────────────────────

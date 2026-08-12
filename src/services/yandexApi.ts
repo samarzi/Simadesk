@@ -919,25 +919,6 @@ export interface YandexChatMessage {
   createdAt: string;
 };
 
-export interface YandexChat {
-  chatId: string;
-  topic: string;
-  orderId?: string;
-  lastMessageText: string;
-  lastMessageTime: string;
-  unreadCount: number;
-}
-
-export interface YandexChatMessage {
-  messageId: string;
-  text: string;
-  attachments?: { name: string; url: string }[];
-  fromSeller: boolean;
-  isSystem?: boolean;
-  senderLabel?: string;
-  createdAt: string;
-}
-
 /**
  * Cursor-based пагинатор для заказов Яндекс Маркета.
  * ЯМ API ограничивает диапазон дат до ~30 дней —

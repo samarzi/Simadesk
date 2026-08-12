@@ -149,13 +149,14 @@ export class StockModule {
       const model = ymFulfillment.get(p.store_id) ?? 'FBS';
       const label: StockItem['stockLabel'] = model === 'FBY' ? 'FBY' : model === 'DBS' ? 'DBS' : 'FBS';
       const isFby = label === 'FBY';
-      // FBY = склад Яндекса (аналог FBO/FBW) → stockFbo; FBS/DBS → stockFbs (seller-managed)
+      // Для FBS/DBS берём stock_available (FIT-остатки), для FBY — stock_total (склад Яндекса)
+      const sellable = isFby ? tot : (p.stock_available ?? tot);
       items.push({ id: `yandex:${p.store_id}:${p.offer_id}`, mp: 'yandex', storeId: p.store_id,
         storeName: storeNames.get(p.store_id) ?? '', offerId: p.vendor_code || p.offer_id,
         name: p.name || p.offer_id, price: p.basic_price ?? null,
-        stockFbs: isFby ? 0 : (p.stock_available ?? tot),
-        stockFbo: isFby ? tot : 0,
-        stockTotal: tot, imageUrl: null, stockLabel: label });
+        stockFbs: isFby ? 0 : sellable,
+        stockFbo: isFby ? sellable : 0,
+        stockTotal: sellable, imageUrl: null, stockLabel: label });
     }
     this.items = items;
   }
@@ -280,9 +281,11 @@ export class StockModule {
                 for (const offer of wh.offers ?? []) {
                   const cur = stocksMap.get(offer.offerId) ?? { total: 0, available: 0 };
                   for (const s of offer.stocks ?? []) {
+                    // Только FIT — продаваемые остатки (не DEFECT, EXPIRED, SURPLUS и т.д.)
+                    if (s.type !== 'FIT') continue;
                     const cnt = Number(s.count) || 0;
                     cur.total += cnt;
-                    if (s.type === 'FIT' || s.type === 'AVAILABLE') cur.available += cnt;
+                    cur.available += cnt;
                   }
                   stocksMap.set(offer.offerId, cur);
                 }
@@ -292,7 +295,9 @@ export class StockModule {
             }
             const updated = storeProds.map(p => {
               const s = stocksMap.get(p.offer_id);
-              return { ...p, stock_total: s?.total ?? p.stock_total ?? 0, stock_available: s?.available ?? p.stock_available ?? 0 };
+              // stock_total = только FIT (продаваемые), stock_available = то же самое
+              const fit = s?.total ?? p.stock_available ?? p.stock_total ?? 0;
+              return { ...p, stock_total: fit, stock_available: fit };
             });
             await yandexDb.replaceStoreProducts(store.id, updated);
           }
@@ -371,6 +376,7 @@ export class StockModule {
   async inlineSave(itemId: string, newValue: number): Promise<void> {
     const item = this.items.find(i => i.id === itemId);
     if (!item) return;
+    newValue = Math.round(newValue);
     if (newValue < 0) newValue = 0;
 
     // Загружаем склады если ещё не кешированы
@@ -599,6 +605,14 @@ export class StockModule {
   // ── Render ─────────────────────────────────────────────────────────────
 
   render(): void {
+    // Preserve focus and scroll before replacing innerHTML
+    const focused = document.activeElement as HTMLInputElement | null;
+    const focusedIsSearch   = !!focused && focused.matches('input[type="search"]') && this.container.contains(focused);
+    const selStart = focusedIsSearch ? (focused!.selectionStart ?? null) : null;
+    const selEnd   = focusedIsSearch ? (focused!.selectionEnd   ?? null) : null;
+    const scrollEl = this.container.querySelector<HTMLElement>('#stock-table-scroll');
+    const scrollTop = scrollEl?.scrollTop ?? 0;
+
     if (this.loading) {
       this.container.innerHTML = `
         <div class="oz-wrap"><div class="ord-loader">
@@ -724,7 +738,7 @@ export class StockModule {
         </div>
 
         <!-- ── Table ── -->
-        <div style="flex:1;overflow:auto;padding:16px 20px;padding-bottom:90px">
+        <div id="stock-table-scroll" style="flex:1;overflow:auto;padding:16px 20px;padding-bottom:90px">
           ${filtered.length === 0 ? `
             <div style="text-align:center;padding:60px 20px;color:var(--text-2)">
               ${total === 0 ? `
@@ -797,6 +811,7 @@ export class StockModule {
                               ${(item.stockLabel === 'FBS' || item.stockLabel === 'DBS') ? `
                                 <input type="number" min="0" value="${item.stockFbs}"
                                   onclick="event.stopPropagation()"
+                                  onkeydown="event.stopPropagation();if(event.key==='Enter'){event.preventDefault();this.blur()}"
                                   onchange="event.stopPropagation();window.stockModule.inlineSave(${safeId},+this.value)"
                                   style="width:64px;padding:4px 6px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:7px;font-size:12px;font-weight:700;text-align:center;outline:none"
                                   onfocus="this.style.borderColor='var(--accent)'"
@@ -844,5 +859,19 @@ export class StockModule {
         </div>
       </div>
     `;
+
+    // Restore focus to search input after re-render
+    if (focusedIsSearch) {
+      const inp = this.container.querySelector<HTMLInputElement>('input[type="search"]');
+      if (inp) {
+        inp.focus();
+        try { if (selStart != null) inp.setSelectionRange(selStart, selEnd ?? selStart); } catch { /* */ }
+      }
+    }
+    // Restore scroll position
+    if (scrollTop > 0) {
+      const newScroll = this.container.querySelector<HTMLElement>('#stock-table-scroll');
+      if (newScroll) newScroll.scrollTop = scrollTop;
+    }
   }
 }

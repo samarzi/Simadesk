@@ -24,6 +24,17 @@ function syncToExtension() {
   }).catch(() => {});
 }
 
+// Fix 2: принимаем от расширения информацию о потраченных токенах и пишем в localStorage SimaDesk
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === 'sima-token-write' && msg.count > 0) {
+    const key = 'sd_ai_daily_' + (msg.date || new Date().toISOString().slice(0, 10));
+    const cur = Number(localStorage.getItem(key) ?? 0);
+    localStorage.setItem(key, String(cur + msg.count));
+    sendResponse({ ok: true });
+  }
+  return true;
+});
+
 // Sync сразу при загрузке страницы
 syncToExtension();
 
