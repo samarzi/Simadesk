@@ -1314,13 +1314,13 @@ export const ozonApi = {
     const all: any[] = [];
     const limit = 100;
     let offset = 0;
-    while (true) {
+    for (let page = 0; page < 200; page++) {
       const body: any = { limit, offset };
       if (status) body.status = status;
       const resp = await ozonPost<any>('/v1/supply-order/list', body, creds);
-      const page: any[] = resp?.result?.supply_orders ?? resp?.supply_orders ?? [];
-      all.push(...page);
-      if (page.length < limit) break;
+      const chunk: any[] = resp?.result?.supply_orders ?? resp?.supply_orders ?? [];
+      all.push(...chunk);
+      if (chunk.length < limit) break;
       offset += limit;
     }
     return all;

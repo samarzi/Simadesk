@@ -368,7 +368,7 @@ export class SupplyManagementModule {
       </div>
 
       <div class="sp-detail-tabs">
-        ${(['overview','items','returns'] as DetailTab[]).map(dt => `
+        ${(this.tab === 'yandex' ? ['overview','returns'] : ['overview','items','returns'] as DetailTab[]).map((dt: string) => `
           <button class="sp-detail-tab ${dt === this.detailTab ? 'active' : ''}" data-detail-tab="${dt}">
             ${dt === 'overview' ? 'Обзор' : dt === 'items' ? 'Состав' : 'Возвраты'}
           </button>`).join('')}
@@ -393,7 +393,7 @@ export class SupplyManagementModule {
         ? [['CREATED','Создана'],['READY_TO_TRANSFER','Готова'],['TRANSFERRED','Передана'],['ACCEPTED','Принята']]
         : this.tab === 'ozon'
           ? [['draft','Черновик'],['awaiting_deliver','Ожидание'],['delivering','В пути'],['delivered','Принята']]
-          : [['draft','Черновик'],['done','Завершена']];
+          : [['draft','Черновик'],['sent','Отправлена'],['done','Принята WB']];
 
     const currentIdx = steps.findIndex(([k]) => k === s.status);
     const progressPct = steps.length > 1 && currentIdx >= 0
@@ -678,7 +678,7 @@ export class SupplyManagementModule {
           this.supplies = list.map(s => ({
             id: String(s.id ?? ''),
             name: s.name ?? `Поставка ${s.id}`,
-            status: s.done ? 'done' : 'draft',
+            status: s.done ? 'done' : (s.scanDt ? 'sent' : 'draft'),
             createdAt: s.createdAt ?? new Date().toISOString(),
             itemsCount: s.orderCount ?? 0,
           }));
@@ -778,9 +778,9 @@ export class SupplyManagementModule {
         // Load supply items first to filter returns by SKU
         const itemSkus = new Set(this.detailItems.map(i => i.sku).filter(Boolean));
         const creds = { client_id: store.client_id, api_key: store.api_key };
-        // FBO returns: paginate by offset
+        // FBO returns: paginate by offset (max 50 pages = 5000 returns)
         const fboReturns: any[] = [];
-        for (let offset = 0; ; offset += 100) {
+        for (let offset = 0, iter = 0; iter < 50; offset += 100, iter++) {
           const page = await ozonApi.getFboReturns(creds, { limit: 100, offset }).catch(() => []);
           fboReturns.push(...page);
           if (page.length < 100) break;
@@ -858,7 +858,7 @@ export class SupplyManagementModule {
       );
 
       if (!baseItems.length) {
-        showToast('Загрузите остатки в разделе «Остатки» для аналитики', 'info');
+        showToast('Сначала синхронизируйте остатки в разделе «Склад» — рекомендации строятся на этих данных', 'info');
         this.recoLoading = false; this.flush(); return;
       }
 
@@ -1365,11 +1365,22 @@ export class SupplyManagementModule {
         await yandexApi.confirmShipment(store.api_key, Number(store.campaign_id), Number(this.detail.id));
       }
       showToast('Поставка отправлена/подтверждена', 'success');
-      this.detail.status = this.tab === 'yandex' ? 'TRANSFERRED' : this.tab === 'ozon' ? 'awaiting_deliver' : 'done';
+      // Optimistic update — correct transitional status per marketplace
+      const optimisticStatus =
+        this.tab === 'yandex' ? 'READY_TO_TRANSFER' :
+        this.tab === 'ozon'   ? 'awaiting_deliver'  : 'sent';
+      if (this.detail) this.detail.status = optimisticStatus;
     } catch (err: any) {
       showToast(`Ошибка: ${err.message}`, 'error');
     } finally {
       this.busy = false; this.flush();
+    }
+    // Reload from API after UI unlocks to get the real status
+    const detailId = this.detail?.id;
+    if (detailId) {
+      await this.loadSupplies();
+      const refreshed = this.supplies.find(s => s.id === detailId);
+      if (refreshed && this.detail?.id === detailId) { this.detail = { ...refreshed }; this.flush(); }
     }
   }
 
