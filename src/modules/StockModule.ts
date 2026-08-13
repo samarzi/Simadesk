@@ -178,35 +178,18 @@ export class StockModule {
       // ── Ozon ──
       for (const store of this.ozStores) {
         try {
-          const storeProds = this.ozProducts.filter(p => p.store_id === store.id);
-          if (storeProds.length === 0) {
-            // Первый запуск — полный синхрон
-            this.syncStatus = `Ozon: ${store.name} — загружаем товары…`;
-            this.render();
-            const products = await fetchAllOzonProducts(store);
-            debug.log(`[Stock] Ozon slow-path: ${products.length} products for store ${store.id}`);
+          // Всегда полный синк: товары + остатки → не пропускаем новые позиции
+          this.syncStatus = `Ozon: ${store.name} — загружаем товары…`;
+          this.render();
+          const products = await fetchAllOzonProducts(store);
+          debug.log(`[Stock] Ozon full-sync: ${products.length} products for store ${store.id}`);
+          if (products.length > 0) {
             this.syncStatus = `Ozon: ${store.name} — сохраняем ${products.length}…`;
             this.render();
-            // If API returned empty (rate-limit, 429) — keep existing data in DB
-            if (products.length > 0) {
-              await ozonDb.replaceStoreProducts(store.id, products);
-            }
-          } else {
-            // Быстрый путь: обновляем только stock_fbs / stock_fbo
-            this.syncStatus = `Ozon: ${store.name} — остатки…`;
-            this.render();
-            const stocks = await fetchOzonStocks(store);
-            debug.log(`[Stock] Ozon fast-path: ${storeProds.length} cached, ${stocks.length} stocks from API`);
-            const byOffer = new Map(stocks.map(s => [s.offer_id, s]));
-            const updated = storeProds.map(({ id: _id, ...rest }) => ({
-              ...rest,
-              stock_fbs: byOffer.get(rest.offer_id)?.fbs ?? rest.stock_fbs,
-              stock_fbo: byOffer.get(rest.offer_id)?.fbo ?? rest.stock_fbo,
-            }));
-            await ozonDb.replaceStoreProducts(store.id, updated);
+            await ozonDb.replaceStoreProducts(store.id, products);
           }
         } catch (e: unknown) {
-          const msg = `Ozon «${store.name}»: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'ошибка'}`;
+          const msg = `Ozon «${store.name}»: ${(e instanceof Error ? e.message : String(e)) ?? 'ошибка'}`;
           console.warn('[Stock]', msg, e);
           this.syncErrors.push(msg);
           this.syncStatus = msg;
@@ -218,35 +201,17 @@ export class StockModule {
       // ── WB ──
       for (const store of this.wbStores) {
         try {
-          const storeProds = this.wbProducts.filter(p => p.store_id === store.id);
-          if (storeProds.length === 0) {
-            this.syncStatus = `WB: ${store.name} — загружаем карточки…`;
-            this.render();
-            const products = await fetchAllWbProducts(store);
+          // Всегда полный синк карточек + остатков
+          this.syncStatus = `WB: ${store.name} — загружаем карточки…`;
+          this.render();
+          const products = await fetchAllWbProducts(store);
+          if (products.length > 0) {
             this.syncStatus = `WB: ${store.name} — сохраняем ${products.length}…`;
             this.render();
-            // If API returned empty (rate-limit, 429) — keep existing data in DB
-            if (products.length > 0) {
-              await wbDb.replaceStoreProducts(store.id, products);
-            }
-          } else {
-            this.syncStatus = `WB: ${store.name} — остатки…`;
-            this.render();
-            const raw = await wbApi.getStocks(store.api_key, '2019-01-01');
-            const stocksMap = new Map<number, number>();
-            for (const s of raw) {
-              const nm = Number(s.nmId);
-              if (!isFinite(nm)) continue;
-              stocksMap.set(nm, (stocksMap.get(nm) ?? 0) + (Number(s.quantity) || 0));
-            }
-            const updated = storeProds.map(p => ({
-              ...p,
-              stock_total: stocksMap.get(p.nm_id) ?? p.stock_total ?? 0,
-            }));
-            await wbDb.replaceStoreProducts(store.id, updated);
+            await wbDb.replaceStoreProducts(store.id, products);
           }
         } catch (e: unknown) {
-          const msg = `WB «${store.name}»: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'ошибка'}`;
+          const msg = `WB «${store.name}»: ${(e instanceof Error ? e.message : String(e)) ?? 'ошибка'}`;
           console.warn('[Stock]', msg, e);
           this.syncErrors.push(msg);
           this.syncStatus = msg;
@@ -259,47 +224,15 @@ export class StockModule {
       for (const store of this.ymStores) {
         if (!store.campaign_id) continue;
         try {
-          const storeProds = this.ymProducts.filter(p => p.store_id === store.id);
-          if (storeProds.length === 0) {
-            this.syncStatus = `ЯМ: ${store.name} — загружаем товары…`;
-            this.render();
-            const products = await fetchAllYandexProducts(store);
+          // Всегда полный синк: fetchAllYandexProducts загружает и товары, и FIT-остатки
+          this.syncStatus = `ЯМ: ${store.name} — загружаем товары…`;
+          this.render();
+          const products = await fetchAllYandexProducts(store);
+          debug.log(`[Stock] YM full-sync: ${products.length} products for store ${store.id}`);
+          if (products.length > 0) {
             this.syncStatus = `ЯМ: ${store.name} — сохраняем ${products.length}…`;
             this.render();
-            // If API returned empty (rate-limit, 429) — keep existing data in DB
-            if (products.length > 0) {
-              await yandexDb.replaceStoreProducts(store.id, products);
-            }
-          } else {
-            this.syncStatus = `ЯМ: ${store.name} — остатки…`;
-            this.render();
-            const stocksMap = new Map<string, { total: number; available: number }>();
-            let tok = '';
-            for (let page = 0; page < 200; page++) {
-              const chunk = await yandexApi.getStocks(store.api_key, store.campaign_id, tok);
-              for (const wh of chunk.warehouses) {
-                for (const offer of wh.offers ?? []) {
-                  const cur = stocksMap.get(offer.offerId) ?? { total: 0, available: 0 };
-                  for (const s of offer.stocks ?? []) {
-                    // Только FIT — продаваемые остатки (не DEFECT, EXPIRED, SURPLUS и т.д.)
-                    if (s.type !== 'FIT') continue;
-                    const cnt = Number(s.count) || 0;
-                    cur.total += cnt;
-                    cur.available += cnt;
-                  }
-                  stocksMap.set(offer.offerId, cur);
-                }
-              }
-              if (!chunk.nextPageToken || chunk.nextPageToken === tok) break;
-              tok = chunk.nextPageToken;
-            }
-            const updated = storeProds.map(p => {
-              const s = stocksMap.get(p.offer_id);
-              // stock_total = только FIT (продаваемые), stock_available = то же самое
-              const fit = s?.total ?? p.stock_available ?? p.stock_total ?? 0;
-              return { ...p, stock_total: fit, stock_available: fit };
-            });
-            await yandexDb.replaceStoreProducts(store.id, updated);
+            await yandexDb.replaceStoreProducts(store.id, products);
           }
         } catch (e: unknown) {
           const msg = `ЯМ «${store.name}»: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'ошибка'}`;
