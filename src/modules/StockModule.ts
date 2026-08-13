@@ -8,12 +8,12 @@ import { copyButton } from '@/utils/copyButton';
 import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
 import { wbDb } from '@/services/wbDb';
-import { fetchOzonStocks, updateOzonFbsStock, fetchAllOzonProducts } from '@/services/ozonApi';
-import { yandexApi, fetchYandexWarehouses, updateYandexFbsStock, fetchAllYandexProducts } from '@/services/yandexApi';
+import { updateOzonFbsStock, fetchAllOzonProducts } from '@/services/ozonApi';
+import { fetchYandexWarehouses, updateYandexFbsStock, fetchAllYandexProducts } from '@/services/yandexApi';
 import { wbApi, fetchAllWbProducts } from '@/services/wbApi';
-import type { OzonStore, OzonProduct } from '@/types/ozon';
-import type { WbStore, WbProduct } from '@/types/wb';
-import type { YandexStore, YandexProduct } from '@/types/yandex';
+import type { OzonStore } from '@/types/ozon';
+import type { WbStore } from '@/types/wb';
+import type { YandexStore } from '@/types/yandex';
 
 type Mp = 'ozon' | 'wb' | 'yandex';
 type StockFilter = 'all' | 'in-stock' | 'low' | 'out';
@@ -58,11 +58,6 @@ export class StockModule {
   private ozStores: OzonStore[] = [];
   private wbStores: WbStore[] = [];
   private ymStores: YandexStore[] = [];
-
-  // Raw DB records — used for fast stock-only sync (overlay + re-insert)
-  private ozProducts: OzonProduct[] = [];
-  private wbProducts: WbProduct[] = [];
-  private ymProducts: YandexProduct[] = [];
 
   // Edit state
   private editItemId: string | null = null;
@@ -109,9 +104,6 @@ export class StockModule {
     this.ozStores = ozStores;
     this.wbStores = wbStores;
     this.ymStores = ymStores;
-    this.ozProducts = ozProducts as OzonProduct[];
-    this.wbProducts = wbProducts as WbProduct[];
-    this.ymProducts = ymProducts as YandexProduct[];
     this.stores = [
       ...ozStores.map(s => ({ id: s.id, name: s.name, mp: 'ozon' as Mp })),
       ...wbStores.map(s => ({ id: s.id, name: s.name, mp: 'wb' as Mp })),
