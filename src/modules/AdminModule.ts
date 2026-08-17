@@ -384,6 +384,14 @@ export class AdminModule {
             <div class="ap-kpi-value">${k.value}</div>
             <div class="ap-kpi-sub">${k.sub}</div>
           </div>`).join('')}
+        <div class="ap-kpi" style="--kpi-color:${C.emerald}">
+          <div class="ap-kpi-top">
+            <div class="ap-kpi-icon">${icon('zap', 16)}</div>
+            <div class="ap-kpi-label">Баланс OpenRouter</div>
+          </div>
+          <div class="ap-kpi-value" data-or-balance style="font-size:18px">${icon('zap', 15)} …</div>
+          <div class="ap-kpi-sub">AI API · текущий остаток</div>
+        </div>
       </div>
       <div class="ap-grid-2">
         <div class="ap-card">
@@ -1123,7 +1131,15 @@ export class AdminModule {
 
     const detail = this.activeLiveChat
       ? this.renderChatDetail(this.activeLiveChat)
-      : `<div class="ap-empty">${icon('chat', 34, 1.4)}<div class="ap-empty-title">Выберите обращение</div><div class="ap-empty-desc">AI-автоответы отвечают на очевидные вопросы сами и помечают спорные для оператора.</div></div>`;
+      : `<div class="ap-sup-placeholder">
+          <div class="ap-sup-placeholder-icon">${icon('chat', 28, 1.5)}</div>
+          <div class="ap-sup-placeholder-title">Выберите обращение</div>
+          <div class="ap-sup-placeholder-desc">AI-автоответы отвечают на очевидные вопросы сами<br>и помечают спорные для оператора.</div>
+          <div class="ap-sup-placeholder-stats">
+            <div class="ap-sup-pstat"><b>${this.liveChats.length}</b><span>чатов</span></div>
+            <div class="ap-sup-pstat"><b>${this.supNeedsAttention.size}</b><span>нужен оператор</span></div>
+          </div>
+        </div>`;
 
     return `
       ${errorBar}
@@ -1132,14 +1148,16 @@ export class AdminModule {
           <span class="ap-switch-track${this.supAiEnabled ? ' on' : ''}" id="sup-ai-toggle-track"><span class="ap-switch-thumb"></span></span>
           <span class="ap-switch-label">AI-автоответы</span>
         </label>
-        <select class="ap-select" id="sup-ai-model-sel" style="width:auto;max-width:270px;padding:5px 9px;font-size:12px">
+        <div class="ap-sup-bar-sep"></div>
+        <select class="ap-select ap-sup-model-sel" id="sup-ai-model-sel">
           ${aiModels.map(m => `<option value="${m.id}"${this.supAiModel === m.id ? ' selected' : ''}>${m.label}</option>`).join('')}
         </select>
+        <div class="ap-sup-bar-sep"></div>
         <span class="ap-sup-hint" id="ap-sup-hint">
           <span class="ap-dot" style="background:${this.supAiEnabled ? C.emerald : 'var(--text3)'}"></span>
           ${this.supAiEnabled ? 'Включено' : 'Выключено'} · нужен оператор: <b style="color:var(--text)">${this.supNeedsAttention.size}</b>
         </span>
-        <span class="ap-sup-balance" id="ap-sup-balance" title="Баланс OpenRouter">${icon('zap', 13)} …</span>
+        <span class="ap-sup-balance" data-or-balance title="Баланс OpenRouter">${icon('zap', 13)} …</span>
       </div>
 
       <div class="ap-sup">
@@ -1176,7 +1194,7 @@ export class AdminModule {
             <span class="ap-sup-time">${c.last_message_at ? supportChatService.fmtTime(c.last_message_at) : ''}</span>
           </div>
           <div class="ap-sup-reason" style="color:${rm.color}">${icon(rm.icon, 12)} ${rm.label}</div>
-          <div class="ap-sup-preview">${c.last_message ? this.esc(c.last_message.slice(0, 70)) : '—'}</div>
+          <div class="ap-sup-preview">${c.last_message ? this.esc(c.last_message.replace(/^🤖\s*АВТОКОНТЕКСТ:[^\n]*/i, '').trim().slice(0, 70)) || '—' : '—'}</div>
         </div>
       </div>`;
   }
@@ -1246,7 +1264,7 @@ export class AdminModule {
       console.info('[Support] diagnostics', st);
     });
 
-    this.fetchOrBalance();
+    void this.refreshOrBalance();
 
     const track = this.el.querySelector<HTMLElement>('#sup-ai-toggle-track');
     track?.addEventListener('click', () => {
@@ -1589,8 +1607,20 @@ Q: Как изменить тариф? → Настройки → Подписк
     void supportChatService.setTyping(id);
   }
 
+  private async ensureAiKey(): Promise<string> {
+    let key = sessionStorage.getItem('sd_ai_key') || '';
+    if (!key) {
+      try {
+        const content = await adminService.getSiteContent();
+        const entry = content.find(c => c.key === 'ai_openrouter_key');
+        if (entry?.content) { key = entry.content; sessionStorage.setItem('sd_ai_key', key); }
+      } catch { /* ignore */ }
+    }
+    return key;
+  }
+
   private async runSupAiReply(chatId: string, messages: Array<{ sender_role: string; content: string }>): Promise<void> {
-    const apiKey = sessionStorage.getItem('sd_ai_key') || '';
+    const apiKey = await this.ensureAiKey();
     if (!apiKey) return;
 
     this.supAiProcessing.add(chatId);
@@ -1671,22 +1701,50 @@ ${this.SIMADESK_KNOWLEDGE}
       ?.insertAdjacentHTML('afterbegin', `<span class="ap-sup-flag" title="Нужен оператор">${icon('alert', 13)}</span>`);
   }
 
-  private async fetchOrBalance(): Promise<void> {
-    const el = this.el.querySelector<HTMLElement>('#ap-sup-balance');
-    if (!el) return;
-    const apiKey = sessionStorage.getItem('sd_ai_key') || '';
-    if (!apiKey) { el.innerHTML = `${icon('zap', 13)} нет ключа`; return; }
+  private async refreshOrBalance(): Promise<void> {
+    const apiKey = await this.ensureAiKey();
+    const els = Array.from(this.el.querySelectorAll<HTMLElement>('[data-or-balance]'));
+    if (!els.length) return;
+
+    const setAll = (html: string, color = '', title = '') => {
+      els.forEach(el => {
+        el.innerHTML = html;
+        if (color) el.style.color = color;
+        if (title) el.title = title;
+      });
+    };
+
+    if (!apiKey) { setAll(`${icon('zap', 13)} нет ключа`, C.rose); return; }
+    setAll(`${icon('zap', 13)} …`);
+
     try {
-      const res = await fetch('https://openrouter.ai/api/v1/credits', { headers: { 'Authorization': `Bearer ${apiKey}` } });
-      if (!res.ok) { el.innerHTML = `${icon('zap', 13)} —`; return; }
-      const data = await res.json();
-      const credits: number = data?.data?.total_credits ?? data?.credits ?? 0;
-      const used: number = data?.data?.usage ?? data?.usage ?? 0;
-      const balance = credits - used;
-      el.innerHTML = `${icon('zap', 13)} $${balance.toFixed(2)}`;
-      el.title = `Баланс OpenRouter: $${balance.toFixed(4)} (лимит $${credits.toFixed(2)}, использовано $${used.toFixed(4)})`;
-      el.style.color = balance < 1 ? C.rose : balance < 5 ? C.amber : C.emerald;
-    } catch { el.innerHTML = `${icon('zap', 13)} —`; }
+      let balance = 0, credits = 0, used = 0;
+
+      // Try /api/v1/credits (newer endpoint)
+      const r1 = await fetch('https://openrouter.ai/api/v1/credits', {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
+      if (r1.ok) {
+        const d = (await r1.json())?.data ?? {};
+        credits = d.total_credits ?? d.grant_total ?? d.limit ?? 0;
+        used    = d.total_usage  ?? d.usage          ?? 0;
+        balance = d.limit_remaining !== undefined ? d.limit_remaining : credits - used;
+      } else {
+        // Fallback: /api/v1/auth/key
+        const r2 = await fetch('https://openrouter.ai/api/v1/auth/key', {
+          headers: { 'Authorization': `Bearer ${apiKey}` },
+        });
+        if (!r2.ok) { setAll(`${icon('zap', 13)} —`, 'var(--text3)'); return; }
+        const d = (await r2.json())?.data ?? {};
+        credits = d.limit ?? 0;
+        used    = d.usage ?? 0;
+        balance = d.limit_remaining !== undefined ? d.limit_remaining : credits - used;
+      }
+
+      const color = balance < 1 ? C.rose : balance < 5 ? C.amber : C.emerald;
+      const title = `Баланс OpenRouter: $${balance.toFixed(4)}\nЛимит: $${credits.toFixed(2)} · Использовано: $${used.toFixed(4)}`;
+      setAll(`${icon('zap', 13)} $${balance.toFixed(2)}`, color, title);
+    } catch { setAll(`${icon('zap', 13)} —`, 'var(--text3)'); }
   }
 
   // ── НАСТРОЙКИ ───────────────────────────────────────────────────────────
@@ -1785,6 +1843,11 @@ ${this.SIMADESK_KNOWLEDGE}
             <div style="display:flex;gap:10px;align-items:center">
               <button class="ap-btn ap-btn-primary" id="save-ai-config-btn">Сохранить</button>
               <span class="ap-status-msg" id="ai-config-status"></span>
+            </div>
+            <div class="ap-or-balance-card">
+              <div class="ap-or-balance-label">${icon('zap', 14)} Баланс OpenRouter</div>
+              <div class="ap-or-balance-value" data-or-balance>${icon('zap', 14)} …</div>
+              <a href="https://openrouter.ai/credits" target="_blank" rel="noopener" class="ap-or-balance-link">Пополнить →</a>
             </div>
             <div class="ap-note">
               Рекомендуемые модели: <b>anthropic/claude-haiku-4-5</b> (быстрая и дешёвая),
@@ -1974,6 +2037,7 @@ ${this.SIMADESK_KNOWLEDGE}
     });
 
     if (this.tab === 'support' && !this.loading) this.bindSupportEvents();
+    if (['overview', 'settings'].includes(this.tab) && !this.loading) void this.refreshOrBalance();
 
     this.el.querySelector('#promo-back')?.addEventListener('click', () => { this.activePromo = null; this.render(); });
     this.el.querySelector('#sub-save')?.addEventListener('click', () => this.handleSetSubscription());
@@ -2813,11 +2877,15 @@ ${this.SIMADESK_KNOWLEDGE}
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         });
-        const data = await res.json();
-        if (data.ok) {
+        const text = await res.text();
+        let data: any = {};
+        try { data = JSON.parse(text); } catch { /* ignore */ }
+        if (!res.ok) {
+          showToast(`Ошибка ${res.status}: ${(data.error ?? text.slice(0, 120)) || 'пустой ответ'}`, 'error');
+        } else if (data.ok) {
           showToast(`Сбор завершён. Сохранено: ${data.saved?.length ?? 0} новостей`, 'success');
         } else {
-          showToast('Ошибка: ' + (data.error ?? 'неизвестно'), 'error');
+          showToast('Ошибка: ' + ((data.error ?? text.slice(0, 120)) || 'пустой ответ'), 'error');
         }
         await this.loadNewsData();
       } catch (e: any) {

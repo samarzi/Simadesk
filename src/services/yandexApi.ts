@@ -1262,22 +1262,26 @@ export async function getYandexShipmentLabels(
 }
 
 /**
- * Список текущих отгрузок ЯМ.
- * GET /v2/campaigns/{campaignId}/shipments
+ * Список текущих отгрузок ЯМ FBY.
+ * PUT /v2/campaigns/{campaignId}/first-mile/shipments — фильтры передаются в теле запроса.
  */
 export async function getYandexShipments(
   store: YandexStore,
   params: { dateFrom?: string; dateTo?: string; status?: string; limit?: number } = {},
 ): Promise<any[]> {
   if (!store.campaign_id) throw new Error('campaign_id не задан');
-  const q = new URLSearchParams();
-  if (params.dateFrom) q.set('dateFrom', params.dateFrom);
-  if (params.dateTo)   q.set('dateTo',   params.dateTo);
-  if (params.status)   q.set('status',   params.status);
-  if (params.limit)    q.set('limit',    String(params.limit));
+  const body: Record<string, any> = {};
+  if (params.dateFrom) body.dateFrom = params.dateFrom;
+  if (params.dateTo)   body.dateTo   = params.dateTo;
+  if (params.status)   body.status   = params.status;
+  if (params.limit)    body.limit    = params.limit;
   const res = await fetch(
-    `/yandex-api/v2/campaigns/${store.campaign_id}/shipments?${q}`,
-    { headers: { 'Api-Key': store.api_key, 'Accept': 'application/json' } },
+    `/yandex-api/v2/campaigns/${store.campaign_id}/first-mile/shipments`,
+    {
+      method: 'PUT',
+      headers: { 'Api-Key': store.api_key, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
   );
   if (!res.ok) {
     const text = await res.text().catch(() => '');
