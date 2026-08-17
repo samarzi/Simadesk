@@ -2807,13 +2807,11 @@ ${this.SIMADESK_KNOWLEDGE}
       this.newsLoading = true;
       this.render();
       try {
-        const { REST_URL } = await import('@/services/dbClient');
+        const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
         const base = REST_URL.replace('/rest/v1', '');
-        const secret = prompt('Введите CRON_SECRET (из .env на VPS):');
-        if (!secret) { this.newsLoading = false; this.render(); return; }
         const res = await fetch(`${base}/functions/v1/telegram-auth/mp-news-fetch`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-cron-secret': secret },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         });
         const data = await res.json();
         if (data.ok) {

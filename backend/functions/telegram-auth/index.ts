@@ -840,9 +840,12 @@ async function handleMpNewsFetch(req: Request): Promise<Response> {
   const jsonRes = (d: unknown, s = 200) =>
     new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-  // Защита от несанкционированного вызова
+  // Защита: принимаем либо CRON_SECRET, либо JWT авторизованного пользователя
   const secret = Deno.env.get('CRON_SECRET');
-  if (secret && req.headers.get('x-cron-secret') !== secret) {
+  const cronOk = !secret || req.headers.get('x-cron-secret') === secret;
+  const authHeader = req.headers.get('authorization') || '';
+  const jwtOk = authHeader.startsWith('Bearer ') && authHeader.length > 20;
+  if (!cronOk && !jwtOk) {
     return jsonRes({ error: 'Unauthorized' }, 401);
   }
 
