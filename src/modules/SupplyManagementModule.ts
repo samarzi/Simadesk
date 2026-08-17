@@ -94,6 +94,7 @@ export class SupplyManagementModule {
   private searchQuery = '';
   private statusFilter = '';
   private busy = false;               // global action in progress
+  private connectedMps: Set<Tab> = new Set<Tab>();
 
   supplyStats = { draft: 0, sending: 0, delivered: 0, cancelled: 0 };
 
@@ -102,6 +103,7 @@ export class SupplyManagementModule {
     this.el.style.cssText = 'display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden';
     this.injectStyles();
     this.buildShell();
+    this.checkConnectedMps();
     this.loadStores();
   }
 
@@ -115,10 +117,7 @@ export class SupplyManagementModule {
             <div class="sp-logo-icon">${I.truck()}</div>
             <span class="sp-logo-text">Поставки</span>
             <div class="sp-tabs" id="sp-tabs">
-              ${(['ozon','wb','yandex'] as Tab[]).map(t => `
-                <button class="sp-tab ${t === this.tab ? 'active' : ''}" data-tab="${t}">
-                  ${t === 'ozon' ? 'Ozon FBO' : t === 'wb' ? 'Wildberries' : 'Яндекс FBY'}
-                </button>`).join('')}
+              ${this.renderTabs()}
             </div>
           </div>
           <div class="sp-header-right" id="sp-actions">
@@ -557,12 +556,12 @@ export class SupplyManagementModule {
 
       if (btn) {
         const tabVal = btn.dataset.tab as Tab | undefined;
-        if (tabVal) {
+        if (tabVal && !btn.disabled) {
           this.tab = tabVal; this.storeId = ''; this.supplies = []; this.detail = null;
           this.detailItems = []; this.detailReturns = []; this.recoItems = []; this.error = '';
           this.supplyStats = { draft:0, sending:0, delivered:0, cancelled:0 };
           this.searchQuery = ''; this.statusFilter = '';
-          this.rebuildHeaderActions(); this.flush(); this.loadStores();
+          this.rebuildTabs(); this.rebuildHeaderActions(); this.flush(); this.loadStores();
           return;
         }
         const dtTab = btn.dataset.detailTab as DetailTab | undefined;
@@ -639,6 +638,41 @@ export class SupplyManagementModule {
       }
       if (sel.id === 'sp-status-filter') { this.statusFilter = sel.value; this.flush(); }
     });
+  }
+
+  private renderTabs(): string {
+    const labels: Record<Tab, string> = { ozon: 'Ozon FBO', wb: 'Wildberries', yandex: 'Яндекс FBY' };
+    const checked = this.connectedMps.size > 0;
+    return (['ozon', 'wb', 'yandex'] as Tab[]).map(t => {
+      const connected = !checked || this.connectedMps.has(t);
+      const active = t === this.tab;
+      const cls = ['sp-tab', active ? 'active' : '', !connected ? 'disabled' : ''].filter(Boolean).join(' ');
+      const title = connected ? '' : `title="Нет подключённых магазинов — перейдите в Настройки"`;
+      return `<button class="${cls}" data-tab="${t}" ${!connected ? 'disabled' : ''} ${title}>${labels[t]}</button>`;
+    }).join('');
+  }
+
+  private rebuildTabs(): void {
+    const tabsEl = this.el.querySelector('#sp-tabs');
+    if (tabsEl) tabsEl.innerHTML = this.renderTabs();
+  }
+
+  private async checkConnectedMps(): Promise<void> {
+    const [ozonStores, wbStores, ymStores] = await Promise.all([
+      ozonDb.getStores().catch(() => [] as any[]),
+      wbDb.getStores().catch(() => [] as any[]),
+      yandexDb.getStores().catch(() => [] as any[]),
+    ]);
+    this.connectedMps.clear();
+    if (ozonStores.length > 0) this.connectedMps.add('ozon');
+    if (wbStores.length > 0)   this.connectedMps.add('wb');
+    if (ymStores.length > 0)   this.connectedMps.add('yandex');
+    // If active tab has no stores, switch to first connected tab
+    if (this.connectedMps.size > 0 && !this.connectedMps.has(this.tab)) {
+      const first = (['ozon', 'wb', 'yandex'] as Tab[]).find(t => this.connectedMps.has(t));
+      if (first) this.tab = first;
+    }
+    this.rebuildTabs();
   }
 
   private rebuildHeaderActions(): void {
@@ -735,6 +769,14 @@ export class SupplyManagementModule {
 
       } else {
         // Yandex
+        const placement = store.placement_type ?? store.fulfillment_model;
+        if (placement && placement !== 'FBY') {
+          this.error = `Этот магазин работает по схеме ${placement}, а не FBY. ` +
+            'Вкладка «Поставки» поддерживает только FBY (Fulfillment by Yandex). ' +
+            (placement === 'FBS' || placement === 'DBS'
+              ? 'Для FBS/DBS управляйте отгрузками напрямую в личном кабинете Яндекс Маркет.'
+              : 'Если считаете это ошибкой — проверьте тип схемы в Настройках магазина.');
+        } else {
         const campaign_id = store.campaign_id;
         if (!campaign_id) {
           this.error = 'У магазина не заполнен Campaign ID. Откройте Настройки → Магазины → Яндекс и укажите ID кампании (находится в ЯМ → Настройки → О магазине).';
@@ -764,6 +806,7 @@ export class SupplyManagementModule {
             }
           }
         }
+        } // end else (placement is FBY or unknown)
       }
 
       this.calcStats();
@@ -1790,11 +1833,19 @@ export class SupplyManagementModule {
       /* Tabs */
       .sp-tabs { display:flex;gap:2px;background:var(--bg3);border-radius:8px;padding:2px }
       .sp-tab {
-        padding:4px 12px;border:none;border-radius:6px;font-size:12px;font-weight:600;
-        color:var(--text2);cursor:pointer;background:none;transition:all .15s
+        padding:5px 14px;border:none;border-radius:6px;font-size:12px;font-weight:600;
+        color:var(--text2);cursor:pointer;background:none;
+        transition:background .2s ease, color .2s ease, box-shadow .2s ease, opacity .15s ease;
+        white-space:nowrap
       }
-      .sp-tab.active { background:var(--bg2);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.1) }
-      .sp-tab:hover:not(.active) { color:var(--text) }
+      .sp-tab.active {
+        background:var(--bg2);color:var(--text);
+        box-shadow:0 1px 4px rgba(0,0,0,.12), 0 0 0 1px rgba(0,0,0,.04)
+      }
+      .sp-tab:hover:not(.active):not(:disabled) { color:var(--text);background:rgba(0,0,0,.04) }
+      .sp-tab.disabled, .sp-tab:disabled {
+        opacity:.38;cursor:not-allowed;pointer-events:none
+      }
 
       /* Buttons */
       .sp-btn {

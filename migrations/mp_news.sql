@@ -20,8 +20,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS mp_news_source_url_uidx ON mp_news (source_url
 
 -- Разрешаем анонимным пользователям читать новости (публичные данные)
 ALTER TABLE mp_news ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "mp_news_read_all"     ON mp_news FOR SELECT USING (true);
-CREATE POLICY "mp_news_insert_service" ON mp_news FOR INSERT WITH CHECK (false);
+CREATE POLICY "mp_news_read_all"    ON mp_news FOR SELECT USING (true);
+-- Edge function использует service_role — обходит RLS; authenticated может удалять (кнопка "Очистить")
+CREATE POLICY "mp_news_delete_auth" ON mp_news FOR DELETE TO authenticated USING (true);
 
 -- ── Каналы для сбора новостей (управляются в админ-панели) ───────────────────
 CREATE TABLE IF NOT EXISTS mp_news_channels (
@@ -36,7 +37,9 @@ CREATE TABLE IF NOT EXISTS mp_news_channels (
 CREATE UNIQUE INDEX IF NOT EXISTS mp_news_channels_slug_uidx ON mp_news_channels (channel_slug);
 
 ALTER TABLE mp_news_channels ENABLE ROW LEVEL SECURITY;
--- Читают все (нужно фронту для отображения статуса)
+-- Читают все
 CREATE POLICY "mp_news_channels_read"   ON mp_news_channels FOR SELECT USING (true);
--- Запись только service_role
-CREATE POLICY "mp_news_channels_write"  ON mp_news_channels FOR ALL WITH CHECK (false);
+-- Аутентифицированные пользователи управляют каналами из админ-панели
+CREATE POLICY "mp_news_channels_insert" ON mp_news_channels FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "mp_news_channels_update" ON mp_news_channels FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "mp_news_channels_delete" ON mp_news_channels FOR DELETE TO authenticated USING (true);
