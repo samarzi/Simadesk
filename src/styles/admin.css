@@ -757,14 +757,43 @@ html.light .ap-api-tag.ya { color: #cc2626; }
 }
 .ap-status-msg { font-size: 11.5px; font-weight: 600; }
 
+/* OpenRouter balance card (used in Settings and inline) */
+.ap-or-balance-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 14px;
+  border-radius: var(--ap-radius-sm);
+  background: var(--ap-raised);
+  border: 1px solid var(--ap-line);
+}
+.ap-or-balance-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 650; color: var(--text2); white-space: nowrap;
+}
+.ap-or-balance-value {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 14px; font-weight: 800; color: var(--text);
+  flex: 1;
+}
+.ap-or-balance-link {
+  font-size: 12px; font-weight: 650;
+  color: var(--accent-text); text-decoration: none; white-space: nowrap;
+}
+.ap-or-balance-link:hover { text-decoration: underline; }
+
 /* ═══════════════════════════════  ПОДДЕРЖКА  ═════════════════════════════ */
 
 .ap-sup-bar {
-  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-  padding: 10px 26px;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 20px;
   background: var(--ap-panel);
   border-bottom: 1px solid var(--ap-line);
   flex-shrink: 0;
+}
+.ap-sup-bar-sep {
+  width: 1px; height: 18px; background: var(--ap-line-strong); flex-shrink: 0;
+}
+.ap-sup-model-sel {
+  width: auto; max-width: 260px; padding: 5px 9px; font-size: 12px;
 }
 .ap-switch { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; user-select: none; }
 .ap-switch-track {
@@ -859,6 +888,27 @@ html.light .ap-api-tag.ya { color: #cc2626; }
 }
 .ap-sup-flag { color: var(--ap-rose); display: inline-flex; }
 .ap-sup-ai-mark { color: var(--ap-violet); display: inline-flex; opacity: .85; }
+
+.ap-sup-placeholder {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 40px 24px; text-align: center;
+}
+.ap-sup-placeholder-icon {
+  width: 56px; height: 56px; border-radius: 18px;
+  background: var(--ap-raised); border: 1px solid var(--ap-line);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text3); margin-bottom: 4px;
+}
+.ap-sup-placeholder-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.ap-sup-placeholder-desc { font-size: 12.5px; color: var(--text3); line-height: 1.6; max-width: 300px; }
+.ap-sup-placeholder-stats {
+  display: flex; gap: 20px; margin-top: 12px;
+  padding: 12px 24px; border-radius: 12px;
+  background: var(--ap-panel); border: 1px solid var(--ap-line);
+}
+.ap-sup-pstat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.ap-sup-pstat b { font-size: 20px; font-weight: 800; color: var(--text); }
+.ap-sup-pstat span { font-size: 11px; color: var(--text3); font-weight: 600; }
 
 .ap-sup-detail { display: flex; flex-direction: column; min-height: 0; background: var(--ap-surface); }
 .ap-sup-detail-inner { display: flex; flex-direction: column; height: 100%; min-height: 0; }
