@@ -9,6 +9,7 @@ import { yandexDb } from '@/services/yandexDb';
 import { fetchAllYandexOrders, yandexApi } from '@/services/yandexApi';
 import { I } from '@/utils/icons';
 import { copyButton } from '@/utils/copyButton';
+import { showToast } from '@/utils/toast';
 
 const STATUS_LABELS: Record<string, string> = {
   PROCESSING:           'В обработке',
@@ -361,7 +362,7 @@ export class YandexOrdersModule {
       if (modal.style.display !== 'none') this.fillModal(modal, localOrder ?? null, detail);
     } catch (err: unknown) {
       // Если детали не получили — оставляем то, что было
-      if (!localOrder) this.fillModalError(modal, (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? String(err));
+      if (!localOrder) this.fillModalError(modal, (err instanceof Error ? err.message : String(err)) ?? String(err));
       debug.warn('[YM] order detail failed:', err);
     }
   }
@@ -589,10 +590,10 @@ export class YandexOrdersModule {
       // YM workflow: PROCESSING/STARTED → PROCESSING/READY_TO_SHIP → курьер/ПВЗ забирает → DELIVERY/* (авто)
       // Прямой переход в DELIVERY вручную не разрешён.
       await yandexApi.setOrderStatus(store, orderId, 'PROCESSING', 'READY_TO_SHIP');
-      alert('✓ Заказ помечен готовым к отгрузке');
+      showToast('✓ Заказ помечен готовым к отгрузке', 'success');
       this.refresh();
     } catch (err: unknown) {
-      alert(`Ошибка: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
+      showToast(`Ошибка: ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
   }
 
@@ -607,7 +608,7 @@ export class YandexOrdersModule {
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 100);
     } catch (err: unknown) {
-      alert(`Не удалось получить этикетку: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
+      showToast(`Не удалось получить этикетку: ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
   }
 
@@ -617,10 +618,10 @@ export class YandexOrdersModule {
     if (!store) return;
     try {
       await yandexApi.setOrderStatus(store, orderId, 'CANCELLED', 'SHOP_FAILED');
-      alert('✓ Заказ отменён');
+      showToast('✓ Заказ отменён', 'success');
       this.refresh();
     } catch (err: unknown) {
-      alert(`Ошибка отмены: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
+      showToast(`Ошибка отмены: ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
   }
 

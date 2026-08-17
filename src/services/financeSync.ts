@@ -317,7 +317,7 @@ export const financeSync = {
         onProgress?.({ storeName: store.name, storeId: store.id, loaded: txs.length, total: txs.length, done: true });
       } catch (e: unknown) {
         if (e instanceof DOMException && e.name === 'AbortError') throw e;
-        const errMsg = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e);
+        const errMsg = (e instanceof Error ? e.message : String(e)) ?? String(e);
         console.error(`[Ozon Sync] ${store.name}: ${errMsg}`);
         // Диагностика: частые причины ошибок Ozon Finance API
         if (errMsg.includes('401') || errMsg.includes('Unauthorized')) {
@@ -368,7 +368,7 @@ export const financeSync = {
       } catch (e: unknown) {
         if (e instanceof DOMException && e.name === 'AbortError') throw e;
         result[store.id] = 0;
-        onProgress?.({ storeName: store.name, storeId: store.id, loaded: 0, total: 0, done: true, error: (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e) });
+        onProgress?.({ storeName: store.name, storeId: store.id, loaded: 0, total: 0, done: true, error: (e instanceof Error ? e.message : String(e)) ?? String(e) });
       }
     }
     return { total, perStore: result };
@@ -444,7 +444,7 @@ export const financeSync = {
       } catch (e: unknown) {
         if (e instanceof DOMException && e.name === 'AbortError') throw e;
         result[store.id] = 0;
-        onProgress?.({ storeName: store.name, storeId: store.id, loaded: 0, total: 0, done: true, error: (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e) });
+        onProgress?.({ storeName: store.name, storeId: store.id, loaded: 0, total: 0, done: true, error: (e instanceof Error ? e.message : String(e)) ?? String(e) });
       }
     }
     return { total, perStore: result };

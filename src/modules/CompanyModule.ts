@@ -508,7 +508,7 @@ export class CompanyModule {
       showToast(`Компания создана ${I.partyPopper('', 16)}`, 'success');
       this.onReady();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка создания';
+      const msg = err instanceof Error ? err.message : 'Ошибка создания';
       showToast(msg, 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Создать'; }
     }
@@ -931,7 +931,7 @@ export class CompanyModule {
       showToast('Реквизиты сохранены ✓', 'success');
       if (btn) { btn.disabled = false; btn.textContent = 'Сохранить реквизиты'; }
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка сохранения', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка сохранения', 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Сохранить реквизиты'; }
     }
   }
@@ -976,7 +976,7 @@ export class CompanyModule {
       if (usernameEl) usernameEl.value = '';
       showToast('Приглашение добавлено ✓', 'success');
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -986,7 +986,7 @@ export class CompanyModule {
       await companyService.removeMember(memberId);
       showToast('Участник удалён', 'success');
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -995,7 +995,7 @@ export class CompanyModule {
       await companyService.updateMemberRole(memberId, role as any);
       showToast('Роль обновлена', 'success');
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -1004,7 +1004,7 @@ export class CompanyModule {
       await companyService.cancelPendingInvitation(inviteId);
       showToast('Приглашение отменено', 'success');
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error');
     }
   }
 

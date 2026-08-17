@@ -686,7 +686,7 @@ export class AnalyticsModule {
       `);
       w.document.close();
     } catch (e: unknown) {
-      alert('Ошибка загрузки JSON: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e));
+      alert('Ошибка загрузки JSON: ' + ((e instanceof Error ? e.message : String(e)) ?? e));
     }
   }
 

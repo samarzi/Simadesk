@@ -197,7 +197,7 @@ export function evaluateFormula(formula: string, costPrice: number): { ok: true;
     if (!isFinite(result)) return { ok: false, error: 'Результат не число' };
     return { ok: true, value: result };
   } catch (e: unknown) {
-    return { ok: false, error: (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e) };
+    return { ok: false, error: (e instanceof Error ? e.message : String(e)) ?? String(e) };
   }
 }
 

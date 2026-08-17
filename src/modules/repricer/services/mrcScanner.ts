@@ -333,7 +333,7 @@ export class MrcScanner {
           }
         }
       } catch (e: unknown) {
-        extensionError = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e);
+        extensionError = (e instanceof Error ? e.message : String(e)) ?? String(e);
       }
       if (extensionError) debug.warn(`[mrcScanner] ${item.productTitle} (${item.mp}): ${extensionError}`);
     }
@@ -407,7 +407,7 @@ export class MrcScanner {
       // Если расширение успело получить витринную цену до того, как API ЛК упало —
       // сохраняем её, чтобы хотя бы показать в ячейке.
       const buyerForErr = extensionBuyerPrice ?? 0;
-      this.pushEntry(rule, item, 0, buyerForErr, 'error', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e), undefined, extensionError);
+      this.pushEntry(rule, item, 0, buyerForErr, 'error', (e instanceof Error ? e.message : String(e)) ?? String(e), undefined, extensionError);
     }
   }
 
@@ -441,7 +441,7 @@ export class MrcScanner {
       this.scheduleVerify(ri.rule.id, ri.item.key, entry.id);
     } catch (e: unknown) {
       entry.action = 'error';
-      entry.errorMsg = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e);
+      entry.errorMsg = (e instanceof Error ? e.message : String(e)) ?? String(e);
       this.saveLog();
       this.ctx.onChange();
     }
@@ -566,7 +566,7 @@ export class MrcScanner {
         this.scheduleVerify(ruleId, itemKey, entryId);
         return;
       } catch (e: unknown) {
-        entry.errorMsg = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e);
+        entry.errorMsg = (e instanceof Error ? e.message : String(e)) ?? String(e);
         entry.action = 'error';
       }
     } else {

@@ -411,7 +411,7 @@ export class ProducersModule {
       await Promise.all([this.loadProducers(), this.loadFields()]);
       await Promise.all([this.loadProducts(), this.loadMappings(), this.loadOrders()]);
     } catch (e: unknown) {
-      this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка загрузки', 'error');
+      this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка загрузки', 'error');
     }
     this.render();
   }
@@ -766,7 +766,7 @@ export class ProducersModule {
         await this.loadProducers();
         if (onSaved) { onSaved(); } else { this.render(); }
         return true;
-      } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); return false; }
+      } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); return false; }
     });
   }
 
@@ -920,7 +920,7 @@ export class ProducersModule {
       (window as any).__producerTemplateDataUrl = dataUrl;
       this.toast(`Шаблон «${f.name}» подготовлен. Сохраните форму.`, 'success');
     } catch (e: unknown) {
-      this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка загрузки', 'error');
+      this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка загрузки', 'error');
     }
   }
 
@@ -931,7 +931,7 @@ export class ProducersModule {
       this.toast('Удалено', 'success');
       await Promise.all([this.loadProducers(), this.loadProducts(), this.loadMappings()]);
       this.render();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -1236,7 +1236,7 @@ export class ProducersModule {
         await this.loadProducts();
         this.render();
         return true;
-      } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); return false; }
+      } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); return false; }
     });
   }
 
@@ -1336,7 +1336,7 @@ export class ProducersModule {
       await this.loadProducts();
       this.render();
       this.toast('Удалено', 'success');
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   // ── Fields modal ──────────────────────────────────────────────────────────
@@ -1425,14 +1425,14 @@ export class ProducersModule {
       await this.loadFields();
       this.toast('Порядок сохранён', 'success');
       this.openFieldsModal();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   async toggleFieldFilter(id: string, on: boolean): Promise<void> {
     try {
       await producerFieldDb.update(id, { show_in_filters: on });
       await this.loadFields();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   editField(id: string): void {
@@ -1478,7 +1478,7 @@ export class ProducersModule {
         this.toast('Сохранено', 'success');
         this.openFieldsModal();
         return true;
-      } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); return false; }
+      } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); return false; }
     });
   }
 
@@ -1505,7 +1505,7 @@ export class ProducersModule {
       this.openFieldsModal();
     } catch (e: unknown) {
       console.error('[addField]', e);
-      this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка создания поля', 'error');
+      this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка создания поля', 'error');
     }
   }
 
@@ -1516,7 +1516,7 @@ export class ProducersModule {
       await this.loadFields();
       this.toast('Удалено', 'success');
       this.openFieldsModal();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -2200,7 +2200,7 @@ export class ProducersModule {
       this.mappingEditAddProductLabel = '';
       this.mappingEditAddQty = 1;
       this.render();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   openMappingForm(): void {
@@ -2267,7 +2267,7 @@ export class ProducersModule {
         this.toast(`Создано связок: ${ok}`, 'success');
         this.render();
         return true;
-      } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); return false; }
+      } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); return false; }
     });
   }
 
@@ -2297,7 +2297,7 @@ export class ProducersModule {
       await producerMappingDb.remove(id);
       await this.loadMappings();
       this.render();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -2659,7 +2659,7 @@ export class ProducersModule {
         await this.loadOrders();
         this.render();
         return true;
-      } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); return false; }
+      } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); return false; }
     });
   }
 
@@ -2698,7 +2698,7 @@ export class ProducersModule {
         this.render();
         this.toast(`Импортировано ${orders.length} заказов`, 'success');
         return true;
-      } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); return false; }
+      } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); return false; }
     });
   }
 
@@ -2708,7 +2708,7 @@ export class ProducersModule {
       this.orderSelected.delete(id);
       await this.loadOrders();
       this.render();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   async generateConsignment(): Promise<void> {
@@ -2755,7 +2755,7 @@ export class ProducersModule {
         });
         generated++;
       } catch (e: unknown) {
-        this.toast(`Ошибка генерации для ${grp.producer.name}: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e))}`, 'error');
+        this.toast(`Ошибка генерации для ${grp.producer.name}: ${(e instanceof Error ? e.message : String(e))}`, 'error');
       }
     }
     if (generated > 0) {
@@ -2902,7 +2902,7 @@ export class ProducersModule {
       this.toast('Документ поставки сформирован', 'success');
       this.supplyQty = {};
       this.render();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -2925,7 +2925,7 @@ export class ProducersModule {
         blob = generateNewFile(doc.items, producer.output_config, producer.name);
       }
       downloadBlob(blob, doc.file_name ?? `${producer.name}.xlsx`);
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка при скачивании', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка при скачивании', 'error'); }
   }
 
   private renderHistoryTab(): string {
@@ -3144,7 +3144,7 @@ export class ProducersModule {
       this.productSelected = new Set();
       await this.loadProducts();
       this.render();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   async bulkDeleteProducts(): Promise<void> {
@@ -3157,7 +3157,7 @@ export class ProducersModule {
       this.productSelected = new Set();
       await this.loadProducts();
       this.render();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   openChangeProducerModal(): void {
@@ -3551,7 +3551,7 @@ export class ProducersModule {
 
         if (lastError && created === 0) { this.toast(lastError?.message ?? 'Ошибка импорта', 'error'); }
         return true;
-      } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка импорта', 'error'); return false; }
+      } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка импорта', 'error'); return false; }
     }, { saveText: 'Импортировать' });
   }
 
@@ -3948,7 +3948,7 @@ export class ProducersModule {
       rowsEl.innerHTML = rowsHtml || '<div style="color:var(--text-2);font-size:12px;padding:8px">Заголовки не найдены</div>';
       mapWrap.style.display = 'flex';
     } catch (e: unknown) {
-      this.toast('Ошибка чтения файла: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
+      this.toast('Ошибка чтения файла: ' + ((e instanceof Error ? e.message : String(e)) ?? e), 'error');
     }
   }
 
@@ -4360,7 +4360,7 @@ export class ProducersModule {
         ? rows.join('')
         : `<div style="color:var(--text-2);font-size:12px">Нет подключённых магазинов. Добавьте их в разделах WB, Ozon, ЯМ.</div>`;
     } catch (e: unknown) {
-      list.innerHTML = `<div style="color:#ef4444;font-size:12px">${esc((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка загрузки')}</div>`;
+      list.innerHTML = `<div style="color:#ef4444;font-size:12px">${esc((e instanceof Error ? e.message : String(e)) ?? 'Ошибка загрузки')}</div>`;
     }
   }
 
@@ -4407,7 +4407,7 @@ export class ProducersModule {
       document.getElementById('producers-modal')?.remove();
       this.render();
     } catch (e: unknown) {
-      this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка загрузки', 'error');
+      this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка загрузки', 'error');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Загрузить артикулы'; }
     }
@@ -4635,7 +4635,7 @@ export class ProducersModule {
       this.mappingKeyQty = new Map();
       await this.loadMappings();
       this.toast(`Создано связок: ${ok}`, 'success');
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
     finally {
       this.mappingCreating = false;
       this.render();
@@ -4689,7 +4689,7 @@ export class ProducersModule {
       document.getElementById('producers-modal')?.remove();
       this.toast('Связка создана', 'success');
       this.render();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -4844,7 +4844,7 @@ export class ProducersModule {
       document.getElementById('producers-modal')?.remove();
       this.render();
     } catch (e: unknown) {
-      this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка сохранения', 'error');
+      this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка сохранения', 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Сохранить'; }
     }
   }
@@ -4946,7 +4946,7 @@ export class ProducersModule {
       await this.loadMappings();
       this.toast(stopped ? `Остановлено: удалено ${processedUpTo} из ${toDelete.length}` : `Удалено связок: ${toDelete.length}`, stopped ? 'info' : 'success');
       this.render();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
     finally { progress.close(); }
   }
 
@@ -4975,7 +4975,7 @@ export class ProducersModule {
       await this.loadMappings();
       this.toast(stopped ? `Остановлено: обработано ${processedUpTo} из ${toDelete.length}` : 'Удалено из каталога', stopped ? 'info' : 'success');
       this.render();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
     finally { progress.close(); }
   }
 
@@ -5028,7 +5028,7 @@ export class ProducersModule {
       await this.loadMappings();
       this.toast('Удалено', 'success');
       this.openMappingEditModal(article);
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   async _addMappingFromEdit(article: string): Promise<void> {
@@ -5040,7 +5040,7 @@ export class ProducersModule {
       await this.loadMappings();
       this.toast('Добавлено', 'success');
       this.openMappingEditModal(article);
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -5052,7 +5052,7 @@ export class ProducersModule {
       await producerOrderDb.updateStatus([id], status as ProducerOrder['status']);
       await this.loadOrders();
       this.render();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   async bulkUpdateOrderStatus(status: string): Promise<void> {
@@ -5062,7 +5062,7 @@ export class ProducersModule {
       await producerOrderDb.updateStatus(ids, status as ProducerOrder['status']);
       await this.loadOrders();
       this.render();
-    } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error'); }
+    } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error'); }
   }
 
   private _renderImportProgress(): string {
@@ -5234,7 +5234,7 @@ export class ProducersModule {
     } catch (e: unknown) {
       this._importProgress = null;
       this.render();
-      this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка загрузки заказов из МП', 'error');
+      this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка загрузки заказов из МП', 'error');
     }
   }
 
@@ -5824,7 +5824,7 @@ export class ProducersModule {
         if (match) this.smartImportMapping[`field_${f.id}`] = match;
       }
     } catch (e: unknown) {
-      this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка чтения файла', 'error');
+      this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка чтения файла', 'error');
       return;
     }
     this._renderSmartImportModal();
@@ -5858,7 +5858,7 @@ export class ProducersModule {
           const f = this.fields.find(fd => fd.name.toLowerCase() === colName.toLowerCase());
           if (f) this.smartImportMapping[`field_${f.id}`] = colName;
         }
-      } catch (e: unknown) { this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка создания полей', 'error'); return; }
+      } catch (e: unknown) { this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка создания полей', 'error'); return; }
     }
 
     const prodByName = new Map<string, string>();
@@ -6035,7 +6035,7 @@ export class ProducersModule {
       this.render();
     } catch (e: unknown) {
       if (btn) { btn.disabled = false; btn.textContent = 'Импортировать'; }
-      this.toast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка импорта', 'error');
+      this.toast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка импорта', 'error');
     }
   }
 

@@ -8,6 +8,7 @@ import { wbDb } from '@/services/wbDb';
 import { fetchAllWbOrders, wbApi, isWbCoolingDown, wbCooldownRemaining } from '@/services/wbApi';
 import { I } from '@/utils/icons';
 import { copyButton } from '@/utils/copyButton';
+import { showToast } from '@/utils/toast';
 
 const STATUS_LABELS: Record<WbOrderStatus, string> = {
   new:         'Новый',
@@ -403,10 +404,10 @@ export class WbOrdersModule {
     if (!store) return;
     try {
       await wbApi.confirmOrder(store.api_key, orderId);
-      alert('✓ Заказ принят');
+      showToast('✓ Заказ принят', 'success');
       this.refresh();
     } catch (err: unknown) {
-      alert(`Ошибка: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
+      showToast(`Ошибка: ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
   }
 
@@ -416,10 +417,10 @@ export class WbOrdersModule {
     if (!store) return;
     try {
       await wbApi.cancelOrder(store.api_key, orderId);
-      alert('✓ Заказ отменён');
+      showToast('✓ Заказ отменён', 'success');
       this.refresh();
     } catch (err: unknown) {
-      alert(`Ошибка: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
+      showToast(`Ошибка: ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
   }
 
@@ -434,7 +435,7 @@ export class WbOrdersModule {
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 100);
     } catch (err: unknown) {
-      alert(`Не удалось получить стикер: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}\n\nДля FBS-стикеров нужен токен с правами «Маркетплейс».`);
+      showToast(`Не удалось получить стикер: ${err instanceof Error ? err.message : String(err)}. Для FBS-стикеров нужен токен с правами «Маркетплейс».`, 'error');
     }
   }
 

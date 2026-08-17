@@ -101,7 +101,7 @@ interface OzonWarehouseResp { result?: OzonWarehouse[] }
 
 /** Extract a human-readable message from an unknown catch value. */
 function errMsg(e: unknown): string {
-  return e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e);
+  return e instanceof Error ? e.message : String(e);
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -1047,7 +1047,7 @@ export const ozonApi = {
       if (lastId) body.last_id = lastId;
 
       const resp = await ozonPost<any>('/v1/review/list', body, creds).catch((err: any) => {
-        const msg = String((err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? '');
+        const msg = String((err instanceof Error ? err.message : String(err)) ?? '');
         if (msg.includes('subscription') || msg.includes('PermissionDenied') || msg.includes('403') || msg.includes('Forbidden') || msg.includes('not available')) {
           throw new Error('Ozon Review API: доступ запрещён сервером Ozon.\n\nПричины: 1) ваш тариф не включает API отзывов (нужен Premium Pro); 2) API-ключ создан ДО подключения тарифа — пересоздайте его в seller.ozon.ru → Настройки → API-ключи; 3) Premium ещё не активирован полностью (обычно до 24ч).\n\nТочный ответ Ozon: "not available with existing subscription".');
         }

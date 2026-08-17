@@ -63,7 +63,7 @@ export class AuthModule {
       (window as any).profileModule?.showAccountTab?.();
     } catch (err) {
       overlay.remove();
-      const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка привязки Яндекс';
+      const msg = err instanceof Error ? err.message : 'Ошибка привязки Яндекс';
       alert(msg);
     }
   }
@@ -108,7 +108,7 @@ export class AuthModule {
           setTimeout(() => location.reload(), 800);
         } catch (err) {
           overlay.remove();
-          const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка объединения';
+          const msg = err instanceof Error ? err.message : 'Ошибка объединения';
           alert(msg);
         }
         resolve();
@@ -144,7 +144,7 @@ export class AuthModule {
     } catch (err) {
       this.render();
       setTimeout(() => {
-        const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка входа через Яндекс';
+        const msg = err instanceof Error ? err.message : 'Ошибка входа через Яндекс';
         this.showError(msg);
       }, 0);
     }
@@ -312,7 +312,7 @@ export class AuthModule {
           await authService.devLogin();
           this.success();
         } catch (err: unknown) {
-          const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка dev-входа. Смотри консоль.';
+          const msg = err instanceof Error ? err.message : 'Ошибка dev-входа. Смотри консоль.';
           this.showError(msg);
           btn.disabled = false;
           btn.style.opacity = '1';
@@ -345,7 +345,7 @@ export class AuthModule {
         await authService.loginWithEmail(email, password);
         this.success();
       } catch (err: unknown) {
-        const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Неверный логин или пароль';
+        const msg = err instanceof Error ? err.message : 'Неверный логин или пароль';
         this.showError(msg);
         submitEl.disabled = false;
         submitEl.textContent = 'Войти';
@@ -427,7 +427,7 @@ export class AuthModule {
       await authService.loginWithTelegram(data);
       this.success();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка входа. Попробуйте снова.';
+      const msg = err instanceof Error ? err.message : 'Ошибка входа. Попробуйте снова.';
       this.showError(msg);
       if (btn) btn.style.opacity = '1';
     }

@@ -11,6 +11,7 @@
 
 import { aiPage, type AiPageCapability, type AiSuggestion, type AiAction } from './aiPageContext';
 import { registerUndoHandler } from '@/modules/LogsModule';
+import { recordDailyTokens } from './aiTokenQuota';
 
 const w = () => window as any;
 const fmtRub = (n: number) =>
@@ -32,13 +33,50 @@ const PAGE_TITLE: Record<string, string> = {
 
 function describeAnalytics(): string {
   const am = w().analyticsModule;
-  const kpi = am?.kpi;
+  const kpi = (am as any)?.kpi;
   if (!kpi) return 'Раздел аналитики. Данные ещё не загружены — попроси открыть/обновить.';
-  return `Аналитика (текущий период):
+
+  let out = `Аналитика (текущий период):
 Выручка нетто: ${fmtRub(kpi.revenue)} | Валовая: ${fmtRub(kpi.revenue_gross ?? 0)}
 Заказов: ${(kpi.orders_delivered ?? 0) + (kpi.orders_processing ?? 0)} | Возвраты: ${kpi.orders_returned ?? 0} | Отмены: ${kpi.orders_cancelled ?? 0}
 Маржа: ${kpi.margin_pct?.toFixed?.(1) ?? '—'}% | Ср. чек: ${fmtRub(kpi.avg_check ?? 0)}
 Комиссии МП: ${fmtRub(kpi.commission ?? 0)} | Логистика: ${fmtRub(kpi.logistics ?? 0)}`;
+
+  // Топ-SKU — агрегируем из orders.items
+  const orders: any[] = (am as any)?.orders ?? [];
+  if (orders.length > 0) {
+    const bySkuMap: Record<string, { name: string; qty: number; revenue: number; profit: number }> = {};
+    for (const order of orders) {
+      for (const item of (order.items ?? [])) {
+        const key = item.vendor_code || item.name || '—';
+        if (!bySkuMap[key]) bySkuMap[key] = { name: item.name || key, qty: 0, revenue: 0, profit: 0 };
+        bySkuMap[key].qty     += item.quantity  ?? 0;
+        bySkuMap[key].revenue += item.revenue   ?? 0;
+        bySkuMap[key].profit  += item.net_profit ?? 0;
+      }
+    }
+    const skus = Object.entries(bySkuMap)
+      .map(([vc, d]) => ({ vc, ...d }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    if (skus.length > 0) {
+      out += `\n\nТоп-${Math.min(10, skus.length)} SKU по выручке:`;
+      skus.slice(0, 10).forEach((s, i) => {
+        const marginStr = s.revenue > 0 ? ` маржа ${(s.profit / s.revenue * 100).toFixed(0)}%` : '';
+        out += `\n${i + 1}. [${s.vc}] «${s.name.slice(0, 40)}» — ${fmtRub(s.revenue)} (${s.qty} шт${marginStr})`;
+      });
+
+      // Аутсайдеры — последние 5 по выручке (только если SKU > 15)
+      if (skus.length > 15) {
+        out += `\n\nАутсайдеры (меньше всего выручки):`;
+        skus.slice(-5).reverse().forEach((s, i) => {
+          out += `\n${i + 1}. [${s.vc}] «${s.name.slice(0, 40)}» — ${fmtRub(s.revenue)} (${s.qty} шт)`;
+        });
+      }
+    }
+  }
+
+  return out;
 }
 
 function pickOrderFields(o: any): string {
@@ -135,8 +173,68 @@ function describeReviews(): string {
   const rm = w().reviewsModule;
   const reviews: any[] = rm?.reviews ?? rm?.items ?? [];
   if (!reviews.length) return 'Раздел отзывов. Отзывы ещё не загружены.';
-  const unanswered = reviews.filter(r => !r.answered && !r.answer);
-  return `Отзывы: всего ${reviews.length}, без ответа ~${unanswered.length}. Негатив стоит отрабатывать в течение 12 часов.`;
+
+  const isUnanswered = (r: any) => !r.answered && !r.answer && !r.reply;
+  const unanswered = reviews.filter(isUnanswered);
+  const neg = unanswered.filter(r => (r.stars ?? 5) <= 2);
+
+  let out = `Отзывы: всего ${reviews.length}, без ответа ${unanswered.length} (негативных ≤2★: ${neg.length}). Негатив отрабатывать в течение 12 часов.`;
+
+  if (unanswered.length > 0) {
+    out += '\n\nОтзывы без ответа (до 15):';
+    unanswered.slice(0, 15).forEach((r, i) => {
+      const stars = (r.stars ?? 0);
+      const product = (r.productName ?? r.product_name ?? r.offer_id ?? '').toString().slice(0, 40);
+      const text = (r.text ?? r.comment ?? '').toString().slice(0, 250);
+      const date = r.created_at ?? r.date ?? '';
+      const dateStr = date ? new Date(date).toLocaleDateString('ru-RU') : '';
+      out += `\n${i + 1}. [id:${r.id}] ${stars}★ ${dateStr}${product ? ' — ' + product : ''}`;
+      if (text) out += `\n   "${text}"`;
+    });
+  }
+
+  const answered = reviews.filter(r => r.answered || r.answer || r.reply).slice(0, 3);
+  if (answered.length > 0) {
+    out += '\n\nПримеры уже отвеченных:';
+    answered.forEach((r, i) => {
+      const text = (r.text ?? r.comment ?? '').toString().slice(0, 100);
+      const ans = (r.answer ?? r.reply ?? '').toString().slice(0, 100);
+      out += `\n${i + 1}. ${r.stars ?? '?'}★ "${text}" → "${ans}"`;
+    });
+  }
+
+  return out;
+}
+
+function describeAdvertising(): string {
+  const am = w().advertisingModule;
+  if (!am) return 'Раздел Реклама. Модуль ещё не загружен — перейди в раздел Реклама и повтори.';
+
+  const campaigns: any[] = am.campaigns ?? [];
+  if (!campaigns.length) {
+    return `Реклама: вкладка ${am.tab ?? '—'}. Кампании ещё не загружены — попроси загрузить данные.`;
+  }
+
+  const active = campaigns.filter(c => c.status === 'active');
+  const paused = campaigns.filter(c => c.status !== 'active');
+  const totalBudget = campaigns.reduce((s: number, c: any) => s + (c.budget ?? 0), 0);
+  const totalSpent  = campaigns.reduce((s: number, c: any) => s + (c.spent  ?? 0), 0);
+  const totalOrders = campaigns.reduce((s: number, c: any) => s + (c.orders ?? 0), 0);
+
+  let out = `Реклама (${am.tab?.toUpperCase() ?? ''}): кампаний ${campaigns.length} (активных: ${active.length}, на паузе: ${paused.length}).`;
+  out += `\nДневной бюджет: ${fmtRub(totalBudget)} | Потрачено: ${fmtRub(totalSpent)} | Заказов: ${totalOrders}`;
+
+  // Проблемные — убыточные и сжигающие бюджет
+  const problems = active.filter(c => (c.roi ?? 0) < -15 && (c.spent ?? 0) > 200);
+  if (problems.length) out += `\n⚠ Убыточных кампаний (ROI < -15%): ${problems.length} — ${problems.map(c => `"${c.name}"(ROI ${c.roi?.toFixed(0)}%)`).join(', ')}`;
+
+  out += '\n\nВсе кампании:';
+  campaigns.slice(0, 12).forEach(c => {
+    const ctrStr = c.views > 0 ? (c.clicks / c.views * 100).toFixed(2) : '—';
+    out += `\n• [id:${c.id}] "${c.name}" [${c.status}] бюджет ${fmtRub(c.budget)} потрачено ${fmtRub(c.spent)} CTR ${ctrStr}% ROI ${c.roi?.toFixed(0) ?? '—'}% заказов ${c.orders ?? 0}`;
+  });
+
+  return out;
 }
 
 function describeGeneric(page: string): string {
@@ -178,6 +276,9 @@ const SUGGESTIONS: Record<string, AiSuggestion[]> = {
   ],
   reviews: [
     { label: '💬 Без ответа', prompt: 'Какие отзывы без ответа и на что ответить в первую очередь?' },
+    { label: '🤖 Ответь на первый', prompt: 'Сгенерируй AI-ответ на первый отзыв без ответа и опубликуй' },
+    { label: '🤖 Ответь на все', prompt: 'Ответь AI-ответами на все отзывы без ответа (до 10)' },
+    { label: '😡 Разбор негатива', prompt: 'Покажи все негативные отзывы (1-2★) без ответа и предложи что написать' },
   ],
   repricer: [
     { label: '💸 Как работает репрайсер', prompt: 'Объясни как настроить репрайсер и стратегии цен' },
@@ -243,9 +344,10 @@ Object.assign(SUGGESTIONS, {
     { label: '📊 Статус поставок', prompt: 'Сколько поставок в каком статусе сейчас?' },
   ],
   advertising: [
-    { label: '📊 Сводка по кампаниям', prompt: 'Дай сводку по рекламным кампаниям: CTR, ROI, бюджет' },
-    { label: '💸 Где лучший ROI', prompt: 'Какая кампания показывает лучший ROI?' },
-    { label: '⏸ Пауза убыточных', prompt: 'Какие кампании убыточны и их стоит остановить?' },
+    { label: '📊 Сводка по кампаниям', prompt: 'Дай детальную сводку по рекламным кампаниям: CTR, ROI, бюджет, заказы' },
+    { label: '💸 Лучший и худший ROI', prompt: 'Покажи кампании отсортированные по ROI — лучшие и убыточные' },
+    { label: '⏸ Что остановить', prompt: 'Какие кампании убыточны (ROI < -15%) и их стоит поставить на паузу?' },
+    { label: '💰 Бюджеты кампаний', prompt: 'Покажи бюджеты всех кампаний — где бюджет исчерпан, где есть запас' },
   ],
 });
 
@@ -262,6 +364,7 @@ const DESCRIBERS: Record<string, () => string> = {
   'products-hub': describeProducts,
   reviews: describeReviews,
   supply: describeSupply,
+  advertising: describeAdvertising,
 };
 
 // ── Actions: главная / дашборд ────────────────────────────────────────────────
@@ -379,34 +482,174 @@ const TASKS_ACTIONS: AiAction[] = [
   },
 ];
 
+// ── AI helper: генерация ответа на отзыв ──────────────────────────────────────
+
+async function generateAiReply(text: string, stars: number, productName: string): Promise<string> {
+  const key = sessionStorage.getItem('sd_ai_key') ?? '';
+  if (!key) throw new Error('AI-ключ не настроен. Перейди в Настройки → AI-ассистент.');
+
+  const tone = stars <= 2
+    ? 'Тон: сочувствующий, извиняющийся, предлагай решение.'
+    : stars === 3
+      ? 'Тон: благодарный, уточни что можно улучшить.'
+      : 'Тон: тёплый, краткий, поблагодари.';
+
+  const prompt = `Ты — специалист по работе с клиентами маркетплейса. Напиши профессиональный ответ на отзыв покупателя от имени продавца.
+
+Отзыв (${stars}★): "${text}"${productName ? `\nТовар: ${productName}` : ''}
+
+${tone}
+Требования: 2–4 предложения, максимум 300 символов, живой текст без шаблонных фраз, только текст ответа без кавычек и подписей.`;
+
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key}`,
+      'HTTP-Referer': window.location.origin,
+      'X-Title': 'SimaDesk Reviews',
+    },
+    body: JSON.stringify({
+      model: 'anthropic/claude-haiku-4-5',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 200,
+      temperature: 0.75,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`AI API ${res.status}: ${err}`);
+  }
+  const data = await res.json();
+  const reply = data.choices?.[0]?.message?.content?.trim() ?? '';
+  if (!reply) throw new Error('AI вернул пустой ответ');
+  const tokens = data.usage?.total_tokens;
+  if (tokens) recordDailyTokens(tokens);
+  return reply;
+}
+
+async function publishReviewReply(rm: any, review: any, text: string): Promise<void> {
+  if (typeof rm.aiReplyReview === 'function') {
+    await rm.aiReplyReview(review.id, text);
+    return;
+  }
+  const { dbFetch } = await import('@/services/dbClient');
+  await dbFetch(`/rest/v1/reviews?id=eq.${review.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ answer: text, answered: true }),
+  });
+  rm.load?.();
+}
+
 // ── Actions: отзывы ──────────────────────────────────────────────────────────────
 
 const REVIEWS_ACTIONS: AiAction[] = [
   {
     name: 'reply_review',
-    description: 'Опубликовать ответ на отзыв покупателя. Используй когда просят «ответь на этот отзыв», «напиши ответ». Если review_id не передан — отвечает на первый отзыв без ответа. text — готовый текст ответа.',
+    description: 'Опубликовать ГОТОВЫЙ текст ответа на конкретный отзыв. Используй когда пользователь сам написал текст ответа и просит опубликовать. Если review_id не передан — берёт первый без ответа.',
     args: '{ text: string, review_id?: string }',
     run: async (a: { text: string; review_id?: string }) => {
       const rm = w().reviewsModule;
       if (!rm) throw new Error('Модуль отзывов недоступен на этой странице');
-      if (typeof rm.aiReplyReview === 'function') {
-        const res = await rm.aiReplyReview(a.review_id ?? null, a.text);
-        return typeof res === 'string' ? res : 'Ответ опубликован';
-      }
-      // Fallback: ищем отзыв и обновляем через API напрямую
       const reviews: any[] = rm.reviews ?? rm.items ?? [];
       const review = a.review_id
         ? reviews.find(r => String(r.id) === String(a.review_id))
         : reviews.find(r => !r.answered && !r.answer && !r.reply);
-      if (!review) throw new Error('Отзыв без ответа не найден. Возможно, все отзывы уже обработаны');
-      if (!review.id) throw new Error('ID отзыва неизвестен — ответьте вручную');
-      const { dbFetch } = await import('@/services/dbClient');
-      await dbFetch(`/rest/v1/reviews?id=eq.${review.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ answer: a.text, answered: true }),
+      if (!review) throw new Error('Отзыв не найден. Возможно, все отзывы уже обработаны');
+      await publishReviewReply(rm, review, a.text);
+      return `Ответ на отзыв ${review.stars ?? '?'}★ опубликован: «${a.text.slice(0, 80)}${a.text.length > 80 ? '…' : ''}»`;
+    },
+  },
+  {
+    name: 'ai_generate_review_reply',
+    description: 'Сгенерировать персонализированный AI-ответ на отзыв и опубликовать его. Используй когда говорят «ответь на этот отзыв», «напиши ответ на отзыв id:X», «сгенерируй ответ». Если review_id не указан — берёт первый без ответа.',
+    args: '{ review_id?: string }',
+    run: async (a: { review_id?: string }) => {
+      let rm = w().reviewsModule;
+      if (!rm) {
+        w().app?.navigateTo?.('reviews');
+        await waitFor(() => !!w().reviewsModule, 2500);
+        rm = w().reviewsModule;
+        if (!rm) return 'Открываю Отзывы — после загрузки страницы повтори команду.';
+      }
+      const reviews: any[] = rm.reviews ?? rm.items ?? [];
+      const review = a.review_id
+        ? reviews.find(r => String(r.id) === String(a.review_id))
+        : reviews.find(r => !r.answered && !r.answer && !r.reply);
+      if (!review) throw new Error('Отзыв без ответа не найден — возможно, все уже обработаны');
+      const text = (review.text ?? review.comment ?? '').toString();
+      const stars = review.stars ?? 5;
+      const product = (review.productName ?? review.product_name ?? '').toString();
+      const generated = await generateAiReply(text, stars, product);
+      await publishReviewReply(rm, review, generated);
+      return `Ответ на отзыв ${stars}★ сгенерирован и опубликован:\n\n«${generated}»`;
+    },
+  },
+];
+
+// ── Actions: реклама ──────────────────────────────────────────────────────────────
+
+const ADVERTISING_ACTIONS: AiAction[] = [
+  {
+    name: 'toggle_campaign',
+    description: 'Поставить рекламную кампанию на паузу или возобновить. Используй когда говорят «останови кампанию X», «возобнови кампанию», «пауза на рекламу X». campaign_id — id из контекста, action — "pause" или "resume".',
+    args: '{ campaign_id: string|number, action: "pause"|"resume" }',
+    run: async (a: { campaign_id: string | number; action: 'pause' | 'resume' }) => {
+      const am = w().advertisingModule;
+      if (!am) throw new Error('Модуль рекламы недоступен — перейди в раздел Реклама');
+      if (typeof am.aiToggleCampaign === 'function') {
+        return await am.aiToggleCampaign(a.campaign_id, a.action);
+      }
+      const campaigns: any[] = am.campaigns ?? [];
+      const c = campaigns.find(x => String(x.id) === String(a.campaign_id));
+      const name = c?.name ?? `id:${a.campaign_id}`;
+      const action = a.action === 'pause' ? 'остановить' : 'возобновить';
+      w().app?.navigateTo?.('advertising');
+      return `Найди кампанию «${name}» в разделе Реклама и ${action} её вручную — API управления кампаниями пока не подключён напрямую.`;
+    },
+  },
+  {
+    name: 'set_campaign_budget',
+    description: 'Изменить дневной бюджет рекламной кампании. Используй когда говорят «установи бюджет X рублей для кампании Y», «увеличь бюджет кампании до X».',
+    args: '{ campaign_id: string|number, budget: number }',
+    run: async (a: { campaign_id: string | number; budget: number }) => {
+      const am = w().advertisingModule;
+      if (!am) throw new Error('Модуль рекламы недоступен — перейди в раздел Реклама');
+      if (typeof am.aiSetBudget === 'function') {
+        return await am.aiSetBudget(a.campaign_id, a.budget);
+      }
+      const campaigns: any[] = am.campaigns ?? [];
+      const c = campaigns.find(x => String(x.id) === String(a.campaign_id));
+      const name = c?.name ?? `id:${a.campaign_id}`;
+      w().app?.navigateTo?.('advertising');
+      return `Открываю Рекламу. Найди кампанию «${name}» → нажми на бюджет и введи ${a.budget} ₽.`;
+    },
+  },
+  {
+    name: 'get_ad_stats',
+    description: 'Показать детальную аналитику по рекламным кампаниям: ROI, CTR, расход бюджета, убыточные. Используй когда говорят «какая реклама работает», «ROI по кампаниям», «где лучший CTR», «что остановить».',
+    args: '{ sort?: "roi"|"spent"|"orders"|"ctr", only_active?: boolean }',
+    run: async (a: { sort?: string; only_active?: boolean }) => {
+      const am = w().advertisingModule;
+      if (!am) { w().app?.navigateTo?.('advertising'); return 'Открываю Рекламу. После загрузки данных повтори команду.'; }
+      let campaigns: any[] = am.campaigns ?? [];
+      if (!campaigns.length) return 'Кампании ещё не загружены. Перейди в раздел Реклама.';
+      if (a.only_active) campaigns = campaigns.filter(c => c.status === 'active');
+
+      const sort = a.sort ?? 'roi';
+      campaigns = [...campaigns].sort((a, b) => (b[sort] ?? 0) - (a[sort] ?? 0));
+
+      const profitable = campaigns.filter(c => (c.roi ?? 0) > 0);
+      const loss = campaigns.filter(c => (c.roi ?? 0) < -15 && (c.spent ?? 0) > 200);
+
+      let out = `Реклама: ${campaigns.length} кампаний (рентабельных: ${profitable.length}, убыточных ROI<-15%: ${loss.length})\n`;
+      campaigns.slice(0, 10).forEach(c => {
+        const ctrStr = c.views > 0 ? (c.clicks / c.views * 100).toFixed(2) + '%' : '—';
+        const roi = c.roi != null ? (c.roi >= 0 ? '+' : '') + c.roi.toFixed(0) + '%' : '—';
+        out += `\n${c.status === 'active' ? '▶' : '⏸'} "${c.name}" ROI ${roi} CTR ${ctrStr} бюджет ${fmtRub(c.budget)} потрачено ${fmtRub(c.spent)} заказов ${c.orders ?? 0}`;
       });
-      rm.load?.();
-      return `Ответ на отзыв (${review.stars ?? '?'}★) опубликован`;
+      if (loss.length) out += `\n\n⚠ Рекомендую остановить убыточные: ${loss.map(c => `"${c.name}"(ROI ${c.roi?.toFixed(0)}%)`).join(', ')}`;
+      return out;
     },
   },
 ];
@@ -548,7 +791,63 @@ const ORDERS_ACTIONS: AiAction[] = [
       return `Создана задача: ${urgent.length} срочных заказов ждут обработки.`;
     },
   },
+  {
+    name: 'export_orders_excel',
+    description: 'Выгрузить заказы в Excel-таблицу в Редакторе. Используй когда говорят «экспортируй заказы», «скачай список заказов», «выгрузи заказы в Excel». Фильтр по mp или status — опционально.',
+    args: '{ mp?: "wb"|"ozon"|"yandex", status?: string, days?: number, title?: string }',
+    run: async (a: { mp?: string; status?: string; days?: number; title?: string }) => {
+      let orders: any[] = w().allOrdersModule?.orders ?? [];
+      if (!orders.length) return 'Заказы не загружены. Перейди в раздел Заказы и повтори.';
+
+      if (a.mp) orders = orders.filter(o => (o.mp ?? o.marketplace ?? '').toLowerCase() === a.mp);
+      if (a.status) orders = orders.filter(o => (o.status ?? o.state ?? '').toLowerCase().includes(a.status!.toLowerCase()));
+      if (a.days) {
+        const cutoff = Date.now() - a.days * 86_400_000;
+        orders = orders.filter(o => {
+          const d = o.created_at ?? o.date ?? o.in_process_at;
+          return d ? new Date(d).getTime() > cutoff : true;
+        });
+      }
+
+      if (!orders.length) return 'После применения фильтров заказов не найдено.';
+
+      const label = [a.mp?.toUpperCase(), a.status, a.days ? `${a.days} дней` : ''].filter(Boolean).join(', ');
+      const title = a.title ?? `Заказы${label ? ' — ' + label : ''} ${new Date().toLocaleDateString('ru-RU')}`;
+      return exportOrdersToExcel(orders, title);
+    },
+  },
 ];
+
+// ── Actions: экспорт заказов ─────────────────────────────────────────────────────
+
+async function exportOrdersToExcel(orders: any[], title: string): Promise<string> {
+  w().app?.navigateTo?.('docs');
+  await new Promise(r => setTimeout(r, 1200));
+  const dm = w().docsModule;
+  if (!dm?.aiCreateDoc) return 'Редактор недоступен. Перейди в раздел «Редактор» и создай Excel вручную.';
+
+  await dm.aiCreateDoc('excel', title);
+  await new Promise(r => setTimeout(r, 400));
+  const docId = dm.activeDocId;
+  if (!docId) return `Отчёт «${title}» создан. Вставь данные вручную.`;
+
+  const header = ['Дата', 'МП', 'Артикул', 'Статус', 'Сумма'];
+  header.forEach((h, col) => dm.aiExcelCommand(docId, 'set_cell', { row: 0, col, value: h }));
+
+  orders.forEach((o, rowIdx) => {
+    const date = o.created_at ?? o.date ?? o.in_process_at ?? '';
+    const dateStr = date ? new Date(date).toLocaleDateString('ru-RU') : '';
+    const mp     = o.mp ?? o.marketplace ?? '';
+    const art    = o.article ?? o.offer_id ?? o.nm_id ?? o.market_sku ?? '';
+    const status = o.status ?? o.state ?? '';
+    const price  = o.price ?? o.amount ?? o.total ?? o.sum ?? '';
+    [dateStr, mp, art, status, price].forEach((val, col) =>
+      dm.aiExcelCommand(docId, 'set_cell', { row: rowIdx + 1, col, value: val }),
+    );
+  });
+
+  return `Экспорт завершён: «${title}» — ${orders.length} заказов в таблице (Редактор).`;
+}
 
 // ── Actions: производители ────────────────────────────────────────────────────
 
@@ -610,6 +909,7 @@ export function capabilityForPage(page: string): AiPageCapability | null {
     'wb':            MARKETPLACES_ACTIONS,
     'yandex':        MARKETPLACES_ACTIONS,
     'producers':     PRODUCERS_ACTIONS,
+    'advertising':   ADVERTISING_ACTIONS,
   };
   const SUPPLY_ACTIONS: AiAction[] = [
     {
@@ -836,29 +1136,126 @@ export function installGlobalAiActions(): void {
     description: 'Создать Excel-отчёт с данными магазина (аналитика, остатки, заказы). Используй когда говорят «создай отчёт», «экспортируй данные», «сделай сводку в Excel».',
     args: '{ type?: "analytics"|"stock"|"orders"|"full", title?: string }',
     run: async (a: { type?: string; title?: string }) => {
+      const type = a.type ?? 'full';
+      const title = a.title ?? `Отчёт SimaDesk ${new Date().toLocaleDateString('ru-RU')}`;
+
+      // For orders-only type, delegate to the full export which writes actual rows
+      if (type === 'orders') {
+        const orders: any[] = w().allOrdersModule?.orders ?? [];
+        if (!orders.length) {
+          w().app?.navigateTo?.('orders');
+          return 'Заказы не загружены. Открываю раздел Заказы — после загрузки повторите команду.';
+        }
+        return exportOrdersToExcel(orders, title);
+      }
+
       w().app?.navigateTo?.('docs');
       await waitFor(() => !!w().docsModule?.aiCreateDoc, 2000);
       const dm = w().docsModule;
       if (!dm?.aiCreateDoc) return 'Редактор документов недоступен. Перейдите в раздел «Редактор» и создайте отчёт вручную.';
 
-      const type = a.type ?? 'full';
-      const title = a.title ?? `Отчёт SimaDesk ${new Date().toLocaleDateString('ru-RU')}`;
       await dm.aiCreateDoc('excel', title);
       await new Promise(r => setTimeout(r, 400));
 
       const lines: string[] = [`Отчёт создан: «${title}»`];
+      const docId = dm.activeDocId ?? '';
 
-      if ((type === 'analytics' || type === 'full') && w().analyticsModule?.kpi) {
+      // Analytics: пишем KPI-строки в Excel (для type='analytics')
+      if (type === 'analytics' && w().analyticsModule?.kpi) {
+        const kpi = w().analyticsModule.kpi;
+        if (docId) {
+          const kpiRows: [string, string | number][] = [
+            ['Метрика', 'Значение'],
+            ['Выручка нетто', kpi.revenue ?? 0],
+            ['Выручка брутто', kpi.revenue_gross ?? 0],
+            ['Заказов выполнено', kpi.orders_delivered ?? 0],
+            ['В обработке', kpi.orders_processing ?? 0],
+            ['Возвраты', kpi.orders_returned ?? 0],
+            ['Отмены', kpi.orders_cancelled ?? 0],
+            ['Маржа %', Number((kpi.margin_pct ?? 0).toFixed(1))],
+            ['Средний чек', kpi.avg_check ?? 0],
+            ['Комиссии МП', kpi.commission ?? 0],
+            ['Логистика', kpi.logistics ?? 0],
+          ];
+          for (let i = 0; i < kpiRows.length; i++) {
+            dm.aiExcelCommand(docId, 'set_cell', { row: i, col: 0, value: kpiRows[i][0] });
+            dm.aiExcelCommand(docId, 'set_cell', { row: i, col: 1, value: kpiRows[i][1] });
+          }
+          lines.push(`Аналитика: выручка ${kpi.revenue?.toFixed(0)}₽, маржа ${kpi.margin_pct?.toFixed(1)}%, заказов ${(kpi.orders_delivered ?? 0) + (kpi.orders_processing ?? 0)} — данные внесены в таблицу`);
+        } else {
+          lines.push(`Аналитика: выручка ${kpi.revenue?.toFixed(0)}₽, маржа ${kpi.margin_pct?.toFixed(1)}%`);
+        }
+      } else if (type === 'full' && w().analyticsModule?.kpi) {
         const kpi = w().analyticsModule.kpi;
         lines.push(`Аналитика: выручка ${kpi.revenue?.toFixed(0)}₽, заказов ${(kpi.orders_delivered ?? 0) + (kpi.orders_processing ?? 0)}, маржа ${kpi.margin_pct?.toFixed(1)}%`);
       }
-      if ((type === 'stock' || type === 'full') && w().stockModule?.items?.length) {
+
+      // Stock: пишем строки остатков в Excel (для type='stock')
+      if (type === 'stock' && w().stockModule?.items?.length) {
+        const items = w().stockModule.items;
+        const oos = items.filter((i: any) => (i.stockTotal ?? 0) === 0).length;
+        if (docId) {
+          const header = ['Артикул', 'Название', 'Остаток'];
+          header.forEach((h, col) => dm.aiExcelCommand(docId, 'set_cell', { row: 0, col, value: h }));
+          items.slice(0, 500).forEach((item: any, rowIdx: number) => {
+            [item.vendor_code ?? item.offerId ?? item.article ?? '', item.name ?? '', item.stockTotal ?? 0]
+              .forEach((val, col) => dm.aiExcelCommand(docId, 'set_cell', { row: rowIdx + 1, col, value: val }));
+          });
+          lines.push(`Остатки: ${items.length} SKU, OOS: ${oos} — данные внесены в таблицу`);
+        } else {
+          lines.push(`Остатки: ${items.length} SKU, OOS: ${oos}`);
+        }
+      } else if (type === 'full' && w().stockModule?.items?.length) {
         const items = w().stockModule.items;
         const oos = items.filter((i: any) => (i.stockTotal ?? 0) === 0).length;
         lines.push(`Остатки: ${items.length} SKU, OOS: ${oos}`);
       }
 
+      if (type === 'full' && w().allOrdersModule?.orders?.length) {
+        const orders: any[] = w().allOrdersModule.orders;
+        if (docId) {
+          const header = ['Дата', 'МП', 'Артикул', 'Статус', 'Сумма'];
+          header.forEach((h, col) => dm.aiExcelCommand(docId, 'set_cell', { row: 0, col, value: h }));
+          orders.slice(0, 500).forEach((o: any, rowIdx: number) => {
+            const date = o.created_at ?? o.date ?? o.in_process_at ?? '';
+            const dateStr = date ? new Date(date).toLocaleDateString('ru-RU') : '';
+            [dateStr, o.mp ?? o.marketplace ?? '', o.article ?? o.offer_id ?? o.nm_id ?? '', o.status ?? o.state ?? '', o.price ?? o.amount ?? o.total ?? o.sum ?? '']
+              .forEach((val, col) => dm.aiExcelCommand(docId, 'set_cell', { row: rowIdx + 1, col, value: val }));
+          });
+          lines.push(`Заказы: ${Math.min(orders.length, 500)} записей добавлено в таблицу`);
+        } else {
+          lines.push(`Заказы: ${orders.length} — данные недоступны (открой Редактор и повтори)`);
+        }
+      }
+
       return lines.join('\n');
+    },
+  });
+
+  // ── Экспорт заказов из любого раздела ──────────────────────────────────────
+  aiPage.registerGlobal({
+    name: 'export_orders_excel_global',
+    description: 'Выгрузить заказы в Excel из любого раздела. Используй когда говорят «экспортируй заказы», «выгрузи заказы в Excel», «сделай список заказов». Работает глобально без перехода в Заказы.',
+    args: '{ mp?: "wb"|"ozon"|"yandex", status?: string, days?: number, title?: string }',
+    run: async (a: { mp?: string; status?: string; days?: number; title?: string }) => {
+      let orders: any[] = w().allOrdersModule?.orders ?? [];
+      if (!orders.length) {
+        w().app?.navigateTo?.('orders');
+        return 'Заказы не загружены. Открываю раздел Заказы — после загрузки повторите команду.';
+      }
+      if (a.mp) orders = orders.filter((o: any) => (o.mp ?? o.marketplace ?? '').toLowerCase() === a.mp);
+      if (a.status) orders = orders.filter((o: any) => (o.status ?? o.state ?? '').toLowerCase().includes(a.status!.toLowerCase()));
+      if (a.days) {
+        const cutoff = Date.now() - a.days * 86_400_000;
+        orders = orders.filter((o: any) => {
+          const d = o.created_at ?? o.date ?? o.in_process_at;
+          return d ? new Date(d).getTime() > cutoff : true;
+        });
+      }
+      if (!orders.length) return 'После применения фильтров заказов не найдено.';
+      const label = [a.mp?.toUpperCase(), a.status, a.days ? `${a.days}д` : ''].filter(Boolean).join(', ');
+      const title = a.title ?? `Заказы${label ? ' — ' + label : ''} ${new Date().toLocaleDateString('ru-RU')}`;
+      return exportOrdersToExcel(orders, title);
     },
   });
 
@@ -884,8 +1281,15 @@ export function installGlobalAiActions(): void {
 
       // Отзывы
       const reviews: any[] = w().reviewsModule?.reviews ?? [];
-      const badUnans = reviews.filter((r: any) => !r.answered && !r.answer && (r.stars ?? 5) <= 2);
+      const badUnans = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= 2);
       if (badUnans.length) risks.push({ text: `Негативных отзывов без ответа: ${badUnans.length}`, priority: 'yellow' });
+      const allUnans = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply);
+      if (allUnans.length > 5) risks.push({ text: `Всего отзывов без ответа: ${allUnans.length}`, priority: 'yellow' });
+
+      // Реклама — убыточные кампании
+      const campaigns: any[] = w().advertisingModule?.campaigns ?? [];
+      const lossAd = campaigns.filter((c: any) => c.status === 'active' && (c.roi ?? 0) < -20 && (c.spent ?? 0) > 300);
+      if (lossAd.length) risks.push({ text: `Убыточных рекламных кампаний (ROI<-20%): ${lossAd.length}`, priority: 'yellow' });
 
       if (!risks.length) return 'Аудит завершён — критичных рисков не обнаружено! Магазин работает штатно.';
 
@@ -910,34 +1314,128 @@ export function installGlobalAiActions(): void {
   // ── Ответить на все отзывы без ответа ──────────────────────────────────────
   aiPage.registerGlobal({
     name: 'reply_all_unanswered',
-    description: 'Ответить на все отзывы без ответа стандартным текстом. Используй когда говорят «ответь на все отзывы», «обработай все без ответа». Принимает шаблон ответа.',
-    args: '{ template?: string, stars_max?: number }',
-    run: async (a: { template?: string; stars_max?: number }) => {
+    description: 'Сгенерировать персонализированные AI-ответы и опубликовать на все отзывы без ответа. Если передан template — использует его для всех, иначе генерирует уникальный ответ для каждого отзыва. Используй когда говорят «ответь на все отзывы», «обработай все без ответа».',
+    args: '{ template?: string, stars_max?: number, limit?: number }',
+    run: async (a: { template?: string; stars_max?: number; limit?: number }) => {
       const rm = w().reviewsModule;
       if (!rm) {
         w().app?.navigateTo?.('reviews');
         return 'Перехожу в раздел Отзывы. После загрузки повторите команду.';
       }
       const reviews: any[] = rm.reviews ?? rm.items ?? [];
-      const maxStars = a.stars_max ?? 3;
+      const maxStars = a.stars_max ?? 5;
       const unanswered = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= maxStars);
       if (!unanswered.length) return `Отзывов без ответа (≤${maxStars}★) не найдено.`;
 
-      const defaultTemplate = 'Спасибо за ваш отзыв! Мы приняли ваш комментарий к сведению и работаем над улучшением качества. Если у вас остались вопросы — свяжитесь с нами, мы обязательно поможем!';
-      const template = a.template ?? defaultTemplate;
-
+      const batch = unanswered.slice(0, a.limit ?? 10);
+      const useAi = !a.template;
+      const results: string[] = [];
       let replied = 0;
-      for (const review of unanswered.slice(0, 10)) {
+
+      for (const review of batch) {
         try {
-          if (typeof rm.aiReplyReview === 'function') {
-            await rm.aiReplyReview(review.id, template);
-            replied++;
-          }
-        } catch { /* continue */ }
+          const text = (review.text ?? review.comment ?? '').toString();
+          const stars = review.stars ?? 5;
+          const product = (review.productName ?? review.product_name ?? '').toString();
+
+          const replyText = a.template ?? await generateAiReply(text, stars, product);
+          await publishReviewReply(rm, review, replyText);
+          results.push(`${stars}★ → «${replyText.slice(0, 60)}${replyText.length > 60 ? '…' : ''}»`);
+          replied++;
+          // Небольшая пауза между запросами к AI
+          if (useAi && batch.indexOf(review) < batch.length - 1) await new Promise(r => setTimeout(r, 300));
+        } catch (e: any) {
+          results.push(`${review.stars ?? '?'}★ — ошибка: ${e?.message ?? 'неизвестно'}`);
+        }
       }
 
-      if (!replied) return `Найдено ${unanswered.length} отзывов без ответа. Перейдите в раздел «Отзывы» и ответьте вручную — или убедитесь что маркетплейс подключён.`;
-      return `Ответил на ${replied} отзыв(а) из ${unanswered.length}. Текст: «${template.slice(0, 60)}…»`;
+      const method = useAi ? 'AI-ответы' : `шаблон: «${a.template!.slice(0, 50)}…»`;
+      const more = unanswered.length > batch.length ? ` (из ${unanswered.length} всего)` : '';
+      return `Обработано ${replied} отзыв(ов)${more} [${method}]:\n${results.map(r => `• ${r}`).join('\n')}`;
     },
   });
+
+  // ── Дневной чеклист ─────────────────────────────────────────────────────────
+  aiPage.registerGlobal({
+    name: 'daily_checklist',
+    description: 'Сформировать дневной чеклист с приоритетными задачами на сегодня: срочные заказы, негативные отзывы, OOS, убыточные кампании.',
+    args: '{}',
+    run: async () => {
+      const items: Array<{ priority: 'high' | 'medium'; text: string }> = [];
+
+      // Срочные FBS-заказы (дедлайн < 4 ч)
+      try {
+        const orders: any[] = w().allOrdersModule?.orders ?? [];
+        const urgent = orders.filter((o: any) =>
+          o.status === 'awaiting_packaging' && o.shipment_date &&
+          new Date(o.shipment_date).getTime() - Date.now() < 4 * 3_600_000
+        );
+        if (urgent.length) items.push({ priority: 'high', text: `⚡ Упаковать ${urgent.length} FBS-заказ(ов) — дедлайн <4ч` });
+      } catch { /* ignore */ }
+
+      // Негативные отзывы без ответа
+      try {
+        const reviews: any[] = w().reviewsModule?.reviews ?? [];
+        const neg = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= 2);
+        const allUnans = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply);
+        if (neg.length) items.push({ priority: 'high', text: `⭐ Ответить на ${neg.length} негативных отзыв(ов) (≤2★)` });
+        else if (allUnans.length) items.push({ priority: 'medium', text: `💬 Ответить на ${allUnans.length} отзыв(ов) без ответа` });
+      } catch { /* ignore */ }
+
+      // OOS и критично малые остатки
+      try {
+        const items2: any[] = w().stockModule?.items ?? [];
+        const oos = items2.filter((i: any) => (i.stockTotal ?? 0) === 0);
+        const low = items2.filter((i: any) => (i.stockTotal ?? 0) > 0 && (i.stockTotal ?? 0) < 10);
+        if (oos.length) items.push({ priority: 'high', text: `📦 Пополнить запасы: ${oos.length} SKU с нулевым остатком` });
+        if (low.length) items.push({ priority: 'medium', text: `📦 Критично мало (<10 ед): ${low.length} SKU` });
+      } catch { /* ignore */ }
+
+      // Убыточные рекламные кампании
+      try {
+        const campaigns: any[] = w().advertisingModule?.campaigns ?? [];
+        const loss = campaigns.filter((c: any) => {
+          const spent = c.spent ?? 0;
+          const orders = c.orders ?? 0;
+          const roi = spent > 0 ? ((orders * 1000 - spent) / spent) * 100 : 0;
+          return c.status === 'active' && spent > 0 && roi < -15;
+        });
+        if (loss.length) items.push({ priority: 'medium', text: `📣 Проверить ${loss.length} убыточных рекламных кампаний (ROI < -15%)` });
+      } catch { /* ignore */ }
+
+      // Просроченные задачи
+      try {
+        const tasks: any[] = w().taskManagerModule?.tasks ?? [];
+        const overdue = tasks.filter((t: any) => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date());
+        if (overdue.length) items.push({ priority: 'medium', text: `✅ Просроченных задач: ${overdue.length}` });
+      } catch { /* ignore */ }
+
+      if (!items.length) return '✅ Всё под контролем — срочных дел не найдено. Хорошего дня!';
+
+      const high = items.filter(i => i.priority === 'high');
+      const medium = items.filter(i => i.priority === 'medium');
+      const lines: string[] = ['📋 **Дневной чеклист**\n'];
+      if (high.length) {
+        lines.push('**🔴 Срочно:**');
+        high.forEach(i => lines.push(`• ${i.text}`));
+      }
+      if (medium.length) {
+        if (high.length) lines.push('');
+        lines.push('**🟡 Важно:**');
+        medium.forEach(i => lines.push(`• ${i.text}`));
+      }
+      return lines.join('\n');
+    },
+  });
+
+  // ── Глобальные зеркала page-specific действий ───────────────────────────────
+  // Позволяют вызывать эти действия с любой страницы (LLM или fast-action).
+  const replyAllGlobal = REVIEWS_ACTIONS.find(a => a.name === 'reply_all_unanswered');
+  if (replyAllGlobal) aiPage.registerGlobal(replyAllGlobal);
+
+  const aiReplyGlobal = REVIEWS_ACTIONS.find(a => a.name === 'ai_generate_review_reply');
+  if (aiReplyGlobal) aiPage.registerGlobal(aiReplyGlobal);
+
+  const adStatsGlobal = ADVERTISING_ACTIONS.find(a => a.name === 'get_ad_stats');
+  if (adStatsGlobal) aiPage.registerGlobal(adStatsGlobal);
 }

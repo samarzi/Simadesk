@@ -12,7 +12,7 @@ import { wbDb } from './wbDb';
 
 /** Extract a human-readable message from an unknown catch value. */
 function errMsg(e: unknown): string {
-  return e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e);
+  return e instanceof Error ? e.message : String(e);
 }
 
 const API_URL  = import.meta.env.VITE_API_URL as string;

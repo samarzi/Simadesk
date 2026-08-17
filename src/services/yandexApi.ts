@@ -10,7 +10,7 @@ import { debug } from '@/utils/debug';
 
 /** Extract a human-readable message from an unknown catch value. */
 function errMsg(e: unknown): string {
-  return e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e);
+  return e instanceof Error ? e.message : String(e);
 }
 
 export interface YandexFeedback {
@@ -425,9 +425,9 @@ export const yandexApi = {
     // Вызываем оба метода — у разных типов кампаний работает разный
     await Promise.all([
       yandexFetch(`/v2/businesses/${businessId}/offer-mappings/update`, 'POST', apiKey, mappingsBody, signal)
-        .catch(e => console.warn('[YM] offer-mappings/update failed:', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)))),
+        .catch(e => console.warn('[YM] offer-mappings/update failed:', (e instanceof Error ? e.message : String(e)))),
       yandexFetch(`/v2/businesses/${businessId}/offer-prices/updates`, 'POST', apiKey, pricesBody, signal)
-        .catch(e => console.warn('[YM] offer-prices/updates failed:', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)))),
+        .catch(e => console.warn('[YM] offer-prices/updates failed:', (e instanceof Error ? e.message : String(e)))),
     ]);
   },
 

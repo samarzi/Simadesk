@@ -119,6 +119,7 @@ interface EditState {
   priceLocked: boolean;
   saving: boolean; saveError: string; saveOk: boolean;
   extraLoaded: boolean; extraLoading: boolean;
+  dirtyFields: Set<string>;
 }
 type PeriodDays = 7 | 30 | 90 | 180;
 
@@ -236,6 +237,10 @@ export class ProductsHubModule {
     ymOffer: new Map<string, string>(), // offer_id (lowercase) → article
   };
   private hadTransactions = false;
+  // ── Editor UX state
+  private collapsedStores = new Set<string>();
+  private editingCostPrice = false;
+  private costPriceEditValue = '';
 
   // ── Raw stores & products (needed for edit/save)
   private ozStores: any[] = [];
@@ -274,6 +279,18 @@ export class ProductsHubModule {
     } else if (e.key === 'ArrowRight' && this.lightboxPhotos.length > 1) {
       this.lightboxIdx = (this.lightboxIdx + 1) % this.lightboxPhotos.length;
       this.showLightboxImage(lb);
+    }
+  };
+
+  private readonly onCtrlS = (e: KeyboardEvent) => {
+    if (!(e.ctrlKey || e.metaKey) || e.key !== 's') return;
+    if (this.activeTab !== 'card-edit' || !this.selectedArticle) return;
+    e.preventDefault();
+    const article = this.selectedArticle;
+    for (const [storeId, st] of this.editState) {
+      if (st.dirtyFields.size > 0 && !st.saving) {
+        this.doSaveCard(article, storeId, st.mp);
+      }
     }
   };
   constructor(private el: HTMLElement) {
@@ -424,6 +441,7 @@ export class ProductsHubModule {
       this.load().finally(() => btn.classList.remove('spinning'));
     });
     document.addEventListener('keydown', this.onKeyDown);
+    document.addEventListener('keydown', this.onCtrlS);
     get('ph-help-btn').addEventListener('click', () => this.showHelp());
     get('ph-help-close').addEventListener('click', () => this.hideHelp());
     get('ph-help-ok').addEventListener('click', () => this.hideHelp());
@@ -438,10 +456,24 @@ export class ProductsHubModule {
     this.cardEl!.addEventListener('input', e => {
       const t = e.target as HTMLInputElement;
       if (t.matches('[data-ph-field]')) {
-        const st = this.editState.get(t.getAttribute('data-store-id')!);
-        if (st) (st as unknown as Record<string, unknown>)[t.getAttribute('data-ph-field')!] = t.value;
+        const sid = t.getAttribute('data-store-id')!;
+        const field = t.getAttribute('data-ph-field')!;
+        const st = this.editState.get(sid);
+        if (st) {
+          (st as unknown as Record<string, unknown>)[field] = t.value;
+          st.dirtyFields.add(field);
+          // Mark section dirty without full re-render
+          const section = this.cardEl?.querySelector<HTMLElement>(`[data-section-store="${sid}"]`);
+          if (section) {
+            section.classList.add('dirty');
+            const chip = section.querySelector<HTMLElement>('.cmp-edit-dirty-chip');
+            if (chip) chip.style.display = '';
+          }
+        }
       } else if (t.id === 'ph-photo-url-input') {
         this.photoAddUrlValue = t.value;
+      } else if (t.id === 'ph-cost-inp') {
+        this.costPriceEditValue = t.value;
       }
     });
 
@@ -457,7 +489,7 @@ export class ProductsHubModule {
           const url = await uploadPhoto(f, this.selectedArticle);
           st.photos.push(url);
         } catch (err: unknown) {
-          st.saveError = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? 'Ошибка загрузки фото';
+          st.saveError = (err instanceof Error ? err.message : String(err)) ?? 'Ошибка загрузки фото';
         }
       }
       t.value = '';
@@ -532,6 +564,46 @@ export class ProductsHubModule {
             this.lightboxIdx = (this.lightboxIdx + 1) % this.lightboxPhotos.length;
             this.showLightboxImage(lb3);
           }
+          break;
+        }
+        // ── Accordion toggle for edit sections
+        case 'toggle-section': {
+          if (this.collapsedStores.has(storeId)) this.collapsedStores.delete(storeId);
+          else this.collapsedStores.add(storeId);
+          const body = this.cardEl?.querySelector<HTMLElement>(`[data-section-store="${storeId}"] .cmp-edit-body`);
+          const arrow = this.cardEl?.querySelector<HTMLElement>(`[data-section-store="${storeId}"] .cmp-section-arrow`);
+          if (body)  body.style.display  = this.collapsedStores.has(storeId) ? 'none' : '';
+          if (arrow) arrow.textContent   = this.collapsedStores.has(storeId) ? '▶' : '▼';
+          break;
+        }
+        // ── Inline cost price editing
+        case 'cost-edit': {
+          const pp = this.items.find(x => x.article === this.selectedArticle);
+          this.editingCostPrice = true;
+          this.costPriceEditValue = String(pp?.cost_price ?? '');
+          if (pp) this.renderCard(pp);
+          setTimeout(() => this.cardEl?.querySelector<HTMLInputElement>('#ph-cost-inp')?.focus(), 30);
+          break;
+        }
+        case 'cost-cancel': {
+          this.editingCostPrice = false;
+          const pp2 = this.items.find(x => x.article === this.selectedArticle);
+          if (pp2) this.renderCard(pp2);
+          break;
+        }
+        case 'cost-save': {
+          const pp3 = this.items.find(x => x.article === this.selectedArticle);
+          if (pp3) {
+            const v = parseFloat(this.costPriceEditValue);
+            if (!isNaN(v) && v >= 0) {
+              await costPriceDb.set(pp3.article, v);
+              pp3.cost_price = v;
+              pp3.has_cost = true;
+            }
+          }
+          this.editingCostPrice = false;
+          const pp4 = this.items.find(x => x.article === this.selectedArticle);
+          if (pp4) this.renderCard(pp4);
           break;
         }
       }
@@ -1172,7 +1244,9 @@ export class ProductsHubModule {
   selectProduct(article: string): void {
     this.selectedArticle = article;
     this.editState.clear();
+    this.collapsedStores.clear();
     this.photoAddStoreId = null;
+    this.editingCostPrice = false;
     if (this.activeTab === 'card-edit' || this.activeTab === 'photos') {
       this.activeTab = 'overview';
     }
@@ -1304,10 +1378,32 @@ export class ProductsHubModule {
     if (p.brand)    meta.push(`<span class="ph-meta-chip">Бренд<b>${esc(p.brand)}</b></span>`);
     if (p.barcode)  meta.push(`<span class="ph-meta-chip">Штрихкод<b>${esc(p.barcode)}${copyButton(p.barcode, 'Копировать штрихкод')}</b></span>`);
 
+    // Completeness score
+    const criteria: Array<[string, boolean]> = [
+      ['Название',      !!p.name],
+      ['Фото',          photos.length > 0],
+      ['Описание',      p.mp_entries.some(e => e.description)],
+      ['Бренд',         !!p.brand],
+      ['Штрихкод',      !!p.barcode],
+      ['Размеры',       !!(p.weight_kg && p.length_cm && p.width_cm && p.height_cm)],
+      ['Себестоимость', p.has_cost],
+      ['Репрайсер',     p.has_repricer],
+      ['Категория',     !!p.category],
+    ];
+    const doneCount = criteria.filter(([, v]) => v).length;
+    const totalCount = criteria.length;
+    const pct = Math.round((doneCount / totalCount) * 100);
+    const completenessColor = pct >= 80 ? 'var(--green,#22c55e)' : pct >= 50 ? 'var(--yellow,#eab308)' : 'var(--red,#ef4444)';
+    const completenessBar = `<div class="ph-completeness" title="${criteria.filter(([,v])=>!v).map(([l])=>l).join(', ') || 'Всё заполнено'}">
+      <div class="ph-completeness-label">${doneCount}/${totalCount} заполнено</div>
+      <div class="ph-completeness-track"><div class="ph-completeness-fill" style="width:${pct}%;background:${completenessColor}"></div></div>
+    </div>`;
+
     return `
       <div class="ph-card-head">
         ${gallery}
         <div class="ph-head-info">
+          ${completenessBar}
           <div class="ph-head-title${p.name ? '' : ' ph-head-title-empty'}">${p.name ? esc(p.name) : 'Без названия'}${p.name ? copyButton(p.name, 'Копировать название') : ''}</div>
           <div class="ph-head-article">
             <span>${esc(p.article)}</span>
@@ -1351,8 +1447,24 @@ export class ProductsHubModule {
         ${sub ? `<div class="ph-stat-sub">${sub}</div>` : ''}
       </div>`;
 
+    const costCell = this.editingCostPrice
+      ? `<div class="ph-stat">
+          <div class="ph-stat-label">Себестоимость</div>
+          <div class="ph-stat-cost-edit">
+            <input id="ph-cost-inp" class="ph-cost-inp" type="number" min="0" step="1"
+              value="${this.costPriceEditValue}" placeholder="0"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();document.querySelector('[data-ph-action=cost-save]')?.click();}else if(event.key==='Escape'){document.querySelector('[data-ph-action=cost-cancel]')?.click();}">
+            <button class="cmp-btn cmp-btn-xs cmp-btn-primary" data-ph-action="cost-save">✓</button>
+            <button class="cmp-btn cmp-btn-xs" data-ph-action="cost-cancel">✕</button>
+          </div>
+        </div>`
+      : `<div class="ph-stat" style="cursor:pointer" data-ph-action="cost-edit" title="Нажмите чтобы изменить">
+          <div class="ph-stat-label">Себестоимость <span style="font-size:10px;opacity:.5">${I.edit('',10)}</span></div>
+          <div class="ph-stat-value ${p.cost_price == null ? 'muted' : ''}">${pr(p.cost_price)}</div>
+        </div>`;
+
     return `<div class="ph-stats">
-      ${stat('Себестоимость', pr(p.cost_price), '', p.cost_price == null ? 'muted' : '')}
+      ${costCell}
       ${stat('Средняя цена', pr(avgPrice), priced.length ? `${priced.length} ${priced.length === 1 ? 'магазин' : 'магазинов'}` : '', avgPrice == null ? 'muted' : '')}
       ${stat('Маржа за шт.', margin != null ? prSigned(margin) : '—', marginPct != null ? `${marginPct}% · без комиссий МП` : 'без комиссий МП', margin == null ? 'muted' : margin >= 0 ? 'pos' : 'neg')}
       ${stat(`Прибыль ${this.period}д`, prSigned(totalNet30), `${totalSales30} продаж · остаток ${totalStock}`, totalNet30 === 0 ? 'muted' : totalNet30 > 0 ? 'pos' : 'neg')}
@@ -1559,11 +1671,74 @@ export class ProductsHubModule {
             <span></span>
           </div>`).join('')}</div>`;
 
+    // Daily sparkline — revenue by day for this article
+    const sparklineHtml = (() => {
+      if (!this.rawTransactions.length) return '';
+      const art = p.article.toLowerCase();
+
+      // Precompute storeId → mp once — avoids O(stores) linear scan per transaction
+      const storeToMp = new Map<string, 'ozon' | 'wb' | 'yandex'>();
+      for (const s of this.ozStores) storeToMp.set((s as any).id, 'ozon');
+      for (const s of this.wbStores) storeToMp.set((s as any).id, 'wb');
+      for (const s of this.ymStores) storeToMp.set((s as any).id, 'yandex');
+
+      const dayMap = new Map<string, number>();
+      for (const tx of this.rawTransactions) {
+        const mp = tx.store_id ? storeToMp.get(tx.store_id) ?? null : null;
+        const items = tx.items_json ?? [];
+        let matched = false;
+        for (const item of items) {
+          const sku = String(item.sku ?? '');
+          let resolved: string | null | undefined = null;
+          if (mp === 'ozon')        resolved = this.skuMaps.ozon.get(sku);
+          else if (mp === 'wb')     resolved = this.skuMaps.wb.get(sku);
+          else if (mp === 'yandex') resolved = this.skuMaps.ymSku.get(sku) ?? this.skuMaps.ymOffer.get(sku.toLowerCase());
+          if (!resolved && item.vendor_code) resolved = item.vendor_code;
+          if (resolved && resolved.toLowerCase() === art) { matched = true; break; }
+        }
+        if (!matched) continue;
+        const day = (tx.operation_date ?? '').slice(0, 10);
+        if (!day) continue;
+        dayMap.set(day, (dayMap.get(day) ?? 0) + (tx.accruals_for_sale ?? 0));
+      }
+      if (!dayMap.size) return '';
+
+      // Fill all days in range
+      const days: string[] = [];
+      const now = new Date();
+      for (let i = this.period - 1; i >= 0; i--) {
+        const d = new Date(now); d.setDate(d.getDate() - i);
+        days.push(d.toISOString().slice(0, 10));
+      }
+      const vals = days.map(d => dayMap.get(d) ?? 0);
+      const maxV = Math.max(...vals, 1);
+      const W = 320, H = 52, pad = 4;
+      const pts = vals.map((v, i) => {
+        const x = pad + (i / Math.max(vals.length - 1, 1)) * (W - pad * 2);
+        const y = pad + (1 - v / maxV) * (H - pad * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      const area = `${pad},${H - pad} ` + pts + ` ${W - pad},${H - pad}`;
+      return `<div class="ph-section">
+        <div class="ph-section-head">${I.trendingUp('', 12)} Выручка по дням</div>
+        <div class="ph-sparkline-wrap">
+          <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:${H}px">
+            <polygon points="${area}" fill="var(--accent)" opacity="0.15"/>
+            <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+          </svg>
+          <div class="ph-sparkline-labels">
+            <span>${days[0]?.slice(5)}</span><span>${days[Math.floor(days.length / 2)]?.slice(5)}</span><span>${days[days.length - 1]?.slice(5)}</span>
+          </div>
+        </div>
+      </div>`;
+    })();
+
     return `
       <div class="ph-section">
         <div class="ph-section-head">${I.chart('', 12)} Итого за ${this.period} дней</div>
         ${summary}
       </div>
+      ${sparklineHtml}
       <div class="ph-section">
         <div class="ph-section-head">${I.dollarSign('', 12)} Структура прибыли</div>
         ${breakdown}
@@ -1658,6 +1833,7 @@ export class ProductsHubModule {
           photos: [...(prod.images ?? [])],
           priceLocked: locked, saving: false, saveError: '', saveOk: false,
           extraLoaded: false, extraLoading: false, // description still fetched on-demand
+          dirtyFields: new Set(),
         });
       } else if (entry.mp === 'wb') {
         const store = this.wbStores.find((s: any) => s.id === entry.store_id);
@@ -1680,6 +1856,7 @@ export class ProductsHubModule {
           photos: [...(prod.pictures ?? [])],
           priceLocked: locked, saving: false, saveError: '', saveOk: false,
           extraLoaded: true, extraLoading: false, // description from DB — no API call needed
+          dirtyFields: new Set(),
         });
       } else if (entry.mp === 'yandex') {
         const store = this.ymStores.find((s: any) => s.id === entry.store_id);
@@ -1702,6 +1879,7 @@ export class ProductsHubModule {
           photos: [...(prod.pictures ?? [])],
           priceLocked: locked, saving: false, saveError: '', saveOk: false,
           extraLoaded: true, extraLoading: false, // all extra data from DB
+          dirtyFields: new Set(),
         });
       }
     }
@@ -1715,12 +1893,17 @@ export class ProductsHubModule {
     const roIcon = `<span class="cmp-field-ro" title="Нельзя редактировать через API">${I.alertTriangle('', 12)}</span>`;
     const vatOzonOpts = [['0','Без НДС'],['0.1','10%'],['0.2','20%']];
     const vatYmOpts   = [['NO_VAT','Без НДС'],['VAT_10','10%'],['VAT_20','20%']];
+    const collapsed = this.collapsedStores.has(entry.store_id);
+    const isDirty = st.dirtyFields.size > 0;
     return `
-    <div class="cmp-edit-section">
-      <div class="cmp-edit-head">
+    <div class="cmp-edit-section${isDirty ? ' dirty' : ''}" data-section-store="${entry.store_id}">
+      <div class="cmp-edit-head" data-ph-action="toggle-section" data-store-id="${entry.store_id}" style="cursor:pointer;user-select:none">
         <span class="cmp-mp-badge cmp-mp-badge--${mp}">${mpLabel}</span>
         <span class="cmp-edit-store">${esc(entry.store_name)}</span>
+        <span class="cmp-edit-dirty-chip"${isDirty ? '' : ' style="display:none"'}>● несохранено</span>
+        <span class="cmp-section-arrow" style="margin-left:auto;font-size:11px;color:var(--text3)">${collapsed ? '▶' : '▼'}</span>
       </div>
+      <div class="cmp-edit-body"${collapsed ? ' style="display:none"' : ''}>
       <div class="cmp-edit-grid">
         <label class="cmp-edit-field cmp-edit-field--wide"><span class="cmp-edit-label">Название</span>
           <input type="text" class="cmp-edit-input" data-ph-field="name" data-store-id="${entry.store_id}" value="${esc(st.name)}" placeholder="—"></label>
@@ -1779,6 +1962,8 @@ export class ProductsHubModule {
           data-ph-action="save-card" data-store-id="${entry.store_id}" data-mp="${mp}" ${st.saving ? 'disabled' : ''}>
           ${st.saving ? '<span class="cmp-spinner-sm"></span> Сохранение…' : 'Сохранить'}
         </button>
+        ${isDirty ? `<span style="font-size:11px;color:var(--text3);margin-left:8px">Ctrl+S — сохранить все</span>` : ''}
+      </div>
       </div>
     </div>`;
   }
@@ -2182,7 +2367,7 @@ export class ProductsHubModule {
       }
       await this.load();
     } catch (e: unknown) {
-      this.syncErr.set(storeId, (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e))?.slice(0, 60) ?? 'Ошибка');
+      this.syncErr.set(storeId, (e instanceof Error ? e.message : String(e))?.slice(0, 60) ?? 'Ошибка');
     } finally {
       this.syncing.set(storeId, false);
       this.updateSyncBarInCard();
@@ -2364,13 +2549,14 @@ export class ProductsHubModule {
         this.extraDataCache.set(ck, { ...this.extraDataCache.get(ck), ...extra });
       }
       st.saveOk = true;
+      st.dirtyFields.clear();
       // Ozon processes imports asynchronously — changes appear on the marketplace in a few minutes.
       if (mp === 'ozon') {
         st.saveError = '✓ Принято — изменения появятся на Ozon через несколько минут';
         st.saveOk = false;
       }
     } catch (e: unknown) {
-      st.saveError = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка сохранения';
+      st.saveError = (e instanceof Error ? e.message : String(e)) ?? 'Ошибка сохранения';
     } finally {
       st.saving = false;
       this.refreshEditTab();
@@ -2436,7 +2622,7 @@ export class ProductsHubModule {
         st.saveError = `${pendingLocal.length} фото не удалось загрузить — попробуйте ещё раз`;
       }
     } catch (e: unknown) {
-      st.saveError = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка сохранения фото';
+      st.saveError = (e instanceof Error ? e.message : String(e)) ?? 'Ошибка сохранения фото';
     } finally {
       st.saving = false;
       this.refreshPhotosTab2();
@@ -2646,7 +2832,7 @@ export class ProductsHubModule {
       XLSX.writeFile(wb, `товары_${new Date().toISOString().slice(0, 10)}.xlsx`);
       showToast(`Экспортировано: ${products.length} товаров`, 'success');
     } catch (e: unknown) {
-      showToast(`Ошибка экспорта: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e}`, 'error');
+      showToast(`Ошибка экспорта: ${(e instanceof Error ? e.message : String(e)) ?? e}`, 'error');
     }
   }
 
@@ -2804,7 +2990,7 @@ export class ProductsHubModule {
         showToast('Синхронизация завершена', 'success');
       }
     } catch (e: unknown) {
-      showToast(`Ошибка импорта: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e}`, 'error');
+      showToast(`Ошибка импорта: ${(e instanceof Error ? e.message : String(e)) ?? e}`, 'error');
     }
   }
 

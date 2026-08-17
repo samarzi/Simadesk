@@ -293,7 +293,7 @@ export class ReviewsModule {
       }
       e.loaded = true;
     } catch (err: unknown) {
-      e.error = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? 'Ошибка загрузки отзывов';
+      e.error = (err instanceof Error ? err.message : String(err)) ?? 'Ошибка загрузки отзывов';
     }
     e.loading = false;
     this.render();
@@ -340,7 +340,7 @@ export class ReviewsModule {
         await new Promise(res => setTimeout(res, delay));
       } catch (err: unknown) {
         errors++;
-        lastError = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? String(err);
+        lastError = (err instanceof Error ? err.message : String(err)) ?? String(err);
         debug.warn('[autoReply]', lastError);
         if (String(lastError ?? '').includes('429') || String(lastError ?? '').includes('кулдауне') || String(lastError ?? '').includes('лимит')) {
           break;
@@ -518,7 +518,7 @@ export class ReviewsModule {
       }
       this.replyingId = null; this.replyText = '';
     } catch (err: unknown) {
-      this.replyError = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? 'Ошибка отправки ответа';
+      this.replyError = (err instanceof Error ? err.message : String(err)) ?? 'Ошибка отправки ответа';
     }
     this.replying = false;
     this.render();

@@ -1053,7 +1053,7 @@ export class SettingsHubModule {
       window.app?.toast?.('Приглашение добавлено — пользователь увидит компанию при входе', 'success');
       this.loadTeamData();
     } catch (e: unknown) {
-      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
+      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? e.message : String(e)) ?? e), 'error');
     }
   }
 
@@ -1064,7 +1064,7 @@ export class SettingsHubModule {
       window.app?.toast?.('Участник удалён', 'success');
       this.loadTeamData();
     } catch (e: unknown) {
-      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
+      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? e.message : String(e)) ?? e), 'error');
     }
   }
 
@@ -1073,7 +1073,7 @@ export class SettingsHubModule {
       await companyService.updateMemberRole(memberId, role as CompanyRole);
       window.app?.toast?.('Роль обновлена', 'success');
     } catch (e: unknown) {
-      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
+      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? e.message : String(e)) ?? e), 'error');
     }
   }
 
@@ -1083,7 +1083,7 @@ export class SettingsHubModule {
       window.app?.toast?.('Приглашение отменено', 'success');
       this.loadTeamData();
     } catch (e: unknown) {
-      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
+      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? e.message : String(e)) ?? e), 'error');
     }
   }
 
@@ -1097,7 +1097,7 @@ export class SettingsHubModule {
       window.app?.toast?.('Ссылка создана', 'success');
       this.loadTeamData();
     } catch (e: unknown) {
-      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
+      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? e.message : String(e)) ?? e), 'error');
     }
   }
 
@@ -1109,7 +1109,7 @@ export class SettingsHubModule {
       window.app?.toast?.('Ссылка отозвана', 'success');
       this.loadTeamData();
     } catch (e: unknown) {
-      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e), 'error');
+      window.app?.toast?.('Ошибка: ' + ((e instanceof Error ? e.message : String(e)) ?? e), 'error');
     }
   }
 

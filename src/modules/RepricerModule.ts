@@ -1030,7 +1030,7 @@ export class RepricerModule {
       };
       this.log.unshift(revertEntry); saveLog(this.log);
     } catch (e: unknown) {
-      const msg: string = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e);
+      const msg: string = (e instanceof Error ? e.message : String(e)) ?? String(e);
       console.error('[Repricer] revertLog:', msg);
       this.revertErrors.set(logId, msg);
       setTimeout(() => { this.revertErrors.delete(logId); this.render(); }, 8000);
@@ -1416,7 +1416,7 @@ export class RepricerModule {
       this.soldVendorCodes = seen;
       console.info(`[Repricer] sold vendor_codes loaded: ${seen.size} unique`);
     } catch (e: unknown) {
-      console.warn('[Repricer] loadSoldVendorCodes failed:', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e);
+      console.warn('[Repricer] loadSoldVendorCodes failed:', (e instanceof Error ? e.message : String(e)) ?? e);
       this.soldVendorCodes = new Set(); // не показываем ошибку — fallback на "архив"
     }
     this.soldVendorCodesLoading = false;
@@ -1470,7 +1470,7 @@ export class RepricerModule {
 
       if (this.tab === 'costs') this.render();
     } catch (e: unknown) {
-      console.warn('[Repricer] loadProducerCostMap failed:', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e);
+      console.warn('[Repricer] loadProducerCostMap failed:', (e instanceof Error ? e.message : String(e)) ?? e);
     }
   }
 
@@ -1625,7 +1625,7 @@ export class RepricerModule {
         try { window.app?.toast?.(`✓ Импортировано: ${saved}. Пропущено: ${skipped}.`, 'success', 4000); } catch (e) { debug.warn('[RepricerModule] swallowed error', e); }
         this.render();
       } catch (err: unknown) {
-        alert('Ошибка чтения файла: ' + ((err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err));
+        alert('Ошибка чтения файла: ' + ((err instanceof Error ? err.message : String(err)) ?? err));
       }
       input.value = '';
     };

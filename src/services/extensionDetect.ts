@@ -82,7 +82,7 @@ export async function checkPriceNow(params: CheckPriceNowParams): Promise<CheckP
         if (chrome.runtime.lastError) { finish({ ok: false, error: chrome.runtime.lastError.message }); return; }
         finish(res ?? { ok: false, error: 'Нет ответа от расширения' });
       });
-    } catch (e: unknown) { finish({ ok: false, error: (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? String(e) }); }
+    } catch (e: unknown) { finish({ ok: false, error: (e instanceof Error ? e.message : String(e)) ?? String(e) }); }
     setTimeout(() => finish({ ok: false, error: 'Таймаут расширения' }), 25_000);
   });
 }

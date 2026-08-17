@@ -1475,7 +1475,7 @@ ${candidates.join('\n')}`;
       this.closeModal();
       await this.reloadBanners();
     } catch (err: unknown) {
-      errEl.textContent   = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : 'Ошибка сохранения';
+      errEl.textContent   = err instanceof Error ? err.message : 'Ошибка сохранения';
       errEl.style.display = '';
       saveBtn.disabled    = false;
       saveBtn.innerHTML   = `${ic(I.check)} ${this.modalBanner ? 'Обновить баннер' : 'Создать баннер'}`;

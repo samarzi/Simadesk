@@ -1773,3 +1773,76 @@ textarea.cmp-edit-input { resize: vertical; min-height: 70px; }
   display: flex; flex-wrap: wrap; gap: 5px;
   padding-top: 2px;
 }
+
+/* ── Dirty state chip & accordion ────────────────────────────────── */
+.cmp-edit-dirty-chip {
+  font-size: 10px;
+  color: var(--yellow, #eab308);
+  background: color-mix(in srgb, var(--yellow, #eab308) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--yellow, #eab308) 30%, transparent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 8px;
+  font-weight: 600;
+}
+.cmp-section-arrow {
+  font-size: 10px;
+  color: var(--text3);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.cmp-edit-section.dirty {
+  outline: 1px solid color-mix(in srgb, var(--yellow, #eab308) 40%, transparent);
+}
+.cmp-edit-body {
+  padding: 0;
+}
+
+/* ── Inline cost price editing ───────────────────────────────────── */
+.ph-stat-cost-edit {
+  display: flex; align-items: center; gap: 4px; margin-top: 2px;
+}
+.ph-cost-inp {
+  width: 80px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 2px 6px;
+}
+.ph-cost-inp:focus { outline: none; border-color: var(--accent); }
+.cmp-btn-xs {
+  padding: 2px 6px; font-size: 11px; border-radius: 4px;
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text2);
+  cursor: pointer;
+}
+.cmp-btn-xs.cmp-btn-primary {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+
+/* ── Completeness indicator ──────────────────────────────────────── */
+.ph-completeness {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+  cursor: help;
+}
+.ph-completeness-label {
+  font-size: 10px; color: var(--text3); white-space: nowrap; flex-shrink: 0;
+}
+.ph-completeness-track {
+  flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden;
+}
+.ph-completeness-fill {
+  height: 100%; border-radius: 2px; transition: width .3s;
+}
+
+/* ── Sparkline ───────────────────────────────────────────────────── */
+.ph-sparkline-wrap {
+  padding: 4px 0 0;
+}
+.ph-sparkline-labels {
+  display: flex; justify-content: space-between;
+  font-size: 10px; color: var(--text3);
+  margin-top: 2px;
+  padding: 0 2px;
+}

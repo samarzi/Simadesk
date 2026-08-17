@@ -227,7 +227,7 @@ export class StockModule {
             await yandexDb.replaceStoreProducts(store.id, products);
           }
         } catch (e: unknown) {
-          const msg = `ЯМ «${store.name}»: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'ошибка'}`;
+          const msg = `ЯМ «${store.name}»: ${(e instanceof Error ? e.message : String(e)) || 'ошибка'}`;
           console.warn('[Stock]', msg, e);
           this.syncErrors.push(msg);
           this.syncStatus = msg;
@@ -292,7 +292,7 @@ export class StockModule {
         this.editWarehouses = this.wbWarehouses.get(item.storeId) ?? [];
       }
       if (this.editWarehouses.length === 1) this.editWarehouseId = this.editWarehouses[0].id;
-    } catch (e: unknown) { this.editError = 'Ошибка загрузки складов: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? ''); }
+    } catch (e: unknown) { this.editError = 'Ошибка загрузки складов: ' + ((e instanceof Error ? e.message : String(e)) ?? ''); }
     this.editLoading = false;
     this.render();
   }
@@ -327,7 +327,7 @@ export class StockModule {
         if (store) { this.wbWarehouses.set(item.storeId, await wbApi.getWarehouses(store.api_key)); }
       }
     } catch (e: unknown) {
-      this.editError = 'Ошибка загрузки складов: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? '');
+      this.editError = 'Ошибка загрузки складов: ' + ((e instanceof Error ? e.message : String(e)) || '');
       this.editItemId = itemId; this.editValue = newValue;
       this.editWarehouses = []; this.editLoading = false; this.editSaving = false;
       this.render(); return;
@@ -384,7 +384,7 @@ export class StockModule {
         item.stockFbs = this.editValue; item.stockTotal = this.editValue;
       }
       this.editItemId = null; this.editWarehouses = [];
-    } catch (e: unknown) { this.editError = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка'; }
+    } catch (e: unknown) { this.editError = (e instanceof Error ? e.message : String(e)) || 'Ошибка'; }
     this.editSaving = false; this.render();
   }
 

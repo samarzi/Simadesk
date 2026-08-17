@@ -695,7 +695,7 @@ export class HomeDashboardModule {
               storeName: store.name, storeColor: color,
             });
           }
-        } catch (e: unknown) { debug.warn('[Home] Ozon', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e); }
+        } catch (e: unknown) { debug.warn('[Home] Ozon', (e instanceof Error ? e.message : String(e)) ?? e); }
         finally { clear(); }
       })());
     });
@@ -718,7 +718,7 @@ export class HomeDashboardModule {
               storeName: store.name, storeColor: color,
             });
           }
-        } catch (e: unknown) { debug.warn('[Home] YM', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e); }
+        } catch (e: unknown) { debug.warn('[Home] YM', (e instanceof Error ? e.message : String(e)) ?? e); }
         finally { clear(); }
       })());
     });
@@ -742,7 +742,7 @@ export class HomeDashboardModule {
               storeName: store.name, storeColor: color,
             });
           }
-        } catch (e: unknown) { debug.warn('[Home] WB', (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e); }
+        } catch (e: unknown) { debug.warn('[Home] WB', (e instanceof Error ? e.message : String(e)) ?? e); }
         finally { clear(); }
       })());
     });

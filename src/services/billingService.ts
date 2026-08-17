@@ -119,7 +119,7 @@ class BillingService {
       );
       return res ?? { ok: false, error: 'Ошибка' };
     } catch (e: unknown) {
-      return { ok: false, error: (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка' };
+      return { ok: false, error: (e instanceof Error ? e.message : String(e)) ?? 'Ошибка' };
     }
   }
 
@@ -136,7 +136,7 @@ class BillingService {
       );
       return res ?? { ok: false, error: 'Ошибка' };
     } catch (e: unknown) {
-      return { ok: false, error: (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка' };
+      return { ok: false, error: (e instanceof Error ? e.message : String(e)) ?? 'Ошибка' };
     }
   }
 
@@ -158,7 +158,7 @@ class BillingService {
       if (!res.ok || data.error) return { error: data.error ?? 'Ошибка создания платежа' };
       return data;
     } catch (e: unknown) {
-      return { error: (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка' };
+      return { error: (e instanceof Error ? e.message : String(e)) ?? 'Ошибка' };
     }
   }
 

@@ -115,7 +115,7 @@ async function refreshFromServer(): Promise<void> {
     saveCache();
     dbAvailable = true;
   } catch (e: unknown) {
-    const msg = String((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? '');
+    const msg = String((e instanceof Error ? e.message : String(e)) ?? '');
     if (msg.includes('42P01') || (msg.includes('cost_prices') && msg.includes('not found'))) {
       // Миграция не применена — работаем чисто на localStorage
       dbAvailable = false;
@@ -145,7 +145,7 @@ async function pushToServer(vendorCode: string, cost: number, retries = 2): Prom
       });
       return; // успех
     } catch (e: unknown) {
-      const msg = String((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? '');
+      const msg = String((e instanceof Error ? e.message : String(e)) ?? '');
       if (msg.includes('cost_prices') && msg.includes('42P01')) {
         dbAvailable = false;
         return;
@@ -216,7 +216,7 @@ export const costPriceDb = {
         headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
         body: JSON.stringify(toUpload),
       }).catch((e: any) => {
-        if (String((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? '').includes('cost_prices')) dbAvailable = false;
+        if (String((e instanceof Error ? e.message : String(e)) ?? '').includes('cost_prices')) dbAvailable = false;
         debug.warn('[costPriceDb] bulkSet:', e);
       });
     }

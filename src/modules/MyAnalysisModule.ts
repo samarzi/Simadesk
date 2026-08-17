@@ -368,7 +368,7 @@ export class MyAnalysisModule {
       }
       (window as any).app?.toast?.('Карточка обновлена', 'success');
     } catch (e: unknown) {
-      (window as any).app?.toast?.('Ошибка сохранения: ' + ((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || e), 'error');
+      (window as any).app?.toast?.('Ошибка сохранения: ' + ((e instanceof Error ? e.message : String(e)) || e), 'error');
     }
 
     this.drawerSaving = false;
@@ -443,7 +443,7 @@ export class MyAnalysisModule {
       this.cards = cards;
       this.loaded = true;
     } catch (e: unknown) {
-      this.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e);
+      this.error = (e instanceof Error ? e.message : String(e)) || String(e);
       debug.warn('[CardAudit]', e);
     } finally {
       this.loading = false;

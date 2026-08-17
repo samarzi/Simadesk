@@ -753,7 +753,7 @@ export class ProfileModule {
       await companyService.updateMemberRole(memberId, role as any);
       showToast('Роль обновлена', 'success');
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -765,7 +765,7 @@ export class ProfileModule {
       const c = companyService.getActive();
       if (c) this.loadTeam(c.id);
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -776,7 +776,7 @@ export class ProfileModule {
       const c = companyService.getActive();
       if (c) this.loadTeam(c.id);
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -794,7 +794,7 @@ export class ProfileModule {
       showToast('Приглашение добавлено', 'success');
       this.loadTeam(company.id);
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -821,7 +821,7 @@ export class ProfileModule {
       await companyService.update(company.id, updates);
       showToast('Реквизиты сохранены', 'success');
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -872,7 +872,7 @@ export class ProfileModule {
       // Update switcher
       window.companyModule?.renderSwitcher?.();
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка принятия', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка принятия', 'error');
     }
   }
 
@@ -883,7 +883,7 @@ export class ProfileModule {
       this.myIncomingInvites = this.myIncomingInvites.filter(i => i.id !== inviteId);
       this.render();
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -897,7 +897,7 @@ export class ProfileModule {
       showToast('Ссылка создана', 'success');
       this.loadTeam(company.id);
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error');
     }
   }
 
@@ -909,7 +909,7 @@ export class ProfileModule {
       const c = companyService.getActive();
       if (c) this.loadTeam(c.id);
     } catch (e: unknown) {
-      showToast((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? 'Ошибка', 'error');
+      showToast((e instanceof Error ? e.message : String(e)) ?? 'Ошибка', 'error');
     }
   }
 

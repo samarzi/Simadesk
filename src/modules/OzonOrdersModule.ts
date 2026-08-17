@@ -11,6 +11,7 @@ import { ozonDb } from '@/services/ozonDb';
 import { ozonOrdersApi, fetchAllPages, fetchAllPagesByCursor } from '@/services/ozonOrdersApi';
 import { I } from '@/utils/icons';
 import { copyButton } from '@/utils/copyButton';
+import { showToast } from '@/utils/toast';
 
 // ── Статусы заказов ──────────────────────────────────────────────────────────
 
@@ -704,7 +705,7 @@ export class OzonOrdersModule {
       })
       .catch((err: unknown) => {
         if (modal!.style.display !== 'none')
-          this.fillModalError(modal!, err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err));
+          this.fillModalError(modal!, err instanceof Error ? err.message : String(err));
       });
   }
 
@@ -879,7 +880,7 @@ export class OzonOrdersModule {
   async shipPosting(postingNumber: string): Promise<void> {
     if (!confirm(`Отгрузить заказ ${postingNumber}?\n\nПосле отгрузки статус изменится на «Передан перевозчику».`)) return;
     const ctx = this.findStoreForPosting(postingNumber);
-    if (!ctx) { alert('Не найден магазин для заказа'); return; }
+    if (!ctx) { showToast('Не найден магазин для заказа', 'error'); return; }
     try {
       // Загружаем детали чтобы получить product_id
       const detail = this.detailsCache.get(postingNumber) ?? await ozonOrdersApi.getFbsPostingDetail(ctx.creds, postingNumber);
@@ -888,14 +889,14 @@ export class OzonOrdersModule {
         quantity: pr.quantity,
       })).filter((p: any) => p.product_id);
       if (products.length === 0) {
-        alert('Не удалось получить product_id товаров для отгрузки. Попробуйте через кабинет Ozon.');
+        showToast('Не удалось получить product_id товаров для отгрузки. Попробуйте через кабинет Ozon.', 'error');
         return;
       }
       await ozonOrdersApi.shipFbsPosting(ctx.creds, postingNumber, [{ products }]);
-      alert('✓ Заказ отгружен');
+      showToast('✓ Заказ отгружен', 'success');
       this.refresh();
     } catch (err: unknown) {
-      alert(`Ошибка отгрузки: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
+      showToast(`Ошибка отгрузки: ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
   }
 
@@ -906,7 +907,7 @@ export class OzonOrdersModule {
       const blob = await ozonOrdersApi.getFbsPackageLabelPdf(ctx.creds, [postingNumber]);
       downloadBlob(blob, `ozon-label-${postingNumber}.pdf`);
     } catch (err: unknown) {
-      alert(`Не удалось получить этикетку: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}\n\nВозможные причины: заказ ещё не собран, у магазина нет прав или истекли.`);
+      showToast(`Не удалось получить этикетку: ${err instanceof Error ? err.message : String(err)}. Возможные причины: заказ ещё не собран, у магазина нет прав или истекли.`, 'error');
     }
   }
 
@@ -915,7 +916,7 @@ export class OzonOrdersModule {
     if (!ctx) return;
     try {
       const reasons = await ozonOrdersApi.getFbsCancelReasons(ctx.creds);
-      if (!reasons.length) { alert('Не удалось получить список причин отмены'); return; }
+      if (!reasons.length) { showToast('Не удалось получить список причин отмены', 'error'); return; }
       // Простое prompt с первыми вариантами
       const list = reasons.slice(0, 10).map((r, i) => `${i + 1}. ${r.title}`).join('\n');
       const choice = prompt(`Выбери причину отмены (1-${Math.min(reasons.length, 10)}):\n\n${list}`);
@@ -924,10 +925,10 @@ export class OzonOrdersModule {
       const reason = reasons[idx - 1];
       const message = prompt('Комментарий (необязательно):') ?? '';
       await ozonOrdersApi.cancelFbsPosting(ctx.creds, postingNumber, reason.id, message);
-      alert('✓ Заказ отменён');
+      showToast('✓ Заказ отменён', 'success');
       this.refresh();
     } catch (err: unknown) {
-      alert(`Не удалось отменить: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err}`);
+      showToast(`Не удалось отменить: ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
   }
 
@@ -1143,7 +1144,7 @@ export class OzonOrdersModule {
 
   exportExcel(): void {
     const rows = this.getFilteredPostings();
-    if (!rows.length) { alert('Нет данных для экспорта'); return; }
+    if (!rows.length) { showToast('Нет данных для экспорта', 'error'); return; }
 
     const data = rows.map(p => ({
       'Номер отправления': p.posting_number,

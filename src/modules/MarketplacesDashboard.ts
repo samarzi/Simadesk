@@ -194,7 +194,7 @@ export class MarketplacesDashboard {
           entry.total = products.length;
         } catch (e: unknown) {
           entry.status = 'error';
-          entry.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e);
+          entry.error = (e instanceof Error ? e.message : String(e)) || String(e);
         }
         idx++;
         this.render();
@@ -218,7 +218,7 @@ export class MarketplacesDashboard {
           entry.total = products.length;
         } catch (e: unknown) {
           entry.status = 'error';
-          entry.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e);
+          entry.error = (e instanceof Error ? e.message : String(e)) || String(e);
         }
         idx++;
         this.render();
@@ -242,7 +242,7 @@ export class MarketplacesDashboard {
           entry.total = products.length;
         } catch (e: unknown) {
           entry.status = 'error';
-          entry.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e);
+          entry.error = (e instanceof Error ? e.message : String(e)) || String(e);
         }
         idx++;
         this.render();
@@ -275,7 +275,7 @@ export class MarketplacesDashboard {
             entry.stage = `Сохраняем ${products.length} товаров...`; this.renderSyncPanel();
             if (products.length > 0) await ozonDb.replaceStoreProducts(stores[i].id, products);
             entry.status = 'done'; entry.total = products.length;
-          } catch (e: unknown) { entry.status = 'error'; entry.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e); }
+          } catch (e: unknown) { entry.status = 'error'; entry.error = (e instanceof Error ? e.message : String(e)) || String(e); }
           this.render();
         }
       } else if (key === 'yandex') {
@@ -290,7 +290,7 @@ export class MarketplacesDashboard {
             entry.stage = `Сохраняем ${products.length} товаров...`; this.renderSyncPanel();
             if (products.length > 0) await yandexDb.replaceStoreProducts(stores[i].id, products);
             entry.status = 'done'; entry.total = products.length;
-          } catch (e: unknown) { entry.status = 'error'; entry.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e); }
+          } catch (e: unknown) { entry.status = 'error'; entry.error = (e instanceof Error ? e.message : String(e)) || String(e); }
           this.render();
         }
       } else {
@@ -305,7 +305,7 @@ export class MarketplacesDashboard {
             entry.stage = `Сохраняем ${products.length} товаров...`; this.renderSyncPanel();
             if (products.length > 0) await wbDb.replaceStoreProducts(stores[i].id, products);
             entry.status = 'done'; entry.total = products.length;
-          } catch (e: unknown) { entry.status = 'error'; entry.error = (e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) || String(e); }
+          } catch (e: unknown) { entry.status = 'error'; entry.error = (e instanceof Error ? e.message : String(e)) || String(e); }
           this.render();
         }
       }

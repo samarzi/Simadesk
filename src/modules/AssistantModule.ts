@@ -78,12 +78,59 @@ const ACTIVE_SID_KEY = 'sd_sima_active_v2';
 
 // ── Человеческие названия действий для журнала ──────────────────────────────────
 const ACTION_LABELS: Record<string, string> = {
+  // Редактор
   excel_replace: 'Замена в таблице',
   excel_set_cell: 'Изменение ячейки',
   excel_style_column: 'Оформление колонки',
   excel_improve_design: 'Улучшение дизайна таблицы',
+  excel_sort_sheet: 'Сортировка таблицы',
+  excel_add_sheet: 'Добавление листа',
+  excel_insert_column: 'Добавление колонки',
+  excel_delete_rows: 'Удаление строк',
+  excel_add_to_column: 'Изменение колонки',
   word_replace: 'Замена в документе',
+  word_count: 'Подсчёт слов',
+  word_clear_formatting: 'Сброс форматирования',
+  word_heading: 'Применение заголовка',
+  docs_switch: 'Переключение документа',
   create_doc: 'Создание документа',
+  // Отзывы
+  reply_review: 'Ответ на отзыв',
+  ai_generate_review_reply: 'AI-ответ на отзыв',
+  reply_all_unanswered: 'Ответы на все отзывы',
+  // Реклама
+  get_ad_stats: 'Статистика рекламы',
+  toggle_campaign: 'Управление кампанией',
+  set_campaign_budget: 'Изменение бюджета кампании',
+  // Заказы
+  export_orders_excel: 'Экспорт заказов в Excel',
+  export_orders_excel_global: 'Экспорт заказов в Excel',
+  create_urgent_orders_task: 'Задача по срочным заказам',
+  // Аналитика
+  export_analytics_report: 'Отчёт аналитики',
+  generate_report: 'Создание отчёта',
+  // Остатки / товары
+  set_stock_alert: 'Настройка алерта остатков',
+  create_oos_tasks: 'Задачи по OOS',
+  set_price: 'Изменение цены товара',
+  apply_price_delta: 'Массовое изменение цен',
+  bulk_price_change: 'Массовое изменение цен',
+  // Задачи
+  mark_task_done: 'Выполнение задачи',
+  create_reorder_tasks: 'Задачи по дозаказу',
+  // Поставки / Реклама
+  create_repricer_rule: 'Правило репрайсера',
+  get_ym_slots: 'Слоты Яндекс Маркет',
+  create_ym_shipment: 'Отгрузка Яндекс Маркет',
+  create_wb_supply_from_orders: 'Поставка WB из заказов',
+  // Система
+  run_risk_audit: 'Аудит рисков',
+  daily_checklist: 'Дневной чеклист',
+  sync_marketplace: 'Синхронизация данных',
+  navigate_to: 'Переход в раздел',
+  reload_page: 'Перезагрузка страницы',
+  toggle_theme_off: 'Переключение темы',
+  toggle_theme_on: 'Переключение темы',
 };
 
 // ── System prompt ──────────────────────────────────────────────────────────────
@@ -93,7 +140,7 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 ## НАВИГАЦИЯ
 Если пользователь говорит "открой/перейди/покажи/запусти [раздел]" — ответь СТРОГО JSON без пояснений:
 {"action":"navigate","page":"page_id","label":"Название"}
-Разделы: home, analytics, repricer, orders, products-hub, stock, producers, tasks, simastore, marketplaces, ozon, wb, yandex, settings, profile, reviews, chats, docs
+Разделы: home, analytics, repricer, orders, products-hub, stock, producers, tasks, simastore, marketplaces, ozon, wb, yandex, settings, profile, reviews, chats, docs, advertising, supply
 
 ## АВТОМАТИЧЕСКОЕ РЕШЕНИЕ ПРОБЛЕМ ИНТЕРФЕЙСА
 Если пользователь сообщает о проблеме с интерфейсом SimaDesk, которую можно исправить одной кнопкой — предложи это:
@@ -263,14 +310,20 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 | name | что делает |
 |------|-----------|
 | create_oos_tasks | Создать задачи по всем OOS-товарам |
-| run_risk_audit | Полный аудит рисков + создание задач |
+| run_risk_audit | Полный аудит рисков (остатки, задачи, отзывы, реклама) + задачи |
 | bulk_price_change | Изменить цены всех товаров (args: mp, delta, percent) |
 | generate_report | Создать Excel-отчёт (args: type: analytics/stock/orders/full) |
-| reply_all_unanswered | Ответить на все отзывы без ответа (args: template, stars_max) |
+| export_orders_excel_global | Выгрузить заказы в Excel (args: mp?, status?, days?, title?) |
+| reply_all_unanswered | AI-ответы на все отзывы без ответа (args: template?, stars_max?, limit?) |
+| ai_generate_review_reply | Сгенерировать AI-ответ на конкретный отзыв (args: review_id?) |
+| get_ad_stats | Показать статистику рекламных кампаний (args: sort?, only_active?) |
+| toggle_campaign | Поставить/снять кампанию с паузы (args: campaign_id, action: pause|resume) |
+| set_campaign_budget | Изменить бюджет кампании (args: campaign_id, budget) |
 | sync_marketplace | Синхронизировать данные с МП (args: mp опционально) |
-| navigate_to | Перейти в любой раздел (args: page) |
+| navigate_to | Перейти в любой раздел (args: page). Разделы: home, analytics, repricer, orders, products-hub, stock, producers, tasks, simastore, marketplaces, ozon, wb, yandex, settings, profile, reviews, chats, docs, advertising, supply |
 | create_task_global | Создать задачу из любого места |
 | create_doc | Создать Excel или Word документ (args: type, title) |
+| daily_checklist | Сформировать дневной чеклист приоритетов (нет аргументов) |
 | toggle_theme_off | Включить тёмную тему |
 | toggle_theme_on | Включить светлую тему |
 | reload_page | Перезагрузить страницу |
@@ -328,6 +381,8 @@ const NAV_PATTERNS: Array<{ re: RegExp; page: string; label: string }> = [
   { re: /чат|chat/i,                                              page: 'chats',        label: 'Чаты' },
   { re: /редактор|документ|docs/i,                                page: 'docs',         label: 'Редактор' },
   { re: /тариф|оплат|billing/i,                                   page: 'billing',      label: 'Тариф и оплата' },
+  { re: /реклам|advertis|кампани/i,                               page: 'advertising',  label: 'Реклама' },
+  { re: /поставк|supply/i,                                        page: 'supply',       label: 'Поставки' },
 ];
 
 const OPEN_PREFIXES = /^(?:открой|открыть|перейди(?:\s+(?:в|на|к))?|перейти(?:\s+(?:в|на|к))?|покажи|показать|запусти|запустить|зайди(?:\s+(?:в|на))?|зайти(?:\s+(?:в|на))?|иди(?:\s+(?:в|на))?|войди(?:\s+(?:в|на))?|go\s+to|open|switch\s+to)\s+/i;
@@ -353,6 +408,8 @@ const BARE_NAV_PATTERNS: Array<{ re: RegExp; page: string; label: string }> = [
   { re: /^(?:чаты?|чат)$/i,                            page: 'chats',        label: 'Чаты' },
   { re: /^(?:документы?|редактор)$/i,                  page: 'docs',         label: 'Редактор' },
   { re: /^(?:тариф|оплата|billing)$/i,                 page: 'billing',      label: 'Тариф и оплата' },
+  { re: /^(?:реклама|рекламные|кампании|advertising)$/i, page: 'advertising', label: 'Реклама' },
+  { re: /^(?:поставки?|supply)$/i,                     page: 'supply',       label: 'Поставки' },
 ];
 
 function tryLocalNav(text: string): NavAction | null {
@@ -372,19 +429,21 @@ function tryLocalNav(text: string): NavAction | null {
 }
 
 // Is this message a nav command (has explicit prefix OR is a bare nav keyword)?
-const IS_NAV_COMMAND = /^(?:открой|открыть|перейди|покажи|запусти|зайди|иди|go\s+to|open)\s+|^(?:главная|дашборд|аналитик|репрайсер|заказы|товары|остатки|склад|задачи|витрина|маркетплейсы|настройки|профиль|отзывы|чаты|документы|редактор|тариф|оплата|ozon|озон|wb|яндекс)/i;
+const IS_NAV_COMMAND = /^(?:открой|открыть|перейди|покажи|запусти|зайди|иди|go\s+to|open)\s+|^(?:главная|дашборд|аналитик|репрайсер|заказы|товары|остатки|склад|задачи|витрина|маркетплейсы|настройки|профиль|отзывы|чаты|документы|редактор|тариф|оплата|ozon|озон|wb|яндекс|реклама|рекламные|кампании|поставки)/i;
 
 // ── Hint suggestions shown at panel open ──────────────────────────────────────
 
 const HINTS = [
-  'Что проверить сегодня?',
+  'Что важного сегодня?',
   'Аудит рисков',
   'Задачи по OOS',
-  'Открой аналитику',
-  'Синхронизируй все',
-  'Отчёт в Excel',
-  'Открой заказы',
+  'Аналитика',
+  'Ответь на все отзывы',
+  'Экспортируй заказы в Excel',
+  'Статистика рекламы',
   'Как улучшить позиции?',
+  'Синхронизируй все',
+  'Создай отчёт',
 ];
 
 // ── Store context collector ───────────────────────────────────────────────────
@@ -460,10 +519,47 @@ function getStoreContext(): string {
     if (rm) {
       const reviews: any[] = (rm as any).reviews ?? [];
       if (reviews.length > 0) {
-        const unanswered = reviews.filter((r: any) => !r.reply && r.stars <= 3);
-        const negative = reviews.filter((r: any) => r.stars <= 2);
-        sections.push(`ОТЗЫВЫ: Всего: ${reviews.length} | Негативных (1-2★): ${negative.length} | Без ответа (≤3★): ${unanswered.length}`
-          + (unanswered.length > 0 ? `\nТребуют ответа: ${unanswered.slice(0, 3).map((r: any) => `"${String(r.productName || r.text || '').slice(0, 30)}"(${r.stars}★)`).join(', ')}` : ''));
+        const unanswered = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply);
+        const negative = unanswered.filter((r: any) => (r.stars ?? 5) <= 2);
+        let reviewSection = `ОТЗЫВЫ: Всего: ${reviews.length} | Без ответа: ${unanswered.length} | Негативных без ответа (≤2★): ${negative.length}`;
+        if (unanswered.length > 0) {
+          reviewSection += '\nОтзывы без ответа (топ-5):';
+          unanswered.slice(0, 5).forEach((r: any) => {
+            const stars = r.stars ?? '?';
+            const product = String(r.productName ?? r.product_name ?? '').slice(0, 30);
+            const text = String(r.text ?? r.comment ?? '').slice(0, 120);
+            reviewSection += `\n  [id:${r.id}] ${stars}★${product ? ' ' + product : ''}: "${text}"`;
+          });
+        }
+        sections.push(reviewSection);
+      }
+    }
+  } catch { /* ignore */ }
+
+  try {
+    const adm = (window as any).advertisingModule;
+    if (adm) {
+      const campaigns: any[] = (adm as any).campaigns ?? [];
+      if (campaigns.length > 0) {
+        const active = campaigns.filter((c: any) => c.status === 'active');
+        const totalSpent = campaigns.reduce((s: number, c: any) => s + (c.spent ?? 0), 0);
+        const totalBudget = campaigns.reduce((s: number, c: any) => s + (c.budget ?? 0), 0);
+        const lossAd = active.filter((c: any) => (c.roi ?? 0) < -15 && (c.spent ?? 0) > 200);
+        const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(0)}тыс₽` : `${Math.round(n)}₽`;
+        let adSection = `РЕКЛАМА (${(adm as any).tab?.toUpperCase() ?? ''}): кампаний ${campaigns.length} (активных ${active.length}) | бюджет/д ${fmt(totalBudget)} | потрачено ${fmt(totalSpent)}`;
+        if (lossAd.length) adSection += `\n⚠ Убыточных кампаний (ROI<-15%): ${lossAd.length} — ${lossAd.map((c: any) => `"${c.name}"(ROI ${c.roi?.toFixed(0)}%)`).join(', ')}`;
+        sections.push(adSection);
+      }
+    }
+  } catch { /* ignore */ }
+
+  try {
+    const sup = (window as any).supplyModule;
+    if (sup) {
+      const stats = (sup as any).supplyStats ?? {};
+      const total = (stats.draft ?? 0) + (stats.sending ?? 0) + (stats.delivered ?? 0);
+      if (total > 0) {
+        sections.push(`ПОСТАВКИ: черновик ${stats.draft ?? 0} | в пути ${stats.sending ?? 0} | принято ${stats.delivered ?? 0} | отменено ${stats.cancelled ?? 0}`);
       }
     }
   } catch { /* ignore */ }
@@ -654,6 +750,8 @@ const PALETTE_COMMANDS: PaletteCommand[] = [
   { icon: '⚙️', category: 'Навигация', label: 'Настройки',                  cmd: 'настройки' },
   { icon: '💳', category: 'Навигация', label: 'Тариф и оплата',             cmd: 'тариф' },
   { icon: '🔗', category: 'Навигация', label: 'Маркетплейсы / API',        cmd: 'маркетплейсы' },
+  { icon: '📣', category: 'Навигация', label: 'Реклама',                    cmd: 'реклама' },
+  { icon: '🚚', category: 'Навигация', label: 'Поставки',                   cmd: 'поставки' },
   // Docs / editor — page-specific
   { icon: '📊', category: 'Редактор (Excel)', label: 'Создать таблицу Excel',            cmd: 'создай excel ',    action: 'create_doc' },
   { icon: '✨', category: 'Редактор (Excel)', label: 'Улучшить дизайн таблицы',          cmd: 'улучши дизайн',    action: 'excel_improve_design' },
@@ -680,7 +778,17 @@ const PALETTE_COMMANDS: PaletteCommand[] = [
   // Analytics
   { icon: '📊', category: 'Аналитика', label: 'Экспорт отчёта аналитики',  cmd: 'отчёт аналитики', action: 'export_analytics_report' },
   // Reviews
-  { icon: '💬', category: 'Отзывы', label: 'Ответить на все отзывы',       cmd: 'ответь на все отзывы', action: 'reply_all_unanswered' },
+  { icon: '💬', category: 'Отзывы', label: 'Ответить на все отзывы (AI)',  cmd: 'ответь на все отзывы', action: 'reply_all_unanswered' },
+  { icon: '🤖', category: 'Отзывы', label: 'AI-ответ на первый отзыв',     cmd: 'ответь на первый отзыв', action: 'ai_generate_review_reply' },
+  { icon: '😡', category: 'Отзывы', label: 'Показать негативные отзывы',   cmd: 'покажи негативные отзывы без ответа' },
+  // Advertising
+  { icon: '📣', category: 'Реклама', label: 'Статистика кампаний',          cmd: 'статистика рекламы',  action: 'get_ad_stats' },
+  { icon: '⏸', category: 'Реклама',  label: 'Что остановить (убыточные)',   cmd: 'какие кампании убыточны и стоит остановить' },
+  { icon: '💰', category: 'Реклама', label: 'Бюджеты кампаний',             cmd: 'покажи бюджеты всех рекламных кампаний' },
+  // Orders export
+  { icon: '📥', category: 'Заказы', label: 'Экспорт заказов в Excel',       cmd: 'экспортируй заказы в Excel', action: 'export_orders_excel_global' },
+  { icon: '📥', category: 'Заказы', label: 'Экспорт заказов WB в Excel',    cmd: 'экспортируй заказы WB в Excel' },
+  { icon: '📥', category: 'Заказы', label: 'Экспорт заказов Ozon в Excel',  cmd: 'экспортируй заказы Ozon в Excel' },
   // System
   { icon: '📊', category: 'Система', label: 'Статус / сводка',             cmd: 'статус' },
   { icon: '🆕', category: 'Система', label: 'Новый чат (очистить)',         cmd: 'новый чат' },
@@ -835,7 +943,7 @@ export class AssistantModule {
 
     try {
       const reviews: any[] = (window as any).reviewsModule?.reviews ?? [];
-      const unanswered = reviews.filter((r: any) => !r.reply && r.stars <= 2);
+      const unanswered = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= 2);
       if (unanswered.length > 0) {
         alerts.push(`⭐ Негативных отзывов без ответа: ${unanswered.length}`);
       }
@@ -1508,7 +1616,7 @@ export class AssistantModule {
 
     try {
       const reviews: any[] = (window as any).reviewsModule?.reviews ?? [];
-      const unanswered = reviews.filter((r: any) => !r.reply && r.stars <= 2);
+      const unanswered = reviews.filter((r: any) => !r.replied && !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= 2);
       if (unanswered.length > 0) alerts.push(`**Негативных отзывов без ответа: ${unanswered.length}**`);
     } catch { /* ignore */ }
 
@@ -1801,7 +1909,7 @@ export class AssistantModule {
           const parsed = await this.parseFile(file);
           this.attachedFiles.push(parsed);
         } catch (e: unknown) {
-          showToast(`Не удалось прочитать ${file.name}: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e}`, 'error');
+          showToast(`Не удалось прочитать ${file.name}: ${(e instanceof Error ? e.message : String(e)) ?? e}`, 'error');
         }
       }
       if (this.fileInputEl) this.fileInputEl.value = '';
@@ -1961,12 +2069,21 @@ export class AssistantModule {
         break;
       }
       case 'dailyCheck': {
-        await this.sendMessage(
-          '[БЫСТРОЕ ДЕЙСТВИЕ: Дневной чеклист]\n' +
-          'Составь подробный чеклист на сегодня для менеджера маркетплейсов. ' +
-          'Что конкретно нужно проверить в SimaDesk, в каком порядке и почему это важно. ' +
-          'Укажи приоритеты и красные флаги.'
-        );
+        this.isLoading = true;
+        this.setInputEnabled(false);
+        const typing = this.addTypingIndicator();
+        try {
+          const result = await aiPage.run('daily_checklist', {});
+          this.removeTypingIndicator(typing);
+          const ttsBtn = this.addAssistantMessage(result.summary);
+          if (this.ttsEnabled && ttsBtn) this.startMsgTts(result.summary, ttsBtn);
+        } catch (e: unknown) {
+          this.removeTypingIndicator(typing);
+          this.addAssistantMessage(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          this.isLoading = false;
+          this.setInputEnabled(true);
+        }
         break;
       }
       case 'priceAnalysis': {
@@ -3128,8 +3245,36 @@ export class AssistantModule {
     } catch { /* ignore */ }
     try {
       const reviews: any[] = (window as any).reviewsModule?.reviews ?? [];
-      const neg = reviews.filter((r: any) => !r.reply && r.stars <= 2);
+      const neg = reviews.filter((r: any) => !r.reply && !r.answered && !r.answer && r.stars <= 2);
+      const allUnans = reviews.filter((r: any) => !r.reply && !r.answered && !r.answer);
       if (neg.length) lines.push(`⭐ Негативных без ответа: **${neg.length}**`);
+      else if (allUnans.length) lines.push(`💬 Отзывов без ответа: **${allUnans.length}**`);
+    } catch { /* ignore */ }
+    try {
+      const campaigns: any[] = (window as any).advertisingModule?.campaigns ?? [];
+      if (campaigns.length) {
+        const active = campaigns.filter((c: any) => c.status === 'active');
+        const loss = active.filter((c: any) => {
+          const spent = c.spent ?? 0;
+          const revenue = (c.orders ?? 0) * 1000;
+          return spent > 0 && (revenue - spent) / spent * 100 < -15;
+        });
+        const totalSpent = active.reduce((s: number, c: any) => s + (c.spent ?? 0), 0);
+        const spentFmt = totalSpent >= 1_000_000 ? `${(totalSpent/1_000_000).toFixed(1)} млн ₽`
+          : totalSpent >= 1_000 ? `${Math.round(totalSpent/1_000)}К ₽` : `${Math.round(totalSpent)} ₽`;
+        lines.push(`📣 Реклама: **${active.length}** активных, расход **${spentFmt}**${loss.length ? ` · ⚠️ убыточных: ${loss.length}` : ''}`);
+      }
+    } catch { /* ignore */ }
+    try {
+      const supplies: any[] = (window as any).supplyModule?.supplies ?? (window as any).stockModule?.supplies ?? [];
+      if (supplies.length) {
+        const drafts = supplies.filter((s: any) => s.status === 'draft' || s.status === 'new').length;
+        const sending = supplies.filter((s: any) => s.status === 'sending' || s.status === 'in_transit').length;
+        const parts: string[] = [];
+        if (drafts) parts.push(`черновиков: ${drafts}`);
+        if (sending) parts.push(`в пути: ${sending}`);
+        if (parts.length) lines.push(`🚚 Поставки: **${parts.join(', ')}**`);
+      }
     } catch { /* ignore */ }
     if (lines.length === 1) lines.push('Данные не загружены — открой нужную страницу сначала.');
     return lines.join('\n');
@@ -3143,7 +3288,7 @@ export class AssistantModule {
     return intro + `⚙️ **Механические команды** (работают без AI):\n\n` +
       `**Навигация** — просто напиши раздел:\n` +
       `\`заказы\` · \`аналитика\` · \`товары\` · \`остатки\` · \`задачи\`\n` +
-      `\`отзывы\` · \`настройки\` · \`репрайсер\` · \`склад\` · \`витрина\`\n\n` +
+      `\`отзывы\` · \`реклама\` · \`поставки\` · \`настройки\` · \`репрайсер\`\n\n` +
       `**Задачи:**\n` +
       `\`создай задачу [название]\` · \`отметь задачу [название]\`\n` +
       `\`срочные заказы\` · \`задачи по дозаказу\` · \`создай задачи по OOS\`\n\n` +
@@ -3156,11 +3301,15 @@ export class AssistantModule {
       `\`удали строки 3 5 7\` · \`переключись на [название документа]\`\n\n` +
       `**Цены:**\n` +
       `\`изменить цены на +10%\` · \`изменить цены на -500₽\`\n\n` +
-      `**Аналитика / отзывы:**\n` +
-      `\`отчёт аналитики\` · \`ответь на все отзывы\`\n\n` +
+      `**Заказы / аналитика:**\n` +
+      `\`экспортируй заказы в Excel\` · \`экспортируй заказы WB\` · \`отчёт аналитики\`\n\n` +
+      `**Отзывы:**\n` +
+      `\`ответь на все отзывы\` · \`ответь на первый отзыв\`\n\n` +
+      `**Реклама:**\n` +
+      `\`статистика рекламы\` · \`рекламные кампании\`\n\n` +
       `**Системные:**\n` +
-      `\`синхронизируй\` · \`аудит\` · \`юнит-экономика\`\n` +
-      `\`отмени\` · \`статус\` · \`новый чат\`\n\n` +
+      `\`синхронизируй\` · \`аудит\` · \`дневной чеклист\` · \`статус\`\n` +
+      `\`юнит-экономика\` · \`отмени\` · \`новый чат\`\n\n` +
       `Для сложных задач — включи AI (кнопка 🤖 вверху).`;
   }
 
@@ -3662,6 +3811,28 @@ export class AssistantModule {
       return;
     }
 
+    // Fast: экспорт заказов в Excel — "экспортируй заказы" / "выгрузи заказы в excel" / "экспорт заказов WB"
+    const exportOrdersRe = /^(?:экспортируй?|выгрузи?|скачай?|export)\s+заказы?(?:\s+(?:в\s+)?(?:excel|xlsx|эксель))?(?:\s+(wb|wildberries|ozon|яндекс|yandex|ям))?(?:\s+(?:за\s+)?(\d+)\s*(?:дн[ейя]|day))?$/i;
+    const exportOrdersMatch = t.match(exportOrdersRe);
+    if (exportOrdersMatch && aiPage.hasAction('export_orders_excel_global')) {
+      const mpRaw = exportOrdersMatch[1]?.toLowerCase();
+      const mp = mpRaw === 'wildberries' ? 'wb' : mpRaw === 'яндекс' || mpRaw === 'ям' ? 'yandex' : mpRaw;
+      const days = exportOrdersMatch[2] ? parseInt(exportOrdersMatch[2], 10) : undefined;
+      await this.runFastAction('export_orders_excel_global', { mp, days },
+        'Формирую Excel с заказами…', 'Выгружаю заказы…');
+      return;
+    }
+
+    // ═══ РЕКЛАМА ══════════════════════════════════════════════════════════════════
+
+    // Fast: статистика рекламы — "статистика рекламы" / "рекламные кампании" / "покажи рекламу"
+    const adStatsRe = /^(?:статистика\s+реклам[ыи]|рекламные?\s+кампании?|кампании?\s+реклам[ыы]|покажи?\s+рекламу?|ad\s*stats?)$/i;
+    if (adStatsRe.test(t) && aiPage.hasAction('get_ad_stats')) {
+      await this.runFastAction('get_ad_stats', {},
+        'Загружаю статистику рекламы…', 'Загружаю рекламу…');
+      return;
+    }
+
     // ═══ ОТЗЫВЫ ══════════════════════════════════════════════════════════════════
 
     // Fast: ответить на все отзывы без ответа
@@ -3669,6 +3840,14 @@ export class AssistantModule {
     if (replyAllRe.test(t) && aiPage.hasAction('reply_all_unanswered')) {
       await this.runFastAction('reply_all_unanswered', {},
         'Отвечаю на все неотвеченные отзывы…', 'Отвечаю на отзывы…');
+      return;
+    }
+
+    // Fast: AI-ответ на первый/конкретный отзыв
+    const aiReplyRe = /^(?:ai.)?ответь?\s+на\s+(?:первый|следующий|этот|конкретный)?\s*отзыв$/i;
+    if (aiReplyRe.test(t) && aiPage.hasAction('ai_generate_review_reply')) {
+      await this.runFastAction('ai_generate_review_reply', {},
+        'Генерирую AI-ответ на отзыв…', 'Генерирую ответ…');
       return;
     }
 
@@ -3744,12 +3923,12 @@ export class AssistantModule {
 
     // Fast: отчёт / экспорт
     const reportRe = /^(?:отчёт|отчет|экспорт|выгрузка|excel|xlsx)$/i;
-    if (reportRe.test(text.trim()) && aiPage.hasAction('export_report')) {
+    if (reportRe.test(text.trim()) && aiPage.hasAction('generate_report')) {
       this.isLoading = true;
       this.setInputEnabled(false);
       const typing = this.addTypingIndicator();
       try {
-        const result = await aiPage.run('export_report', {});
+        const result = await aiPage.run('generate_report', {});
         this.removeTypingIndicator(typing);
         this.addAssistantMessage(result.summary);
       } catch {
@@ -3919,11 +4098,11 @@ export class AssistantModule {
       this.setStatus('Готова');
     } catch (err: unknown) {
       this.removeTypingIndicator(typing);
-      const msg = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err))?.includes('401')
+      const msg = (err instanceof Error ? err.message : String(err))?.includes('401')
         ? 'Неверный API-ключ OpenRouter. Проверьте ключ в настройках AI.'
-        : (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err))?.includes('429')
+        : (err instanceof Error ? err.message : String(err))?.includes('429')
         ? 'Превышен лимит запросов. Попробуйте через минуту.'
-        : `Ошибка: ${(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? 'неизвестная ошибка'}`;
+        : `Ошибка: ${(err instanceof Error ? err.message : String(err)) ?? 'неизвестная ошибка'}`;
       this.addAssistantMessage(msg);
       this.setStatus('Ошибка');
     } finally {
@@ -4106,7 +4285,7 @@ export class AssistantModule {
         undo: res.undo,
       });
     } catch (e: unknown) {
-      resultMsg = `Не удалось выполнить: ${(e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? e}`;
+      resultMsg = `Не удалось выполнить: ${(e instanceof Error ? e.message : String(e)) ?? e}`;
       changeLog.logAction({
         category: 'ai',
         action: ACTION_LABELS[name] ?? name,

@@ -354,7 +354,7 @@ export class ChatsModule {
       e.chats.sort((a, b) => new Date(b.lastTime).getTime() - new Date(a.lastTime).getTime());
       e.loaded = true;
     } catch (err: unknown) {
-      e.error = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? 'Ошибка загрузки чатов';
+      e.error = (err instanceof Error ? err.message : String(err)) ?? 'Ошибка загрузки чатов';
     }
     e.loading = false;
     this.render();
@@ -487,7 +487,7 @@ export class ChatsModule {
       chat.unread = 0;
     } catch (err: unknown) {
       if (this.activeChatId !== chatId) return;
-      this.messagesError = (err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? 'Ошибка загрузки сообщений';
+      this.messagesError = (err instanceof Error ? err.message : String(err)) ?? 'Ошибка загрузки сообщений';
     }
     if (this.activeChatId !== chatId) return;
     this.messagesLoading = false;
@@ -544,7 +544,7 @@ export class ChatsModule {
       if (ta) ta.value = '';
       this.pendingAttachment = null;
     } catch (err: unknown) {
-      const msg = String((err instanceof Error ? (err instanceof Error ? err.message : String(err)) : String(err)) ?? err);
+      const msg = String((err instanceof Error ? err.message : String(err)) ?? err);
       const friendly = /premium plus subscription/i.test(msg)
         ? 'Отправка сообщений в чат Ozon доступна только с подпиской Premium Plus'
         : 'Ошибка отправки: ' + msg;

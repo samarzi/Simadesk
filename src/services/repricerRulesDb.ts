@@ -87,7 +87,7 @@ async function refreshFromServer(): Promise<void> {
     saveCache();
     dbAvailable = true;
   } catch (e: unknown) {
-    const msg = String((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? '');
+    const msg = String((e instanceof Error ? e.message : String(e)) ?? '');
     if (msg.includes('42P01') || (msg.includes('repricer_rules') && msg.includes('not found'))) {
       dbAvailable = false;
       debug.warn('[repricerRulesDb] Supabase table repricer_rules не найдена. Используется localStorage.');
@@ -125,7 +125,7 @@ async function pushToServer(rule: any, retries = 2): Promise<void> {
       });
       return;
     } catch (e: unknown) {
-      const msg = String((e instanceof Error ? (e instanceof Error ? e.message : String(e)) : String(e)) ?? '');
+      const msg = String((e instanceof Error ? e.message : String(e)) ?? '');
       if (msg.includes('repricer_rules') && msg.includes('42P01')) { dbAvailable = false; return; }
       debug.warn(`[repricerRulesDb] push "${rule.id}" attempt ${attempt + 1}/${retries + 1}:`, msg);
       if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
