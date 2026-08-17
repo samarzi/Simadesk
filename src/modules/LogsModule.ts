@@ -5,6 +5,9 @@
 import { debug } from '@/utils/debug';
 import { I } from '@/utils/icons';
 import { showToast } from '@/utils/toast';
+import { authService } from '@/services/authService';
+import { companyService } from '@/services/companyService';
+import { dbFetch } from '@/services/dbClient';
 
 
 export interface UndoSpec {
@@ -16,10 +19,12 @@ export interface UndoSpec {
 export interface ChangeLogEntry {
   id: string;
   ts: string;              // ISO timestamp
-  category: string;        // 'product' | 'price' | 'group' | 'import' | 'rule' | 'settings' | 'sync' | 'ai'
+  category: string;        // 'product' | 'price' | 'group' | 'import' | 'rule' | 'settings' | 'sync' | 'ai' | 'undo'
   action: string;          // короткое действие, напр. "Изменена цена"
   details: string;         // подробности
-  user?: string;
+  user?: string;           // имя пользователя (auto-fill из authService)
+  userId?: string;         // UUID пользователя (для groupKey и фильтрации)
+  relatedId?: string;      // id исходной записи (для undo-события)
   meta?: Record<string, any>;
   // ── AI-действия / дерево запросов / откат ──
   requestText?: string;    // исходный запрос пользователя (1 запрос = 1 действие)
@@ -36,10 +41,11 @@ export function registerUndoHandler(kind: string, fn: UndoHandler): void {
   undoHandlers[kind] = fn;
 }
 
-/** Нормализация текста запроса → ключ дерева (одинаковые запросы группируются). */
-function makeGroupKey(requestText: string | undefined, action: string): string {
+/** Нормализация текста запроса → ключ дерева. Включает userId, чтобы запросы разных пользователей не смешивались. */
+function makeGroupKey(requestText: string | undefined, action: string, userId?: string): string {
   const base = (requestText ?? action ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
-  return base || action || 'other';
+  const text = base || action || 'other';
+  return userId ? `${userId}:${text}` : text;
 }
 
 const KEY = 'change_log_v1';
@@ -64,8 +70,16 @@ export const changeLog = {
   add(entry: Omit<ChangeLogEntry, 'id' | 'ts'>): string {
     const entries = load();
     const id = crypto.randomUUID();
-    entries.unshift({ ...entry, id, ts: new Date().toISOString() });
+    // Авто-заполнение user/userId из текущей сессии, если не переданы явно
+    const authUser = authService.getUser();
+    const userName = entry.user ?? (authUser
+      ? (authUser.display_name || authUser.username || authUser.first_name || undefined)
+      : undefined);
+    const userId = entry.userId ?? authUser?.id;
+    const full: ChangeLogEntry = { ...entry, id, ts: new Date().toISOString(), user: userName, userId };
+    entries.unshift(full);
     save(entries);
+    this._pushToServer(full);
     return id;
   },
 
@@ -77,12 +91,14 @@ export const changeLog = {
     requestText?: string;
     undo?: UndoSpec;
   }): string {
+    const authUser = authService.getUser();
+    const userId = authUser?.id;
     return this.add({
       category: a.category ?? 'ai',
       action: a.action,
       details: a.details,
       requestText: a.requestText,
-      groupKey: makeGroupKey(a.requestText, a.action),
+      groupKey: makeGroupKey(a.requestText, a.action, userId),
       undo: a.undo,
       undone: false,
     });
@@ -108,6 +124,13 @@ export const changeLog = {
     if (!handler) return `Нет обработчика отката «${e.undo.kind}»`;
     await handler(e.undo.payload);
     this.markUndone(id);
+    // Аудиторная запись об отмене (кто, когда, что откатил)
+    this.add({
+      category: 'undo',
+      action: `Отменено: ${e.action}`,
+      details: e.undo.label ?? e.details,
+      relatedId: id,
+    });
     return `Отменено: ${e.action}`;
   },
 
@@ -117,9 +140,19 @@ export const changeLog = {
       .filter(e => e.groupKey === groupKey && e.undo && !e.undone)
       .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()); // новые первыми
     let n = 0;
+    const undoneIds: string[] = [];
     for (const e of entries) {
       const handler = undoHandlers[e.undo!.kind];
-      if (handler) { await handler(e.undo!.payload); this.markUndone(e.id); n++; }
+      if (handler) { await handler(e.undo!.payload); this.markUndone(e.id); n++; undoneIds.push(e.id); }
+    }
+    if (n > 0) {
+      // Одна аудиторная запись на всё дерево
+      this.add({
+        category: 'undo',
+        action: `Отменено дерево (${n} действий)`,
+        details: entries[0]?.requestText ?? entries[0]?.action ?? groupKey,
+        relatedId: undoneIds[0],
+      });
     }
     return n ? `Отменено действий в дереве: ${n}` : 'Нечего отменять';
   },
@@ -131,18 +164,84 @@ export const changeLog = {
     return this.undo(entries[0].id);
   },
 
+  /** Асинхронно (fire-and-forget) отправить одну запись на сервер. */
+  _pushToServer(entry: ChangeLogEntry): void {
+    const companyId = companyService.getActive()?.id;
+    if (!companyId || !authService.isLoggedIn()) return;
+    const row = {
+      id:           entry.id,
+      company_id:   companyId,
+      user_id:      entry.userId ?? null,
+      user_name:    entry.user ?? null,
+      category:     entry.category,
+      action:       entry.action,
+      details:      entry.details,
+      related_id:   entry.relatedId ?? null,
+      request_text: entry.requestText ?? null,
+      group_key:    entry.groupKey ?? null,
+      undone:       entry.undone ?? false,
+      ts:           entry.ts,
+    };
+    dbFetch<void>('action_log', {
+      method: 'POST',
+      body: JSON.stringify(row),
+      headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal', 'Content-Type': 'application/json' },
+    }).catch(e => debug.warn('[LogsModule] action_log push failed', e));
+  },
+
+  /** Загрузить последние записи с сервера и смержить в localStorage-кеш. */
+  async syncFromServer(): Promise<void> {
+    const companyId = companyService.getActive()?.id;
+    if (!companyId || !authService.isLoggedIn()) return;
+    try {
+      const rows = await dbFetch<Array<{
+        id: string; user_id: string | null; user_name: string | null;
+        category: string; action: string; details: string;
+        related_id: string | null; request_text: string | null;
+        group_key: string | null; undone: boolean; ts: string;
+      }>>(`action_log?company_id=eq.${companyId}&order=ts.desc&limit=2000`);
+      if (!Array.isArray(rows) || rows.length === 0) return;
+      // Смержить: серверные данные приоритетнее, локальные уникальные — сохраняем
+      const local = load();
+      const localById = new Map(local.map(e => [e.id, e]));
+      for (const r of rows) {
+        localById.set(r.id, {
+          id: r.id,
+          ts: r.ts,
+          category: r.category,
+          action: r.action,
+          details: r.details,
+          user: r.user_name ?? undefined,
+          userId: r.user_id ?? undefined,
+          relatedId: r.related_id ?? undefined,
+          requestText: r.request_text ?? undefined,
+          groupKey: r.group_key ?? undefined,
+          undone: r.undone,
+        });
+      }
+      const merged = [...localById.values()]
+        .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+      save(merged);
+    } catch (e) {
+      debug.warn('[LogsModule] syncFromServer failed', e);
+    }
+  },
+
   clear(): void { localStorage.removeItem(KEY); },
   exportCsv(): void {
     const entries = load();
-    const rows = [['Дата','Время','Категория','Действие','Подробности']];
+    const rows = [['Дата','Время','Пользователь','Категория','Действие','Подробности','Статус']];
     for (const e of entries) {
       const d = new Date(e.ts);
+      const status = e.undone ? 'Отменено' : (e.category === 'undo' ? 'Отмена' : 'Выполнено');
       rows.push([
         d.toLocaleDateString('ru'),
         d.toLocaleTimeString('ru'),
+        e.user ?? '',
         e.category,
         e.action,
         e.details,
+        status,
       ]);
     }
     const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
@@ -163,6 +262,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   settings: `${I.settings('',14)} Настройки`,
   sync: `${I.refresh('',14)} Синхронизация`,
   column: `${I.chart('',14)} Колонка`,
+  undo: `↩ Отмена`,
   other: `${I.type('',14)} Прочее`,
 };
 
@@ -175,6 +275,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   settings: '#64748b',
   sync: '#f59e0b',
   column: '#8b5cf6',
+  undo: '#dc2626',
   other: '#94a3b8',
 };
 
@@ -182,6 +283,7 @@ export class LogsModule {
   private container: HTMLElement;
   private search = '';
   private filterCategory = '';
+  private filterUser = '';
   private page = 0;
   private readonly PAGE_SIZE = 50;
   private expanded = new Set<string>();  // раскрытые деревья (groupKey)
@@ -192,12 +294,15 @@ export class LogsModule {
     this.container.style.display = 'flex';
     this.container.style.flexDirection = 'column';
     this.render();
+    // Фоновая синхронизация с сервером — подтянуть записи других участников команды
+    changeLog.syncFromServer().then(() => this.render()).catch(() => {});
   }
 
   hide(): void { this.container.style.display = 'none'; }
 
   setSearch(q: string): void { this.search = q; this.page = 0; this.render(); }
   setFilter(cat: string): void { this.filterCategory = cat; this.page = 0; this.render(); }
+  setUserFilter(u: string): void { this.filterUser = u; this.page = 0; this.render(); }
   nextPage(): void { this.page++; this.render(); }
   prevPage(): void { if (this.page > 0) { this.page--; this.render(); } }
 
@@ -208,9 +313,12 @@ export class LogsModule {
   render(): void {
     const all = changeLog.get(MAX);
     const q = this.search.toLowerCase();
+    // Уникальные пользователи из всего журнала (для dropdown-фильтра)
+    const allUsers = [...new Set(all.map(e => e.user).filter(Boolean) as string[])].sort();
     const filtered = all.filter(e => {
       if (this.filterCategory && e.category !== this.filterCategory) return false;
-      if (q && !`${e.action} ${e.details} ${e.category}`.toLowerCase().includes(q)) return false;
+      if (this.filterUser && e.user !== this.filterUser) return false;
+      if (q && !`${e.action} ${e.details} ${e.category} ${e.user ?? ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
 
@@ -286,6 +394,14 @@ export class LogsModule {
               ${CATEGORY_LABELS[cat] ?? cat}
             </button>`;
           }).join('')}
+          ${allUsers.length > 1 ? `
+            <select onchange="window.logsModule.setUserFilter(this.value)"
+              style="padding:5px 10px;border:1px solid var(--border);background:var(--bg2);color:var(--text);
+                border-radius:8px;font-size:11px;cursor:pointer">
+              <option value="" ${!this.filterUser?'selected':''}>Все участники</option>
+              ${allUsers.map(u => `<option value="${this.esc(u)}" ${this.filterUser===u?'selected':''}>${this.esc(u)}</option>`).join('')}
+            </select>
+          ` : ''}
           <span style="margin-left:auto;font-size:11px;color:var(--text-2)">${filtered.length} записей</span>
         </div>
 
@@ -329,6 +445,9 @@ export class LogsModule {
     const col = CATEGORY_COLORS[e.category] ?? '#64748b';
     const catLabel = CATEGORY_LABELS[e.category] ?? e.category;
     const time = d.toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const userBadge = e.user
+      ? `<span style="padding:2px 7px;border-radius:8px;font-size:10px;font-weight:600;background:var(--bg2);color:var(--text-2);white-space:nowrap;border:1px solid var(--border)" title="Пользователь">${this.esc(e.user)}</span>`
+      : '';
     const undoBtn = e.undo && !e.undone
       ? `<button onclick="window.logsModule.undoEntry('${e.id}')"
            style="padding:4px 10px;border-radius:7px;border:1px solid #16a34a55;background:#16a34a14;color:#16a34a;cursor:pointer;font-size:11px;font-weight:600;white-space:nowrap">
@@ -344,6 +463,7 @@ export class LogsModule {
           <div style="font-size:12px;font-weight:600;color:var(--text);${e.undone ? 'text-decoration:line-through;' : ''}">${this.esc(e.action)}</div>
           <div style="font-size:11px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${this.esc(e.details)}">${this.esc(e.details)}</div>
         </div>
+        ${userBadge}
         <div style="font-size:10px;color:var(--text-2);white-space:nowrap">${time}</div>
         ${undoBtn}
       </div>`;
