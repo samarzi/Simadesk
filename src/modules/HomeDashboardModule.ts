@@ -162,12 +162,92 @@ export class HomeDashboardModule {
   private _fetching = false;
 
   private _news: MpNews[] = [];
+  private _homeTab: 'dashboard' | 'news' = 'dashboard';
+
+  switchHomeTab(tab: 'dashboard' | 'news'): void {
+    this._homeTab = tab;
+    this.renderDashboard();
+  }
 
   private async loadAndRenderNews(): Promise<void> {
     try {
-      this._news = await loadRecentNews(7);
+      this._news = await loadRecentNews(30);
     } catch { this._news = []; }
     this.renderNewsBlock();
+  }
+
+  private async loadAndRenderNewsTab(): Promise<void> {
+    const wrap = document.getElementById('cmd-news-tab-wrap');
+    if (!wrap) return;
+    try {
+      const news = await loadRecentNews(30);
+      this._news = news;
+      wrap.innerHTML = this.renderNewsTabContent(news);
+    } catch {
+      wrap.innerHTML = `<div class="cmd-news-tab-error">Не удалось загрузить новости</div>`;
+    }
+  }
+
+  private renderNewsTabContent(news: MpNews[]): string {
+    const MP_LABEL: Record<string, string> = { wb: 'Wildberries', ozon: 'Ozon', yandex: 'Яндекс Маркет', sber: 'СберМаркет', general: 'Общее' };
+    const MP_COLOR: Record<string, string> = { wb: '#cb11ab', ozon: '#005bff', yandex: '#cc0000', sber: '#21a038', general: '#888' };
+
+    if (!news.length) {
+      return `<div class="cmd-nt-empty">
+        <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".3"><rect x="8" y="6" width="32" height="36" rx="3"/><path d="M16 18h16M16 25h16M16 32h10"/></svg>
+        <div>Новостей пока нет</div>
+        <div class="cmd-nt-empty-sub">Добавь каналы в Админ-панели → Новости МП</div>
+      </div>`;
+    }
+
+    const important = news.filter(n => n.is_important);
+    const regular   = news.filter(n => !n.is_important);
+
+    const renderCard = (n: MpNews) => {
+      const color = MP_COLOR[n.mp] || '#888';
+      const label = MP_LABEL[n.mp] || n.mp;
+      const d = new Date(n.published_at);
+      const dateStr = d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+      const link = n.source_url
+        ? `<a href="${n.source_url}" target="_blank" rel="noopener" class="cmd-nt-link">Источник →</a>`
+        : '';
+      return `<div class="cmd-nt-card ${n.is_important ? 'important' : ''}">
+        ${n.is_important ? `<div class="cmd-nt-imp-bar"></div>` : ''}
+        <div class="cmd-nt-card-meta">
+          <span class="cmd-nt-mp" style="background:${color}22;color:${color}">${label}</span>
+          <span class="cmd-nt-date">${dateStr}</span>
+          ${n.is_important ? `<span class="cmd-nt-imp-badge">Важное</span>` : ''}
+        </div>
+        <div class="cmd-nt-card-title">${escHtml(n.title)}</div>
+        <div class="cmd-nt-card-sum">${escHtml(n.summary)}</div>
+        ${link}
+      </div>`;
+    };
+
+    const importantBlock = important.length ? `
+      <div class="cmd-nt-section">
+        <div class="cmd-nt-section-title">
+          <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1l1.5 4h4l-3.3 2.4 1.3 4L7 9l-3.5 2.4 1.3-4L1.5 5h4z"/></svg>
+          Важные новости
+        </div>
+        <div class="cmd-nt-grid">${important.map(renderCard).join('')}</div>
+      </div>` : '';
+
+    const regularBlock = regular.length ? `
+      <div class="cmd-nt-section">
+        <div class="cmd-nt-section-title">
+          <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h10a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v8a1 1 0 0 1-1 1zm0 0a1 1 0 0 1-1-1V6c0-.6.4-1 1-1h1"/></svg>
+          Остальные новости
+        </div>
+        <div class="cmd-nt-grid">${regular.map(renderCard).join('')}</div>
+      </div>` : '';
+
+    return `
+      <div class="cmd-nt-header">
+        <span class="cmd-nt-count">${news.length} новост${news.length === 1 ? 'ь' : news.length < 5 ? 'и' : 'ей'} за последние 30 дней</span>
+      </div>
+      ${importantBlock}${regularBlock}
+    `;
   }
 
   private renderNewsBlock(): void {
@@ -217,6 +297,8 @@ export class HomeDashboardModule {
     const editMode = this.homeEditMode;
     const scope = this.scopeLabel();
 
+    const isNews = this._homeTab === 'news';
+
     content.innerHTML = `
       <div class="cmd-wrap">
         <div class="cmd-header">
@@ -225,6 +307,17 @@ export class HomeDashboardModule {
             <div class="cmd-subtitle">${I.radio('', 12)} Командный центр · обновление каждые 30 сек</div>
           </div>
           <div class="cmd-header-actions">
+            <div class="cmd-tab-pills">
+              <button class="cmd-tab-pill ${!isNews ? 'active' : ''}" onclick="window.app.switchHomeTab('dashboard')">
+                <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="5" height="6" rx="1"/><rect x="8" y="1" width="5" height="4" rx="1"/><rect x="8" y="7" width="5" height="6" rx="1"/><rect x="1" y="9" width="5" height="4" rx="1"/></svg>
+                Дашборд
+              </button>
+              <button class="cmd-tab-pill ${isNews ? 'active' : ''}" onclick="window.app.switchHomeTab('news')">
+                <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h10a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v8a1 1 0 0 1-1 1zm0 0a1 1 0 0 1-1-1V6c0-.6.4-1 1-1h1"/><path d="M10 7H7M9 10H7M6.5 4h3"/></svg>
+                Новости МП
+              </button>
+            </div>
+            ${!isNews ? `
             <button class="cmd-edit-btn ${editMode ? 'active' : ''}" onclick="window.app.toggleHomeEdit()">
               ${editMode
                 ? `<svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7.5l3 3 6-7"/></svg><span>Готово</span>`
@@ -233,10 +326,11 @@ export class HomeDashboardModule {
             <button class="cmd-refresh-btn" id="cmd-refresh-btn" onclick="window.app.refreshDashboard()" title="Обновить">
               <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7A6 6 0 1 1 7.5 1.1M13 1v4H9"/></svg>
               <span id="cmd-last-update">обновить</span>
-            </button>
+            </button>` : ''}
           </div>
         </div>
 
+        ${isNews ? `<div id="cmd-news-tab-wrap" class="cmd-news-tab-wrap"><div class="cmd-news-tab-loading">Загружаем новости…</div></div>` : `
         ${this.renderFilterBarSkeleton()}
 
         <div class="cmd-news-block" id="cmd-news-block"></div>
@@ -254,9 +348,14 @@ export class HomeDashboardModule {
 
         <div class="cmd-widgets-grid ${editMode ? 'edit-mode' : ''}" id="cmd-widgets-grid">
           ${renderWidgetGrid(layout, editMode, scope)}
-        </div>
+        </div>`}
       </div>
     `;
+
+    if (isNews) {
+      this.loadAndRenderNewsTab().catch(e => debug.warn('[Home] newsTab', e));
+      return;
+    }
 
     // Мгновенно заливаем из кэша, если он свежий — иначе грузим
     this.populate().catch(err => debug.warn('[Home] populate', err));

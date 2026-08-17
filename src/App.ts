@@ -1828,6 +1828,7 @@ export class App {
   renderDashboard(): void { this.dashboard.renderDashboard(); }
   refreshDashboard(): void { this.dashboard.refreshDashboard(); }
   toggleHomeEdit(): void { this.dashboard.toggleHomeEdit(); }
+  switchHomeTab(tab: 'dashboard' | 'news'): void { this.dashboard.switchHomeTab(tab); }
   removeWidget(id: string): void { this.dashboard.removeWidget(id); }
   addWidget(id: string): void { this.dashboard.addWidget(id); }
   moveWidget(id: string, dir: -1 | 1): void { this.dashboard.moveWidget(id, dir); }

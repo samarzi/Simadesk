@@ -659,12 +659,35 @@ export class AdvertisingModule {
         </div>
       </div>`;
     } else {
+      // ЯМ: строим подсказку для акций (business_id-дедупликация)
+      const ymPromoHint = this.ymSub === 'promo' && !this.storeId && this.stores.length > 1
+        ? (() => {
+            const uniqueBusinesses = new Set(this.stores.map(s => Number(s.business_id)).filter(Boolean));
+            return uniqueBusinesses.size < this.stores.length
+              ? `<span style="font-size:11px;color:var(--text3)">Акции — уровень бизнеса · загружается 1 раз на ${uniqueBusinesses.size} бизнес${uniqueBusinesses.size > 1 ? 'а' : ''}</span>`
+              : '';
+          })()
+        : '';
+
+      // ЯМ Буст: для FBS/FBY разные campaign_id — показываем какой именно
+      const ymBoostNote = this.ymSub === 'boost'
+        ? (() => {
+            const storesWithCampaign = this.stores.filter(s => s.campaign_id);
+            if (storesWithCampaign.length > 1) {
+              return `<span style="font-size:11px;color:var(--text3)">Выберите магазин для загрузки ставок (FBS и FBY — разные кампании)</span>`;
+            }
+            return '';
+          })()
+        : '';
+
       el.innerHTML = `<div class="ads">
         <div class="ads-l">
           <div class="ad-stabs">
             <button class="ad-stab ${this.ymSub==='promo'?'on':''}" data-ymsub="promo">Акции</button>
             <button class="ad-stab ${this.ymSub==='boost'?'on':''}" data-ymsub="boost">Буст-продвижение</button>
           </div>
+          ${ymPromoHint}
+          ${ymBoostNote}
         </div>
         ${this.ymSub==='boost'?`<div class="ads-r">
           <button class="rpr-btn rpr-btn-ghost" id="ym-load-bids" style="display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;font-size:12px">
@@ -1054,8 +1077,27 @@ export class AdvertisingModule {
       this.storeId = '';
       this.flushBody(); return;
     }
+
+    // Строим лейблы с учётом типа МП
+    const storeLabel = (s: Store): string => {
+      let label = s.name;
+      if (this.tab === 'yandex') {
+        const pt = (s as any).placement_type as string | undefined;
+        if (pt) label += ` [${pt}]`;
+      }
+      return label;
+    };
+
+    // Детектируем дубли (одинаковый api_key/client_id/business_id)
+    const hasDuplicates = this.tab === 'wb'
+      ? new Set(this.stores.map(s => s.api_key)).size < this.stores.length
+      : this.tab === 'ozon'
+        ? new Set(this.stores.map(s => s.client_id)).size < this.stores.length
+        : false;
+
     sel.innerHTML = this.stores.map(s =>
-      `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
+      `<option value="${esc(s.id)}">${esc(storeLabel(s))}</option>`).join('');
+
     if (!this.storeId && this.stores.length === 1) {
       this.storeId = this.stores[0].id;
       sel.value = this.storeId;
@@ -1064,6 +1106,11 @@ export class AdvertisingModule {
     }
     const allBtn = this.el.querySelector('#ad-all-tog');
     allBtn?.classList.toggle('on', this.storeId === '');
+
+    if (hasDuplicates) {
+      showToast('Обнаружены магазины с одинаковым API-ключом. Данные будут загружены один раз.', 'warning');
+    }
+
     if (this.tab === 'wb') await this.loadBalance();
     this.flushBody();
   }
@@ -1083,10 +1130,43 @@ export class AdvertisingModule {
 
   // ─── load campaigns ───────────────────────────────────────────────────────────
 
+  /** Дедуплицирует stores по уникальному идентификатору аккаунта чтобы не дублировать данные. */
+  private deduplicateStores(stores: Store[]): Store[] {
+    // WB: один api_key = один рекламный кабинет
+    if (this.tab === 'wb') {
+      const seen = new Set<string>();
+      return stores.filter(s => {
+        if (seen.has(s.api_key)) return false;
+        seen.add(s.api_key); return true;
+      });
+    }
+    // Ozon: один client_id = один Performance-кабинет
+    if (this.tab === 'ozon') {
+      const seen = new Set<string>();
+      return stores.filter(s => {
+        const key = s.client_id ?? s.api_key;
+        if (seen.has(key)) return false;
+        seen.add(key); return true;
+      });
+    }
+    // ЯМ Акции: бизнес-уровень — один business_id = одни промо (не дублируем)
+    // ЯМ Буст: кампания-уровень — campaign_id разные у FBS/FBY, не дедуплицируем
+    if (this.tab === 'yandex' && this.ymSub === 'promo') {
+      const seen = new Set<number>();
+      return stores.filter(s => {
+        const bid = Number(s.business_id);
+        if (!bid || seen.has(bid)) return false;
+        seen.add(bid); return true;
+      });
+    }
+    return stores;
+  }
+
   private async loadCampaigns() {
-    const targets = this.storeId
+    const rawTargets = this.storeId
       ? this.stores.filter(s => s.id === this.storeId)
       : this.stores;
+    const targets = this.deduplicateStores(rawTargets);
     if (!targets.length) { showToast('Нет магазинов', 'warning'); return; }
 
     this.loading = true; this.campaigns = []; this.filtered = [];
@@ -1736,7 +1816,12 @@ export class AdvertisingModule {
   }
 
   private async loadYmBids() {
-    const store = this.stores.find(s => s.id === this.storeId);
+    // Если "Все" — пробуем найти любой магазин с campaign_id
+    let store = this.stores.find(s => s.id === this.storeId);
+    if (!store && !this.storeId) {
+      store = this.stores.find(s => s.campaign_id);
+      if (store) showToast(`Ставки загружаются для «${store.name}» (первый магазин с Campaign ID)`, 'warning');
+    }
     if (!store) { showToast('Выберите конкретный магазин', 'warning'); return; }
     if (!store.campaign_id) { showToast('Нет Campaign ID. Добавьте его в настройки магазина', 'warning'); return; }
     this.ymBidsLoading = true; this.ymBidsSearch = ''; this.flushBody();
