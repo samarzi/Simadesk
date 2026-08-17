@@ -324,6 +324,10 @@ export class AdvertisingModule {
   // Errors per store
   private loadErrors: Array<{ storeName: string; message: string }> = [];
 
+  // Which marketplaces have stores connected
+  private mpAvailable: Record<'wb' | 'ozon' | 'yandex', boolean> = { wb: true, ozon: true, yandex: true };
+  private mpAvailableLoaded = false;
+
   private eventsAC = new AbortController();
 
   constructor(container: HTMLElement) {
@@ -335,6 +339,7 @@ export class AdvertisingModule {
     this.injectStyles();
     this.buildShell();
     this.loadStores();
+    this.loadMpAvailability();
   }
 
   // ─── styles ──────────────────────────────────────────────────────────────────
@@ -366,6 +371,8 @@ export class AdvertisingModule {
 .ad-mptab.awb{background:rgba(124,58,237,.15);color:#a78bfa}
 .ad-mptab.aozon{background:rgba(0,91,255,.12);color:#60a5fa}
 .ad-mptab.aym{background:rgba(252,63,29,.1);color:#f87171}
+.ad-mptab.ad-mptab-locked{opacity:.35;cursor:not-allowed !important;pointer-events:none}
+.ad-mptab.ad-mptab-locked:hover{background:transparent !important;color:var(--text2) !important}
 
 /* store select */
 .ad-sel{padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;
@@ -756,6 +763,10 @@ export class AdvertisingModule {
 
       const mp = btn.dataset.mp as Tab | undefined;
       if (mp && mp !== this.tab) {
+        if (mp !== 'overview' && this.mpAvailableLoaded && !this.mpAvailable[mp as 'wb' | 'ozon' | 'yandex']) {
+          showToast('Магазины этой платформы не подключены. Перейдите в Настройки → Магазины.', 'warning');
+          return;
+        }
         this.tab = mp;
         if (mp === 'overview') {
           // overview just re-renders whatever is already loaded
@@ -1113,6 +1124,42 @@ export class AdvertisingModule {
 
     if (this.tab === 'wb') await this.loadBalance();
     this.flushBody();
+  }
+
+  private async loadMpAvailability(): Promise<void> {
+    try {
+      const [wb, ozon, ym] = await Promise.allSettled([
+        wbDb.getStores(),
+        ozonDb.getStores(),
+        yandexDb.getStores(),
+      ]);
+      this.mpAvailable = {
+        wb:     wb.status === 'fulfilled' && wb.value.length > 0,
+        ozon:   ozon.status === 'fulfilled' && ozon.value.length > 0,
+        yandex: ym.status === 'fulfilled' && ym.value.length > 0,
+      };
+    } catch {
+      this.mpAvailable = { wb: true, ozon: true, yandex: true };
+    }
+    this.mpAvailableLoaded = true;
+    this.updateMpTabStates();
+    // If current tab became unavailable — redirect to overview
+    if (this.tab !== 'overview' && !this.mpAvailable[this.tab as 'wb' | 'ozon' | 'yandex']) {
+      this.tab = 'overview';
+      this.buildShell(); this.loadStores();
+    }
+  }
+
+  private updateMpTabStates(): void {
+    const mps: Array<'wb' | 'ozon' | 'yandex'> = ['wb', 'ozon', 'yandex'];
+    for (const mp of mps) {
+      const btn = this.el.querySelector<HTMLButtonElement>(`[data-mp="${mp}"]`);
+      if (!btn) continue;
+      const available = this.mpAvailable[mp];
+      btn.disabled = !available;
+      btn.classList.toggle('ad-mptab-locked', !available);
+      btn.title = available ? '' : 'Магазины не подключены — откройте Настройки';
+    }
   }
 
   private async loadBalance() {
