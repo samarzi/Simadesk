@@ -3933,6 +3933,54 @@
 }
 .cmd-filter-clear:hover { background: color-mix(in srgb, #dc2626 16%, var(--card)); }
 
+/* ── Блок новостей МП (постоянный, нескрываемый) ──────────────── */
+.cmd-news-block:empty { display: none; }
+.cmd-news-block {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.cmd-news-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 5%, var(--card));
+}
+.cmd-news-hdr-title {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 650; font-size: 13px; color: var(--text);
+}
+.cmd-news-hdr-count {
+  font-size: 11px; color: var(--muted);
+}
+.cmd-news-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0;
+}
+.cmd-news-item {
+  padding: 12px 16px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 5px;
+}
+.cmd-news-item:hover { background: var(--bg2); }
+.cmd-news-item-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cmd-news-mp {
+  display: inline-block; padding: 1px 7px; border-radius: 20px;
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.cmd-news-date { font-size: 11px; color: var(--muted); }
+.cmd-news-imp {
+  display: inline-block; padding: 1px 7px; border-radius: 12px;
+  font-size: 11px; font-weight: 600;
+  background: #f5a62322; color: #d48806;
+}
+.cmd-news-item-title { font-size: 13px; font-weight: 550; color: var(--text); line-height: 1.35; }
+.cmd-news-item-sum { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.cmd-news-link { font-size: 11px; color: var(--accent); text-decoration: none; align-self: flex-start; }
+.cmd-news-link:hover { text-decoration: underline; }
+
 /* ── Баннер режима правки ──────────────────────────────────────── */
 .cmd-edit-banner {
   display: flex;

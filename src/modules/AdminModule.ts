@@ -42,13 +42,13 @@ import { areaChart, groupedBars, hBars, donut } from './admin/charts';
 
 type AdminTab =
   | 'overview' | 'users' | 'companies' | 'plans' | 'subscriptions'
-  | 'promos' | 'accounting' | 'support' | 'settings' | 'roadmap';
+  | 'promos' | 'accounting' | 'support' | 'settings' | 'roadmap' | 'news';
 
 interface TabMeta { title: string; desc: string; icon: string }
 
 const TABS: AdminTab[] = [
   'overview', 'users', 'companies', 'plans', 'subscriptions',
-  'promos', 'accounting', 'support', 'settings', 'roadmap',
+  'promos', 'accounting', 'support', 'settings', 'roadmap', 'news',
 ];
 
 const TAB_META: Record<AdminTab, TabMeta> = {
@@ -62,6 +62,7 @@ const TAB_META: Record<AdminTab, TabMeta> = {
   support:       { title: 'Поддержка',     icon: 'chat',      desc: 'Обращения пользователей, живой чат и AI-автоответы' },
   settings:      { title: 'Настройки',     icon: 'settings',  desc: 'Права администраторов, AI-ассистент и страницы сайта' },
   roadmap:       { title: 'Дорожная карта', icon: 'roadmap',  desc: 'Задачи разработки: приоритеты, статусы и дедупликация' },
+  news:          { title: 'Новости МП',    icon: 'news',      desc: 'Telegram-каналы для сбора новостей маркетплейсов' },
 };
 
 const PLAN_COLORS: Record<string, string> = {
@@ -163,6 +164,11 @@ export class AdminModule {
   private roadmapForm: { title: string; description: string; quadrant: Quadrant; status: RoadmapStatus } =
     { title: '', description: '', quadrant: 'important_not_urgent', status: 'todo' };
 
+  /* новости МП */
+  private newsChannels: Array<{ id: string; mp: string; channel_slug: string; label: string; enabled: boolean }> = [];
+  private newsItems: Array<{ id: string; mp: string; title: string; summary: string; is_important: boolean; published_at: string; source_url?: string }> = [];
+  private newsLoading = false;
+
   constructor(el: HTMLElement) { this.el = el; }
 
   // ── ЖИЗНЕННЫЙ ЦИКЛ ──────────────────────────────────────────────────────
@@ -253,6 +259,7 @@ export class AdminModule {
           break;
         }
         case 'roadmap': this.roadmapTasks = await roadmapDb.getTasks(); break;
+        case 'news': await this.loadNewsData(); break;
       }
     } catch (e: unknown) {
       debug.warn('[Admin] loadTab error:', e);
@@ -343,6 +350,7 @@ export class AdminModule {
       case 'support':       return this.renderSupport();
       case 'settings':      return this.renderSettings();
       case 'roadmap':       return this.renderRoadmap();
+      case 'news':          return this.renderNews();
     }
   }
 
@@ -1982,6 +1990,8 @@ ${this.SIMADESK_KNOWLEDGE}
     });
 
     this.el.querySelectorAll<HTMLElement>('.ap-picker').forEach(p => this.bindPickerEvents(p));
+
+    if (this.tab === 'news' && !this.loading) this.bindNewsEvents();
   }
 
   private debouncedSearch(sel: string, cb: (value: string) => void): void {
@@ -2623,5 +2633,210 @@ ${this.SIMADESK_KNOWLEDGE}
       <div class="ap-empty-desc">${desc}</div>
       <button class="ap-btn" id="ap-refresh-empty">${icon('refresh', 14)} Обновить</button>
     </div>`;
+  }
+
+  // ── НОВОСТИ МП ──────────────────────────────────────────────────────────────
+
+  private async loadNewsData(): Promise<void> {
+    const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+    const [chRes, newsRes] = await Promise.all([
+      fetch(`${REST_URL}/mp_news_channels?select=*&order=mp.asc,created_at.asc`, { headers: getAuthHeaders() }),
+      fetch(`${REST_URL}/mp_news?select=*&order=published_at.desc&limit=30`, { headers: getAuthHeaders() }),
+    ]);
+    this.newsChannels = chRes.ok ? await chRes.json() : [];
+    this.newsItems    = newsRes.ok ? await newsRes.json() : [];
+  }
+
+  private renderNews(): string {
+    const MP_OPTIONS = [
+      { v: 'wb',      l: 'Wildberries' },
+      { v: 'ozon',    l: 'Ozon' },
+      { v: 'yandex',  l: 'Яндекс Маркет' },
+      { v: 'general', l: 'Общее / другое' },
+    ];
+    const MP_COLORS: Record<string, string> = {
+      wb: '#cb11ab', ozon: '#005bff', yandex: '#ffd700', general: '#6366f1',
+    };
+
+    const channelRows = this.newsChannels.length
+      ? this.newsChannels.map(ch => {
+          const color = MP_COLORS[ch.mp] ?? '#6366f1';
+          const mpLabel = MP_OPTIONS.find(o => o.v === ch.mp)?.l ?? ch.mp;
+          return `<tr data-channel-id="${this.esc(ch.id)}">
+            <td><span class="ap-news-mp-badge" style="background:${color}40;color:${color}">${this.esc(mpLabel)}</span></td>
+            <td><code class="ap-news-slug">@${this.esc(ch.channel_slug)}</code></td>
+            <td>${this.esc(ch.label ?? '—')}</td>
+            <td>
+              <label class="ap-news-toggle">
+                <input type="checkbox" class="news-ch-enabled" data-id="${this.esc(ch.id)}" ${ch.enabled ? 'checked' : ''}>
+                <span class="ap-news-toggle-track"></span>
+              </label>
+            </td>
+            <td>
+              <button class="ap-btn-icon news-ch-delete" data-id="${this.esc(ch.id)}" title="Удалить канал">${icon('trash', 14)}</button>
+            </td>
+          </tr>`;
+        }).join('')
+      : `<tr><td colspan="5" class="ap-news-empty-row">Каналов пока нет — добавьте первый ниже</td></tr>`;
+
+    const newsRows = this.newsItems.length
+      ? this.newsItems.map(n => {
+          const color = MP_COLORS[n.mp] ?? '#6366f1';
+          const mpLabel = MP_OPTIONS.find(o => o.v === n.mp)?.l ?? n.mp;
+          const date = new Date(n.published_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          const imp = n.is_important ? `<span class="ap-news-imp-badge">⚠ важно</span>` : '';
+          return `<tr>
+            <td><span class="ap-news-mp-badge" style="background:${color}40;color:${color}">${this.esc(mpLabel)}</span></td>
+            <td class="ap-news-title-cell">${this.esc(n.title)} ${imp}</td>
+            <td class="ap-news-sum-cell">${this.esc(n.summary)}</td>
+            <td class="ap-news-date-cell">${date}</td>
+            <td>${n.source_url ? `<a class="ap-news-src-link" href="${this.esc(n.source_url)}" target="_blank" rel="noopener">→</a>` : '—'}</td>
+          </tr>`;
+        }).join('')
+      : `<tr><td colspan="5" class="ap-news-empty-row">Новостей ещё нет — запустите первый сбор</td></tr>`;
+
+    return `
+      <div class="ap-news-wrap">
+
+        <div class="ap-section-card">
+          <div class="ap-section-hdr">
+            <div>
+              <div class="ap-section-title">Telegram-каналы</div>
+              <div class="ap-section-sub">Откуда Сима берёт новости. Добавляйте только официальные каналы МП.</div>
+            </div>
+            <div class="ap-news-fetch-wrap">
+              <button class="ap-btn ap-btn-primary" id="news-run-fetch" ${this.newsLoading ? 'disabled' : ''}>
+                ${this.newsLoading ? icon('refresh', 14) + ' Идёт сбор…' : icon('refresh', 14) + ' Запустить сбор сейчас'}
+              </button>
+            </div>
+          </div>
+
+          <table class="ap-news-table">
+            <thead>
+              <tr>
+                <th>МП</th><th>Канал</th><th>Название</th><th>Активен</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="news-ch-tbody">${channelRows}</tbody>
+          </table>
+
+          <div class="ap-news-add-form" id="news-add-form">
+            <div class="ap-news-add-title">${icon('plus', 14)} Добавить канал</div>
+            <div class="ap-news-add-row">
+              <select class="ap-input ap-news-mp-sel" id="news-add-mp">
+                ${MP_OPTIONS.map(o => `<option value="${o.v}">${o.l}</option>`).join('')}
+              </select>
+              <input class="ap-input ap-news-slug-inp" id="news-add-slug" placeholder="@channelname или channelname" autocomplete="off">
+              <input class="ap-input ap-news-label-inp" id="news-add-label" placeholder="Название (необязательно)">
+              <button class="ap-btn ap-btn-primary" id="news-add-btn">${icon('plus', 14)} Добавить</button>
+            </div>
+            <div class="ap-news-add-hint">Вставьте @username канала из Telegram. Канал должен быть публичным — бот читает его без авторизации.</div>
+          </div>
+        </div>
+
+        <div class="ap-section-card">
+          <div class="ap-section-hdr">
+            <div>
+              <div class="ap-section-title">Последние собранные новости</div>
+              <div class="ap-section-sub">Только то, что прошло AI-фильтрацию — реклама и спам отсеиваются автоматически</div>
+            </div>
+            <button class="ap-btn" id="news-clear-btn">${icon('trash', 14)} Очистить все</button>
+          </div>
+          <table class="ap-news-table ap-news-items-table">
+            <thead>
+              <tr><th>МП</th><th>Заголовок</th><th>Краткое содержание</th><th>Дата</th><th>Источник</th></tr>
+            </thead>
+            <tbody>${newsRows}</tbody>
+          </table>
+        </div>
+
+      </div>`;
+  }
+
+  private bindNewsEvents(): void {
+    const el = this.el;
+
+    // Добавить канал
+    el.querySelector('#news-add-btn')?.addEventListener('click', async () => {
+      const mp    = (el.querySelector<HTMLSelectElement>('#news-add-mp'))?.value ?? '';
+      const slug  = (el.querySelector<HTMLInputElement>('#news-add-slug'))?.value.trim().replace(/^@/, '') ?? '';
+      const label = (el.querySelector<HTMLInputElement>('#news-add-label'))?.value.trim() ?? '';
+      if (!slug) { showToast('Введите @username канала', 'error'); return; }
+
+      const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+      const res = await fetch(`${REST_URL}/mp_news_channels`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Prefer': 'return=representation' },
+        body: JSON.stringify({ mp, channel_slug: slug, label: label || null, enabled: true }),
+      });
+      if (!res.ok) { showToast('Ошибка добавления: ' + (await res.text()), 'error'); return; }
+      showToast(`Канал @${slug} добавлен`, 'success');
+      await this.loadNewsData();
+      this.render();
+    });
+
+    // Включить/выключить канал
+    el.querySelectorAll<HTMLInputElement>('.news-ch-enabled').forEach(inp => {
+      inp.addEventListener('change', async () => {
+        const id = inp.dataset.id!;
+        const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+        await fetch(`${REST_URL}/mp_news_channels?id=eq.${id}`, {
+          method: 'PATCH',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ enabled: inp.checked }),
+        });
+        showToast(inp.checked ? 'Канал включён' : 'Канал отключён', 'success');
+      });
+    });
+
+    // Удалить канал
+    el.querySelectorAll<HTMLButtonElement>('.news-ch-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id!;
+        if (!confirm('Удалить этот канал?')) return;
+        const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+        await fetch(`${REST_URL}/mp_news_channels?id=eq.${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+        showToast('Канал удалён', 'success');
+        await this.loadNewsData();
+        this.render();
+      });
+    });
+
+    // Запустить сбор новостей
+    el.querySelector('#news-run-fetch')?.addEventListener('click', async () => {
+      this.newsLoading = true;
+      this.render();
+      try {
+        const { REST_URL } = await import('@/services/dbClient');
+        const base = REST_URL.replace('/rest/v1', '');
+        const secret = prompt('Введите CRON_SECRET (из .env на VPS):');
+        if (!secret) { this.newsLoading = false; this.render(); return; }
+        const res = await fetch(`${base}/functions/v1/telegram-auth/mp-news-fetch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-cron-secret': secret },
+        });
+        const data = await res.json();
+        if (data.ok) {
+          showToast(`Сбор завершён. Сохранено: ${data.saved?.length ?? 0} новостей`, 'success');
+        } else {
+          showToast('Ошибка: ' + (data.error ?? 'неизвестно'), 'error');
+        }
+        await this.loadNewsData();
+      } catch (e: any) {
+        showToast('Ошибка запуска: ' + e.message, 'error');
+      }
+      this.newsLoading = false;
+      this.render();
+    });
+
+    // Очистить все новости
+    el.querySelector('#news-clear-btn')?.addEventListener('click', async () => {
+      if (!confirm('Удалить все собранные новости?')) return;
+      const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+      await fetch(`${REST_URL}/mp_news?published_at=gte.2000-01-01`, { method: 'DELETE', headers: getAuthHeaders() });
+      showToast('Новости очищены', 'success');
+      await this.loadNewsData();
+      this.render();
+    });
   }
 }

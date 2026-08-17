@@ -1060,3 +1060,65 @@ html.light .ap-api-tag.ya { color: #cc2626; }
   .ap-promo-stats { grid-template-columns: 1fr; }
   .ap-topbar h1 { font-size: 17px; }
 }
+
+/* ── Новости МП (News tab) ───────────────────────────────────────────────────── */
+.ap-news-wrap { display: flex; flex-direction: column; gap: 20px; }
+
+.ap-news-channels-card .ap-card-body { display: flex; flex-direction: column; gap: 14px; }
+
+.ap-news-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ap-news-table th {
+  text-align: left; padding: 7px 10px; font-weight: 600; font-size: 11px;
+  letter-spacing: .04em; text-transform: uppercase; color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+}
+.ap-news-table td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.ap-news-table tr:last-child td { border-bottom: none; }
+.ap-news-table tr:hover td { background: var(--bg2); }
+
+.ap-news-mp-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px;
+  font-weight: 600; letter-spacing: .03em; white-space: nowrap;
+}
+.ap-news-mp-badge[data-mp="wb"]     { background: #cb11ab22; color: #cb11ab; }
+.ap-news-mp-badge[data-mp="ozon"]   { background: #005bff22; color: #005bff; }
+.ap-news-mp-badge[data-mp="yandex"] { background: #ff000022; color: #cc0000; }
+.ap-news-mp-badge[data-mp="sber"]   { background: #21a03822; color: #21a038; }
+.ap-news-mp-badge[data-mp="general"]{ background: var(--border); color: var(--text-2); }
+
+.ap-news-toggle {
+  display: inline-flex; align-items: center; gap: 0; cursor: pointer;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 20px;
+  padding: 3px 10px; font-size: 12px; color: var(--text-2); transition: all .15s;
+}
+.ap-news-toggle[data-enabled="true"] { background: #21a03822; border-color: #21a038; color: #21a038; }
+.ap-news-toggle:hover { opacity: .8; }
+
+.ap-news-add-form {
+  display: grid; grid-template-columns: 140px 1fr 1fr auto; gap: 8px; align-items: end;
+  padding: 12px; background: var(--bg2); border-radius: 8px; border: 1px dashed var(--border);
+}
+.ap-news-add-form label { display: block; font-size: 11px; color: var(--text-2); margin-bottom: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+.ap-news-add-form input,
+.ap-news-add-form select { width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; }
+.ap-news-add-form input:focus,
+.ap-news-add-form select:focus { outline: none; border-color: var(--ap-accent); }
+
+.ap-news-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.ap-news-imp-badge {
+  display: inline-block; padding: 1px 7px; border-radius: 12px; font-size: 11px;
+  font-weight: 600; background: #f5a62322; color: #d48806; white-space: nowrap;
+}
+
+.ap-news-item-title { font-weight: 500; font-size: 13px; margin-bottom: 2px; }
+.ap-news-item-sum { font-size: 12px; color: var(--text-2); }
+
+.ap-news-link { color: var(--ap-accent); text-decoration: none; font-size: 12px; }
+.ap-news-link:hover { text-decoration: underline; }
+
+.ap-news-empty { text-align: center; padding: 24px; color: var(--text-2); font-size: 13px; }
+
+@media (max-width: 800px) {
+  .ap-news-add-form { grid-template-columns: 1fr 1fr; }
+}

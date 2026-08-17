@@ -8,6 +8,7 @@ import {
   renderWidgetGrid, renderWidgetPicker,
   setWidgetDims, clampDims,
 } from './HomeWidgets';
+import { loadRecentNews, type MpNews } from '../services/mpNewsService';
 
 /**
  * Главная страница — командный центр с live-данными по заказам и виджетами.
@@ -160,6 +161,53 @@ export class HomeDashboardModule {
   private _rawTime = 0;
   private _fetching = false;
 
+  private _news: MpNews[] = [];
+
+  private async loadAndRenderNews(): Promise<void> {
+    try {
+      this._news = await loadRecentNews(7);
+    } catch { this._news = []; }
+    this.renderNewsBlock();
+  }
+
+  private renderNewsBlock(): void {
+    const wrap = document.getElementById('cmd-news-block');
+    if (!wrap) return;
+    const news = this._news;
+    if (!news.length) { wrap.innerHTML = ''; return; }
+
+    const MP_LABEL: Record<string, string> = { wb: 'WB', ozon: 'Ozon', yandex: 'Яндекс', sber: 'СберМаркет', general: 'Общее' };
+    const MP_COLOR: Record<string, string> = { wb: '#cb11ab', ozon: '#005bff', yandex: '#cc0000', sber: '#21a038', general: '#888' };
+
+    const items = news.slice(0, 10).map(n => {
+      const mp = n.mp;
+      const color = MP_COLOR[mp] || '#888';
+      const label = MP_LABEL[mp] || mp;
+      const d = new Date(n.published_at);
+      const dateStr = d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+      const impBadge = n.is_important ? `<span class="cmd-news-imp">Важное</span>` : '';
+      const link = n.source_url ? `<a href="${n.source_url}" target="_blank" rel="noopener" class="cmd-news-link">Источник →</a>` : '';
+      return `<div class="cmd-news-item">
+        <div class="cmd-news-item-meta">
+          <span class="cmd-news-mp" style="background:${color}22;color:${color}">${label}</span>
+          <span class="cmd-news-date">${dateStr}</span>
+          ${impBadge}
+        </div>
+        <div class="cmd-news-item-title">${escHtml(n.title)}</div>
+        <div class="cmd-news-item-sum">${escHtml(n.summary)}</div>
+        ${link}
+      </div>`;
+    }).join('');
+
+    wrap.innerHTML = `
+      <div class="cmd-news-hdr">
+        <span class="cmd-news-hdr-title">${I.radio('', 13)} Новости маркетплейсов</span>
+        <span class="cmd-news-hdr-count">${news.length} новост${news.length === 1 ? 'ь' : news.length < 5 ? 'и' : 'ей'} за 7 дней</span>
+      </div>
+      <div class="cmd-news-list">${items}</div>
+    `;
+  }
+
   // ── Рендер оболочки ─────────────────────────────────────────────
   renderDashboard(): void {
     const content = document.getElementById('main-content');
@@ -191,6 +239,8 @@ export class HomeDashboardModule {
 
         ${this.renderFilterBarSkeleton()}
 
+        <div class="cmd-news-block" id="cmd-news-block"></div>
+
         ${editMode ? `
           <div class="cmd-edit-banner">
             <div class="cmd-edit-banner-txt">
@@ -210,6 +260,7 @@ export class HomeDashboardModule {
 
     // Мгновенно заливаем из кэша, если он свежий — иначе грузим
     this.populate().catch(err => debug.warn('[Home] populate', err));
+    this.loadAndRenderNews().catch(e => debug.warn('[Home] news', e));
 
     if (this.dashboardRefreshTimer) clearInterval(this.dashboardRefreshTimer);
     this.dashboardRefreshTimer = window.setInterval(() => {

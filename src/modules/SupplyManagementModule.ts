@@ -28,11 +28,12 @@ export interface Supply {
 
 interface RecoItem {
   name: string;
-  sku: string;
+  sku: string;     // offer_id for Ozon, nmId for WB, offerId for YM
   stock: number;
   dailySales: number;
   daysLeft: number;
   mp: string;
+  recoQty: number; // recommended order quantity (editable by user)
 }
 
 const STATUS: Record<string, { text: string; color: string }> = {
@@ -298,36 +299,58 @@ export class SupplyManagementModule {
   // ── Recommendations ─────────────────────────────────────────────────────────
 
   private renderReco(): string {
+    const hasItems = this.recoItems.length > 0;
+    const isOzon = this.tab === 'ozon';
+    const totalQty = this.recoItems.reduce((s, r) => s + r.recoQty, 0);
+
     return `<div class="sp-reco">
       <div class="sp-reco-header">
         <span style="font-weight:700;font-size:13px">Рекомендации пополнения</span>
-        <button class="sp-btn sp-btn-ghost" id="sp-reco-load" style="padding:3px 8px;font-size:11px">
-          ${this.recoLoading ? `${I.loader()} Загрузка...` : `${I.refresh()} Обновить`}
-        </button>
+        <div style="display:flex;gap:6px;align-items:center">
+          ${isOzon && hasItems ? `
+            <button class="sp-btn sp-btn-primary" id="sp-reco-create" style="padding:4px 12px;font-size:12px" ${this.busy ? 'disabled' : ''}>
+              ${I.plus()} Создать поставку (${totalQty} шт.)
+            </button>` : ''}
+          <button class="sp-btn sp-btn-ghost" id="sp-reco-load" style="padding:3px 8px;font-size:11px">
+            ${this.recoLoading ? `${I.loader()} Загрузка...` : `${I.refresh()} Обновить`}
+          </button>
+        </div>
       </div>
-      ${this.recoLoading ? `<div class="sp-reco-loading">${Array(4).fill(`<div class="sp-skeleton" style="height:56px;margin-bottom:8px"></div>`).join('')}</div>` : ''}
-      ${!this.recoLoading && !this.recoItems.length ? `
+      ${this.recoLoading ? `<div class="sp-reco-loading">${Array(4).fill(`<div class="sp-skeleton" style="height:52px;margin-bottom:8px"></div>`).join('')}</div>` : ''}
+      ${!this.recoLoading && !hasItems ? `
         <div class="sp-reco-empty">
           <p>Нажмите «Обновить» для загрузки аналитики остатков</p>
-          <p style="font-size:11px;color:var(--text3);margin-top:4px">Анализ скорости продаж за 30 дней</p>
+          <p style="font-size:11px;color:var(--text3);margin-top:4px">Анализ скорости продаж за 30 дней · цель: 30 дней запасов</p>
         </div>` : ''}
-      ${this.recoItems.length ? `
+      ${hasItems ? `
         <div class="sp-reco-legend">
           <span class="sp-badge sp-badge-red">0–7д</span> срочно &nbsp;
           <span class="sp-badge sp-badge-orange">8–14д</span> скоро &nbsp;
           <span class="sp-badge sp-badge-yellow">15–30д</span> план
+          ${isOzon ? `<span style="margin-left:10px;font-size:11px;color:var(--text3)">Количество к поставке — редактируемое</span>` : ''}
         </div>
         <div class="sp-reco-list">
-          ${this.recoItems.map(r => `
+          ${this.recoItems.map((r, idx) => `
             <div class="sp-reco-item">
               <div class="sp-reco-item-top">
                 <span class="sp-reco-name">${esc(r.name)}</span>
                 ${urgencyBadge(r.daysLeft)}
               </div>
               <div class="sp-reco-item-sub">
-                <span>Остаток: <b>${r.stock}</b> шт.</span>
-                <span>·</span><span>~${r.dailySales.toFixed(1)}/д</span>
-                <span>·</span><span>Рек.: <b>${Math.ceil(r.dailySales * 30)}</b> шт.</span>
+                <span>Остаток: <b>${r.stock}</b></span>
+                <span>·</span>
+                <span>~${r.dailySales.toFixed(1)}/д</span>
+                <span>·</span>
+                <span style="display:inline-flex;align-items:center;gap:5px">
+                  К поставке:
+                  ${isOzon
+                    ? `<input type="number" min="0" value="${r.recoQty}" data-reco-idx="${idx}"
+                         class="sp-reco-qty" style="width:60px;padding:1px 5px;font-size:12px;font-weight:700;
+                         border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--text);
+                         text-align:center" />`
+                    : `<b>${r.recoQty}</b>`
+                  } шт.
+                </span>
               </div>
               ${stockBar(r.daysLeft)}
             </div>`).join('')}
@@ -560,6 +583,7 @@ export class SupplyManagementModule {
           case 'sp-cancel': this.cancelSupply(); break;
           case 'sp-reco': this.showReco = !this.showReco; this.flush(); if (this.showReco && !this.recoItems.length) this.loadReco(); break;
           case 'sp-reco-load': this.loadReco(); break;
+          case 'sp-reco-create': this.createSupplyFromReco(); break;
           case 'sp-export-csv': this.exportCsv(); break;
           case 'sp-clear-filter': this.searchQuery = ''; this.statusFilter = ''; this.flush(); break;
           case 'sp-help': case 'sp-help-no-store': case 'sp-help-error': case 'sp-help-empty': this.openHelpModal(); break;
@@ -591,6 +615,18 @@ export class SupplyManagementModule {
     this.el.addEventListener('input', (e) => {
       const inp = e.target as HTMLInputElement;
       if (inp.id === 'sp-search') { this.searchQuery = inp.value; this.flush(); }
+      if (inp.dataset.recoIdx !== undefined) {
+        const idx = Number(inp.dataset.recoIdx);
+        if (this.recoItems[idx] !== undefined) {
+          this.recoItems[idx].recoQty = Math.max(0, parseInt(inp.value) || 0);
+          // Update button label without full flush to avoid focus loss
+          const btn = this.el.querySelector('#sp-reco-create');
+          if (btn) {
+            const total = this.recoItems.reduce((s, r) => s + r.recoQty, 0);
+            btn.textContent = `+ Создать поставку (${total} шт.)`;
+          }
+        }
+      }
     });
 
     this.el.addEventListener('change', (e) => {
@@ -929,7 +965,8 @@ export class SupplyManagementModule {
           const key = String(i.productId ?? i.product_id ?? i.nmId ?? i.offerId ?? i.offer_id ?? '');
           const dailySales = velocityMap.get(key) ?? (stock > 0 ? stock / 45 : 0.1);
           const daysLeft = dailySales > 0 ? Math.round(stock / dailySales) : 999;
-          return { name: (i.name ?? i.offerId ?? 'Товар').slice(0, 50), sku: key, stock, dailySales, daysLeft, mp: mpFilter } as RecoItem;
+          const recoQty = Math.max(0, Math.ceil((30 - daysLeft) * dailySales));
+          return { name: (i.name ?? i.offerId ?? 'Товар').slice(0, 50), sku: key, stock, dailySales, daysLeft, mp: mpFilter, recoQty };
         })
         .filter(i => i.daysLeft <= 60)
         .sort((a, b) => a.daysLeft - b.daysLeft)
@@ -1517,6 +1554,138 @@ export class SupplyManagementModule {
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
     this.dlBlob(blob, `supply_${this.detail?.id ?? 'export'}.csv`);
     showToast('CSV скачан', 'success');
+  }
+
+  // ── Create supply from recommendations ───────────────────────────────────────
+
+  private async createSupplyFromReco(): Promise<void> {
+    if (this.tab !== 'ozon') {
+      showToast('Автосоздание из рекомендаций работает только для Ozon FBO — единственный МП, где API позволяет задать состав поставки', 'info');
+      return;
+    }
+    if (!this.storeId) { showToast('Выберите магазин', 'warning'); return; }
+    const store = this.getStore();
+    if (!store) { showToast('Магазин не найден', 'error'); return; }
+
+    // Sync qty values from DOM inputs before reading
+    this.el.querySelectorAll<HTMLInputElement>('[data-reco-idx]').forEach(inp => {
+      const idx = Number(inp.dataset.recoIdx);
+      if (this.recoItems[idx] !== undefined) {
+        this.recoItems[idx].recoQty = Math.max(0, parseInt(inp.value) || 0);
+      }
+    });
+
+    const ov = this.modal('Создать поставку из рекомендаций');
+    ov.body.innerHTML = `<div class="sp-loading-inline">${I.loader()} Загружаем склады и SKU...</div>`;
+
+    let warehouses: any[] = [];
+    let products: any[] = [];
+    try {
+      [warehouses, products] = await Promise.all([
+        ozonApi.getWarehouses({ client_id: store.client_id, api_key: store.api_key }),
+        ozonDb.getProducts().catch(() => []),
+      ]);
+    } catch (err: any) {
+      ov.body.innerHTML = `<div class="sp-error-block" style="margin:0">
+        <div class="sp-error-text">Ошибка: ${esc(err.message)}</div>
+      </div>
+      <div class="sp-form-footer"><button class="sp-btn sp-btn-ghost" data-close>Закрыть</button></div>`;
+      return;
+    }
+
+    // offer_id → FBO SKU map for this store
+    const skuByOfferId = new Map<string, number>(
+      (products as any[])
+        .filter(p => p.store_id === this.storeId && p.sku)
+        .map(p => [String(p.offer_id), Number(p.sku)]),
+    );
+
+    const skipped: string[] = [];
+    const items: Array<{ sku: number; quantity: number }> = [];
+    for (const r of this.recoItems) {
+      if (r.recoQty <= 0) continue;
+      const fboSku = skuByOfferId.get(r.sku);
+      if (!fboSku) { skipped.push(r.name); continue; }
+      items.push({ sku: fboSku, quantity: r.recoQty });
+    }
+
+    if (!items.length) {
+      ov.body.innerHTML = `<div class="sp-error-block" style="margin:0">
+        <div class="sp-error-text">Нет товаров для добавления${skipped.length ? ` — у ${skipped.length} товаров не найден FBO SKU` : ''}</div>
+        <p style="font-size:12px;color:var(--text2);margin-top:6px">Синхронизируйте товары в разделе «Склад» чтобы загрузить FBO SKU</p>
+      </div>
+      <div class="sp-form-footer"><button class="sp-btn sp-btn-ghost" data-close>Закрыть</button></div>`;
+      return;
+    }
+
+    const fboWarehouses = warehouses.filter(w => w.is_rfbs === false);
+    const displayWarehouses = fboWarehouses.length > 0 ? fboWarehouses : warehouses;
+    if (!displayWarehouses.length) {
+      ov.body.innerHTML = `<div class="sp-error-block" style="margin:0">
+        <div class="sp-error-text">У магазина нет FBO-складов. Подключите FBO-склад в Seller Portal → Склады.</div>
+      </div>
+      <div class="sp-form-footer"><button class="sp-btn sp-btn-ghost" data-close>Закрыть</button></div>`;
+      return;
+    }
+
+    const totalQty = items.reduce((s, i) => s + i.quantity, 0);
+    const warehouseField = displayWarehouses.length === 1
+      ? `<input type="hidden" name="warehouseId" value="${displayWarehouses[0].warehouse_id}">
+         <div class="sp-help-note">Склад: <b>${esc(displayWarehouses[0].name)}</b></div>`
+      : `<div class="sp-field">
+           <label class="sp-label">FBO-склад Ozon</label>
+           <select name="warehouseId" class="sp-input">
+             ${displayWarehouses.map(w => `<option value="${w.warehouse_id}">${esc(w.name)}</option>`).join('')}
+           </select>
+         </div>`;
+
+    ov.body.innerHTML = `
+      <form id="sp-dlg-form" class="sp-form">
+        <div class="sp-field">
+          <label class="sp-label">Название поставки</label>
+          <input name="name" required class="sp-input" autofocus
+            value="Пополнение ${new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}">
+        </div>
+        ${warehouseField}
+        <div class="sp-help-note">
+          ${items.length} позиций · ${totalQty} шт. — товары добавятся автоматически
+          ${skipped.length ? `<br><span style="color:var(--text3)">⚠ ${skipped.length} пропущено (нет FBO SKU) — синхронизируйте «Склад»</span>` : ''}
+        </div>
+        <div class="sp-form-footer">
+          <button type="button" class="sp-btn sp-btn-ghost" data-close>Отмена</button>
+          <button type="submit" class="sp-btn sp-btn-primary">${I.plus()} Создать и добавить товары</button>
+        </div>
+      </form>`;
+
+    (ov.body.querySelector('#sp-dlg-form') as HTMLFormElement).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target as HTMLFormElement);
+      const name = (fd.get('name') as string).trim();
+      const warehouseId = Number(fd.get('warehouseId'));
+      ov.el.remove();
+      await this.createSupplyWithItems(name, warehouseId, items);
+    });
+  }
+
+  private async createSupplyWithItems(name: string, warehouseId: number, items: Array<{ sku: number; quantity: number }>): Promise<void> {
+    this.busy = true; this.flush();
+    try {
+      const store = this.getStore();
+      if (!store) throw new Error('Магазин не найден');
+      const creds = { client_id: store.client_id, api_key: store.api_key };
+      const { supplyId } = await ozonApi.createSupply(creds, warehouseId, name);
+      if (!supplyId) throw new Error('Ozon не вернул ID поставки');
+      await ozonApi.addProductsToSupply(creds, supplyId, items);
+      showToast(`Поставка «${name}» создана — ${items.length} позиций добавлено`, 'success');
+      this.showReco = false;
+      await this.loadSupplies();
+      const found = this.supplies.find(s => s.id === supplyId);
+      if (found) { this.detail = found; this.detailTab = 'items'; this.detailItems = []; this.loadDetailItems(); }
+    } catch (err: any) {
+      showToast(`Ошибка: ${err.message}`, 'error');
+    } finally {
+      this.busy = false; this.flush();
+    }
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────

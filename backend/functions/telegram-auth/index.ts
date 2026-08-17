@@ -753,11 +753,8 @@ async function handleYookassaPay(req: Request, url: URL): Promise<Response> {
 
 // ── MP News Fetch handler ────────────────────────────────────────────────────
 
-const TG_CHANNELS: Array<{ mp: string; slug: string; label: string }> = [
-  { mp: 'wb',     slug: 'wb_partners',            label: 'Wildberries' },
-  { mp: 'ozon',   slug: 'ozon_seller_help',        label: 'Ozon' },
-  { mp: 'yandex', slug: 'yandex_market_partner',   label: 'Яндекс Маркет' },
-];
+// Каналы загружаются из БД — не хардкодим
+type TgChannel = { mp: string; slug: string; label: string };
 
 function extractTgMessages(html: string, channelSlug: string): Array<{ text: string; url: string; date: string }> {
   const results: Array<{ text: string; url: string; date: string }> = [];
@@ -810,21 +807,30 @@ async function aiSummarize(text: string, mp: string, orKey: string): Promise<{ t
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${orKey}` },
       body: JSON.stringify({
         model: 'google/gemini-flash-1.5',
-        max_tokens: 200,
+        max_tokens: 250,
         messages: [{
           role: 'user',
-          content: `Ты аналитик для продавцов на маркетплейсах (${mp}). Прочитай новость из официального канала и верни JSON:
-{"title":"Краткий заголовок до 80 символов","summary":"1-2 предложения о чём новость и что это значит для продавца","is_important":true/false}
-is_important=true если это изменение комиссий, логистики, правил работы, штрафов, новых требований, крупных акций.
-Если новость не важна для продавца — {"title":"...","summary":"...","is_important":false}
-Текст новости:\n${text.slice(0, 1000)}`
+          content: `Ты фильтр и аналитик для продавцов на маркетплейсах (${mp}).
+
+СНАЧАЛА ПРОВЕРЬ — это реклама/спам/нерелевантный контент?
+Признаки спама/рекламы: призывы купить курсы или подписки, реклама сторонних сервисов, конкурсы, поздравления, мотивационные цитаты, самореклама канала, юмор без практической ценности.
+Если ЭТО СПАМ/РЕКЛАМА — верни: {"skip":true}
+
+Если это РЕАЛЬНАЯ НОВОСТЬ для продавца — верни JSON:
+{"title":"Краткий заголовок до 80 символов","summary":"1-2 предложения: что изменилось и что это значит для продавца","is_important":true/false}
+is_important=true если: изменение комиссий/тарифов, логистики, правил работы, штрафов, требований к товарам, технических изменений платформы, крупных программ поддержки.
+is_important=false если: общие советы, статистика без изменений, мелкие обновления.
+
+Текст:\n${text.slice(0, 1200)}`
         }],
       }),
     });
     if (!res.ok) return null;
     const json = await res.json();
     const content = json.choices?.[0]?.message?.content ?? '';
-    const parsed = JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] ?? '{}');
+    const jsonMatch = content.match(/\{[\s\S]*\}/)?.[0] ?? '{}';
+    const parsed = JSON.parse(jsonMatch);
+    if (parsed.skip) return null;
     if (!parsed.title || !parsed.summary) return null;
     return { title: String(parsed.title).slice(0, 120), summary: String(parsed.summary).slice(0, 400), is_important: !!parsed.is_important };
   } catch { return null; }
@@ -849,11 +855,25 @@ async function handleMpNewsFetch(req: Request): Promise<Response> {
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
 
+  // Загружаем каналы из БД
+  const { data: channelsData, error: chErr } = await db
+    .from('mp_news_channels')
+    .select('mp, channel_slug, label')
+    .eq('enabled', true);
+
+  if (chErr) return jsonRes({ error: `DB channels error: ${chErr.message}` }, 500);
+  const channels: TgChannel[] = (channelsData ?? []).map((r: Record<string, string>) => ({
+    mp: r.mp,
+    slug: r.channel_slug,
+    label: r.label || r.mp,
+  }));
+  if (!channels.length) return jsonRes({ ok: true, saved: [], errors: ['No channels configured'], ts: new Date().toISOString() });
+
   const since = new Date(Date.now() - 2 * 86_400_000).toISOString(); // последние 2 дня
   const saved: string[] = [];
   const errors: string[] = [];
 
-  for (const ch of TG_CHANNELS) {
+  for (const ch of channels) {
     try {
       const pageRes = await fetch(`https://t.me/s/${ch.slug}`, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SimaDesk/1.0)' },
