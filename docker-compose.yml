@@ -178,6 +178,8 @@ services:
       YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
       # AES-256-GCM key for marketplace api_key encryption (never leaves the server)
       MP_ENC_KEY: ${MP_ENC_KEY:-}
+      OPENROUTER_KEY: ${OPENROUTER_KEY:-}
+      CRON_SECRET: ${CRON_SECRET:-}
     volumes:
       - ./backend/functions:/home/deno/functions:ro
     command:

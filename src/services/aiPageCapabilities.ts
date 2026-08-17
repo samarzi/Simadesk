@@ -237,6 +237,179 @@ function describeAdvertising(): string {
   return out;
 }
 
+function describeRepricer(): string {
+  const rep = w().repricerModule;
+  if (!rep) return 'Раздел Репрайсера. Управляет автоматическим изменением цен. Стратегии: следить за конкурентами, целевая маржа, удержание позиции. Создай первое правило: выбери товар → «Добавить правило».';
+  const rules: any[] = rep.rules ?? [];
+  const items: any[] = rep.items ?? rep.skus ?? [];
+  if (!rules.length && !items.length) return 'Репрайсер: правил нет, товары не добавлены. Создай первое правило — выбери SKU → «Добавить правило» → стратегия + мин/макс цена.';
+
+  const byStrategy: Record<string, number> = {};
+  rules.forEach((r: any) => { const s = r.strategy ?? r.type ?? 'unknown'; byStrategy[s] = (byStrategy[s] || 0) + 1; });
+  const noMinMax = rules.filter((r: any) => !r.min_price && !r.max_price);
+  const byMp: Record<string, number> = {};
+  rules.forEach((r: any) => { const m = r.mp ?? '—'; byMp[m] = (byMp[m] || 0) + 1; });
+
+  let out = `Репрайсер: ${rules.length} правил, ${items.length} SKU под управлением.`;
+  if (Object.keys(byStrategy).length) out += `\nСтратегии: ${Object.entries(byStrategy).map(([s, n]) => `${s}: ${n}`).join(', ')}`;
+  if (Object.keys(byMp).length > 1) out += `\nПо МП: ${Object.entries(byMp).map(([m, n]) => `${m}: ${n}`).join(', ')}`;
+  if (noMinMax.length) out += `\n⚠ Правил без мин/макс цены: ${noMinMax.length} — риск уйти в убыток!`;
+  if (rules.length > 0) {
+    out += `\n\nПравила (первые 5):`;
+    rules.slice(0, 5).forEach((r: any, i: number) => {
+      out += `\n${i + 1}. [id:${r.id}] "${r.name ?? 'без названия'}" [${r.mp ?? '—'}] ${r.strategy ?? r.type ?? ''} мин:${r.min_price ?? '—'}₽ макс:${r.max_price ?? '—'}₽`;
+    });
+  }
+  return out;
+}
+
+function describeProducers(): string {
+  const pm = w().producersModule;
+  if (!pm) return 'Раздел Производители / Поставщики. Хранит контакты, условия, прайсы и историю заказов поставщиков. Связан с Остатками для планирования поставок.';
+  const suppliers: any[] = pm.suppliers ?? pm.producers ?? pm.items ?? [];
+  if (!suppliers.length) return 'Производители: список поставщиков пуст. Добавь первого через кнопку «+» в разделе.';
+
+  let out = `Производители: ${suppliers.length} поставщиков в базе.`;
+  const withContacts = suppliers.filter((s: any) => s.phone || s.email || s.contact_name);
+  if (withContacts.length < suppliers.length) out += ` Без контактов: ${suppliers.length - withContacts.length}.`;
+
+  out += `\n\nПоставщики (первые 8):`;
+  suppliers.slice(0, 8).forEach((s: any, i: number) => {
+    const name = s.name ?? s.company_name ?? 'без названия';
+    const contact = s.contact_name ?? s.contact ?? '';
+    const phone = s.phone ?? '';
+    const email = s.email ?? '';
+    out += `\n${i + 1}. "${name}"${contact ? ' — ' + contact : ''}${phone ? ' ' + phone : ''}${email ? ' ' + email : ''}`;
+  });
+  return out;
+}
+
+function describeSimaStore(): string {
+  const sm = w().simaStoreModule ?? w().simastore ?? w().storeModule;
+  if (!sm) return 'Раздел Витрины (SimaStore). Собственный интернет-магазин без маркетплейса. URL: /s/slug. Товары берутся из Products Hub. Подключи оплату и доставку в настройках витрины.';
+
+  const slug = sm.slug ?? sm.storeSlug ?? sm.store?.slug ?? '';
+  const published = sm.published ?? sm.isPublished ?? sm.store?.published ?? false;
+  const products: any[] = sm.products ?? sm.items ?? sm.store?.products ?? [];
+  const paymentEnabled = sm.paymentEnabled ?? sm.payment_enabled ?? sm.store?.payment_enabled ?? false;
+  const deliveryEnabled = sm.deliveryEnabled ?? sm.delivery_enabled ?? sm.store?.delivery_enabled ?? false;
+
+  let out = `Витрина SimaStore: ${published ? '🟢 опубликована' : '⚪ не опубликована'}.`;
+  if (slug) out += `\nURL: /s/${slug}`;
+  out += `\nТоваров: ${products.length}`;
+  out += `\nОплата: ${paymentEnabled ? '✅ подключена' : '❌ не настроена'} | Доставка: ${deliveryEnabled ? '✅ настроена' : '❌ не настроена'}`;
+  if (!published) out += `\n💡 Для публикации: настройки витрины → «Опубликовать». Убедись что подключены оплата и доставка.`;
+  return out;
+}
+
+function describeSettings(): string {
+  const stm = w().settingsModule;
+  const parts: string[] = ['Раздел Настройки SimaDesk.'];
+
+  const team: any[] = stm?.team ?? stm?.users ?? w().companyModule?.users ?? [];
+  if (team.length) parts.push(`Команда: ${team.length} пользователей (добавить: Настройки → Команда → «Пригласить»).`);
+
+  const wbConn = !!(w().wbModule?.connected || stm?.wbKey);
+  const ozConn = !!(w().ozonModule?.connected || stm?.ozonKey);
+  const ymConn = !!(w().yandexModule?.connected || stm?.ymKey);
+  parts.push(`Маркетплейсы: WB ${wbConn ? '✅' : '❌'} | Ozon ${ozConn ? '✅' : '❌'} | ЯМ ${ymConn ? '✅' : '❌'}`);
+
+  const aiKey = sessionStorage.getItem('sd_ai_key') ?? stm?.aiKey ?? '';
+  parts.push(`AI-ассистент (Сима): ${aiKey ? '✅ ключ настроен' : '❌ ключ не настроен — без ключа Сима не работает. Настройки → AI → вставь OpenRouter API-ключ.'}`);
+
+  const sub = stm?.subscription ?? stm?.plan ?? w().companyModule?.subscription;
+  if (sub) parts.push(`Подписка: ${sub.name ?? sub.plan ?? sub.tier ?? 'активна'}`);
+
+  return parts.join('\n');
+}
+
+function describeMarketplaces(): string {
+  const wbm = w().wbModule;
+  const ozm = w().ozonModule;
+  const ymm = w().yandexModule;
+
+  const lines: string[] = ['Раздел Маркетплейсы — подключение API-аккаунтов.'];
+
+  if (wbm) {
+    const name = wbm.shopName ?? '';
+    lines.push(`Wildberries: ${wbm.connected ? `✅ подключён${name ? ' (' + name + ')' : ''}` : '❌ не подключён — нужен токен из ЛК WB → Профиль → Токены API'}`);
+  } else {
+    lines.push('Wildberries: статус неизвестен (модуль не загружен — перейди в раздел Маркетплейсы)');
+  }
+
+  if (ozm) {
+    const name = ozm.shopName ?? '';
+    lines.push(`Ozon: ${ozm.connected ? `✅ подключён${name ? ' (' + name + ')' : ''}` : '❌ не подключён — нужен ключ из ЛК Ozon → API → Ключи'}`);
+  } else {
+    lines.push('Ozon: статус неизвестен');
+  }
+
+  if (ymm) {
+    const name = ymm.shopName ?? '';
+    lines.push(`Яндекс Маркет: ${ymm.connected ? `✅ подключён${name ? ' (' + name + ')' : ''}` : '❌ не подключён — нужен OAuth-токен из ЛК ЯМ → Настройки → API'}`);
+  } else {
+    lines.push('Яндекс Маркет: статус неизвестен');
+  }
+
+  lines.push('\nПосле вставки ключа первая синхронизация занимает 15–30 мин. Если синхронизация не идёт — проверь права ключа.');
+  return lines.join('\n');
+}
+
+function describeHome(): string {
+  const lines: string[] = ['Пользователь на Главной (дашборд). Сима ВИДИТ сводку по всему магазину:'];
+
+  // Analytics KPI
+  const am = w().analyticsModule;
+  if (am?.kpi) {
+    const k = am.kpi;
+    const rev = k.revenue != null ? `выручка нетто ${k.revenue.toFixed(0)}₽` : null;
+    const margin = k.margin_pct != null ? `маржа ${k.margin_pct.toFixed(1)}%` : null;
+    const orders = (k.orders_delivered ?? 0) + (k.orders_processing ?? 0);
+    lines.push(`Аналитика: ${[rev, margin, orders ? `заказов ${orders}` : null].filter(Boolean).join(', ')}`);
+  }
+
+  // Stock OOS
+  const sm = w().stockModule;
+  if (sm?.items?.length) {
+    const items: any[] = sm.items;
+    const oos = items.filter((i: any) => (i.stockTotal ?? 0) === 0).length;
+    const low = items.filter((i: any) => (i.stockTotal ?? 0) > 0 && (i.stockTotal ?? 0) < 10).length;
+    lines.push(`Склад: ${items.length} SKU, OOS ${oos}, критично мало (<10 ед) ${low}`);
+  }
+
+  // Tasks overdue
+  const tm = w().taskManagerModule;
+  if (tm?.tasks?.length) {
+    const tasks: any[] = tm.tasks;
+    const overdue = tasks.filter((t: any) => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()).length;
+    const todo = tasks.filter((t: any) => t.status === 'todo').length;
+    lines.push(`Задачи: ${todo} в работе, ${overdue} просроченных`);
+  }
+
+  // Reviews unanswered
+  const rm = w().reviewsModule;
+  if (rm) {
+    const reviews: any[] = rm.reviews ?? rm.items ?? [];
+    const unans = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply).length;
+    const neg = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= 2).length;
+    if (unans > 0) lines.push(`Отзывы: ${unans} без ответа${neg ? `, из них ${neg} негативных` : ''}`);
+  }
+
+  // Ads budget
+  const adm = w().advertisingModule;
+  if (adm?.campaigns?.length) {
+    const campaigns: any[] = adm.campaigns;
+    const active = campaigns.filter((c: any) => c.status === 'active').length;
+    const totalSpent = campaigns.reduce((s: number, c: any) => s + (c.spent ?? 0), 0);
+    lines.push(`Реклама: ${active} активных кампаний, расход ${totalSpent.toFixed(0)}₽`);
+  }
+
+  if (lines.length === 1) {
+    lines.push('Данные модулей ещё не загружены — попроси пользователя перейти в нужный раздел для получения актуальной информации.');
+  }
+  return lines.join('\n');
+}
+
 function describeGeneric(page: string): string {
   const title = PAGE_TITLE[page] ?? page;
   return `Открыт раздел «${title}». Можешь помочь пользователю разобраться с ним, подсказать действия и, если попросят, перейти в другой раздел.`;
@@ -354,6 +527,7 @@ Object.assign(SUGGESTIONS, {
 // ── Сборка капабилити для страницы ───────────────────────────────────────────────
 
 const DESCRIBERS: Record<string, () => string> = {
+  home: describeHome,
   analytics: describeAnalytics,
   orders: describeOrders,
   'orders-ozon': describeOrders,
@@ -365,6 +539,15 @@ const DESCRIBERS: Record<string, () => string> = {
   reviews: describeReviews,
   supply: describeSupply,
   advertising: describeAdvertising,
+  repricer: describeRepricer,
+  producers: describeProducers,
+  simastore: describeSimaStore,
+  settings: describeSettings,
+  profile: describeSettings,
+  marketplaces: describeMarketplaces,
+  ozon: describeMarketplaces,
+  wb: describeMarketplaces,
+  yandex: describeMarketplaces,
 };
 
 // ── Actions: главная / дашборд ────────────────────────────────────────────────
@@ -478,6 +661,45 @@ const TASKS_ACTIONS: AiAction[] = [
         summary: `Задача «${task.title}» отмечена выполненной`,
         undo: { kind: 'task_status', payload: { id: task.id, status: task.status }, label: `Задача: ${task.title}` },
       };
+    },
+  },
+  {
+    name: 'edit_task',
+    description: 'Изменить название, описание, приоритет или дату задачи по её текущему названию. Используй когда говорят «переименуй задачу X в Y», «поменяй приоритет задачи», «перенеси задачу X на [дату]».',
+    args: '{ title: string, new_title?: string, description?: string, priority?: "red"|"yellow"|"blue"|"none", due_date?: string }',
+    run: async (a: { title: string; new_title?: string; description?: string; priority?: string; due_date?: string }) => {
+      const tm = w().taskManagerModule;
+      const tasks: any[] = tm?.tasks ?? [];
+      const needle = (a.title || '').toLowerCase().trim();
+      const task = tasks.find(t => t.title.toLowerCase().includes(needle));
+      if (!task) throw new Error(`Задача «${a.title}» не найдена`);
+      const { taskDb } = await import('@/services/taskDb');
+      const updates: Record<string, any> = {};
+      if (a.new_title) updates.title = a.new_title;
+      if (a.description !== undefined) updates.description = a.description;
+      if (a.priority) updates.priority = a.priority;
+      if (a.due_date) updates.due_date = a.due_date;
+      if (!Object.keys(updates).length) throw new Error('Не указано что именно изменить в задаче');
+      await taskDb.updateTask(task.id, updates);
+      tm?.load?.();
+      const changed = Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(', ');
+      return `Задача «${task.title}» обновлена: ${changed}`;
+    },
+  },
+  {
+    name: 'delete_task',
+    description: 'Удалить задачу по названию. Используй только когда пользователь явно просит удалить/убрать задачу, а не выполнить её. ОБЯЗАТЕЛЬНО спроси подтверждение перед удалением.',
+    args: '{ title: string }',
+    run: async (a: { title: string }) => {
+      const tm = w().taskManagerModule;
+      const tasks: any[] = tm?.tasks ?? [];
+      const needle = (a.title || '').toLowerCase().trim();
+      const task = tasks.find(t => t.title.toLowerCase().includes(needle));
+      if (!task) throw new Error(`Задача «${a.title}» не найдена`);
+      const { taskDb } = await import('@/services/taskDb');
+      await taskDb.deleteTask(task.id);
+      tm?.load?.();
+      return `Задача «${task.title}» удалена`;
     },
   },
 ];
@@ -719,6 +941,63 @@ const PRODUCTS_HUB_ACTIONS: AiAction[] = [
       return pm.aiApplyPriceDelta(a);
     },
   },
+  {
+    name: 'hide_product',
+    description: 'Скрыть товар (перевести в статус «скрыт»). Используй когда говорят «скрой товар», «снять с продажи», «выключи артикул». Требует подтверждения.',
+    args: '{ article: string, mp?: "wb"|"ozon"|"yandex" }',
+    run: async (a: { article: string; mp?: string }) => {
+      const pm = w().productsHubModule;
+      if (typeof pm?.aiHideProduct === 'function') return await pm.aiHideProduct(a);
+      const items: any[] = pm?.items ?? [];
+      const item = items.find((i: any) => {
+        const art = (i.vendor_code ?? i.offer_id ?? i.article ?? i.nm_id ?? '').toString();
+        return art.toLowerCase() === (a.article || '').toLowerCase();
+      });
+      if (!item) throw new Error(`Товар «${a.article}» не найден в каталоге`);
+      w().app?.navigateTo?.('products-hub');
+      return `Товар «${item.name ?? a.article}» найден. Скрытие через API пока недоступно — откройте карточку товара в разделе Товары и измените статус на «Скрыт» вручную.`;
+    },
+  },
+  {
+    name: 'show_product',
+    description: 'Показать скрытый товар (перевести в статус «активен»). Используй когда говорят «покажи товар», «снова в продажу», «активируй артикул».',
+    args: '{ article: string, mp?: "wb"|"ozon"|"yandex" }',
+    run: async (a: { article: string; mp?: string }) => {
+      const pm = w().productsHubModule;
+      if (typeof pm?.aiShowProduct === 'function') return await pm.aiShowProduct(a);
+      const items: any[] = pm?.items ?? [];
+      const item = items.find((i: any) => {
+        const art = (i.vendor_code ?? i.offer_id ?? i.article ?? i.nm_id ?? '').toString();
+        return art.toLowerCase() === (a.article || '').toLowerCase();
+      });
+      if (!item) throw new Error(`Товар «${a.article}» не найден в каталоге`);
+      w().app?.navigateTo?.('products-hub');
+      return `Товар «${item.name ?? a.article}» найден. Активация через API пока недоступна — откройте карточку товара в разделе Товары и измените статус на «Активен» вручную.`;
+    },
+  },
+  {
+    name: 'update_product_description',
+    description: 'Обновить название, описание или характеристики товара по артикулу. Используй когда говорят «измени описание товара X», «обнови SEO-описание», «переименуй артикул Y». Если не указан артикул — попроси уточнить.',
+    args: '{ article: string, name?: string, description?: string, mp?: "wb"|"ozon"|"yandex" }',
+    run: async (a: { article: string; name?: string; description?: string; mp?: string }) => {
+      const pm = w().productsHubModule;
+      if (typeof pm?.aiUpdateDescription === 'function') {
+        return await pm.aiUpdateDescription(a);
+      }
+      const items: any[] = pm?.items ?? [];
+      const item = items.find((i: any) => {
+        const art = (i.vendor_code ?? i.offer_id ?? i.article ?? i.nm_id ?? '').toString();
+        return art.toLowerCase() === (a.article || '').toLowerCase();
+      });
+      if (!item) throw new Error(`Товар с артикулом «${a.article}» не найден в загруженном каталоге`);
+      const changes = [];
+      if (a.name) changes.push(`Новое название: «${a.name}»`);
+      if (a.description) changes.push(`Описание обновлено (${a.description.length} символов)`);
+      if (!changes.length) throw new Error('Не указано что изменить — укажи name или description');
+      w().app?.navigateTo?.('products-hub');
+      return `Товар «${item.name ?? a.article}» найден. ${changes.join('; ')}. API редактирования описания пока не подключён напрямую — откройте карточку товара в разделе Товары и внесите изменения вручную.`;
+    },
+  },
 ];
 
 // ── Actions: аналитика ────────────────────────────────────────────────────────
@@ -880,6 +1159,150 @@ const PRODUCERS_ACTIONS: AiAction[] = [
   },
 ];
 
+// ── Actions: управление репрайсером ─────────────────────────────────────────────
+
+const REPRICER_MGMT_ACTIONS: AiAction[] = [
+  {
+    name: 'list_repricer_rules',
+    description: 'Показать список всех правил репрайсера с параметрами. Используй когда говорят «покажи правила репрайсера», «какие автоцены настроены», «что в репрайсере».',
+    args: '{}',
+    run: async () => {
+      const rep = w().repricerModule;
+      if (!rep) { w().app?.navigateTo?.('repricer'); return 'Открываю Репрайсер. Повтори команду после загрузки.'; }
+      const rules: any[] = rep.rules ?? [];
+      if (!rules.length) return 'Правил репрайсера нет. Создай первое: выбери товар → «Добавить правило».';
+      return `Правила репрайсера (${rules.length}):\n` + rules.map((r: any, i: number) =>
+        `${i + 1}. [id:${r.id}] "${r.name ?? '—'}" [${r.mp ?? '—'}] ${r.strategy ?? '—'} мин:${r.min_price ?? '—'}₽ макс:${r.max_price ?? '—'}₽ SKU:${(r.articles ?? []).length}`
+      ).join('\n');
+    },
+  },
+  {
+    name: 'edit_repricer_rule',
+    description: 'Изменить параметры правила репрайсера: мин/макс цену, стратегию. Используй когда говорят «измени мин цену правила X», «поменяй стратегию правила Y». Требует id правила (из list_repricer_rules).',
+    args: '{ rule_id: string|number, min_price?: number, max_price?: number, strategy?: "match"|"undercut"|"margin" }',
+    run: async (a: { rule_id: string | number; min_price?: number; max_price?: number; strategy?: string }) => {
+      const rep = w().repricerModule;
+      if (!rep) throw new Error('Репрайсер недоступен — перейди в раздел Репрайсер');
+      if (typeof rep.aiEditRule === 'function') return await rep.aiEditRule(a);
+      const rules: any[] = rep.rules ?? [];
+      const rule = rules.find((r: any) => String(r.id) === String(a.rule_id));
+      if (!rule) throw new Error(`Правило id:${a.rule_id} не найдено. Используй list_repricer_rules чтобы увидеть все правила.`);
+      const changes: string[] = [];
+      if (a.min_price !== undefined) changes.push(`мин. цена: ${a.min_price} ₽`);
+      if (a.max_price !== undefined) changes.push(`макс. цена: ${a.max_price} ₽`);
+      if (a.strategy) changes.push(`стратегия: ${a.strategy}`);
+      if (!changes.length) throw new Error('Укажи что изменить: min_price, max_price или strategy');
+      w().app?.navigateTo?.('repricer');
+      return `Правило «${rule.name ?? rule.id}»: ${changes.join(', ')}. API прямого редактирования репрайсера пока не подключён — открой правило в разделе Репрайсер и внеси изменения вручную.`;
+    },
+  },
+];
+
+// ── Actions: витрина SimaStore ───────────────────────────────────────────────────
+
+const SIMASTORE_ACTIONS: AiAction[] = [
+  {
+    name: 'simastore_get_link',
+    description: 'Получить публичную ссылку на витрину. Используй когда говорят «ссылка на витрину», «какой URL магазина», «как поделиться витриной».',
+    args: '{}',
+    run: async () => {
+      const sm = w().simaStoreModule ?? w().simastore ?? w().storeModule;
+      const slug = sm?.slug ?? sm?.storeSlug ?? sm?.store?.slug ?? '';
+      if (!slug) {
+        w().app?.navigateTo?.('simastore');
+        return 'Slug витрины не найден. Перейди в раздел Витрина → Настройки и задай URL-адрес магазина.';
+      }
+      const url = `${window.location.origin}/s/${slug}`;
+      return `Ссылка на витрину: ${url}\n\nПоделись этой ссылкой с покупателями. Витрина ${(sm?.published ?? sm?.isPublished) ? 'опубликована и доступна' : 'пока не опубликована — нажми «Опубликовать» в настройках витрины'}.`;
+    },
+  },
+  {
+    name: 'simastore_publish',
+    description: 'Опубликовать или снять с публикации витрину. Используй когда говорят «опубликуй витрину», «запусти магазин», «скрой витрину».',
+    args: '{ publish: boolean }',
+    run: async (a: { publish: boolean }) => {
+      const sm = w().simaStoreModule ?? w().simastore ?? w().storeModule;
+      if (!sm) { w().app?.navigateTo?.('simastore'); return 'Открываю раздел Витрина. Повтори команду после загрузки.'; }
+      if (typeof sm.aiPublish === 'function') return await sm.aiPublish(a.publish);
+      const action = a.publish ? 'опубликовать' : 'снять с публикации';
+      w().app?.navigateTo?.('simastore');
+      return `Чтобы ${action} витрину — открой раздел Витрина → Настройки → ${a.publish ? '«Опубликовать»' : '«Снять с публикации'}.`;
+    },
+  },
+  {
+    name: 'simastore_add_products',
+    description: 'Добавить товары из Products Hub на витрину. Используй когда говорят «добавь товары на витрину», «выставь товары в магазин».',
+    args: '{ articles?: string[] }',
+    run: async (a: { articles?: string[] }) => {
+      const sm = w().simaStoreModule ?? w().simastore ?? w().storeModule;
+      if (!sm) { w().app?.navigateTo?.('simastore'); return 'Открываю раздел Витрина. Повтори команду после загрузки.'; }
+      if (typeof sm.aiAddProducts === 'function') return await sm.aiAddProducts(a.articles);
+      const articlesInfo = a.articles?.length ? `Артикулы: ${a.articles.join(', ')}` : 'Все товары из Products Hub';
+      w().app?.navigateTo?.('simastore');
+      return `${articlesInfo}. Для добавления товаров на витрину: раздел Витрина → «Добавить товары» → выбери из Products Hub.`;
+    },
+  },
+];
+
+// ── Actions: настройки ───────────────────────────────────────────────────────────
+
+const SETTINGS_ACTIONS: AiAction[] = [
+  {
+    name: 'get_subscription_info',
+    description: 'Показать информацию о текущей подписке: тариф, лимиты, дата следующего платежа. Используй когда говорят «какой у меня тариф», «когда следующий платёж», «что входит в подписку».',
+    args: '{}',
+    run: async () => {
+      const stm = w().settingsModule ?? w().subscriptionModule;
+      const sub = stm?.subscription ?? stm?.plan ?? w().companyModule?.subscription;
+      if (!sub) {
+        w().app?.navigateTo?.('settings');
+        return 'Информация о подписке недоступна. Открываю Настройки — посмотри раздел «Подписка».';
+      }
+      const name = sub.name ?? sub.plan ?? sub.tier ?? 'неизвестно';
+      const nextPayment = sub.next_payment ?? sub.renewal_date ?? '';
+      const price = sub.price ?? sub.amount ?? '';
+      let out = `Подписка: ${name}`;
+      if (price) out += ` — ${price}₽/мес`;
+      if (nextPayment) out += `\nСледующий платёж: ${new Date(nextPayment).toLocaleDateString('ru-RU')}`;
+      const limits = sub.limits ?? {};
+      if (Object.keys(limits).length) out += `\nЛимиты: ${Object.entries(limits).map(([k, v]) => `${k}: ${v}`).join(', ')}`;
+      return out;
+    },
+  },
+  {
+    name: 'check_api_keys',
+    description: 'Проверить статус API-ключей всех подключённых маркетплейсов и AI-ключа. Используй когда говорят «проверь ключи», «почему не синхронизируется», «статус API».',
+    args: '{}',
+    run: async () => {
+      const results: string[] = [];
+      const wbm = w().wbModule;
+      if (wbm) results.push(`WB: ${wbm.connected ? '✅ подключён' : '❌ ключ не задан или невалиден'}${wbm.shopName ? ' (' + wbm.shopName + ')' : ''}`);
+      else results.push('WB: ⚪ модуль не загружен');
+      const ozm = w().ozonModule;
+      if (ozm) results.push(`Ozon: ${ozm.connected ? '✅ подключён' : '❌ ключ не задан или невалиден'}${ozm.shopName ? ' (' + ozm.shopName + ')' : ''}`);
+      else results.push('Ozon: ⚪ модуль не загружен');
+      const ymm = w().yandexModule;
+      if (ymm) results.push(`ЯМ: ${ymm.connected ? '✅ подключён' : '❌ ключ не задан или невалиден'}${ymm.shopName ? ' (' + ymm.shopName + ')' : ''}`);
+      else results.push('ЯМ: ⚪ модуль не загружен');
+      const aiKey = sessionStorage.getItem('sd_ai_key') ?? '';
+      results.push(`AI (Сима): ${aiKey ? '✅ ключ настроен' : '❌ ключ не настроен — Настройки → AI → OpenRouter API-ключ'}`);
+      return 'Статус API-ключей:\n' + results.join('\n');
+    },
+  },
+  {
+    name: 'invite_team_member',
+    description: 'Пригласить нового сотрудника в команду по email. Используй когда говорят «добавь сотрудника», «пригласи пользователя», «дай доступ [email]».',
+    args: '{ email: string, role?: "admin"|"manager"|"viewer" }',
+    run: async (a: { email: string; role?: string }) => {
+      if (!a.email) throw new Error('Укажи email сотрудника для приглашения');
+      const stm = w().settingsModule;
+      if (typeof stm?.aiInviteUser === 'function') return await stm.aiInviteUser(a.email, a.role ?? 'manager');
+      w().app?.navigateTo?.('settings');
+      return `Для приглашения ${a.email}: Настройки → Команда → «Пригласить пользователя» → введи email${a.role ? ` → роль: ${a.role}` : ''}. После отправки приглашения пользователь получит письмо.`;
+    },
+  },
+];
+
 export function capabilityForPage(page: string): AiPageCapability | null {
   // Редактор ведёт себя богаче — берём капабилити прямо у модуля.
   if (page === 'docs') {
@@ -897,7 +1320,7 @@ export function capabilityForPage(page: string): AiPageCapability | null {
     'products-hub':  PRODUCTS_HUB_ACTIONS,
     'tasks':         TASKS_ACTIONS,
     'reviews':       REVIEWS_ACTIONS,
-    'repricer':      REPRICER_ACTIONS,
+    'repricer':      [...REPRICER_ACTIONS, ...REPRICER_MGMT_ACTIONS],
     'stock':         STOCK_ACTIONS,
     'analytics':     ANALYTICS_ACTIONS,
     'orders':        ORDERS_ACTIONS,
@@ -910,6 +1333,9 @@ export function capabilityForPage(page: string): AiPageCapability | null {
     'yandex':        MARKETPLACES_ACTIONS,
     'producers':     PRODUCERS_ACTIONS,
     'advertising':   ADVERTISING_ACTIONS,
+    'simastore':     SIMASTORE_ACTIONS,
+    'settings':      SETTINGS_ACTIONS,
+    'profile':       SETTINGS_ACTIONS,
   };
   const SUPPLY_ACTIONS: AiAction[] = [
     {
@@ -1429,7 +1855,6 @@ export function installGlobalAiActions(): void {
   });
 
   // ── Глобальные зеркала page-specific действий ───────────────────────────────
-  // Позволяют вызывать эти действия с любой страницы (LLM или fast-action).
   const replyAllGlobal = REVIEWS_ACTIONS.find(a => a.name === 'reply_all_unanswered');
   if (replyAllGlobal) aiPage.registerGlobal(replyAllGlobal);
 
@@ -1438,4 +1863,71 @@ export function installGlobalAiActions(): void {
 
   const adStatsGlobal = ADVERTISING_ACTIONS.find(a => a.name === 'get_ad_stats');
   if (adStatsGlobal) aiPage.registerGlobal(adStatsGlobal);
+
+  // ── Новые глобальные actions — задачи ────────────────────────────────────────
+  const editTaskGlobal = TASKS_ACTIONS.find(a => a.name === 'edit_task');
+  if (editTaskGlobal) aiPage.registerGlobal(editTaskGlobal);
+
+  const deleteTaskGlobal = TASKS_ACTIONS.find(a => a.name === 'delete_task');
+  if (deleteTaskGlobal) aiPage.registerGlobal(deleteTaskGlobal);
+
+  // ── Массовое изменение цен по условию ──────────────────────────────────────
+  aiPage.registerGlobal({
+    name: 'bulk_price_filtered',
+    description: 'Изменить цены товаров по условию: только нужный маркетплейс И маржа выше порога. Используй когда говорят «снизь цены на WB с маржой >30%», «скидка 10% на Ozon товарам с маржой выше 20%».',
+    args: '{ mp: "wb"|"ozon"|"yandex", delta: number, percent?: boolean, min_margin?: number }',
+    run: async (a: { mp: string; delta: number; percent?: boolean; min_margin?: number }) => {
+      const pm = w().productsHubModule;
+      let items: any[] = pm?.items ?? [];
+      if (!items.length) {
+        w().app?.navigateTo?.('products-hub');
+        await new Promise(r => setTimeout(r, 800));
+        items = w().productsHubModule?.items ?? [];
+      }
+      if (!items.length) return 'Товары не загружены. Откройте раздел Products Hub и повторите команду.';
+
+      const mpItems = items.filter((i: any) => {
+        const itemMp = (i.mp ?? i.marketplace ?? '').toLowerCase();
+        return itemMp === a.mp.toLowerCase() || itemMp.includes(a.mp.toLowerCase());
+      });
+      const filtered = a.min_margin != null
+        ? mpItems.filter((i: any) => (i.margin_pct ?? i.margin ?? 0) >= a.min_margin!)
+        : mpItems;
+
+      if (!filtered.length) {
+        const reason = a.min_margin != null ? ` с маржой ≥${a.min_margin}%` : '';
+        return `Товаров на ${a.mp.toUpperCase()}${reason} не найдено.`;
+      }
+
+      const articles = filtered.map((i: any) => (i.vendor_code ?? i.offer_id ?? i.article ?? i.nm_id ?? '').toString()).filter(Boolean);
+
+      if (typeof pm?.aiApplyPriceDelta === 'function') {
+        await pm.aiApplyPriceDelta({ mp: a.mp, delta: a.delta, percent: a.percent ?? false, articles });
+        const marginNote = a.min_margin != null ? ` с маржой ≥${a.min_margin}%` : '';
+        return `Цены изменены для ${articles.length} товаров на ${a.mp.toUpperCase()}${marginNote}: ${a.percent ? `${a.delta}%` : `${a.delta}₽`}`;
+      }
+
+      const marginNote = a.min_margin != null ? ` с маржой ≥${a.min_margin}%` : '';
+      return `Найдено ${filtered.length} товаров на ${a.mp.toUpperCase()}${marginNote}. Применение цен через API прямо сейчас недоступно — откройте Products Hub, выделите эти товары и используйте «Изменить цену».`;
+    },
+  });
+
+  // ── Новые глобальные actions — товары ─────────────────────────────────────────
+  const hideProductGlobal = PRODUCTS_HUB_ACTIONS.find(a => a.name === 'hide_product');
+  if (hideProductGlobal) aiPage.registerGlobal(hideProductGlobal);
+
+  const showProductGlobal = PRODUCTS_HUB_ACTIONS.find(a => a.name === 'show_product');
+  if (showProductGlobal) aiPage.registerGlobal(showProductGlobal);
+
+  const updateDescGlobal = PRODUCTS_HUB_ACTIONS.find(a => a.name === 'update_product_description');
+  if (updateDescGlobal) aiPage.registerGlobal(updateDescGlobal);
+
+  // ── Новые глобальные actions — репрайсер ─────────────────────────────────────
+  for (const act of REPRICER_MGMT_ACTIONS) aiPage.registerGlobal(act);
+
+  // ── Новые глобальные actions — витрина ─────────────────────────────────────
+  for (const act of SIMASTORE_ACTIONS) aiPage.registerGlobal(act);
+
+  // ── Новые глобальные actions — настройки ─────────────────────────────────────
+  for (const act of SETTINGS_ACTIONS) aiPage.registerGlobal(act);
 }

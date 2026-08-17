@@ -205,7 +205,7 @@ export class SupplyManagementModule {
       return `<div class="sp-empty">
         <div class="sp-empty-icon">${I.truck()}</div>
         <p>Выберите магазин для загрузки поставок</p>
-        <button class="sp-btn sp-btn-ghost" id="sp-help" style="margin-top:8px">? Как это работает</button>
+        <button class="sp-btn sp-btn-ghost" id="sp-help-no-store" style="margin-top:8px">? Как это работает</button>
       </div>`;
     }
     if (this.loading) return this.renderSkeleton();
@@ -215,7 +215,7 @@ export class SupplyManagementModule {
         <div class="sp-error-text">${esc(this.error)}</div>
         <div class="sp-error-actions">
           <button class="sp-btn sp-btn-primary" id="sp-refresh">Попробовать снова</button>
-          <button class="sp-btn sp-btn-ghost" id="sp-help">? Инструкция</button>
+          <button class="sp-btn sp-btn-ghost" id="sp-help-error">? Инструкция</button>
         </div>
       </div>`;
     }
@@ -226,7 +226,7 @@ export class SupplyManagementModule {
         <div class="sp-empty-actions">
           <button class="sp-btn sp-btn-primary" id="sp-create-empty">${I.plus()} Создать поставку</button>
           ${this.tab === 'wb' ? `<button class="sp-btn sp-btn-purple" id="sp-wizard-empty">${I.truck()} Из заказов</button>` : ''}
-          <button class="sp-btn sp-btn-ghost" id="sp-help">? Как создать</button>
+          <button class="sp-btn sp-btn-ghost" id="sp-help-empty">? Как создать</button>
         </div>
       </div>`;
     }
@@ -562,7 +562,7 @@ export class SupplyManagementModule {
           case 'sp-reco-load': this.loadReco(); break;
           case 'sp-export-csv': this.exportCsv(); break;
           case 'sp-clear-filter': this.searchQuery = ''; this.statusFilter = ''; this.flush(); break;
-          case 'sp-help': this.openHelpModal(); break;
+          case 'sp-help': case 'sp-help-no-store': case 'sp-help-error': case 'sp-help-empty': this.openHelpModal(); break;
         }
       }
 
@@ -611,10 +611,20 @@ export class SupplyManagementModule {
   }
 
   private flush(): void {
+    const active = document.activeElement as HTMLElement | null;
+    const activeId = active?.id;
+    const selStart = active instanceof HTMLInputElement ? active.selectionStart : null;
     const content = this.el.querySelector('#sp-content');
     if (content) content.innerHTML = this.renderContent();
     const kpi = this.el.querySelector('#sp-kpi');
     if (kpi) kpi.innerHTML = this.renderKpi();
+    if (activeId) {
+      const restored = this.el.querySelector(`#${activeId}`) as HTMLInputElement | null;
+      if (restored) {
+        restored.focus();
+        if (selStart !== null && 'setSelectionRange' in restored) restored.setSelectionRange(selStart, selStart);
+      }
+    }
   }
 
   // ── Data: stores ─────────────────────────────────────────────────────────────
@@ -651,7 +661,8 @@ export class SupplyManagementModule {
     this.loading = true; this.error = ''; this.flush();
     try {
       this.supplies = [];
-      const store = this.stores.find(s => s.id === this.storeId)!;
+      const store = this.getStore();
+      if (!store) { this.error = 'Магазин не найден — выберите снова'; return; }
 
       if (this.tab === 'ozon') {
         let list: any[] = [];
@@ -733,7 +744,8 @@ export class SupplyManagementModule {
     if (!this.detail) return;
     this.detailItemsLoading = true; this.flush();
     try {
-      const store = this.stores.find(s => s.id === this.storeId)!;
+      const store = this.getStore();
+      if (!store) { this.detailItems = []; return; }
 
       if (this.tab === 'ozon') {
         const d = await ozonApi.getSupplyDetails({ client_id: store.client_id, api_key: store.api_key }, this.detail.id);
@@ -772,7 +784,8 @@ export class SupplyManagementModule {
     if (!this.detail) return;
     this.detailReturnsLoading = true; this.flush();
     try {
-      const store = this.stores.find(s => s.id === this.storeId)!;
+      const store = this.getStore();
+      if (!store) { this.detailReturns = []; return; }
 
       if (this.tab === 'ozon') {
         // Load supply items first to filter returns by SKU
@@ -785,10 +798,10 @@ export class SupplyManagementModule {
           fboReturns.push(...page);
           if (page.length < 100) break;
         }
-        // FBS returns: paginate by cursor (last_id)
+        // FBS returns: paginate by cursor (last_id), max 100 pages = 10,000 returns
         const fbsReturns: any[] = [];
         let last_id = '';
-        while (true) {
+        for (let iter = 0; iter < 100; iter++) {
           const res = await ozonApi.getFbsReturns(creds, { limit: 100, last_id }).catch(() => ({ returns: [], last_id: '', has_next: false }));
           fbsReturns.push(...res.returns);
           if (!res.has_next) break;
@@ -932,37 +945,100 @@ export class SupplyManagementModule {
 
   // ── Dialogs ──────────────────────────────────────────────────────────────────
 
-  private openCreateDialog(): void {
+  private async openCreateDialog(): Promise<void> {
     if (!this.storeId) { showToast('Выберите магазин', 'warning'); return; }
     if (this.tab === 'yandex') { this.openYmDialog(); return; }
 
     const ov = this.modal(`Новая поставка ${this.tab === 'ozon' ? 'Ozon FBO' : 'WB FBW'}`);
-    ov.body.innerHTML = `
-      <form id="sp-dlg-form" class="sp-form">
-        <div class="sp-field">
-          <label class="sp-label">Название поставки</label>
-          <input name="name" required placeholder="Например: Поставка июль 2026" class="sp-input" autofocus>
+
+    if (this.tab === 'ozon') {
+      ov.body.innerHTML = `<div class="sp-loading-inline">${I.loader()} Загружаем склады Ozon...</div>`;
+      const store = this.getStore();
+      if (!store) { ov.el.remove(); showToast('Магазин не найден', 'error'); return; }
+
+      let warehouses: any[] = [];
+      try {
+        warehouses = await ozonApi.getWarehouses({ client_id: store.client_id, api_key: store.api_key });
+      } catch (err: any) {
+        ov.body.innerHTML = `<div class="sp-error-block" style="margin:0">
+          <div class="sp-error-text">Ошибка загрузки складов: ${esc(err.message)}</div>
         </div>
-        ${this.tab === 'ozon' ? `<div class="sp-help-note">
-          После создания откроется состав поставки — там добавите товары по SKU.
-        </div>` : `<div class="sp-help-note">
-          После создания добавьте FBW-заказы через ЛК WB или используйте «Из заказов» при создании.
-        </div>`}
-        <div class="sp-form-footer">
-          <button type="button" class="sp-btn sp-btn-ghost" data-close>Отмена</button>
-          <button type="submit" class="sp-btn sp-btn-primary">${I.plus()} Создать</button>
+        <div class="sp-form-footer"><button class="sp-btn sp-btn-ghost" data-close>Закрыть</button></div>`;
+        return;
+      }
+
+      // Prefer FBO warehouses (is_rfbs === false); fallback to all if none explicitly marked
+      const fboWarehouses = warehouses.filter(w => w.is_rfbs === false);
+      const displayWarehouses = fboWarehouses.length > 0 ? fboWarehouses : warehouses;
+
+      if (!displayWarehouses.length) {
+        ov.body.innerHTML = `<div class="sp-error-block" style="margin:0">
+          <div class="sp-error-text">У магазина нет FBO-складов. Подключите FBO-склад в Ozon Seller Portal → Склады.</div>
         </div>
-      </form>`;
-    (ov.body.querySelector('#sp-dlg-form') as HTMLFormElement).addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const name = (new FormData(e.target as HTMLFormElement).get('name') as string).trim();
-      ov.el.remove();
-      await this.createSupply(name);
-    });
+        <div class="sp-form-footer"><button class="sp-btn sp-btn-ghost" data-close>Закрыть</button></div>`;
+        return;
+      }
+
+      const warehouseField = displayWarehouses.length === 1
+        ? `<input type="hidden" name="warehouseId" value="${displayWarehouses[0].warehouse_id}">
+           <div class="sp-help-note">Склад: <b>${esc(displayWarehouses[0].name)}</b></div>`
+        : `<div class="sp-field">
+             <label class="sp-label">FBO-склад Ozon</label>
+             <select name="warehouseId" class="sp-input" required>
+               ${displayWarehouses.map(w => `<option value="${w.warehouse_id}">${esc(w.name)}</option>`).join('')}
+             </select>
+           </div>`;
+
+      ov.body.innerHTML = `
+        <form id="sp-dlg-form" class="sp-form">
+          <div class="sp-field">
+            <label class="sp-label">Название поставки</label>
+            <input name="name" required placeholder="Например: Поставка июль 2026" class="sp-input" autofocus>
+          </div>
+          ${warehouseField}
+          <div class="sp-help-note">После создания откроется состав поставки — там добавите товары по SKU.</div>
+          <div class="sp-form-footer">
+            <button type="button" class="sp-btn sp-btn-ghost" data-close>Отмена</button>
+            <button type="submit" class="sp-btn sp-btn-primary">${I.plus()} Создать</button>
+          </div>
+        </form>`;
+      (ov.body.querySelector('#sp-dlg-form') as HTMLFormElement).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target as HTMLFormElement);
+        const name = (fd.get('name') as string).trim();
+        const warehouseId = Number(fd.get('warehouseId'));
+        ov.el.remove();
+        await this.createSupply(name, warehouseId);
+      });
+
+    } else {
+      // WB — simple name form
+      ov.body.innerHTML = `
+        <form id="sp-dlg-form" class="sp-form">
+          <div class="sp-field">
+            <label class="sp-label">Название поставки</label>
+            <input name="name" required placeholder="Например: Поставка июль 2026" class="sp-input" autofocus>
+          </div>
+          <div class="sp-help-note">
+            После создания добавьте FBW-заказы через ЛК WB или используйте «Из заказов» при создании.
+          </div>
+          <div class="sp-form-footer">
+            <button type="button" class="sp-btn sp-btn-ghost" data-close>Отмена</button>
+            <button type="submit" class="sp-btn sp-btn-primary">${I.plus()} Создать</button>
+          </div>
+        </form>`;
+      (ov.body.querySelector('#sp-dlg-form') as HTMLFormElement).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = (new FormData(e.target as HTMLFormElement).get('name') as string).trim();
+        ov.el.remove();
+        await this.createSupply(name);
+      });
+    }
   }
 
   private openYmDialog(): void {
-    const store = this.stores.find(s => s.id === this.storeId)!;
+    const store = this.getStore();
+    if (!store) { showToast('Магазин не найден', 'error'); return; }
     if (!store.campaign_id) {
       this.openHelpModal('yandex');
       showToast('У магазина не задан Campaign ID — смотри инструкцию', 'warning');
@@ -1014,7 +1090,8 @@ export class SupplyManagementModule {
 
   private async openWbWizard(): Promise<void> {
     if (!this.storeId) { showToast('Выберите магазин', 'warning'); return; }
-    const store = this.stores.find(s => s.id === this.storeId)!;
+    const store = this.getStore();
+    if (!store) { showToast('Магазин не найден', 'error'); return; }
     const ov = this.modal('Создать поставку WB из новых заказов');
     ov.body.innerHTML = `<div class="sp-loading-inline">${I.loader()} Загружаем новые FBW-заказы...</div>`;
 
@@ -1125,8 +1202,9 @@ export class SupplyManagementModule {
       if (!items.length) { showToast('Неверный формат. Пример: 12345:10', 'warning'); return; }
       ov.el.remove();
       try {
-        const store = this.stores.find(s => s.id === this.storeId)!;
-        await ozonApi.addProductsToSupply({ client_id: store.client_id, api_key: store.api_key }, this.detail!.id, items);
+        const store = this.getStore();
+        if (!store || !this.detail) { showToast('Магазин не найден', 'error'); return; }
+        await ozonApi.addProductsToSupply({ client_id: store.client_id, api_key: store.api_key }, this.detail.id, items);
         showToast(`Добавлено ${items.length} позиций`, 'success');
         this.detailItems = []; this.detailTab = 'items';
         await this.loadDetailItems();
@@ -1278,17 +1356,22 @@ export class SupplyManagementModule {
 
   // ── API Actions ───────────────────────────────────────────────────────────────
 
-  private async createSupply(name: string): Promise<void> {
+  private async createSupply(name: string, warehouseId?: number): Promise<void> {
     this.busy = true; this.flush();
     try {
-      const store = this.stores.find(s => s.id === this.storeId)!;
+      const store = this.getStore();
+      if (!store) { showToast('Магазин не найден', 'error'); return; }
       let newId = '';
       if (this.tab === 'ozon') {
-        const warehouses = await ozonApi.getWarehouses({ client_id: store.client_id, api_key: store.api_key });
-        if (!warehouses.length) throw new Error('У магазина нет складов Ozon. Подключите FBO-склад в Seller Portal.');
-        // Try to find an FBO warehouse by name; fall back to first
-        const fboWh = warehouses.find(w => /fbo/i.test(w.name)) ?? warehouses[0];
-        const res = await ozonApi.createSupply({ client_id: store.client_id, api_key: store.api_key }, fboWh.warehouse_id, name);
+        let resolvedWarehouseId = warehouseId;
+        if (!resolvedWarehouseId) {
+          // Fallback for AI API calls: auto-select FBO warehouse
+          const warehouses = await ozonApi.getWarehouses({ client_id: store.client_id, api_key: store.api_key });
+          if (!warehouses.length) throw new Error('У магазина нет складов Ozon. Подключите FBO-склад в Seller Portal.');
+          const fboWh = warehouses.find(w => w.is_rfbs === false) ?? warehouses.find(w => /fbo/i.test(w.name)) ?? warehouses[0];
+          resolvedWarehouseId = fboWh.warehouse_id;
+        }
+        const res = await ozonApi.createSupply({ client_id: store.client_id, api_key: store.api_key }, resolvedWarehouseId, name);
         newId = res.supplyId;
       } else {
         const res = await wbApi.createWbSupply(store.api_key, name);
@@ -1310,7 +1393,8 @@ export class SupplyManagementModule {
   private async createYmShipment(dateFrom: string, dateTo: string, externalId?: string): Promise<void> {
     this.busy = true; this.flush();
     try {
-      const store = this.stores.find(s => s.id === this.storeId)!;
+      const store = this.getStore();
+      if (!store) throw new Error('Магазин не найден');
       if (!store.campaign_id) throw new Error('campaign_id не задан — укажите в настройках магазина');
       const { id: newId } = await yandexApi.createShipment(store.api_key, Number(store.campaign_id), {
         planIntervalFrom: dateFrom,
@@ -1355,7 +1439,8 @@ export class SupplyManagementModule {
     if (!confirm(confirmMsg)) return;
     this.busy = true; this.flush();
     try {
-      const store = this.stores.find(s => s.id === this.storeId)!;
+      const store = this.getStore();
+      if (!store) throw new Error('Магазин не найден');
       if (this.tab === 'ozon')
         await ozonApi.sendSupply({ client_id: store.client_id, api_key: store.api_key }, this.detail.id);
       else if (this.tab === 'wb')
@@ -1389,16 +1474,15 @@ export class SupplyManagementModule {
     this.busy = true; this.flush();
     try {
       let blob: Blob;
-      const store = this.stores.find(s => s.id === this.storeId)!;
+      const store = this.getStore();
+      if (!store) throw new Error('Магазин не найден');
       if (this.tab === 'ozon')
         blob = await ozonApi.getSupplyBarcodes({ client_id: store.client_id, api_key: store.api_key }, this.detail.id);
       else if (this.tab === 'wb')
         blob = await wbApi.getSupplyBarcodePdf(store.api_key, this.detail.id);
       else
         blob = await getYandexShipmentLabels(store as any, Number(this.detail.id));
-      const url = URL.createObjectURL(blob);
-      Object.assign(document.createElement('a'), { href: url, download: `supply_${this.detail.id}.pdf` }).click();
-      URL.revokeObjectURL(url);
+      this.dlBlob(blob, `supply_${this.detail.id}.pdf`);
       showToast('Этикетки скачаны', 'success');
     } catch (err: any) {
       showToast(`Ошибка скачивания: ${err.message}`, 'error');
@@ -1412,7 +1496,8 @@ export class SupplyManagementModule {
     if (this.tab !== 'ozon') { showToast('Отмена через API доступна только для Ozon', 'info'); return; }
     this.busy = true; this.flush();
     try {
-      const store = this.stores.find(s => s.id === this.storeId)!;
+      const store = this.getStore();
+      if (!store) throw new Error('Магазин не найден');
       await ozonApi.cancelSupply({ client_id: store.client_id, api_key: store.api_key }, this.detail.id);
       showToast('Поставка отменена', 'success');
       this.detail = null; this.detailItems = []; this.detailReturns = [];
@@ -1430,10 +1515,23 @@ export class SupplyManagementModule {
     for (const item of this.detailItems) rows.push([item.name, item.sku ?? '', String(item.qty)]);
     const csv = rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    Object.assign(document.createElement('a'), { href: url, download: `supply_${this.detail?.id ?? 'export'}.csv` }).click();
-    URL.revokeObjectURL(url);
+    this.dlBlob(blob, `supply_${this.detail?.id ?? 'export'}.csv`);
     showToast('CSV скачан', 'success');
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────────
+
+  private getStore(): Record<string, any> | null {
+    return this.stores.find(s => s.id === this.storeId) ?? null;
+  }
+
+  private dlBlob(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   // ── Stats ─────────────────────────────────────────────────────────────────────
@@ -1467,7 +1565,8 @@ export class SupplyManagementModule {
   async aiCreateWbSupplyFromNewOrders(name?: string): Promise<string> {
     if (!this.storeId && this.stores.length) this.storeId = this.stores[0].id;
     if (!this.storeId) throw new Error('Нет WB магазинов');
-    const store = this.stores.find(s => s.id === this.storeId)!;
+    const store = this.getStore();
+    if (!store) throw new Error('Магазин не найден');
     const orders = await wbApi.getNewOrders(store.api_key);
     if (!orders.length) return 'Новых заказов для поставки нет';
     const supplyName = name ?? `Поставка ${new Date().toLocaleDateString('ru-RU')}`;

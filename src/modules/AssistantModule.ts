@@ -10,6 +10,7 @@ import { selectionCtx } from '@/services/selectionContext';
 import { reportAiUsage } from '@/services/aiUsage';
 import { SupportSpamGuard } from '@/services/supportSpamGuard';
 import { hasQuota, getQuotaInfo, recordDailyTokens, getDailyLimit, FREE_DAILY_TOKENS } from '@/services/aiTokenQuota';
+import { loadRecentNews, countUnread, markAllRead, formatNewsForContext, type MpNews } from '@/services/mpNewsService';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -61,6 +62,18 @@ interface ChainAction {
   plan: string;
   steps: ChainStep[];
 }
+
+interface ClarifyAction {
+  action: 'clarify';
+  question: string;
+  field: string;
+  options?: string[];
+  // pending context — filled before asking
+  pendingActionName?: string;
+  pendingArgs?: Record<string, any>;
+  originalRequest?: string;
+}
+
 
 // ── Chat sessions ─────────────────────────────────────────────────────────────
 
@@ -115,8 +128,25 @@ const ACTION_LABELS: Record<string, string> = {
   set_price: 'Изменение цены товара',
   apply_price_delta: 'Массовое изменение цен',
   bulk_price_change: 'Массовое изменение цен',
+  bulk_price_filtered: 'Изменение цен по условию',
+  hide_product: 'Скрытие товара',
+  show_product: 'Активация товара',
+  update_product_description: 'Обновление описания товара',
+  // Репрайсер
+  list_repricer_rules: 'Список правил репрайсера',
+  edit_repricer_rule: 'Редактирование правила репрайсера',
+  // Витрина
+  simastore_get_link: 'Ссылка на витрину',
+  simastore_publish: 'Публикация витрины',
+  simastore_add_products: 'Добавление товаров на витрину',
+  // Настройки
+  get_subscription_info: 'Информация о подписке',
+  check_api_keys: 'Проверка API-ключей',
+  invite_team_member: 'Приглашение сотрудника',
   // Задачи
   mark_task_done: 'Выполнение задачи',
+  edit_task: 'Редактирование задачи',
+  delete_task: 'Удаление задачи',
   create_reorder_tasks: 'Задачи по дозаказу',
   // Поставки / Реклама
   create_repricer_rule: 'Правило репрайсера',
@@ -237,12 +267,14 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 **Главная / Дашборд (home)**
 Ключевые метрики за день: выручка, новые заказы, остатки в зоне риска, просроченные задачи.
 Клик по любой карточке — переход в соответствующий раздел. Обновляй каждое утро.
+Сима ВИДИТ: выручку и маржу из аналитики, кол-во OOS и критично малых остатков, просроченные задачи, отзывы без ответа, расход рекламы. Используй эти данные для сводки «что важно сегодня».
 
 **Аналитика (analytics)**
 Детальный анализ за период (день/неделя/месяц/квартал). Метрики: выручка нетто/брутто, заказы, возвраты, маржа, средний чек, конверсия. Сравнение периодов, разбивка по маркетплейсам и SKU. ABC-анализ товаров по прибыли.
 
 **Репрайсер (repricer)**
-Автоматическое управление ценами по правилам. Стратегии: следить за конкурентами, держать позицию, целевая маржа. Настройка: выбрать SKU → "Добавить правило" → стратегия + границы мин/макс цены. ОБЯЗАТЕЛЬНО проверяй unit-экономику перед снижением цены.
+Автоматическое управление ценами по правилам. Стратегии: следить за конкурентами, держать позицию, целевая маржа. Настройка: выбрать SKU → «Добавить правило» → стратегия + границы мин/макс цены. ОБЯЗАТЕЛЬНО проверяй unit-экономику перед снижением цены.
+Сима ВИДИТ: список правил (list_repricer_rules), их стратегии, мин/макс цены, количество SKU. Может редактировать (edit_repricer_rule), показывать аналитику по настройкам.
 
 **Заказы (orders)**
 Все заказы со всех маркетплейсов в одном экране. Фильтры: статус, маркетплейс, дата, SKU. Статусы FBS выделены по дедлайнам — красный = срочно, просрочка = штраф 35%. Группировка для сборки на складе.
@@ -255,12 +287,14 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 
 **Производители / Поставщики (producers)**
 База поставщиков и производителей. Хранит: контакты, условия, прайсы, историю заказов. Связан с разделом Остатки для планирования поставок.
+Сима ВИДИТ: список поставщиков с контактами (имена, телефоны, email). Может создавать задачи на дозаказ (create_reorder_tasks).
 
 **Задачи (tasks)**
 Планировщик операционных задач команды. Приоритеты: 🔴 срочно, 🟡 важно, 🔵 инфо. Создание: кнопка "+" или скажи мне "создай задачу [название]". Фильтры по дате/исполнителю/статусу. Просроченные задачи выделяются красным.
 
 **Витрина / SimaStore (simastore)**
-Собственный интернет-магазин без маркетплейса. URL: /s/название. Товары синхронизируются из Products Hub. Подключение оплаты и доставки через настройки витрины.
+Собственный интернет-магазин без маркетплейса. URL: /s/название. Товары берутся из Products Hub. Подключение оплаты и доставки через настройки витрины.
+Сима ВИДИТ: slug, статус публикации, кол-во товаров, статус оплаты/доставки. Может: получить ссылку (simastore_get_link), опубликовать (simastore_publish), добавить товары (simastore_add_products).
 
 **Подключение маркетплейсов (marketplaces)**
 Подключение API аккаунтов WB, Ozon, Яндекс Маркет. Как получить ключ:
@@ -271,6 +305,7 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 
 **Настройки (settings)**
 Профиль и безопасность, смена пароля. Подключение маркетплейсов. Настройки AI (Сима): здесь вводится OpenRouter API-ключ — без него я не работаю. Управление командой: добавить/удалить пользователей компании. Тарифы и подписка.
+Сима ВИДИТ: статус API-ключей МП, настроен ли AI-ключ, кол-во пользователей, тариф. Может: проверить ключи (check_api_keys), показать подписку (get_subscription_info), пригласить сотрудника (invite_team_member).
 
 **Профиль (profile)**
 Личные данные, фото профиля, контакты. История входов и устройств.
@@ -306,27 +341,54 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 
 ## ГЛОБАЛЬНЫЕ КОМАНДЫ (доступны всегда, с любой страницы)
 Следующие действия можно вызвать через {"action":"page_action","name":"...","args":{}} или как шаг в chain:
+ВАЖНО: если обязательный аргумент не указан — используй {"action":"clarify",...} вместо угадывания!
 
-| name | что делает |
-|------|-----------|
-| create_oos_tasks | Создать задачи по всем OOS-товарам |
-| run_risk_audit | Полный аудит рисков (остатки, задачи, отзывы, реклама) + задачи |
-| bulk_price_change | Изменить цены всех товаров (args: mp, delta, percent) |
-| generate_report | Создать Excel-отчёт (args: type: analytics/stock/orders/full) |
-| export_orders_excel_global | Выгрузить заказы в Excel (args: mp?, status?, days?, title?) |
-| reply_all_unanswered | AI-ответы на все отзывы без ответа (args: template?, stars_max?, limit?) |
-| ai_generate_review_reply | Сгенерировать AI-ответ на конкретный отзыв (args: review_id?) |
-| get_ad_stats | Показать статистику рекламных кампаний (args: sort?, only_active?) |
-| toggle_campaign | Поставить/снять кампанию с паузы (args: campaign_id, action: pause|resume) |
-| set_campaign_budget | Изменить бюджет кампании (args: campaign_id, budget) |
-| sync_marketplace | Синхронизировать данные с МП (args: mp опционально) |
-| navigate_to | Перейти в любой раздел (args: page). Разделы: home, analytics, repricer, orders, products-hub, stock, producers, tasks, simastore, marketplaces, ozon, wb, yandex, settings, profile, reviews, chats, docs, advertising, supply |
-| create_task_global | Создать задачу из любого места |
-| create_doc | Создать Excel или Word документ (args: type, title) |
-| daily_checklist | Сформировать дневной чеклист приоритетов (нет аргументов) |
-| toggle_theme_off | Включить тёмную тему |
-| toggle_theme_on | Включить светлую тему |
-| reload_page | Перезагрузить страницу |
+| name | обязательные args | что делает |
+|------|-------------------|-----------|
+| create_oos_tasks | — | Задачи по всем OOS-товарам |
+| run_risk_audit | — | Полный аудит рисков + задачи |
+| bulk_price_change | mp, delta | Изменить цены всех товаров (percent опц.) |
+| generate_report | — | Excel-отчёт (type: analytics/stock/orders/full) |
+| export_orders_excel_global | — | Заказы в Excel (mp?, status?, days?) |
+| reply_all_unanswered | — | AI-ответы на все отзывы без ответа |
+| ai_generate_review_reply | — | AI-ответ на конкретный отзыв (review_id?) |
+| get_ad_stats | — | Статистика рекламных кампаний |
+| toggle_campaign | campaign_id, action | Пауза/запуск кампании |
+| set_campaign_budget | campaign_id, budget | Изменить бюджет кампании |
+| sync_marketplace | — | Синхронизация с МП (mp опц.) |
+| navigate_to | page | Перейти в раздел |
+| create_task_global | title | Создать задачу из любого места |
+| create_doc | type | Excel или Word документ |
+| daily_checklist | — | Дневной чеклист приоритетов |
+| toggle_theme_off | — | Тёмная тема |
+| toggle_theme_on | — | Светлая тема |
+| reload_page | — | Перезагрузить страницу |
+| edit_task | title | Изменить задачу (new_title?, priority?, due_date?) |
+| delete_task | title | Удалить задачу (СПРОСИ подтверждение через clarify) |
+| update_product_description | article | Обновить описание товара (name?, description?) |
+| list_repricer_rules | — | Показать все правила репрайсера |
+| edit_repricer_rule | rule_id | Изменить параметры правила (min_price?, max_price?, strategy?) |
+| simastore_get_link | — | Ссылка на витрину |
+| simastore_publish | publish | Опубликовать/снять витрину (true/false) |
+| simastore_add_products | — | Добавить товары на витрину (articles? опц.) |
+| get_subscription_info | — | Информация о тарифе и подписке |
+| check_api_keys | — | Статус API-ключей всех МП и AI |
+| invite_team_member | email | Пригласить сотрудника (role: admin/manager/viewer) |
+| hide_product | article | Скрыть товар (СПРОСИ подтверждение через clarify) |
+| show_product | article | Активировать скрытый товар |
+| bulk_price_filtered | mp, delta | Цены по условию: mp + маржа (min_margin?, percent?) |
+
+## УТОЧНЯЮЩИЙ ВОПРОС (CLARIFY)
+Если пользователь просит выполнить action, но не указал ОБЯЗАТЕЛЬНЫЙ параметр — НИКОГДА не угадывай. Спроси ровно один параметр через JSON:
+{"action":"clarify","question":"Какой маркетплейс? WB, Ozon или Яндекс Маркет?","field":"mp","options":["wb","ozon","yandex"]}
+- question: конкретный вопрос с вариантами прямо в тексте
+- field: имя параметра который нужно узнать
+- options: массив быстрых кнопок (показываются в интерфейсе) — всегда добавляй если возможно
+- Задавай максимум ОДИН вопрос за раз
+- После ответа пользователя — выполни action с полученным параметром
+- НЕ уточняй параметры для: navigate, reload_page, toggle_theme, daily_checklist, run_risk_audit (они не требуют обязательных аргументов)
+- ОБЯЗАТЕЛЬНО спрашивай для: set_price (mp, article, price), bulk_price_change (mp), bulk_price_filtered (mp), export_orders (mp если нужен), toggle_campaign (campaign_id), hide_product (article), show_product (article)
+- Примеры когда спрашивать: «снизь цены на 10%» → спроси «На каком маркетплейсе снижать цены?»; «удали задачу» → спроси «Какую задачу удалить? Напиши название»; «скрой товар» → спроси «Укажи артикул товара который нужно скрыть»
 
 ## ЦЕПОЧКИ ДЕЙСТВИЙ (CHAIN ACTIONS)
 Для выполнения нескольких шагов последовательно — ответь ОДНИМ JSON без пояснений:
@@ -837,10 +899,15 @@ export class AssistantModule {
   private voiceSendOnEnd = false;  // when true: auto-send after voice stops
   private voiceHotkeyHeld = false; // Alt+Space hotkey currently held
 
+
   // ── AI Cursor ──────────────────────────────────────────────────────────────
   private aiCursorActive = false;
   private aiCursorOverlay: HTMLDivElement | null = null;
   private aiCursorCleanup: (() => void) | null = null;
+
+  // ── MP News ───────────────────────────────────────────────────────────────
+  private mpNews: MpNews[] = [];
+  private mpNewsUnread = 0;
 
   // ── Chat sessions ─────────────────────────────────────────────────────────
   private sessions: ChatSession[] = [];
@@ -905,6 +972,9 @@ export class AssistantModule {
 
     // Запуск фонового мониторинга
     this.startBackgroundMonitor();
+
+    // Загрузка новостей МП (не блокируем init)
+    setTimeout(() => this.loadMpNews(), 3000);
   }
 
   // ── Фоновый мониторинг ────────────────────────────────────────────────────────
@@ -981,6 +1051,66 @@ export class AssistantModule {
     }
   }
 
+  private async loadMpNews(): Promise<void> {
+    try {
+      this.mpNews = await loadRecentNews(7);
+      this.mpNewsUnread = countUnread(this.mpNews);
+      if (this.mpNews.length) this.renderNewsBlock();
+      if (this.mpNewsUnread > 0) this.renderNewsBadge();
+    } catch { /* non-critical */ }
+  }
+
+  private renderNewsBadge(): void {
+    if (!this.btn) return;
+    if (this.btn.querySelector('.sima-news-dot')) return;
+    const dot = document.createElement('span');
+    dot.className = 'sima-news-dot';
+    dot.title = `${this.mpNewsUnread} новых новостей МП`;
+    this.btn.appendChild(dot);
+  }
+
+  private removeNewsBadge(): void {
+    this.btn?.querySelector('.sima-news-dot')?.remove();
+  }
+
+  private renderNewsBlock(): void {
+    if (!this.panel || !this.mpNews.length) return;
+    const block = this.panel.querySelector<HTMLElement>('#sd-ap-news-block');
+    const countEl = this.panel.querySelector<HTMLElement>('#sd-ap-news-count');
+    if (block) block.style.display = 'block';
+    if (countEl && this.mpNewsUnread > 0) countEl.textContent = `${this.mpNewsUnread} новых`;
+  }
+
+  private renderNewsList(): void {
+    const list = this.panel?.querySelector<HTMLElement>('#sd-ap-news-list');
+    if (!list || !this.mpNews.length) return;
+    const mpLabel: Record<string, string> = { wb: 'WB', ozon: 'Ozon', yandex: 'ЯМ', general: 'МП' };
+    const mpColor: Record<string, string> = { wb: '#cb11ab', ozon: '#005bff', yandex: '#fc0', general: 'var(--ap-accent)' };
+    list.innerHTML = this.mpNews.slice(0, 15).map(n => {
+      const date = new Date(n.published_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+      const imp = n.is_important ? '<span class="sd-ap-news-imp">⚠️ важно</span>' : '';
+      const color = mpColor[n.mp] ?? 'var(--ap-accent)';
+      const label = mpLabel[n.mp] ?? n.mp;
+      const link = n.source_url ? `<a class="sd-ap-news-link" href="${n.source_url}" target="_blank" rel="noopener">→ источник</a>` : '';
+      return `<div class="sd-ap-news-item">
+        <div class="sd-ap-news-meta">
+          <span class="sd-ap-news-mp" style="background:${color}">${label}</span>
+          <span class="sd-ap-news-date">${date}</span>
+          ${imp}
+        </div>
+        <div class="sd-ap-news-item-title">${esc(n.title)}</div>
+        <div class="sd-ap-news-item-sum">${esc(n.summary)}</div>
+        ${link}
+      </div>`;
+    }).join('');
+
+    // Быстрая кнопка — спросить Симу про новости
+    list.innerHTML += `<button class="sd-ap-news-ask" id="sd-ap-news-ask">Спросить Симу про новости МП</button>`;
+    list.querySelector('#sd-ap-news-ask')?.addEventListener('click', () => {
+      this.sendMessage('Расскажи про последние новости маркетплейсов из своей базы — что изменилось и что важно для продавца?');
+    });
+  }
+
   /** Called by admin panel to update config without page reload */
   updateConfig(key: string, model: string): void {
     this.aiKey   = key;
@@ -1054,6 +1184,23 @@ export class AssistantModule {
     // Settings accordion
     panel.querySelector('#sd-ap-settings-header')?.addEventListener('click', () => {
       panel.querySelector('#sd-ap-settings-section')?.classList.toggle('open');
+    });
+
+    // News accordion
+    panel.querySelector('#sd-ap-news-hdr')?.addEventListener('click', () => {
+      const list = panel.querySelector<HTMLElement>('#sd-ap-news-list');
+      const arrow = panel.querySelector<HTMLElement>('.sd-ap-news-arrow');
+      if (!list) return;
+      const isOpen = list.style.display !== 'none';
+      list.style.display = isOpen ? 'none' : 'block';
+      arrow?.classList.toggle('open', !isOpen);
+      if (!isOpen) {
+        markAllRead();
+        this.mpNewsUnread = 0;
+        this.removeNewsBadge();
+        panel.querySelector<HTMLElement>('#sd-ap-news-count')!.textContent = '';
+        this.renderNewsList();
+      }
     });
 
     // Speed slider
@@ -1341,6 +1488,15 @@ export class AssistantModule {
           </div>
         </div>
       </div>
+      <div class="sd-ap-news-block" id="sd-ap-news-block" style="display:none">
+        <div class="sd-ap-news-hdr" id="sd-ap-news-hdr">
+          <span class="sd-ap-news-icon">📰</span>
+          <span class="sd-ap-news-title">Новости маркетплейсов</span>
+          <span class="sd-ap-news-count" id="sd-ap-news-count"></span>
+          <svg class="sd-ap-news-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+        </div>
+        <div class="sd-ap-news-list" id="sd-ap-news-list" style="display:none"></div>
+      </div>
       <div class="sd-ap-hints">${hints}</div>
       <div class="sd-ap-page-actions" id="sd-ap-page-actions"></div>
       <div class="sd-ap-messages" id="sd-ap-messages"></div>
@@ -1518,12 +1674,28 @@ export class AssistantModule {
         const el = document.createElement('div');
         el.className = 'sd-ap-msg user';
         const safe = clean.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        el.innerHTML = `<div class="sd-ap-msg-avatar">Я</div><div class="sd-ap-msg-bubble">${safe}<div class="sd-ap-msg-footer"></div></div>`;
+        el.innerHTML = `<div class="sd-ap-msg-avatar">Я</div><div class="sd-ap-msg-bubble">${safe}<div class="sd-ap-msg-footer"><button class="msg-copy-btn" title="Копировать"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>`;
+        el.querySelector<HTMLElement>('.msg-copy-btn')?.addEventListener('click', (e) => {
+          navigator.clipboard.writeText(clean).catch(() => {});
+          const btn = e.currentTarget as HTMLElement;
+          btn.classList.add('copied'); btn.title = 'Скопировано!';
+          showToast('Скопировано', 'success');
+          setTimeout(() => { btn.classList.remove('copied'); btn.title = 'Копировать'; }, 1500);
+        });
         this.messagesEl.appendChild(el);
       } else {
         const el = document.createElement('div');
         el.className = 'sd-ap-msg assistant';
-        el.innerHTML = `<div class="sd-ap-msg-avatar">С</div><div class="sd-ap-msg-bubble">${renderMarkdown(msg.content)}<div class="sd-ap-msg-footer"></div></div>`;
+        const content = msg.content;
+        el.innerHTML = `<div class="sd-ap-msg-avatar">С</div><div class="sd-ap-msg-bubble">${renderMarkdown(content)}<div class="sd-ap-msg-footer"><button class="msg-copy-btn" title="Копировать"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>`;
+        el.querySelector<HTMLElement>('.msg-copy-btn')?.addEventListener('click', (e) => {
+          const plain = content.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/^#{1,3}\s+/gm, '').trim();
+          navigator.clipboard.writeText(plain).catch(() => {});
+          const btn = e.currentTarget as HTMLElement;
+          btn.classList.add('copied'); btn.title = 'Скопировано!';
+          showToast('Скопировано', 'success');
+          setTimeout(() => { btn.classList.remove('copied'); btn.title = 'Копировать'; }, 1500);
+        });
         this.messagesEl.appendChild(el);
       }
     }
@@ -3989,7 +4161,9 @@ export class AssistantModule {
         streamMsgEl = el;
         streamBubble = el.querySelector('.sd-ap-stream-text');
       }
-      if (streamBubble) streamBubble.innerHTML = renderMarkdown(partial);
+      // Скрываем JSON-блоки действий во время стриминга — они заменятся карточкой
+      const display = partial.replace(/```json\s*\{[\s\S]*$/, '').trim();
+      if (streamBubble) streamBubble.innerHTML = renderMarkdown(display);
       this.scrollToBottom();
     };
 
@@ -3999,8 +4173,11 @@ export class AssistantModule {
       const selCtxFrag = selectionCtx.current.type !== 'none'
         ? '\n\n' + selectionCtx.current.prompt
         : '';
+      const newsFrag = this.mpNews.length
+        ? '\n\n' + formatNewsForContext(this.mpNews)
+        : '';
       const messages: ChatMessage[] = [
-        { role: 'system', content: SYSTEM_PROMPT + storeCtx + pageFrag + selCtxFrag },
+        { role: 'system', content: SYSTEM_PROMPT + storeCtx + pageFrag + selCtxFrag + newsFrag },
         ...this.history.slice(-10),
       ];
 
@@ -4035,6 +4212,12 @@ export class AssistantModule {
       const chainAct = this.parseChainAction(replyNorm);
       if (chainAct) {
         cleanStream();
+        const chainJson = this.extractBalancedJson(replyNorm, '"chain"');
+        if (chainJson?.raw) {
+          const textBefore = replyNorm.slice(0, replyNorm.indexOf(chainJson.raw))
+            .replace(/```(?:json)?\s*$/, '').trim();
+          if (textBefore) this.addAssistantMessage(textBefore);
+        }
         await this.executeChain(chainAct, text);
         return;
       }
@@ -4054,6 +4237,17 @@ export class AssistantModule {
         cleanStream();
         this.addAssistantMessage('Конечно! Переключаю на поддержку SimaDesk — там ответит живой оператор.');
         setTimeout(() => this.switchSupportMode('support'), 600);
+        this.setStatus('Готова');
+        return;
+      }
+
+      // clarify action — Сима спрашивает недостающий параметр
+      const clarifyAct = this.parseClarifyAction(replyNorm);
+      if (clarifyAct) {
+        cleanStream();
+        const textBefore = replyNorm.replace(/\{[\s\S]*?"action"\s*:\s*"clarify"[\s\S]*?\}/g, '').trim();
+        if (textBefore) this.addAssistantMessage(textBefore);
+        this.addClarifyCard(clarifyAct, text);
         this.setStatus('Готова');
         return;
       }
@@ -4355,6 +4549,58 @@ export class AssistantModule {
       start = text.lastIndexOf('{', start - 1);
     }
     return null;
+  }
+
+  /** Извлечь clarify action {"action":"clarify","question":"...","field":"...","options":[...]} */
+  private parseClarifyAction(reply: string): ClarifyAction | null {
+    const found = this.extractBalancedJson(reply, '"clarify"');
+    if (!found) return null;
+    const p = found.value;
+    if (p && p.action === 'clarify' && typeof p.question === 'string') {
+      return p as ClarifyAction;
+    }
+    return null;
+  }
+
+  /** Показать карточку уточнения с вопросом и кнопками-вариантами. */
+  private addClarifyCard(clarify: ClarifyAction, _originalRequest: string): void {
+    if (!this.messagesEl) return;
+    const el = document.createElement('div');
+    el.className = 'sd-ap-msg assistant';
+    const optionsHtml = (clarify.options ?? []).map(opt =>
+      `<button class="sd-ap-clarify-opt">${opt.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</button>`
+    ).join('');
+    const safeQ = clarify.question.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    el.innerHTML = `
+      <div class="sd-ap-msg-avatar">С</div>
+      <div class="sd-ap-msg-bubble">
+        <div class="sd-ap-plan-card">
+          <div class="sd-ap-plan-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            Уточняющий вопрос
+          </div>
+          <div class="sd-ap-plan-body">${safeQ}</div>
+          ${optionsHtml ? `<div class="sd-ap-clarify-opts">${optionsHtml}</div>` : ''}
+        </div>
+      </div>`;
+
+    el.querySelectorAll<HTMLButtonElement>('.sd-ap-clarify-opt').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const answer = btn.textContent ?? '';
+        el.remove();
+        if (this.textareaEl) {
+          this.textareaEl.value = answer;
+          this.textareaEl.focus();
+        }
+        this.sendMessage(answer);
+      });
+    });
+
+    this.messagesEl.appendChild(el);
+    this.scrollToBottom();
   }
 
   /** Извлечь цепочку действий {"action":"chain",...} */

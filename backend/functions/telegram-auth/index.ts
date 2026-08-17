@@ -751,6 +751,150 @@ async function handleYookassaPay(req: Request, url: URL): Promise<Response> {
   return jsonRes({ payment_id: payment.id, confirmation_url: payment.confirmation?.confirmation_url });
 }
 
+// ── MP News Fetch handler ────────────────────────────────────────────────────
+
+const TG_CHANNELS: Array<{ mp: string; slug: string; label: string }> = [
+  { mp: 'wb',     slug: 'wb_partners',            label: 'Wildberries' },
+  { mp: 'ozon',   slug: 'ozon_seller_help',        label: 'Ozon' },
+  { mp: 'yandex', slug: 'yandex_market_partner',   label: 'Яндекс Маркет' },
+];
+
+function extractTgMessages(html: string, channelSlug: string): Array<{ text: string; url: string; date: string }> {
+  const results: Array<{ text: string; url: string; date: string }> = [];
+  // Находим блоки сообщений
+  const msgRegex = /<div class="tgme_widget_message_wrap[^"]*"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/g;
+  const msgs = html.match(msgRegex) ?? [];
+
+  for (const block of msgs) {
+    // Извлекаем текст (без HTML-тегов)
+    const textMatch = block.match(/class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/);
+    if (!textMatch) continue;
+    const rawText = textMatch[1].replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim();
+    if (!rawText || rawText.length < 30) continue;
+
+    // Извлекаем дату
+    const dateMatch = block.match(/datetime="([^"]+)"/);
+    const date = dateMatch ? dateMatch[1] : new Date().toISOString();
+
+    // Извлекаем ссылку на пост
+    const urlMatch = block.match(/href="(https:\/\/t\.me\/[^"]+\/\d+)"/);
+    const url = urlMatch ? urlMatch[1] : `https://t.me/${channelSlug}`;
+
+    results.push({ text: rawText, url, date });
+  }
+
+  // Если regex не нашёл блоки — пробуем простой экстракт текстов
+  if (!results.length) {
+    const simpleText = /<div[^>]+class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/g;
+    const simpleDates = html.match(/datetime="([^"]+)"/g) ?? [];
+    const simpleUrls = html.match(/href="(https:\/\/t\.me\/[^"]+\/\d+)"/g) ?? [];
+    let i = 0;
+    let m: RegExpExecArray | null;
+    while ((m = simpleText.exec(html)) !== null) {
+      const rawText = m[1].replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim();
+      if (rawText.length < 30) continue;
+      const date = simpleDates[i]?.match(/datetime="([^"]+)"/)?.[1] ?? new Date().toISOString();
+      const url  = simpleUrls[i]?.match(/href="([^"]+)"/)?.[1] ?? `https://t.me/${channelSlug}`;
+      results.push({ text: rawText, url, date });
+      i++;
+    }
+  }
+
+  return results;
+}
+
+async function aiSummarize(text: string, mp: string, orKey: string): Promise<{ title: string; summary: string; is_important: boolean } | null> {
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${orKey}` },
+      body: JSON.stringify({
+        model: 'google/gemini-flash-1.5',
+        max_tokens: 200,
+        messages: [{
+          role: 'user',
+          content: `Ты аналитик для продавцов на маркетплейсах (${mp}). Прочитай новость из официального канала и верни JSON:
+{"title":"Краткий заголовок до 80 символов","summary":"1-2 предложения о чём новость и что это значит для продавца","is_important":true/false}
+is_important=true если это изменение комиссий, логистики, правил работы, штрафов, новых требований, крупных акций.
+Если новость не важна для продавца — {"title":"...","summary":"...","is_important":false}
+Текст новости:\n${text.slice(0, 1000)}`
+        }],
+      }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const content = json.choices?.[0]?.message?.content ?? '';
+    const parsed = JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] ?? '{}');
+    if (!parsed.title || !parsed.summary) return null;
+    return { title: String(parsed.title).slice(0, 120), summary: String(parsed.summary).slice(0, 400), is_important: !!parsed.is_important };
+  } catch { return null; }
+}
+
+async function handleMpNewsFetch(req: Request): Promise<Response> {
+  const jsonRes = (d: unknown, s = 200) =>
+    new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+  // Защита от несанкционированного вызова
+  const secret = Deno.env.get('CRON_SECRET');
+  if (secret && req.headers.get('x-cron-secret') !== secret) {
+    return jsonRes({ error: 'Unauthorized' }, 401);
+  }
+
+  const orKey = Deno.env.get('OPENROUTER_KEY');
+  if (!orKey) return jsonRes({ error: 'OPENROUTER_KEY not configured' }, 503);
+
+  const db = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+
+  const since = new Date(Date.now() - 2 * 86_400_000).toISOString(); // последние 2 дня
+  const saved: string[] = [];
+  const errors: string[] = [];
+
+  for (const ch of TG_CHANNELS) {
+    try {
+      const pageRes = await fetch(`https://t.me/s/${ch.slug}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SimaDesk/1.0)' },
+      });
+      if (!pageRes.ok) { errors.push(`${ch.mp}: HTTP ${pageRes.status}`); continue; }
+      const html = await pageRes.text();
+      const messages = extractTgMessages(html, ch.slug);
+
+      // Только свежие
+      const fresh = messages.filter(m => m.date > since).slice(0, 5);
+
+      for (const msg of fresh) {
+        // Проверяем дубли
+        const { data: existing } = await db.from('mp_news').select('id').eq('source_url', msg.url).maybeSingle();
+        if (existing) continue;
+
+        const ai = await aiSummarize(msg.text, ch.label, orKey);
+        if (!ai) continue;
+
+        await db.from('mp_news').insert({
+          mp: ch.mp,
+          title: ai.title,
+          summary: ai.summary,
+          raw_text: msg.text.slice(0, 2000),
+          source_url: msg.url,
+          is_important: ai.is_important,
+          published_at: msg.date,
+        });
+        saved.push(`${ch.mp}: ${ai.title}`);
+
+        // Небольшая пауза между AI-запросами
+        await new Promise(r => setTimeout(r, 500));
+      }
+    } catch (e: unknown) {
+      errors.push(`${ch.mp}: ${e instanceof Error ? e.message : 'error'}`);
+    }
+  }
+
+  return jsonRes({ ok: true, saved, errors, ts: new Date().toISOString() });
+}
+
 // ── Main handler (router) ─────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -758,6 +902,15 @@ Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/+/, '');
   const sub = path.replace(/^telegram-auth\//, '');
+
+  // Route to mp-news-fetch handler
+  if (sub === 'mp-news-fetch' || path === 'mp-news-fetch') {
+    try { return await handleMpNewsFetch(req); }
+    catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'error';
+      return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+  }
 
   // Route to tts-edge handler
   if (sub === 'tts-edge' || path === 'tts-edge') {

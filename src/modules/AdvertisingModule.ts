@@ -15,7 +15,7 @@ import { I } from '@/utils/icons';
 import { esc } from '@/utils/format';
 import { showToast } from '@/utils/toast';
 
-type Tab = 'wb' | 'ozon' | 'yandex';
+type Tab = 'overview' | 'wb' | 'ozon' | 'yandex';
 type OzonSub = 'perf' | 'promo';
 type YmSub   = 'promo' | 'boost';
 type WbDetail = 'bids' | 'keywords';
@@ -50,11 +50,27 @@ interface AiHint {
   action?: string;
 }
 
+interface Store {
+  id: string;
+  name: string;
+  api_key: string;
+  client_id?: string | null;
+  business_id?: string | number | null;  // number in YandexStore
+  campaign_id?: string | number | null;
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 const fmt = (n: number) => n.toLocaleString('ru-RU');
 const ctr = (v: number, c: number) => v > 0 ? (c / v * 100).toFixed(2) + '%' : '—';
 const roiStr = (r: number) => (r >= 0 ? '+' : '') + r.toFixed(1) + '%';
+const drrVal = (spend: number, revenue: number) => revenue > 0 && spend > 0 ? spend / revenue * 100 : null;
+const drrBadge = (spend: number, revenue: number) => {
+  const d = drrVal(spend, revenue);
+  if (d === null) return `<span style="display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px;font-weight:700;background:var(--bg3);color:var(--text3)">—</span>`;
+  const [col, bg] = d < 15 ? ['#22c55e', 'rgba(34,197,94,.12)'] : d < 30 ? ['#f59e0b', 'rgba(245,158,11,.12)'] : ['#ef4444', 'rgba(239,68,68,.12)'];
+  return `<span style="display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px;font-weight:700;background:${bg};color:${col}">${d.toFixed(1)}%</span>`;
+};
 
 function statusChip(s: string) {
   const M: Record<string, [string, string, string]> = {
@@ -93,11 +109,19 @@ function analyzeAi(campaigns: Campaign[]): AiHint[] {
     const cpc   = c.clicks > 0 ? c.spent / c.clicks : 0;
     const ctrV  = c.views  > 0 ? c.clicks / c.views * 100 : 0;
     const budgetUtil = c.budget > 0 ? c.spent / c.budget * 100 : 0;
+    const drr   = drrVal(c.spent, c.revenue);
 
-    if (c.roi < -30 && c.spent > 500) {
+    if (c.spent > 500 && c.orders === 0) {
       hints.push({ level: 'danger', campaignId: c.id, campaignName: c.name,
-        message: `ROI ${roiStr(c.roi)} — кампания убыточна (потрачено ${fmt(c.spent)} ₽)`,
+        message: `Потрачено ${fmt(c.spent)} ₽ — ноль заказов. ДРР не определён. Рекомендуем остановить кампанию.`,
         action: 'pause' });
+    } else if (drr !== null && drr > 40 && c.spent > 300) {
+      hints.push({ level: 'danger', campaignId: c.id, campaignName: c.name,
+        message: `ДРР ${drr.toFixed(1)}% — выше 40%, кампания съедает больше прибыли чем приносит`,
+        action: 'pause' });
+    } else if (drr !== null && drr > 25 && c.spent > 200) {
+      hints.push({ level: 'warn', campaignId: c.id, campaignName: c.name,
+        message: `ДРР ${drr.toFixed(1)}% — высоковато. Проверьте ставки и состав товаров` });
     } else if (c.roi < -10 && c.spent > 200) {
       hints.push({ level: 'warn', campaignId: c.id, campaignName: c.name,
         message: `ROI ${roiStr(c.roi)} — низкая отдача, проверьте ставки и товары` });
@@ -106,22 +130,63 @@ function analyzeAi(campaigns: Campaign[]): AiHint[] {
       hints.push({ level: 'warn', campaignId: c.id, campaignName: c.name,
         message: `CTR ${ctr(c.views, c.clicks)} при ${fmt(c.views)} показах — ставки занижены или объявление нерелевантно` });
     }
-    if (budgetUtil > 95 && c.roi > 0) {
+    if (budgetUtil > 95 && (drr === null || drr < 25)) {
       hints.push({ level: 'ok', campaignId: c.id, campaignName: c.name,
-        message: `Бюджет исчерпан на ${budgetUtil.toFixed(0)}%, ROI положительный — увеличьте дневной лимит` });
+        message: `Бюджет исчерпан на ${budgetUtil.toFixed(0)}%${drr !== null ? `, ДРР ${drr.toFixed(1)}%` : ''} — увеличьте дневной лимит для роста продаж` });
     }
     if (cpc > 200 && c.orders === 0) {
       hints.push({ level: 'danger', campaignId: c.id, campaignName: c.name,
-        message: `CPC ${fmt(cpc)} ₽ без заказов — высокая стоимость клика без конверсий` });
+        message: `CPC ${fmt(Math.round(cpc))} ₽ без заказов — высокая стоимость клика, нет конверсий` });
     }
   }
   return hints.slice(0, 8);
 }
 
+function buildAiText(campaigns: Campaign[], hints: AiHint[]): string {
+  if (!campaigns.length) return '';
+  const active = campaigns.filter(c => c.status === 'active');
+  const totalSpent = campaigns.reduce((s, c) => s + c.spent, 0);
+  const totalRev   = campaigns.reduce((s, c) => s + c.revenue, 0);
+  const drr = drrVal(totalSpent, totalRev);
+  const dangers = hints.filter(h => h.level === 'danger');
+  const warns   = hints.filter(h => h.level === 'warn');
+  const oks     = hints.filter(h => h.level === 'ok');
+
+  let t = `Анализирую ${campaigns.length} кампаний, из них ${active.length} активных...\n`;
+  if (totalSpent > 0) {
+    t += `Расход за период: ${fmt(Math.round(totalSpent))} ₽`;
+    if (totalRev > 0) t += `, выручка: ${fmt(Math.round(totalRev))} ₽, ДРР: ${drr!.toFixed(1)}%`;
+    t += '.\n';
+  }
+  t += '\n';
+  if (dangers.length) {
+    t += `🔴 Критично (${dangers.length}):\n`;
+    for (const h of dangers) t += `  • ${h.campaignName} — ${h.message}\n`;
+    t += '\n';
+  }
+  if (warns.length) {
+    t += `⚠️ Рекомендации (${warns.length}):\n`;
+    for (const h of warns) t += `  • ${h.campaignName} — ${h.message}\n`;
+    t += '\n';
+  }
+  if (oks.length) {
+    t += `✅ Возможности (${oks.length}):\n`;
+    for (const h of oks) t += `  • ${h.campaignName} — ${h.message}\n`;
+    t += '\n';
+  }
+  if (!hints.length) {
+    t += '✅ Все активные кампании работают штатно. Следите за динамикой CTR и конверсий.\n';
+  } else {
+    const total = dangers.length + warns.length;
+    t += `Итог: ${total > 0 ? `найдено ${total} проблем${total > 4 ? '' : total > 1 ? 'ы' : 'а'}, требующих внимания` : 'серьёзных проблем нет'}${oks.length ? `, ${oks.length} возможностей для роста` : ''}.`;
+  }
+  return t;
+}
+
 // ─── Help content ──────────────────────────────────────────────────────────────
 
 function buildHelpModal(): string {
-  return `<div id="ad-help-overlay" onclick="if(event.target===this)this.remove()" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;
+  return `<div id="ad-help-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;
     display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)">
     <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:16px;width:660px;
       max-width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden">
@@ -177,7 +242,7 @@ function buildHelpModal(): string {
 
         <div style="background:var(--bg3);border-radius:12px;padding:16px">
           <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:10px">
-            🤖 ИИ-советник
+            ⚡ Автодиагностика
           </div>
           <div style="font-size:12px;color:var(--text2);line-height:1.8;display:flex;flex-direction:column;gap:6px">
             <div>После загрузки кампаний появляется панель ИИ-советника. Она автоматически анализирует:</div>
@@ -208,12 +273,12 @@ function buildHelpModal(): string {
 export class AdvertisingModule {
   private el: HTMLElement;
 
-  private tab: Tab = 'wb';
+  private tab: Tab = 'overview';
   private ozonSub: OzonSub = 'perf';
   private ymSub: YmSub = 'promo';
 
   private storeId = '';           // '' = all stores
-  private stores: any[] = [];
+  private stores: Store[] = [];
 
   private campaigns: Campaign[] = [];
   private filtered: Campaign[] = [];
@@ -227,6 +292,8 @@ export class AdvertisingModule {
   private filterStatus = 'all';
   private sortKey: SortKey = 'spent';
   private sortDir: 1 | -1 = -1;
+  private isFilterActive = false;    // true when search or status filter applied
+  private opInProgress = new Set<string>(); // locked campaign IDs during API ops
 
   // Expanded rows
   private expanded = new Set<string>();
@@ -245,10 +312,14 @@ export class AdvertisingModule {
   private ymRec:  any[] = [];
   private ymBidsLoading = false;
   private ymBidEdits = new Map<string, string>();
+  private ymBidsSearch = '';
 
   // AI
   private aiHints: AiHint[] = [];
   private aiOpen = false;
+  private aiStreamText = '';
+  private aiStreamDisplayed = '';
+  private aiStreamTimer: ReturnType<typeof setInterval> | null = null;
 
   // Errors per store
   private loadErrors: Array<{ storeName: string; message: string }> = [];
@@ -291,6 +362,7 @@ export class AdvertisingModule {
 .ad-mptab{padding:4px 12px;border-radius:8px;border:none;cursor:pointer;font-size:12px;
   font-weight:700;font-family:inherit;transition:all .15s;background:transparent;color:var(--text2)}
 .ad-mptab:hover{background:var(--bg2);color:var(--text)}
+.ad-mptab.ad-mptab-ov{background:rgba(99,102,241,.15);color:#818cf8}
 .ad-mptab.awb{background:rgba(124,58,237,.15);color:#a78bfa}
 .ad-mptab.aozon{background:rgba(0,91,255,.12);color:#60a5fa}
 .ad-mptab.aym{background:rgba(252,63,29,.1);color:#f87171}
@@ -454,6 +526,35 @@ export class AdvertisingModule {
 
 /* sort indicator */
 .ad-sort-i{font-size:9px;opacity:.6;margin-left:3px}
+
+/* overview */
+.ad-ov{padding:16px 18px;display:flex;flex-direction:column;gap:16px}
+.ad-ov-kpi{display:flex;gap:8px;flex-wrap:wrap}
+.ad-ov-kpi-tile{flex:1;min-width:110px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 14px}
+.ad-ov-kpi-l{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-bottom:3px}
+.ad-ov-kpi-v{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}
+.ad-ov-sec{font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.ad-ov-plats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.ad-ov-plat{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.ad-ov-plat-name{font-size:12px;font-weight:700;margin-bottom:6px}
+.ad-ov-plat-amt{font-size:16px;font-weight:800;margin-bottom:4px}
+.ad-ov-bar-bg{height:3px;background:var(--bg3);border-radius:2px;overflow:hidden;margin-bottom:5px}
+.ad-ov-bar{height:3px;border-radius:2px}
+.ad-ov-plat-meta{font-size:11px;color:var(--text3)}
+
+/* AI panel in overview */
+.ad-ai-full{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.ad-ai-full-hd{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg3)}
+.ad-ai-full-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--text)}
+.ad-ai-full-badge{padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700}
+.ad-ai-stream-wrap{padding:12px 14px;font-size:12px;line-height:1.8;color:var(--text2);white-space:pre-wrap;font-family:var(--font-mono, monospace);min-height:80px;max-height:200px;overflow-y:auto}
+.ad-ai-stream-cursor{display:inline-block;width:7px;height:12px;background:var(--accent);vertical-align:middle;animation:adp .7s step-end infinite;margin-left:1px}
+.ad-ai-actions{display:flex;flex-direction:column;gap:6px;padding:10px 14px;border-top:1px solid var(--border)}
+.ad-ai-action-row{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-radius:8px;font-size:12px}
+.ad-ai-action-row.d{background:rgba(239,68,68,.07);border-left:3px solid #ef4444}
+.ad-ai-action-row.w{background:rgba(245,158,11,.07);border-left:3px solid #f59e0b}
+.ad-ai-action-row.o{background:rgba(34,197,94,.07);border-left:3px solid #22c55e}
+.ad-ai-action-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:4px}
 `;
     document.head.appendChild(s);
   }
@@ -461,15 +562,21 @@ export class AdvertisingModule {
   // ─── shell ────────────────────────────────────────────────────────────────────
 
   private buildShell() {
+    const tabs: { id: Tab; label: string; cls: string }[] = [
+      { id: 'overview', label: '⚡ Обзор',       cls: '' },
+      { id: 'wb',       label: 'Wildberries',    cls: 'awb' },
+      { id: 'ozon',     label: 'Ozon',            cls: 'aozon' },
+      { id: 'yandex',   label: 'Яндекс.Маркет',  cls: 'aym' },
+    ];
     this.el.innerHTML = `<div class="adw">
       <div class="adh">
         <div class="adh-l">
           <div class="ad-logo">${I.zap()}</div>
           <span class="ad-title">Реклама</span>
           <div class="ad-mptabs">
-            ${(['wb','ozon','yandex'] as Tab[]).map(t =>
-              `<button class="ad-mptab ${this.tab===t?'a'+t:''}" data-mp="${t}">
-                ${t==='wb'?'Wildberries':t==='ozon'?'Ozon':'Яндекс.Маркет'}
+            ${tabs.map(t =>
+              `<button class="ad-mptab ${this.tab===t.id?t.cls||'ad-mptab-ov':''}" data-mp="${t.id}">
+                ${t.label}
               </button>`).join('')}
           </div>
         </div>
@@ -489,7 +596,7 @@ export class AdvertisingModule {
       <div id="ad-bulk"  style="display:none"></div>
       <div id="ad-tiles" style="display:none"></div>
       <div id="ad-ai"    style="display:none"></div>
-      <div class="ad-body" id="ad-body">${empty('Выберите магазин и нажмите «Загрузить»','или включите «Все» чтобы загрузить данные по всем магазинам')}</div>
+      <div class="ad-body" id="ad-body">${empty('Выберите платформу и нажмите «Загрузить»','или включите «Все» чтобы загрузить данные по всем магазинам')}</div>
     </div>`;
     this.bindAll();
     this.renderSub();
@@ -507,6 +614,20 @@ export class AdvertisingModule {
         const label = this.stores.length > 1 && s ? esc(s.name.slice(0, 12)) + ': ' : '';
         return `<span class="ad-bal">${I.wallet()} ${label}${fmt(b)} ₽</span>`;
       }).join('');
+
+    if (this.tab === 'overview') {
+      el.innerHTML = `<div class="ads">
+        <div class="ads-l">
+          <span style="font-size:12px;color:var(--text2)">Выберите платформу и нажмите «Загрузить» — обзор покажет агрегированные данные</span>
+        </div>
+        <div class="ads-r">
+          <button class="rpr-btn rpr-btn-ghost" id="ad-refresh" style="display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;font-size:12px">
+            ${I.refresh()} Обновить
+          </button>
+        </div>
+      </div>`;
+      return;
+    }
 
     if (this.tab === 'wb') {
       el.innerHTML = `<div class="ads">
@@ -554,7 +675,40 @@ export class AdvertisingModule {
     }
   }
 
+  // ─── AI stream ────────────────────────────────────────────────────────────────
+
+  private startAiStream(text: string) {
+    this.aiStreamText = text;
+    this.aiStreamDisplayed = '';
+    if (this.aiStreamTimer) { clearInterval(this.aiStreamTimer); this.aiStreamTimer = null; }
+    const speed = Math.max(3, Math.floor(text.length / 80));
+    this.aiStreamTimer = setInterval(() => {
+      const el = document.getElementById('ad-ai-stream-text');
+      if (!el) { this.stopAiStream(); return; }
+      const remaining = this.aiStreamText.length - this.aiStreamDisplayed.length;
+      if (remaining <= 0) { this.stopAiStream(); this.flushBody(); return; }
+      const add = Math.min(speed, remaining);
+      this.aiStreamDisplayed += this.aiStreamText.slice(this.aiStreamDisplayed.length, this.aiStreamDisplayed.length + add);
+      el.textContent = this.aiStreamDisplayed;
+    }, 25);
+  }
+
+  private stopAiStream() {
+    if (this.aiStreamTimer) { clearInterval(this.aiStreamTimer); this.aiStreamTimer = null; }
+    this.aiStreamDisplayed = this.aiStreamText;
+  }
+
   // ─── events ───────────────────────────────────────────────────────────────────
+
+  // ─── generic expand toggle ────────────────────────────────────────────────────
+
+  private _toggleExpand(id: string, loader?: () => void) {
+    if (this.expanded.has(id)) this.expanded.delete(id); else this.expanded.add(id);
+    this.flushBody();
+    if (this.expanded.has(id) && loader) loader();
+  }
+
+  // ─── click dispatch ───────────────────────────────────────────────────────────
 
   private bindAll() {
     this.eventsAC.abort();
@@ -562,11 +716,10 @@ export class AdvertisingModule {
     const { signal } = this.eventsAC;
 
     this.el.addEventListener('click', async (e) => {
-      const t = e.target as HTMLElement;
+      const t   = e.target as HTMLElement;
       const btn = t.closest('button') as HTMLButtonElement | null;
       const th  = t.closest('th[data-sort]') as HTMLElement | null;
 
-      // sort header
       if (th) {
         const k = th.dataset.sort as SortKey;
         if (k === this.sortKey) this.sortDir = (this.sortDir === 1 ? -1 : 1) as 1 | -1;
@@ -576,38 +729,45 @@ export class AdvertisingModule {
 
       if (!btn) return;
 
-      // MP tab
+      // ── Navigation: MP tab / sub-tabs / presets / store toggle ──────────────
+
       const mp = btn.dataset.mp as Tab | undefined;
       if (mp && mp !== this.tab) {
-        this.tab = mp; this.campaigns = []; this.filtered = [];
+        this.tab = mp;
+        if (mp === 'overview') {
+          // overview just re-renders whatever is already loaded
+          this.buildShell();
+          this.loadStores();
+          return;
+        }
+        this.campaigns = []; this.filtered = []; this.isFilterActive = false;
         this.expanded.clear(); this.detailCache.clear();
-        this.ymBids = []; this.ymRec = []; this.aiHints = [];
-        this.loadErrors = [];
+        this.ymBids = []; this.ymRec = []; this.ymBidsSearch = '';
+        this.aiHints = []; this.loadErrors = [];
         this.balances.clear(); this.selected.clear();
         this.buildShell(); this.loadStores(); return;
       }
 
-      // Ozon sub
       const os = btn.dataset.osub as OzonSub | undefined;
       if (os && os !== this.ozonSub) {
         this.ozonSub = os; this.campaigns = []; this.filtered = [];
+        this.isFilterActive = false;
         this.expanded.clear(); this.detailCache.clear(); this.aiHints = [];
         this.renderSub(); this.renderFilterBar(); this.renderTiles();
         this.renderAi(); this.flushBody(); return;
       }
 
-      // YM sub
       const ys = btn.dataset.ymsub as YmSub | undefined;
       if (ys && ys !== this.ymSub) {
         this.ymSub = ys; this.campaigns = []; this.filtered = [];
-        this.ymBids = []; this.ymRec = []; this.aiHints = [];
+        this.isFilterActive = false;
+        this.ymBids = []; this.ymRec = []; this.ymBidsSearch = ''; this.aiHints = [];
         this.renderSub(); this.renderFilterBar(); this.renderTiles();
         this.renderAi(); this.flushBody(); return;
       }
 
-      // Period presets
       if (btn.dataset.days) {
-        const d = Number(btn.dataset.days);
+        const d   = Number(btn.dataset.days);
         const now = new Date();
         this.dateTo   = now.toISOString().slice(0, 10);
         this.dateFrom = new Date(now.getTime() - d * 86_400_000).toISOString().slice(0, 10);
@@ -624,112 +784,84 @@ export class AdvertisingModule {
           if (sel) sel.value = this.storeId;
         } else { this.storeId = ''; }
         btn.classList.toggle('on', this.storeId === '');
-        this.campaigns = []; this.filtered = []; this.aiHints = [];
-        this.expanded.clear(); this.detailCache.clear(); this.selected.clear();
-        this.balances.clear();
+        this.campaigns = []; this.filtered = []; this.isFilterActive = false;
+        this.aiHints = []; this.expanded.clear(); this.detailCache.clear();
+        this.selected.clear(); this.balances.clear();
         this.renderSub(); this.renderTiles(); this.renderAi(); this.flushBody();
         if (this.tab === 'wb') await this.loadBalance();
         return;
       }
 
-      if (btn.id === 'ad-refresh')   { await this.loadCampaigns(); return; }
-      if (btn.id === 'ad-create')    { this.showCreateDialog(); return; }
-      if (btn.id === 'ym-load-bids') { await this.loadYmBids(); return; }
-      if (btn.id === 'ad-help')      { this.showHelp(); return; }
-      if (btn.id === 'ad-help-x' || btn.id === 'ad-help-overlay') {
-        document.getElementById('ad-help-overlay')?.remove(); return;
-      }
-      if (btn.id === 'ad-ai-tog') { this.aiOpen = !this.aiOpen; this.renderAi(); return; }
+      // ── Named button IDs ─────────────────────────────────────────────────────
 
-      // Bulk actions
-      if (btn.id === 'ad-bulk-pause')  { await this.bulkPause(11); return; }
-      if (btn.id === 'ad-bulk-resume') { await this.bulkPause(9);  return; }
-      if (btn.id === 'ad-bulk-clear')  { this.selected.clear(); this.flushBody(); this.renderBulk(); return; }
-
-      // Row checkbox
-      if (btn.dataset.action === 'check') {
-        const id = btn.dataset.id!;
-        if (this.selected.has(id)) this.selected.delete(id); else this.selected.add(id);
-        this.renderBulk(); this.flushBody(); return;
-      }
-
-      // Budget
-      if (btn.dataset.action === 'edit-budget') {
-        this.budgetEditing.add(btn.dataset.id!);
-        this.flushBody();
-        setTimeout(() => (this.el.querySelector(`#ad-bi-${btn.dataset.id}`) as HTMLInputElement)?.focus(), 10);
-        return;
-      }
-      if (btn.dataset.action === 'cancel-budget') { this.budgetEditing.delete(btn.dataset.id!); this.flushBody(); return; }
-      if (btn.dataset.action === 'save-budget') {
-        const inp = this.el.querySelector(`#ad-bi-${btn.dataset.id}`) as HTMLInputElement | null;
-        if (inp) await this.saveBudget(btn.dataset.id!, Number(inp.value));
-        return;
+      switch (btn.id) {
+        case 'ad-refresh':    await this.loadCampaigns(); return;
+        case 'ad-create':     this.showCreateDialog(); return;
+        case 'ym-load-bids':  await this.loadYmBids(); return;
+        case 'ad-help':       this.showHelp(); return;
+        case 'ad-ai-tog':     this.aiOpen = !this.aiOpen; this.renderAi(); return;
+        case 'ad-ai-rerun': {
+          if (this.campaigns.length) {
+            this.aiHints = analyzeAi(this.campaigns);
+            this.startAiStream(buildAiText(this.campaigns, this.aiHints));
+            this.renderFilterBar(); this.renderAi(); this.flushBody();
+          } else {
+            await this.loadCampaigns();
+          }
+          return;
+        }
+        case 'ad-bulk-pause': await this.bulkPause(11); return;
+        case 'ad-bulk-resume':await this.bulkPause(9);  return;
+        case 'ad-bulk-clear': this.selected.clear(); this.flushBody(); this.renderBulk(); return;
+        case 'ym-save-bids':  await this.saveYmBids(); return;
       }
 
-      // WB pause/resume
-      if (btn.dataset.action === 'pause')  { await this.toggleWb(btn.dataset.id!, 11); return; }
-      if (btn.dataset.action === 'resume') { await this.toggleWb(btn.dataset.id!, 9);  return; }
+      // ── data-action dispatch ─────────────────────────────────────────────────
 
-      // Expand WB row
-      if (btn.dataset.action === 'expand') {
-        const id = btn.dataset.id!;
-        if (this.expanded.has(id)) this.expanded.delete(id); else this.expanded.add(id);
-        this.flushBody();
-        if (this.expanded.has(id)) this.loadDetail(id);
-        return;
-      }
+      const action = btn.dataset.action;
+      const id     = btn.dataset.id ?? '';
 
-      // WB detail sub-tab
-      if (btn.dataset.action === 'dtab') {
-        this.wbDetailTab.set(btn.dataset.id!, btn.dataset.tab as WbDetail);
-        this.flushBody(); return;
-      }
+      switch (action) {
+        case 'check': {
+          if (this.selected.has(id)) this.selected.delete(id); else this.selected.add(id);
+          this.renderBulk(); this.flushBody(); return;
+        }
+        case 'edit-budget': {
+          this.budgetEditing.add(id); this.flushBody();
+          setTimeout(() => (this.el.querySelector(`#ad-bi-${id}`) as HTMLInputElement)?.focus(), 10);
+          return;
+        }
+        case 'cancel-budget':  this.budgetEditing.delete(id); this.flushBody(); return;
+        case 'save-budget': {
+          const inp = this.el.querySelector(`#ad-bi-${id}`) as HTMLInputElement | null;
+          if (inp) await this.saveBudget(id, Number(inp.value));
+          return;
+        }
+        case 'pause':    await this.toggleWb(id, 11); return;
+        case 'resume':   await this.toggleWb(id, 9);  return;
+        case 'ai-pause': await this.toggleWb(id, 11); return;
 
-      if (btn.dataset.action === 'save-bids')     { await this.saveBids(btn.dataset.id!); return; }
-      if (btn.dataset.action === 'save-excluded')  { await this.saveExcluded(btn.dataset.id!); return; }
+        case 'expand':
+          this._toggleExpand(id, () => this.loadDetail(id)); return;
+        case 'dtab':
+          this.wbDetailTab.set(id, btn.dataset.tab as WbDetail); this.flushBody(); return;
+        case 'save-bids':     await this.saveBids(id); return;
+        case 'save-excluded': await this.saveExcluded(id); return;
 
-      // Ozon perf expand
-      if (btn.dataset.action === 'exp-perf') {
-        const id = btn.dataset.id!;
-        if (this.expanded.has(id)) this.expanded.delete(id); else this.expanded.add(id);
-        this.flushBody();
-        if (this.expanded.has(id)) this.loadPerfObjects(id);
-        return;
-      }
-      if (btn.dataset.action === 'tog-perf') {
-        await this.toggleOzonPerf(btn.dataset.id!, btn.dataset.status === 'active'); return;
-      }
+        case 'exp-perf':
+          this._toggleExpand(id, () => this.loadPerfObjects(id)); return;
+        case 'tog-perf':
+          await this.toggleOzonPerf(id, btn.dataset.status === 'active'); return;
 
-      // Ozon promo expand
-      if (btn.dataset.action === 'exp-promo') {
-        const id = btn.dataset.id!;
-        if (this.expanded.has(id)) this.expanded.delete(id); else this.expanded.add(id);
-        this.flushBody();
-        if (this.expanded.has(id)) this.loadOzonPromoProducts(id, Number(btn.dataset.aid));
-        return;
-      }
-      if (btn.dataset.action === 'rm-promo-product') {
-        await this.rmOzonPromoProduct(btn.dataset.pid!, Number(btn.dataset.aid), Number(btn.dataset.prodid)); return;
-      }
+        case 'exp-promo':
+          this._toggleExpand(id, () => this.loadOzonPromoProducts(id, Number(btn.dataset.aid))); return;
+        case 'rm-promo-product':
+          await this.rmOzonPromoProduct(btn.dataset.pid!, Number(btn.dataset.aid), Number(btn.dataset.prodid)); return;
 
-      // YM promo expand
-      if (btn.dataset.action === 'exp-ympromo') {
-        const id = btn.dataset.id!;
-        if (this.expanded.has(id)) this.expanded.delete(id); else this.expanded.add(id);
-        this.flushBody();
-        if (this.expanded.has(id)) this.loadYmPromoOffers(id, btn.dataset.promoid!);
-        return;
-      }
-      if (btn.dataset.action === 'rm-ym-offer') {
-        await this.rmYmOffer(btn.dataset.promoid!, btn.dataset.offerid!); return;
-      }
-
-      if (btn.id === 'ym-save-bids') { await this.saveYmBids(); return; }
-
-      // AI quick action
-      if (btn.dataset.action === 'ai-pause') {
-        await this.toggleWb(btn.dataset.id!, 11); return;
+        case 'exp-ympromo':
+          this._toggleExpand(id, () => this.loadYmPromoOffers(id, btn.dataset.promoid!)); return;
+        case 'rm-ym-offer':
+          await this.rmYmOffer(btn.dataset.promoid!, btn.dataset.offerid!); return;
       }
     }, { signal });
 
@@ -739,8 +871,8 @@ export class AdvertisingModule {
         this.storeId = t.value;
         const allBtn = this.el.querySelector('#ad-all-tog');
         allBtn?.classList.toggle('on', this.storeId === '');
-        this.campaigns = []; this.filtered = []; this.aiHints = [];
-        this.loadErrors = [];
+        this.campaigns = []; this.filtered = []; this.isFilterActive = false;
+        this.aiHints = []; this.loadErrors = [];
         this.expanded.clear(); this.detailCache.clear(); this.selected.clear();
         this.balances.clear();
         this.renderSub(); this.renderTiles(); this.renderAi(); this.flushBody();
@@ -759,7 +891,8 @@ export class AdvertisingModule {
 
     this.el.addEventListener('input', (e) => {
       const t = e.target as HTMLInputElement;
-      if (t.id === 'adf-search') { this.searchQ = t.value; this.applyFilter(); }
+      if (t.id === 'adf-search')   { this.searchQ = t.value; this.applyFilter(); }
+      if (t.id === 'boost-search') { this.ymBidsSearch = t.value; this.flushBody(); }
       if (t.dataset.boostid) {
         const cur = this.ymBids.find(b => (b.offerId ?? b.offer_id) === t.dataset.boostid);
         t.classList.toggle('ch', t.value !== '' && Number(t.value) !== (cur?.bid ?? 0));
@@ -797,13 +930,15 @@ export class AdvertisingModule {
     const clicks  = c.reduce((s, x) => s + x.clicks, 0);
     const roi     = spent > 0 ? (revenue - spent) / spent * 100 : 0;
 
+    const drr = drrVal(spent, revenue);
+    const drrColor = drr === null ? '#71717a' : drr < 15 ? '#22c55e' : drr < 30 ? '#f59e0b' : '#ef4444';
     const tiles = this.tab === 'wb'
       ? [
-          ['Бюджет/д',  fmt(budget)   + ' ₽', '#818cf8'],
-          ['Потрачено', fmt(spent)    + ' ₽', '#f59e0b'],
-          ['Выручка',   fmt(revenue)  + ' ₽', '#22c55e'],
-          ['Заказы',    String(orders),        '#3b82f6'],
-          ['CTR',       ctr(views, clicks),    '#a78bfa'],
+          ['Бюджет/д',  fmt(Math.round(budget))  + ' ₽', '#818cf8'],
+          ['Потрачено', fmt(Math.round(spent))    + ' ₽', '#f59e0b'],
+          ['Выручка',   fmt(Math.round(revenue))  + ' ₽', '#22c55e'],
+          ['Заказы',    String(orders),                    '#3b82f6'],
+          ['ДРР',       drr !== null ? drr.toFixed(1) + '%' : '—', drrColor],
           ['ROI',       roiStr(roi), roi >= 0 ? '#22c55e' : '#ef4444'],
         ]
       : [
@@ -844,7 +979,7 @@ export class AdvertisingModule {
         <option value="name:1"    ${this.sortKey==='name' &&this.sortDir===1?'selected':''}>Название А-Я</option>
       </select>
       ${aiLevel ? `<button class="adf-ai ${aiLevel}" id="ad-ai-tog">
-        🤖 ИИ-советник (${this.aiHints.length})
+        ⚡ Диагностика (${this.aiHints.length})
       </button>` : ''}
     </div>`;
   }
@@ -882,6 +1017,7 @@ export class AdvertisingModule {
   }
 
   private applyFilter() {
+    this.isFilterActive = this.searchQ.trim() !== '' || this.filterStatus !== 'all';
     let data = [...this.campaigns];
     if (this.searchQ.trim()) {
       const q = this.searchQ.toLowerCase();
@@ -954,6 +1090,7 @@ export class AdvertisingModule {
     if (!targets.length) { showToast('Нет магазинов', 'warning'); return; }
 
     this.loading = true; this.campaigns = []; this.filtered = [];
+    this.isFilterActive = false; this.searchQ = ''; this.filterStatus = 'all';
     this.loadErrors = [];
     this.expanded.clear(); this.detailCache.clear(); this.aiHints = [];
     this.selected.clear();
@@ -973,11 +1110,14 @@ export class AdvertisingModule {
         }
       }
       this.aiHints = analyzeAi(this.campaigns);
+      this.aiStreamDisplayed = '';
       this.applyFilter();
       this.renderFilterBar();
       this.renderAi();
       this.renderBulk();
       if (this.campaigns.length) {
+        const aiText = buildAiText(this.campaigns, this.aiHints);
+        this.startAiStream(aiText);
         showToast(`Загружено: ${this.campaigns.length}`, 'success');
       } else if (this.loadErrors.length) {
         showToast(`Ошибка загрузки: ${this.loadErrors[0].message.slice(0, 80)}`, 'error');
@@ -1074,7 +1214,91 @@ export class AdvertisingModule {
 
   // ─── render body ──────────────────────────────────────────────────────────────
 
+  private renderOverview(): string {
+    const campaigns = this.campaigns;
+    const totalSpend = campaigns.reduce((s, c) => s + c.spent, 0);
+    const totalRev   = campaigns.reduce((s, c) => s + c.revenue, 0);
+    const totalActive = campaigns.filter(c => c.status === 'active').length;
+    const drr = drrVal(totalSpend, totalRev);
+    const drrDisplay = drr !== null
+      ? `<span style="color:${drr < 15 ? '#22c55e' : drr < 30 ? '#f59e0b' : '#ef4444'}">${drr.toFixed(1)}%</span>`
+      : `<span style="color:var(--text3)">—</span>`;
+
+    const kpiHtml = `<div class="ad-ov-kpi">
+      <div class="ad-ov-kpi-tile">
+        <div class="ad-ov-kpi-l">Расход</div>
+        <div class="ad-ov-kpi-v" style="color:#f59e0b">${totalSpend ? fmt(Math.round(totalSpend)) + ' ₽' : '—'}</div>
+      </div>
+      <div class="ad-ov-kpi-tile">
+        <div class="ad-ov-kpi-l">Выручка</div>
+        <div class="ad-ov-kpi-v" style="color:#22c55e">${totalRev ? fmt(Math.round(totalRev)) + ' ₽' : '—'}</div>
+      </div>
+      <div class="ad-ov-kpi-tile">
+        <div class="ad-ov-kpi-l">ДРР</div>
+        <div class="ad-ov-kpi-v">${drrDisplay}</div>
+      </div>
+      <div class="ad-ov-kpi-tile">
+        <div class="ad-ov-kpi-l">Активных</div>
+        <div class="ad-ov-kpi-v" style="color:#818cf8">${totalActive}</div>
+      </div>
+    </div>`;
+
+    const noDanger = this.aiHints.filter(h => h.level === 'danger').length;
+    const noWarn   = this.aiHints.filter(h => h.level === 'warn').length;
+    const noOk     = this.aiHints.filter(h => h.level === 'ok').length;
+    const badgeCol = noDanger ? '#ef4444' : noWarn ? '#f59e0b' : '#22c55e';
+    const badgeBg  = noDanger ? 'rgba(239,68,68,.12)' : noWarn ? 'rgba(245,158,11,.12)' : 'rgba(34,197,94,.1)';
+    const badgeTxt = noDanger ? `${noDanger} критично` : noWarn ? `${noWarn} предупреждений` : noOk ? `всё хорошо` : '—';
+
+    const streamDone = !this.aiStreamTimer;
+    const streamHtml = `<div class="ad-ai-full">
+      <div class="ad-ai-full-hd">
+        <div class="ad-ai-full-title">
+          ⚡ ИИ-анализ рекламы
+          ${this.aiHints.length ? `<span class="ad-ai-full-badge" style="background:${badgeBg};color:${badgeCol}">${badgeTxt}</span>` : ''}
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          ${!streamDone ? `<span style="font-size:11px;color:var(--text3)">анализирует…</span>` : ''}
+          <button class="rpr-btn rpr-btn-ghost" id="ad-ai-rerun" style="height:24px;padding:0 8px;font-size:11px">↺ Перезапустить</button>
+        </div>
+      </div>
+      <div class="ad-ai-stream-wrap">
+        <span id="ad-ai-stream-text">${this.aiStreamDisplayed || (!this.campaigns.length ? 'Загрузите кампании любой платформы — ИИ проанализирует показатели и предложит действия.' : '')}</span>${!streamDone ? '<span class="ad-ai-stream-cursor"></span>' : ''}
+      </div>
+      ${this.aiHints.length ? `<div class="ad-ai-actions">
+        ${this.aiHints.map(h => {
+          const cls = h.level === 'danger' ? 'd' : h.level === 'warn' ? 'w' : 'o';
+          const col = h.level === 'danger' ? '#ef4444' : h.level === 'warn' ? '#f59e0b' : '#22c55e';
+          const actionBtn = h.action === 'pause' && this.tab !== 'ozon' && this.tab !== 'yandex'
+            ? `<button class="rpr-btn rpr-btn-ghost" style="padding:2px 9px;font-size:11px;flex-shrink:0;color:#ef4444" data-action="ai-pause" data-id="${h.campaignId}">⏸ Пауза</button>`
+            : '';
+          return `<div class="ad-ai-action-row ${cls}">
+            <div class="ad-ai-action-dot" style="background:${col}"></div>
+            <div style="flex:1">
+              <div style="font-weight:700;color:var(--text);font-size:11px;margin-bottom:2px">${esc(h.campaignName)}</div>
+              <div style="color:var(--text2)">${h.message}</div>
+            </div>
+            ${actionBtn}
+          </div>`;
+        }).join('')}
+      </div>` : ''}
+    </div>`;
+
+    const hint = !campaigns.length
+      ? `<div style="font-size:12px;color:var(--text3);text-align:center;padding:12px 0">
+          Переключитесь на вкладку Wildberries, Ozon или Яндекс.Маркет и нажмите «Загрузить» чтобы увидеть данные здесь.
+        </div>`
+      : '';
+
+    return `<div class="ad-ov">
+      ${kpiHtml}
+      ${hint}
+      ${streamHtml}
+    </div>`;
+  }
+
   private renderBody(): string {
+    if (this.tab === 'overview') return this.renderOverview();
     if (this.loading) return skeleton(6);
     if (!this.stores.length)
       return empty('Нет магазинов', 'Добавьте магазин в раздел «Магазины» и вернитесь сюда');
@@ -1107,8 +1331,8 @@ export class AdvertisingModule {
 
     if (!this.campaigns.length && !this.loading)
       return empty('Нажмите «Загрузить»', 'Выберите магазин или включите «Все», затем нажмите кнопку «Загрузить»');
-    const data = this.filtered.length ? this.filtered : this.campaigns;
-    if (!data.length) return empty('Ничего не найдено', 'Попробуйте изменить фильтр');
+    const data = this.isFilterActive ? this.filtered : this.campaigns;
+    if (!data.length) return empty('Ничего не найдено', 'Попробуйте изменить фильтр или сбросить поиск');
 
     const multiStore = !this.storeId || this.stores.length > 1;
 
@@ -1144,9 +1368,12 @@ export class AdvertisingModule {
             <button class="ad-bud-pen" data-action="edit-budget" data-id="${key}" style="background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center">${I.edit()}</button>
           </div>`;
 
-      const pauseBtn = c.status === 'active'
-        ? `<button class="rpr-btn rpr-btn-ghost" style="padding:2px 7px;font-size:11px" data-action="pause"  data-id="${key}">⏸</button>`
-        : `<button class="rpr-btn rpr-btn-ghost" style="padding:2px 7px;font-size:11px" data-action="resume" data-id="${key}">▶</button>`;
+      const isLocked = this.opInProgress.has(key);
+      const pauseBtn = isLocked
+        ? `<button class="rpr-btn rpr-btn-ghost" style="padding:2px 7px;font-size:11px;opacity:.4" disabled>…</button>`
+        : c.status === 'active'
+          ? `<button class="rpr-btn rpr-btn-ghost" style="padding:2px 7px;font-size:11px" data-action="pause"  data-id="${key}">⏸</button>`
+          : `<button class="rpr-btn rpr-btn-ghost" style="padding:2px 7px;font-size:11px" data-action="resume" data-id="${key}">▶</button>`;
 
       const expBtn = `<button class="ad-exp ${isExp?'on':''}" data-action="expand" data-id="${key}">
         <span class="ad-chev">${I.chevronDown()}</span></button>`;
@@ -1160,10 +1387,11 @@ export class AdvertisingModule {
         <td>${statusChip(c.status)}</td>
         <td class="dim nm">${esc(c.type)}</td>
         <td>${budCell}</td>
-        <td class="r dim">${c.spent ? fmt(c.spent) + ' ₽' : '—'}</td>
+        <td class="r dim">${c.spent ? fmt(Math.round(c.spent)) + ' ₽' : '—'}</td>
         <td class="r dim">${fmt(c.views)}</td>
         <td class="r dim">${fmt(c.clicks)}</td>
         <td class="r dim">${c.orders}</td>
+        <td class="r">${drrBadge(c.spent, c.revenue)}</td>
         <td class="r" style="font-weight:700;color:${roiCol}">${roiStr(c.roi)}</td>
         <td style="white-space:nowrap">${pauseBtn} ${expBtn}</td>
       </tr>`;
@@ -1177,7 +1405,7 @@ export class AdvertisingModule {
           ${isAuto ? 'Минус-слова' : 'Ключевые слова'}</button>
       </div>`;
 
-      const detRow = `<tr class="ad-drow"><td colspan="${ms?12:11}">
+      const detRow = `<tr class="ad-drow"><td colspan="${ms?13:12}">
         <div class="ad-dinn">${dtabHtml}${detail}</div>
       </td></tr>`;
 
@@ -1195,6 +1423,7 @@ export class AdvertisingModule {
       <th class="r" data-sort="views">Показы</th>
       <th class="r" data-sort="clicks">Клики</th>
       <th class="r" data-sort="orders">Заказы</th>
+      <th class="r">ДРР</th>
       <th class="r" data-sort="roi">ROI</th>
       <th></th>
     </tr></thead><tbody>${rows}</tbody></table>`;
@@ -1398,7 +1627,10 @@ export class AdvertisingModule {
     const recMap = new Map<string, any>();
     for (const r of this.ymRec) recMap.set(r.offerId ?? r.offer_id ?? '', r);
 
-    const rows = this.ymBids.map(b => {
+    const q = this.ymBidsSearch.toLowerCase().trim();
+    const visibleBids = q ? this.ymBids.filter(b => (b.offerId ?? b.offer_id ?? '').toLowerCase().includes(q)) : this.ymBids;
+
+    const rows = visibleBids.map(b => {
       const oid = b.offerId ?? b.offer_id ?? '';
       const rec = recMap.get(oid);
       const cur = b.bid ?? 0;
@@ -1413,7 +1645,17 @@ export class AdvertisingModule {
       </tr>`;
     }).join('');
 
+    const emptyRow = !visibleBids.length
+      ? `<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text3);font-size:12px">Ничего не найдено</td></tr>`
+      : '';
+
     return `<div>
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 18px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2)">
+        <input id="boost-search" value="${esc(this.ymBidsSearch)}" placeholder="Поиск по Offer ID…"
+          style="flex:1;max-width:300px;padding:5px 10px;background:var(--bg);border:1px solid var(--border);
+            border-radius:8px;color:var(--text);font-size:12px;font-family:inherit;outline:none">
+        <span style="font-size:11px;color:var(--text3)">${visibleBids.length} / ${this.ymBids.length}</span>
+      </div>
       <div style="overflow-x:auto"><table class="adt">
         <thead><tr>
           <th>Offer ID</th>
@@ -1421,7 +1663,7 @@ export class AdvertisingModule {
           <th class="r">Рекомендованная</th>
           <th style="min-width:120px">Новая ставка, ₽</th>
         </tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${rows}${emptyRow}</tbody>
       </table></div>
       <div style="padding:12px 18px;border-top:1px solid var(--border)">
         <button class="rpr-btn rpr-btn-green" id="ym-save-bids" style="display:flex;align-items:center;gap:5px;height:28px;padding:0 14px;font-size:12px">
@@ -1439,7 +1681,7 @@ export class AdvertisingModule {
     try {
       const c = this.campaigns.find(x => String(x.id) === key);
       if (!c) return;
-      const store = this.stores.find(s => s.id === c.storeId) as any;
+      const store = this.stores.find(s => s.id === c.storeId);
       if (!store) return;
       const d = await getWbCampaignDetails(store.api_key, Number(c.id));
       this.detailCache.set(key, d ?? {});
@@ -1454,9 +1696,9 @@ export class AdvertisingModule {
     try {
       const c = this.campaigns.find(x => String(x.id) === key);
       if (!c) return;
-      const store = this.stores.find(s => s.id === c.storeId) as any;
+      const store = this.stores.find(s => s.id === c.storeId);
       if (!store) return;
-      const obs = await ozonPerfApi.getCampaignObjects(store.client_id, store.api_key, key);
+      const obs = await ozonPerfApi.getCampaignObjects(store.client_id ?? '', store.api_key, key);
       this.detailCache.set(key, obs);
     } finally {
       this.detailLoading.delete(key); this.flushBody();
@@ -1469,9 +1711,9 @@ export class AdvertisingModule {
     try {
       const c = this.campaigns.find(x => String(x.id) === key);
       if (!c) return;
-      const store = this.stores.find(s => s.id === c.storeId) as any;
+      const store = this.stores.find(s => s.id === c.storeId);
       if (!store) return;
-      const d = await ozonApi.getPromoProducts({ client_id: store.client_id, api_key: store.api_key }, actionId);
+      const d = await ozonApi.getPromoProducts({ client_id: store.client_id ?? '', api_key: store.api_key }, actionId);
       this.detailCache.set(key, d);
     } finally {
       this.detailLoading.delete(key); this.flushBody();
@@ -1484,7 +1726,7 @@ export class AdvertisingModule {
     try {
       const c = this.campaigns.find(x => String(x.id) === key);
       if (!c) return;
-      const store = this.stores.find(s => s.id === c.storeId) as any;
+      const store = this.stores.find(s => s.id === c.storeId);
       if (!store) return;
       const offers = await getYandexPromoOffers(store.api_key, Number(store.business_id ?? 0), promoId);
       this.detailCache.set(key, offers);
@@ -1494,10 +1736,10 @@ export class AdvertisingModule {
   }
 
   private async loadYmBids() {
-    const store = this.stores.find(s => s.id === this.storeId) as any;
+    const store = this.stores.find(s => s.id === this.storeId);
     if (!store) { showToast('Выберите конкретный магазин', 'warning'); return; }
     if (!store.campaign_id) { showToast('Нет Campaign ID. Добавьте его в настройки магазина', 'warning'); return; }
-    this.ymBidsLoading = true; this.flushBody();
+    this.ymBidsLoading = true; this.ymBidsSearch = ''; this.flushBody();
     try {
       const sig = this.eventsAC.signal;
       const [bids, rec] = await Promise.all([
@@ -1513,9 +1755,13 @@ export class AdvertisingModule {
   }
 
   private async toggleWb(key: string, status: 9 | 11) {
+    if (this.opInProgress.has(key)) return;
     const c = this.campaigns.find(x => String(x.id) === key);
     if (!c) return;
-    const store = this.stores.find(s => s.id === c.storeId) as any;
+    const store = this.stores.find(s => s.id === c.storeId);
+    if (!store) return;
+    this.opInProgress.add(key);
+    this.flushBody();
     try {
       await updateWbCampaign(store.api_key, Number(c.id), { status });
       c.status = status === 9 ? 'active' : 'paused';
@@ -1523,6 +1769,9 @@ export class AdvertisingModule {
       showToast(status === 11 ? 'Пауза' : 'Запущена', 'success');
     } catch (err: any) {
       showToast(`Ошибка: ${err.message}`, 'error');
+    } finally {
+      this.opInProgress.delete(key);
+      this.flushBody();
     }
   }
 
@@ -1535,16 +1784,24 @@ export class AdvertisingModule {
 
   private async saveBudget(key: string, budget: number) {
     if (!budget || budget < 50) { showToast('Минимум 50 ₽', 'warning'); return; }
+    if (this.opInProgress.has(key)) return;
     const c = this.campaigns.find(x => String(x.id) === key);
     if (!c) return;
-    const store = this.stores.find(s => s.id === c.storeId) as any;
+    const store = this.stores.find(s => s.id === c.storeId);
+    if (!store) return;
+    this.opInProgress.add(key);
+    this.flushBody();
     try {
+      // WB API принимает бюджет в копейках → умножаем на 100
       await updateWbCampaign(store.api_key, Number(c.id), { dailyBudget: budget * 100 });
       c.budget = budget;
       this.budgetEditing.delete(key);
-      showToast('Бюджет обновлён', 'success'); this.flushBody();
+      showToast('Бюджет обновлён', 'success');
     } catch (err: any) {
       showToast(`Ошибка: ${err.message}`, 'error');
+    } finally {
+      this.opInProgress.delete(key);
+      this.flushBody();
     }
   }
 
@@ -1557,7 +1814,8 @@ export class AdvertisingModule {
     if (!nmList.length) { showToast('Нет изменений', 'warning'); return; }
     const c = this.campaigns.find(x => String(x.id) === key);
     if (!c) return;
-    const store = this.stores.find(s => s.id === c.storeId) as any;
+    const store = this.stores.find(s => s.id === c.storeId);
+    if (!store) return;
     try {
       await updateWbCampaignBids(store.api_key, Number(c.id), nmList);
       showToast(`Ставки обновлены: ${nmList.length}`, 'success');
@@ -1573,7 +1831,8 @@ export class AdvertisingModule {
     const words = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
     const c = this.campaigns.find(x => String(x.id) === key);
     if (!c) return;
-    const store = this.stores.find(s => s.id === c.storeId) as any;
+    const store = this.stores.find(s => s.id === c.storeId);
+    if (!store) return;
     try {
       await setWbExcludedKeywords(store.api_key, Number(c.id), words);
       showToast('Минус-слова сохранены', 'success');
@@ -1585,9 +1844,10 @@ export class AdvertisingModule {
   private async toggleOzonPerf(key: string, isActive: boolean) {
     const c = this.campaigns.find(x => String(x.id) === key);
     if (!c) return;
-    const store = this.stores.find(s => s.id === c.storeId) as any;
+    const store = this.stores.find(s => s.id === c.storeId);
+    if (!store) return;
     try {
-      await ozonPerfApi.toggleCampaign(store.client_id, store.api_key, key, !isActive);
+      await ozonPerfApi.toggleCampaign(store.client_id ?? '', store.api_key, key, !isActive);
       c.status = isActive ? 'paused' : 'active';
       this.applyFilter();
       showToast(isActive ? 'Приостановлена' : 'Запущена', 'success');
@@ -1599,9 +1859,10 @@ export class AdvertisingModule {
   private async rmOzonPromoProduct(promoKey: string, actionId: number, productId: number) {
     const c = this.campaigns.find(x => String(x.id) === promoKey);
     if (!c) return;
-    const store = this.stores.find(s => s.id === c.storeId) as any;
+    const store = this.stores.find(s => s.id === c.storeId);
+    if (!store) return;
     try {
-      await ozonApi.deactivatePromoProducts({ client_id: store.client_id, api_key: store.api_key }, actionId, [productId]);
+      await ozonApi.deactivatePromoProducts({ client_id: store.client_id ?? '', api_key: store.api_key }, actionId, [productId]);
       const d = this.detailCache.get(promoKey);
       if (d) d.activated = d.activated.filter((p: any) => p.id !== productId);
       this.flushBody(); showToast('Убран из акции', 'success');
@@ -1613,7 +1874,8 @@ export class AdvertisingModule {
   private async rmYmOffer(promoId: string, offerId: string) {
     const c = this.campaigns.find(x => String(x.promoId ?? x.id) === promoId);
     if (!c) return;
-    const store = this.stores.find(s => s.id === c.storeId) as any;
+    const store = this.stores.find(s => s.id === c.storeId);
+    if (!store) return;
     try {
       await removeYandexPromoOffers(store.api_key, Number(store.business_id ?? 0), promoId, [offerId]);
       for (const [k, v] of this.detailCache) {
@@ -1626,7 +1888,7 @@ export class AdvertisingModule {
   }
 
   private async saveYmBids() {
-    const store = this.stores.find(s => s.id === this.storeId) as any;
+    const store = this.stores.find(s => s.id === this.storeId);
     if (!store?.campaign_id) return;
     const bids: Array<{ offerId: string; bid: number }> = [];
     this.ymBidEdits.forEach((val, oid) => {
@@ -1648,12 +1910,17 @@ export class AdvertisingModule {
   private showHelp() {
     document.getElementById('ad-help-overlay')?.remove();
     document.body.insertAdjacentHTML('beforeend', buildHelpModal());
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        document.getElementById('ad-help-overlay')?.remove();
-        document.removeEventListener('keydown', onKey);
-      }
+    const overlay = document.getElementById('ad-help-overlay')!;
+
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
     };
+
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+
+    // Backdrop click — replaces inline onclick in buildHelpModal
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
     document.addEventListener('keydown', onKey);
   }
 
@@ -1699,17 +1966,30 @@ export class AdvertisingModule {
 
     (ov.querySelector('#dlg-form') as HTMLFormElement).addEventListener('submit', async e => {
       e.preventDefault();
-      const fd = new FormData(e.target as HTMLFormElement);
-      close();
-      const store = this.stores.find(s => s.id === this.storeId) as any ?? this.stores[0];
+      const fd   = new FormData(e.target as HTMLFormElement);
+      const store = this.stores.find(s => s.id === this.storeId) ?? this.stores[0];
       if (!store) return;
-      await createWbAdCampaign(store.api_key, {
-        name: fd.get('name') as string,
-        subjectId: 0, type: Number(fd.get('type')),
-        nms: [], dailyBudget: Number(fd.get('budget')) * 100,
-      });
-      showToast('Кампания создана', 'success');
-      await this.loadCampaigns();
+
+      const submitBtn = ov.querySelector('[type=submit]') as HTMLButtonElement;
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Создание…';
+
+      try {
+        await createWbAdCampaign(store.api_key, {
+          name: fd.get('name') as string,
+          subjectId: 0,  // WB требует subjectId; 0 = без категории (товары добавляются через ЛК)
+          type: Number(fd.get('type')),
+          nms: [],
+          dailyBudget: Number(fd.get('budget')) * 100,
+        });
+        close();
+        showToast('Кампания создана', 'success');
+        await this.loadCampaigns();
+      } catch (err: any) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `${I.plus()} Создать`;
+        showToast(`Ошибка создания: ${err.message}`, 'error');
+      }
     });
   }
 

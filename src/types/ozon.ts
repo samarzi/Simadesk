@@ -51,6 +51,7 @@ export interface OzonProductGroup {
 export interface OzonWarehouse {
   warehouse_id: number;
   name: string;
+  is_rfbs?: boolean; // false = FBO warehouse, true = FBS/RFBS
 }
 
 export type DeliveryScheme = 'fbo' | 'fbs' | 'rfbs';
