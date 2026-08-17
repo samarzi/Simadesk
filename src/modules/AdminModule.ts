@@ -1180,21 +1180,26 @@ export class AdminModule {
     const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Пользователь';
     const isActive = this.activeLiveChat?.id === c.id;
     const rm = REASON_META[c.reason] ?? { label: c.reason, icon: 'chat', color: '#64748b' };
-    const flag = this.supNeedsAttention.has(c.id)
-      ? `<span class="ap-sup-flag" title="Нужен оператор">${icon('alert', 13)}</span>` : '';
-    const aiMark = this.supAiHandled.has(c.id) && !this.supNeedsAttention.has(c.id)
-      ? `<span class="ap-sup-ai-mark" title="Ответил ИИ">${icon('bot', 13)}</span>` : '';
-    const unread = c.unread_count > 0 && !isActive ? `<span class="ap-sup-unread">${c.unread_count}</span>` : '';
+    const needsOp = this.supNeedsAttention.has(c.id);
+    const aiDone  = this.supAiHandled.has(c.id) && !needsOp;
+    const unread  = c.unread_count > 0 && !isActive;
+    const preview = c.last_message
+      ? this.esc(c.last_message.replace(/^\[?🤖\s*АВТОКОНТЕКСТ:[^\]\n]*\]?\n?/i, '').trim().slice(0, 65)) || '—'
+      : '—';
     return `
-      <div class="ap-sup-row${isActive ? ' active' : ''}" data-live-chat-id="${c.id}">
+      <div class="ap-sup-row${isActive ? ' active' : ''}${needsOp ? ' needs-op' : ''}" data-live-chat-id="${c.id}">
+        <div class="ap-sup-row-accent" style="background:${rm.color}"></div>
         ${this.avatar(null, name)}
         <div class="ap-sup-row-body">
           <div class="ap-sup-row-head">
-            <span class="ap-sup-name">${this.esc(name)}</span>${flag}${aiMark}${unread}
+            <span class="ap-sup-name">${this.esc(name)}</span>
+            ${needsOp ? `<span class="ap-sup-flag" title="Нужен оператор">${icon('alert', 12)}</span>` : ''}
+            ${aiDone  ? `<span class="ap-sup-ai-mark" title="Ответил AI">${icon('bot', 12)}</span>` : ''}
+            ${unread  ? `<span class="ap-sup-unread">${c.unread_count}</span>` : ''}
             <span class="ap-sup-time">${c.last_message_at ? supportChatService.fmtTime(c.last_message_at) : ''}</span>
           </div>
-          <div class="ap-sup-reason" style="color:${rm.color}">${icon(rm.icon, 12)} ${rm.label}</div>
-          <div class="ap-sup-preview">${c.last_message ? this.esc(c.last_message.replace(/^🤖\s*АВТОКОНТЕКСТ:[^\n]*/i, '').trim().slice(0, 70)) || '—' : '—'}</div>
+          <div class="ap-sup-reason" style="color:${rm.color}">${icon(rm.icon, 11)} ${rm.label}</div>
+          <div class="ap-sup-preview">${preview}</div>
         </div>
       </div>`;
   }
@@ -1203,45 +1208,85 @@ export class AdminModule {
     const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Пользователь';
     const rm = REASON_META[c.reason] ?? { label: c.reason, icon: 'chat', color: '#64748b' };
     const isAi = this.supAdminMode === 'ai';
+    const meta = [
+      c.telegram_username ? `@${this.esc(c.telegram_username)}` : '',
+      c.company_name ? this.esc(c.company_name) : '',
+    ].filter(Boolean).join(' · ');
     return `
       <div class="ap-sup-detail-inner">
         <div class="ap-sup-detail-head">
           ${this.avatar(null, name, 'lg')}
-          <div style="flex:1;min-width:0">
+          <div class="ap-sup-detail-info">
             <div class="ap-sup-detail-name">${this.esc(name)}</div>
-            <div class="ap-ident-sub">${c.telegram_username ? '@' + this.esc(c.telegram_username) + ' · ' : ''}${c.company_name ? this.esc(c.company_name) + ' · ' : ''}${rm.label}</div>
+            ${meta ? `<div class="ap-sup-detail-meta">${meta}</div>` : ''}
+            <div class="ap-sup-detail-reason" style="--rc:${rm.color}">
+              ${icon(rm.icon, 12)} ${rm.label}
+            </div>
           </div>
-          <button class="ap-btn ap-btn-danger ap-btn-sm" id="ap-live-close-chat">${icon('close', 13)} Завершить диалог</button>
+          <button class="ap-btn ap-btn-danger ap-btn-sm" id="ap-live-close-chat">${icon('close', 13)} Завершить</button>
         </div>
         <div class="ap-sup-msgs" id="ap-live-messages">${this.renderMessages(c, name)}</div>
         <div id="ap-live-typing"></div>
         <div class="ap-chips" id="ap-live-chips"></div>
-        <div class="ap-mode-bar" id="ap-live-mode-bar">
-          <span class="ap-mode-label" id="ap-live-mode-label">${isAi ? icon('bot', 14) + ' AI-ассистент отвечает' : icon('edit', 14) + ' Ручное управление'}</span>
-          <button class="ap-btn ap-btn-sm" id="ap-live-mode-toggle">${isAi ? 'Взять управление' : 'Передать AI'}</button>
+        <div class="ap-mode-bar${isAi ? '' : ' manual'}" id="ap-live-mode-bar">
+          <span class="ap-mode-label" id="ap-live-mode-label">${isAi ? icon('bot', 14) + ' AI-ассистент отвечает' : icon('edit', 14) + ' Ручной режим'}</span>
+          <button class="ap-btn ap-btn-sm${isAi ? '' : ' ap-btn-primary'}" id="ap-live-mode-toggle">${isAi ? 'Взять управление' : 'Передать AI'}</button>
         </div>
         <div class="ap-composer">
           <button class="ap-composer-btn" id="ap-live-attach-btn" title="Прикрепить файл">${icon('paperclip', 16)}</button>
           <input type="file" id="ap-live-file-input" accept=".xlsx,.xls,.docx,.doc,.pdf,.jpg,.jpeg,.png,.webp,.gif,.txt,.csv" multiple style="display:none">
-          <textarea id="ap-live-textarea" rows="1" placeholder="${isAi ? 'Отвечает AI — нажмите «Взять управление»' : 'Напишите ответ…'}"${isAi ? ' disabled' : ''}></textarea>
+          <textarea id="ap-live-textarea" rows="1" placeholder="${isAi ? 'AI отвечает — нажмите «Взять управление»' : 'Напишите ответ и нажмите Enter…'}"${isAi ? ' disabled' : ''}></textarea>
           <button class="ap-composer-btn send" id="ap-live-send-btn"${isAi ? ' disabled' : ''} title="Отправить (Enter)">${icon('send', 16)}</button>
         </div>
       </div>`;
   }
 
+  private parseAutoCtx(content: string): { ctx: Record<string, string> | null; text: string } {
+    const m = content?.match(/^\[?🤖\s*АВТОКОНТЕКСТ:\s*([^\]\n]*)\]?\n?/i);
+    if (!m) return { ctx: null, text: content ?? '' };
+    const text = content.slice(m[0].length).trim();
+    const ctx: Record<string, string> = {};
+    m[1].split(',').forEach(pair => {
+      const [k, v] = pair.trim().split('=');
+      if (k?.trim() && v?.trim()) ctx[k.trim()] = v.trim();
+    });
+    return { ctx: Object.keys(ctx).length ? ctx : null, text };
+  }
+
+  private renderAutoCtxBadge(ctx: Record<string, string>): string {
+    const SECTION: Record<string, string> = {
+      home: 'Главная', analytics: 'Аналитика', orders: 'Заказы',
+      products: 'Товары', 'products-hub': 'Товары', stock: 'Склад',
+      settings: 'Настройки', repricer: 'Репрайсер', tasks: 'Задачи',
+      billing: 'Тариф', simastore: 'Витрина', docs: 'Редактор',
+    };
+    const theme   = ctx['тема'];
+    const section = ctx['раздел'];
+    const parts: string[] = [];
+    if (theme)   parts.push(`${theme === 'тёмная' ? '🌙' : '☀️'} ${theme}`);
+    if (section) parts.push(`📍 ${SECTION[section] ?? section}`);
+    return parts.length
+      ? `<div class="ap-ctx-badge">${parts.join('&nbsp;·&nbsp;')}</div>`
+      : '';
+  }
+
   private renderMessages(c: AdminSupportChat, name: string): string {
     const msgs = c.messages ?? [];
-    if (!msgs.length) return `<div class="ap-empty" style="padding:32px">${icon('chat', 26, 1.4)}<div class="ap-empty-desc">Сообщений пока нет</div></div>`;
+    if (!msgs.length) return `<div class="ap-sup-empty-msgs">${icon('chat', 28, 1.4)}<div>Сообщений пока нет</div></div>`;
     return msgs.map(m => {
       const isAdmin = m.sender_role === 'admin';
+      const { ctx, text: cleanText } = this.parseAutoCtx(m.content ?? '');
+      const ctxBadge = !isAdmin && ctx ? this.renderAutoCtxBadge(ctx) : '';
       const attach = (m.attachments ?? []).map(a =>
         a.kind === 'image'
           ? `<img src="${a.data}" alt="${this.esc(a.name)}" class="ap-msg-img">`
           : `<div class="ap-msg-file">${icon('paperclip', 13)} ${this.esc(a.name)}</div>`,
       ).join('');
+      const timeStr = supportChatService.fmtTime(m.created_at);
       return `<div class="ap-msg ${isAdmin ? 'admin' : 'user'}">
-        <div class="ap-bubble">${m.content ? this.esc(m.content).replace(/\n/g, '<br>') : ''}${attach}</div>
-        <div class="ap-msg-time">${isAdmin ? 'Поддержка' : this.esc(name)} · ${supportChatService.fmtTime(m.created_at)}</div>
+        ${ctxBadge}
+        <div class="ap-bubble">${cleanText ? this.esc(cleanText).replace(/\n/g, '<br>') : ''}${attach}</div>
+        <div class="ap-msg-time">${isAdmin ? icon('shield', 10) + ' Поддержка' : this.esc(name)} · ${timeStr}</div>
       </div>`;
     }).join('');
   }
