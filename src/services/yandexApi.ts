@@ -1457,7 +1457,8 @@ export async function removeYandexPromoOffers(
 // ── Advertising: буст-ставки ───────────────────────────────────────────────
 
 /**
- * GET /v2/campaigns/{campaignId}/bids — текущие ставки буст-продвижения.
+ * POST /v2/campaigns/{campaignId}/bids — текущие ставки буст-продвижения.
+ * ЯМ API использует POST для получения списка ставок (GET возвращает 405).
  */
 export async function getYandexCampaignBids(
   apiKey: string,
@@ -1467,7 +1468,7 @@ export async function getYandexCampaignBids(
   try {
     const resp = await yandexFetch<any>(
       `/v2/campaigns/${campaignId}/bids`,
-      'GET', apiKey, undefined, signal,
+      'POST', apiKey, {}, signal,
     );
     return resp?.result?.items ?? resp?.items ?? resp?.bids ?? [];
   } catch { return []; }
@@ -1489,6 +1490,7 @@ export async function updateYandexCampaignBids(
 
 /**
  * GET /v2/campaigns/{campaignId}/bids/recommended — рекомендованные ставки.
+ * Endpoint может вернуть 404 если у кампании нет товаров для буста — возвращаем [].
  */
 export async function getYandexRecommendedBids(
   apiKey: string,
@@ -1497,8 +1499,8 @@ export async function getYandexRecommendedBids(
 ): Promise<any[]> {
   try {
     const resp = await yandexFetch<any>(
-      `/v2/campaigns/${campaignId}/bids/recommended`,
-      'GET', apiKey, undefined, signal,
+      `/v2/campaigns/${campaignId}/bids/recommendations`,
+      'POST', apiKey, {}, signal,
     );
     return resp?.result?.items ?? resp?.items ?? [];
   } catch { return []; }
