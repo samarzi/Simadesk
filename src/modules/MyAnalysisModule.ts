@@ -5,7 +5,7 @@
  * – редактирование названия, описания, фото прямо здесь
  * – ИИ-подсказки через OpenRouter
  */
-import { dbFetchAll } from '../services/dbClient';
+import { dbFetch, dbFetchAll } from '../services/dbClient';
 import { companyService } from '../services/companyService';
 import { ozonApi } from '../services/ozonApi';
 import { wbApi } from '../services/wbApi';
@@ -328,11 +328,23 @@ export class MyAnalysisModule {
           images: this.drawerPhotos.length ? this.drawerPhotos : undefined,
         });
 
+        // Sync local DB cache so verifyFixed sees the updated values
+        await dbFetch(`ozon_products?store_id=eq.${card.storeId}&offer_id=eq.${encodeURIComponent(card.vendorCode)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ name: this.drawerName, ...(this.drawerPhotos.length ? { images: this.drawerPhotos } : {}) }),
+        });
+
       } else if (card.mp === 'wb') {
         const store = this.wbStores.find(s => s.id === card.storeId)!;
         await wbApi.updateCard(store.api_key, card.nmId!, {
           title: this.drawerName,
           ...(this.drawerDesc ? { description: this.drawerDesc } : {}),
+        });
+
+        // Sync local DB cache
+        await dbFetch(`wb_products?store_id=eq.${card.storeId}&nm_id=eq.${card.nmId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ title: this.drawerName, ...(this.drawerPhotos.length ? { pictures: this.drawerPhotos } : {}) }),
         });
 
       } else if (card.mp === 'yandex') {
@@ -341,6 +353,12 @@ export class MyAnalysisModule {
           offerId: card.vendorCode,
           name: this.drawerName,
           ...(this.drawerDesc ? { description: this.drawerDesc } : {}),
+        });
+
+        // Sync local DB cache
+        await dbFetch(`yandex_products?store_id=eq.${card.storeId}&offer_id=eq.${encodeURIComponent(card.vendorCode)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ name: this.drawerName, ...(this.drawerPhotos.length ? { pictures: this.drawerPhotos } : {}) }),
         });
       }
 

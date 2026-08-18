@@ -7,6 +7,7 @@
 
 import { debug } from '@/utils/debug';
 import { I } from '@/utils/icons';
+import { aiPage } from '@/services/aiPageContext';
 import { Mp, MP_LABEL, MP_COLOR, Order, KPI, TimeseriesPoint, PeriodPreset, StoreInfo, TaxModel } from './types';
 import { aggregateOrders, ProductMap } from './services/orderAggregator';
 import { buildCogsResolver } from './services/cogsResolver';
@@ -128,11 +129,65 @@ export class AnalyticsModule {
       this.render();
       this.refresh();
     } else {
+      this._registerAiPage();
       this.render();
     }
   }
 
-  hide(): void { this.container.style.display = 'none'; }
+  hide(): void {
+    this.container.style.display = 'none';
+    aiPage.clear('analytics');
+  }
+
+  get isDataLoaded(): boolean { return this.dataLoaded; }
+
+  /** Текстовый дамп аналитики для AI-ассистента. */
+  getAiSummary(): string {
+    if (!this.dataLoaded || !this.kpi) return '';
+    const k = this.kpi;
+    const fmt = (n: number) =>
+      n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)} млн ₽`
+      : n >= 1_000 ? `${(n / 1_000).toFixed(0)} тыс ₽`
+      : `${Math.round(n)} ₽`;
+
+    const lines: string[] = [
+      `Период: ${this._periodLabel()}`,
+      `Выручка нетто: ${fmt(k.revenue)} | Валовая: ${fmt(k.revenue_gross)}`,
+      `Заказов доставлено: ${k.orders_delivered} | В обработке: ${k.orders_processing} | Возвратов: ${k.orders_returned} | Отмен: ${k.orders_cancelled}`,
+      `Маржа: ${k.margin_pct.toFixed(1)}% | Чистая прибыль: ${fmt(k.net_profit)} | Ср. чек: ${fmt(k.avg_check)}`,
+      `Комиссии МП: ${fmt(k.commission)} | Логистика: ${fmt(k.logistics)} | Налог: ${fmt(k.tax)} | Себестоимость: ${fmt(k.cogs)}`,
+    ];
+
+    // Топ-5 товаров по выручке
+    try {
+      const { computeSkuPerformance } = await import('./services/kpiAggregator');
+      const skus = computeSkuPerformance(this.orders).sort((a: any, b: any) => b.revenue - a.revenue).slice(0, 5);
+      if (skus.length) {
+        lines.push('Топ-5 товаров по выручке:');
+        skus.forEach((s: any, i: number) => {
+          lines.push(`  ${i + 1}. [${s.mp}] ${s.vendor_code} "${s.name}" — ${fmt(s.revenue)}, ${s.units_sold} шт, маржа ${s.margin_pct.toFixed(1)}%`);
+        });
+      }
+    } catch { /* ignore */ }
+
+    return lines.join('\n');
+  }
+
+  private _periodLabel(): string {
+    const labels: Record<string, string> = { '7d': '7 дней', '14d': '14 дней', '30d': '30 дней', '60d': '60 дней', '90d': '90 дней', 'all': 'всё время' };
+    if (this.period === 'custom' && this.customFrom && this.customTo) return `${this.customFrom} — ${this.customTo}`;
+    return labels[this.period] ?? this.period;
+  }
+
+  private _registerAiPage(): void {
+    if (!this.dataLoaded || !this.kpi) return;
+    aiPage.register({
+      page: 'analytics',
+      title: 'Аналитика',
+      describe: () => this.getAiSummary(),
+      actions: [],
+    });
+  }
 
   // ── Период ────────────────────────────────────────────────────────────
   private getRange(): { start: Date; end: Date } {
@@ -237,6 +292,7 @@ export class AnalyticsModule {
       clearSummaryCache();
       clearOrdersCache();
       clearProductsCache();
+      this._registerAiPage();
       this.render();
 
       // Сравнение с прошлым периодом — фоновая загрузка

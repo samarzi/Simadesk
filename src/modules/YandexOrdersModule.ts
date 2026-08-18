@@ -117,7 +117,8 @@ export class YandexOrdersModule {
     if (this.period === '30') days = 30;
     else if (this.period === '90') days = 90;
     const from = new Date(now.getTime() - days * 86_400_000);
-    return { from: ymDateOnly(from), to: ymDateOnly(now) };
+    const to = new Date(now.getTime() + 86_400_000); // +1 день: Яндекс API обрабатывает toDate как исключительную границу
+    return { from: ymDateOnly(from), to: ymDateOnly(to) };
   }
 
   private async loadOrders(): Promise<void> {

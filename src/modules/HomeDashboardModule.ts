@@ -73,6 +73,11 @@ interface StoreCard {
   cancels: number;
   lastActivity: Date | null;
   connected: boolean;
+  // Остатки (из локальной БД, загружаются параллельно с заказами)
+  stockInStock: number;  // товаров с остатком > 3
+  stockLow: number;      // товаров с остатком 1–3
+  stockOut: number;      // товаров с нулевым остатком
+  stockTotal: number;    // суммарный остаток всех товаров
 }
 
 /** Сырые данные — результат сетевого захода, НЕ зависят от фильтра. */
@@ -334,6 +339,14 @@ export class HomeDashboardModule {
         ${this.renderFilterBarSkeleton()}
 
         <div class="cmd-news-block" id="cmd-news-block"></div>
+
+        <!-- Дашборд по маркетплейсам и магазинам (всегда видим, не виджет) -->
+        <div class="cmd-mp-board" id="cmd-mp-board">
+          <div class="cmd-mp-board-skeleton">
+            <div class="cmd-mp-board-sk-row"></div>
+            <div class="cmd-mp-board-sk-row"></div>
+          </div>
+        </div>
 
         ${editMode ? `
           <div class="cmd-edit-banner">
@@ -802,6 +815,7 @@ export class HomeDashboardModule {
         mp, mpName, mpColor, storeId, storeName,
         revenue30: 0, revenueToday: 0, orders30: 0, ordersToday: 0,
         newCount: 0, shipUrgent: 0, cancels: 0, lastActivity: null, connected: false,
+        stockInStock: 0, stockLow: 0, stockOut: 0, stockTotal: 0,
       };
       storeCards.push(card);
       return card;
@@ -898,7 +912,88 @@ export class HomeDashboardModule {
     });
 
     await Promise.all(jobs);
+
+    // Загружаем остатки из локальной БД (без API-запросов, только Supabase)
+    await this.fillStockSummaries(storeCards, ozStores, ymStores, wbStores);
+
     return { hasStores: true, storeCards, allOrders: all };
+  }
+
+  /** Добавляет данные об остатках к карточкам магазинов из локальной БД. */
+  private async fillStockSummaries(
+    cards: StoreCard[],
+    ozStores: { id: string }[],
+    ymStores: { id: string }[],
+    wbStores: { id: string }[],
+  ): Promise<void> {
+    try {
+      const { dbFetch } = await import('../services/dbClient');
+
+      const summarise = (items: { stockVal: number; storeId: string }[], LOW = 3): Map<string, { inStock: number; low: number; out: number; total: number }> => {
+        const m = new Map<string, { inStock: number; low: number; out: number; total: number }>();
+        for (const it of items) {
+          const v = m.get(it.storeId) ?? { inStock: 0, low: 0, out: 0, total: 0 };
+          if (it.stockVal <= 0) v.out++;
+          else if (it.stockVal <= LOW) v.low++;
+          else v.inStock++;
+          v.total += it.stockVal;
+          m.set(it.storeId, v);
+        }
+        return m;
+      };
+
+      const loads: Promise<void>[] = [];
+
+      if (ozStores.length) {
+        const ids = ozStores.map(s => s.id).join(',');
+        loads.push(
+          dbFetch<{ store_id: string; stock_fbs: number; stock_fbo: number }[]>(
+            `ozon_products?store_id=in.(${ids})&select=store_id,stock_fbs,stock_fbo`,
+          ).then(rows => {
+            const sm = summarise(rows.map(r => ({ storeId: r.store_id, stockVal: (r.stock_fbs ?? 0) + (r.stock_fbo ?? 0) })));
+            for (const c of cards) {
+              if (c.mp !== 'ozon') continue;
+              const s = sm.get(c.storeId);
+              if (s) { c.stockInStock = s.inStock; c.stockLow = s.low; c.stockOut = s.out; c.stockTotal = s.total; }
+            }
+          }).catch(() => {}),
+        );
+      }
+
+      if (ymStores.length) {
+        const ids = ymStores.map(s => s.id).join(',');
+        loads.push(
+          dbFetch<{ store_id: string; stock_available: number; stock_total: number }[]>(
+            `yandex_products?store_id=in.(${ids})&select=store_id,stock_available,stock_total`,
+          ).then(rows => {
+            const sm = summarise(rows.map(r => ({ storeId: r.store_id, stockVal: r.stock_available ?? r.stock_total ?? 0 })));
+            for (const c of cards) {
+              if (c.mp !== 'yandex') continue;
+              const s = sm.get(c.storeId);
+              if (s) { c.stockInStock = s.inStock; c.stockLow = s.low; c.stockOut = s.out; c.stockTotal = s.total; }
+            }
+          }).catch(() => {}),
+        );
+      }
+
+      if (wbStores.length) {
+        const ids = wbStores.map(s => s.id).join(',');
+        loads.push(
+          dbFetch<{ store_id: string; stock_total: number }[]>(
+            `wb_products?store_id=in.(${ids})&select=store_id,stock_total`,
+          ).then(rows => {
+            const sm = summarise(rows.map(r => ({ storeId: r.store_id, stockVal: r.stock_total ?? 0 })));
+            for (const c of cards) {
+              if (c.mp !== 'wb') continue;
+              const s = sm.get(c.storeId);
+              if (s) { c.stockInStock = s.inStock; c.stockLow = s.low; c.stockOut = s.out; c.stockTotal = s.total; }
+            }
+          }).catch(() => {}),
+        );
+      }
+
+      await Promise.all(loads);
+    } catch { /* остатки не критичны — дашборд отображается без них */ }
   }
 
   /** Считает агрегаты для виджетов из уже отфильтрованных карточек/заказов. Без сети. */
@@ -1049,6 +1144,7 @@ export class HomeDashboardModule {
       this.paintKpi(cfg.elemId, disp, seriesFor[cfg.id] ?? null, cfg.color);
     }
 
+    this.paintMpBoard(d);
     this.paintStores(d);
     this.paintFeed(d);
     this.paintUrgent(d);
@@ -1068,6 +1164,8 @@ export class HomeDashboardModule {
   private renderEmpty(): void {
     const grid = document.getElementById('cmd-widgets-grid');
     if (!grid) return;
+    const board = document.getElementById('cmd-mp-board');
+    if (board) board.innerHTML = '';
     grid.innerHTML = `
       <div class="cmd-empty-state">
         <div class="cmd-empty-icon">${I.plug('', 30)}</div>
@@ -1078,6 +1176,102 @@ export class HomeDashboardModule {
   }
 
   // ── Painters ────────────────────────────────────────────────────
+
+  private paintMpBoard(d: DashData): void {
+    const el = document.getElementById('cmd-mp-board');
+    if (!el) return;
+    if (d.storeCards.length === 0) { el.innerHTML = ''; return; }
+
+    // Группируем магазины по маркетплейсу
+    const groups = new Map<string, { mp: Mp; mpName: string; mpColor: string; cards: StoreCard[] }>();
+    const MP_ORDER: Mp[] = ['ozon', 'wb', 'yandex'];
+    for (const mp of MP_ORDER) {
+      const mpCards = d.storeCards.filter(c => c.mp === mp);
+      if (mpCards.length === 0) continue;
+      groups.set(mp, { mp, mpName: mpCards[0].mpName, mpColor: mpCards[0].mpColor, cards: mpCards });
+    }
+    // Добавляем неизвестные МП (на будущее)
+    for (const c of d.storeCards) {
+      if (!groups.has(c.mp)) groups.set(c.mp, { mp: c.mp, mpName: c.mpName, mpColor: c.mpColor, cards: [] });
+      if (!groups.get(c.mp)!.cards.includes(c)) groups.get(c.mp)!.cards.push(c);
+    }
+
+    const mpIcons: Record<string, string> = {
+      ozon: '<svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor"><circle cx="10" cy="10" r="9" opacity=".15"/><text x="10" y="14" text-anchor="middle" font-size="9" font-weight="800" fill="currentColor">O</text></svg>',
+      wb: '<svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor"><circle cx="10" cy="10" r="9" opacity=".15"/><text x="10" y="14" text-anchor="middle" font-size="9" font-weight="800" fill="currentColor">WB</text></svg>',
+      yandex: '<svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor"><circle cx="10" cy="10" r="9" opacity=".15"/><text x="10" y="14" text-anchor="middle" font-size="8" font-weight="800" fill="currentColor">ЯМ</text></svg>',
+    };
+
+    const sections = [...groups.values()].map(g => {
+      const totalRev = g.cards.reduce((s, c) => s + c.revenue30, 0);
+      const totalOrd = g.cards.reduce((s, c) => s + c.orders30, 0);
+      const totalNew = g.cards.reduce((s, c) => s + c.newCount, 0);
+      const totalShip = g.cards.reduce((s, c) => s + c.shipUrgent, 0);
+      const totalInStock = g.cards.reduce((s, c) => s + c.stockInStock, 0);
+      const totalLow = g.cards.reduce((s, c) => s + c.stockLow, 0);
+      const totalOut = g.cards.reduce((s, c) => s + c.stockOut, 0);
+      const hasStock = totalInStock + totalLow + totalOut > 0;
+      const dest = g.mp === 'ozon' ? 'orders-ozon' : g.mp === 'yandex' ? 'orders-yandex' : 'orders-wb';
+
+      const storeRows = g.cards.map(c => {
+        const hasStoreStock = c.stockInStock + c.stockLow + c.stockOut > 0;
+        return `<div class="mpb-store-row" style="--c:${c.mpColor}" onclick="window.app.navigateTo('${dest}')">
+          <span class="mpb-store-dot"></span>
+          <span class="mpb-store-name">${escHtml(c.storeName)}</span>
+          <span class="mpb-store-stats">
+            <span class="mpb-stat">
+              <span class="mpb-stat-lbl">Выручка 30д</span>
+              <span class="mpb-stat-val mpb-money">${fmtRub(c.revenue30)}</span>
+            </span>
+            <span class="mpb-stat">
+              <span class="mpb-stat-lbl">Заказов 30д</span>
+              <span class="mpb-stat-val">${c.orders30}</span>
+            </span>
+            <span class="mpb-stat">
+              <span class="mpb-stat-lbl">Сегодня</span>
+              <span class="mpb-stat-val ${c.ordersToday > 0 ? 'mpb-today' : ''}">${c.ordersToday}</span>
+            </span>
+            ${c.newCount > 0 ? `<span class="mpb-stat"><span class="mpb-stat-lbl">Новые</span><span class="mpb-stat-val mpb-new">+${c.newCount}</span></span>` : ''}
+            ${c.shipUrgent > 0 ? `<span class="mpb-stat"><span class="mpb-stat-lbl">К отгрузке</span><span class="mpb-stat-val mpb-urg">${c.shipUrgent}⏰</span></span>` : ''}
+            ${hasStoreStock ? `
+            <span class="mpb-stat mpb-stat-sep"></span>
+            <span class="mpb-stat">
+              <span class="mpb-stat-lbl">В наличии</span>
+              <span class="mpb-stat-val mpb-stock-ok">${c.stockInStock}</span>
+            </span>
+            <span class="mpb-stat">
+              <span class="mpb-stat-lbl">Мало</span>
+              <span class="mpb-stat-val ${c.stockLow > 0 ? 'mpb-stock-low' : ''}">${c.stockLow}</span>
+            </span>
+            <span class="mpb-stat">
+              <span class="mpb-stat-lbl">Нет</span>
+              <span class="mpb-stat-val ${c.stockOut > 0 ? 'mpb-stock-out' : ''}">${c.stockOut}</span>
+            </span>` : ''}
+          </span>
+          <span class="mpb-store-status ${c.connected ? 'live' : 'off'}"></span>
+        </div>`;
+      }).join('');
+
+      return `<div class="mpb-section">
+        <div class="mpb-header" style="--c:${g.mpColor}">
+          <span class="mpb-mp-icon" style="color:${g.mpColor}">${mpIcons[g.mp] ?? ''}</span>
+          <span class="mpb-mp-name">${g.mpName}</span>
+          <span class="mpb-mp-totals">
+            <span class="mpb-total-rev">${fmtRub(totalRev)}</span>
+            <span class="mpb-total-ord">${totalOrd} зак.</span>
+            ${totalNew > 0 ? `<span class="mpb-badge mpb-new">+${totalNew} новых</span>` : ''}
+            ${totalShip > 0 ? `<span class="mpb-badge mpb-urg">${totalShip}⏰ срочно</span>` : ''}
+            ${hasStock ? `<span class="mpb-stock-summary"><span class="mpb-stock-ok-dot"></span>${totalInStock} <span class="mpb-stock-low-dot"></span>${totalLow} <span class="mpb-stock-out-dot"></span>${totalOut}</span>` : ''}
+          </span>
+          <span class="mpb-mp-stores-count">${g.cards.length} ${g.cards.length === 1 ? 'магазин' : g.cards.length < 5 ? 'магазина' : 'магазинов'}</span>
+        </div>
+        <div class="mpb-stores">${storeRows}</div>
+      </div>`;
+    });
+
+    el.innerHTML = sections.join('');
+  }
+
   private paintKpi(elemId: string, value: string, series: number[] | null, _color: string): void {
     const valEl = document.getElementById(`${elemId}-val`);
     if (valEl) valEl.textContent = value;

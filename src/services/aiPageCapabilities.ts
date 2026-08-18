@@ -1431,8 +1431,8 @@ export function installGlobalAiActions(): void {
     args: '{ type: "excel"|"word", title?: string }',
     run: async (a: { type?: string; title?: string }) => {
       const type = a?.type === 'word' ? 'word' : 'excel';
-      w().app?.navigateTo?.('docs');
-      await waitFor(() => !!w().docsModule?.aiCreateDoc);
+      await w().app?.navigateTo?.('docs');
+      await waitFor(() => !!w().docsModule?.aiCreateDoc, 2000);
       const dm = w().docsModule;
       if (!dm?.aiCreateDoc) throw new Error('Редактор недоступен');
       return dm.aiCreateDoc(type, a?.title);
@@ -1930,4 +1930,24 @@ export function installGlobalAiActions(): void {
 
   // ── Новые глобальные actions — настройки ─────────────────────────────────────
   for (const act of SETTINGS_ACTIONS) aiPage.registerGlobal(act);
+
+  // ── Аналитика: загрузить данные с любой страницы ─────────────────────────────
+  aiPage.registerGlobal({
+    name: 'fetch_analytics',
+    description: 'Перейти в раздел Аналитики, загрузить данные и вернуть полный отчёт. Используй ВСЕГДА когда пользователь спрашивает про аналитику, выручку, заказы, маржу, топ товаров, прибыль — и данных нет в [ТЕКУЩИЕ ДАННЫЕ МАГАЗИНА]. Сам перейдёт в нужный раздел.',
+    args: '{}',
+    run: async () => {
+      const am = w().analyticsModule;
+      if (!am) throw new Error('Модуль аналитики недоступен');
+      // Переходим в Аналитику и ждём загрузки данных
+      await w().app?.navigateTo?.('analytics');
+      if (!am.isDataLoaded) {
+        await am.show();
+        await waitFor(() => !!(w().analyticsModule?.isDataLoaded), 15000);
+      }
+      const summary: string = am.getAiSummary?.() ?? '';
+      if (!summary) return 'Данные аналитики загружены, но пока пусты — возможно нет подключённых маркетплейсов или данных за период.';
+      return `Вот актуальные данные аналитики вашего магазина:\n\n${summary}`;
+    },
+  });
 }

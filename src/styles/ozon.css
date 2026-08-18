@@ -4431,6 +4431,194 @@
 .sf-footer-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 8px; }
 
 /* ══════════════════════════════════════════════════════════════
+   MP Board — дашборд по маркетплейсам/магазинам
+   ══════════════════════════════════════════════════════════════ */
+.cmd-mp-board {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.cmd-mp-board-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cmd-mp-board-sk-row {
+  height: 54px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  animation: cmd-sk-pulse 1.4s ease-in-out infinite;
+}
+@keyframes cmd-sk-pulse {
+  0%, 100% { opacity: .5; }
+  50%       { opacity: 1; }
+}
+
+.mpb-section {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.mpb-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--c, #005bff) 6%, var(--bg2));
+  border-bottom: 1px solid var(--border);
+}
+.mpb-mp-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.mpb-mp-name {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--c, var(--text));
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  flex-shrink: 0;
+}
+.mpb-mp-totals {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.mpb-total-rev {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text);
+}
+.mpb-total-ord {
+  font-size: 11px;
+  color: var(--muted);
+}
+.mpb-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.mpb-badge.mpb-new { background: color-mix(in srgb,#ea580c 15%,transparent); color: #ea580c; }
+.mpb-badge.mpb-urg { background: color-mix(in srgb,#dc2626 15%,transparent); color: #dc2626; }
+
+.mpb-stock-summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+  margin-left: 4px;
+}
+.mpb-stock-ok-dot  { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #16a34a; }
+.mpb-stock-low-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; }
+.mpb-stock-out-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #ef4444; }
+
+.mpb-mp-stores-count {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 600;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.mpb-stores {
+  display: flex;
+  flex-direction: column;
+}
+.mpb-store-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .12s;
+}
+.mpb-store-row:last-child { border-bottom: none; }
+.mpb-store-row:hover { background: color-mix(in srgb, var(--c, #005bff) 5%, transparent); }
+
+.mpb-store-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c, #005bff);
+  flex-shrink: 0;
+}
+.mpb-store-name {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  min-width: 120px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.mpb-store-stats {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.mpb-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex-shrink: 0;
+}
+.mpb-stat-sep {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  align-self: center;
+  flex-direction: row;
+}
+.mpb-stat-lbl {
+  font-size: 9px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  font-weight: 700;
+  line-height: 1;
+}
+.mpb-stat-val {
+  font-size: 13px;
+  font-weight: 750;
+  color: var(--text);
+  line-height: 1.2;
+}
+.mpb-stat-val.mpb-money { font-variant-numeric: tabular-nums; }
+.mpb-stat-val.mpb-today { color: #16a34a; }
+.mpb-stat-val.mpb-new   { color: #ea580c; }
+.mpb-stat-val.mpb-urg   { color: #dc2626; }
+.mpb-stat-val.mpb-stock-ok  { color: #16a34a; }
+.mpb-stat-val.mpb-stock-low { color: #f59e0b; }
+.mpb-stat-val.mpb-stock-out { color: #ef4444; }
+
+.mpb-store-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.mpb-store-status.live { background: #16a34a; box-shadow: 0 0 0 2px rgba(22,163,74,.2); }
+.mpb-store-status.off  { background: #ef4444; }
+
+@media (max-width: 640px) {
+  .mpb-store-name { max-width: 120px; min-width: 80px; }
+  .mpb-store-stats { gap: 8px; }
+}
+
+/* ══════════════════════════════════════════════════════════════
    Лента заказов
    ══════════════════════════════════════════════════════════════ */
 .cmd-feed-item {

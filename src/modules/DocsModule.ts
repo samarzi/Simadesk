@@ -3735,7 +3735,13 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     if (!html) throw new Error('Не указано содержимое (html или text)');
     const result = a?.append ? before + html : html;
     this.updateContent(doc.id, result);
-    this.render();
+    // Try to update the live contenteditable directly (avoids full DOM rebuild)
+    const page = this.root.querySelector<HTMLElement>('.docs-word-page');
+    if (page) {
+      page.innerHTML = result;
+    } else {
+      this.render();
+    }
     const wordCount = result.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length;
     return this.docsResult(doc.id, before, `Документ обновлён (~${wordCount} слов).`, 'Отменить изменение содержимого');
   }
