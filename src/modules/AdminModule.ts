@@ -168,6 +168,7 @@ export class AdminModule {
   private newsChannels: Array<{ id: string; mp: string; channel_slug: string; label: string; enabled: boolean }> = [];
   private newsItems: Array<{ id: string; mp: string; title: string; summary: string; is_important: boolean; published_at: string; source_url?: string }> = [];
   private newsLoading = false;
+  private newsManualAdd = false;
 
   constructor(el: HTMLElement) { this.el = el; }
 
@@ -2781,6 +2782,7 @@ ${this.SIMADESK_KNOWLEDGE}
     const MP_COLORS: Record<string, string> = {
       wb: '#cb11ab', ozon: '#005bff', yandex: '#ffd700', general: '#6366f1',
     };
+    const mpSelectOpts = MP_OPTIONS.map(o => `<option value="${o.v}">${o.l}</option>`).join('');
 
     const channelRows = this.newsChannels.length
       ? this.newsChannels.map(ch => {
@@ -2788,7 +2790,7 @@ ${this.SIMADESK_KNOWLEDGE}
           const mpLabel = MP_OPTIONS.find(o => o.v === ch.mp)?.l ?? ch.mp;
           return `<tr data-channel-id="${this.esc(ch.id)}">
             <td><span class="ap-news-mp-badge" style="background:${color}40;color:${color}">${this.esc(mpLabel)}</span></td>
-            <td><code class="ap-news-slug">${ch.channel_slug.startsWith('vk:') ? ch.channel_slug : '@' + this.esc(ch.channel_slug)}</code></td>
+            <td><code class="ap-news-slug">@${this.esc(ch.channel_slug)}</code></td>
             <td>${this.esc(ch.label ?? '—')}</td>
             <td>
               <label class="ap-news-toggle">
@@ -2809,15 +2811,42 @@ ${this.SIMADESK_KNOWLEDGE}
           const mpLabel = MP_OPTIONS.find(o => o.v === n.mp)?.l ?? n.mp;
           const date = new Date(n.published_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
           const imp = n.is_important ? `<span class="ap-news-imp-badge">⚠ важно</span>` : '';
-          return `<tr>
+          return `<tr data-news-id="${this.esc(n.id)}">
             <td><span class="ap-news-mp-badge" style="background:${color}40;color:${color}">${this.esc(mpLabel)}</span></td>
             <td class="ap-news-title-cell">${this.esc(n.title)} ${imp}</td>
             <td class="ap-news-sum-cell">${this.esc(n.summary)}</td>
-            <td class="ap-news-date-cell">${date}</td>
+            <td class="ap-news-date-cell" style="white-space:nowrap">${date}</td>
             <td>${n.source_url ? `<a class="ap-news-src-link" href="${this.esc(n.source_url)}" target="_blank" rel="noopener">→</a>` : '—'}</td>
+            <td class="ap-news-actions-cell">
+              <button class="ap-btn-icon news-item-edit" data-id="${this.esc(n.id)}" title="Редактировать">${icon('edit', 13)}</button>
+              <button class="ap-btn-icon news-item-delete" data-id="${this.esc(n.id)}" title="Удалить">${icon('trash', 13)}</button>
+            </td>
           </tr>`;
         }).join('')
-      : `<tr><td colspan="5" class="ap-news-empty-row">Новостей ещё нет — запустите первый сбор</td></tr>`;
+      : `<tr><td colspan="6" class="ap-news-empty-row">Новостей ещё нет — запустите первый сбор или добавьте вручную</td></tr>`;
+
+    const manualForm = this.newsManualAdd ? `
+      <tr id="news-manual-row">
+        <td colspan="6" style="padding:0">
+          <div class="ap-news-manual-form">
+            <div class="ap-news-manual-row">
+              <select class="ap-input ap-news-manual-mp" id="news-manual-mp">${mpSelectOpts}</select>
+              <input class="ap-input" id="news-manual-title" placeholder="Заголовок" style="flex:2">
+              <label class="ap-news-manual-imp"><input type="checkbox" id="news-manual-imp"> Важно</label>
+            </div>
+            <div class="ap-news-manual-row">
+              <textarea class="ap-input" id="news-manual-summary" placeholder="Краткое содержание (1–2 предложения)" rows="2" style="flex:1;resize:vertical"></textarea>
+            </div>
+            <div class="ap-news-manual-row">
+              <input class="ap-input" id="news-manual-url" placeholder="Ссылка на источник (необязательно)" style="flex:1">
+              <div style="display:flex;gap:8px;flex-shrink:0">
+                <button class="ap-btn ap-btn-primary" id="news-manual-save">${icon('check', 14)} Сохранить</button>
+                <button class="ap-btn" id="news-manual-cancel">Отмена</button>
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>` : '';
 
     return `
       <div class="ap-news-wrap">
@@ -2825,8 +2854,8 @@ ${this.SIMADESK_KNOWLEDGE}
         <div class="ap-section-card">
           <div class="ap-section-hdr">
             <div>
-              <div class="ap-section-title">Источники новостей</div>
-              <div class="ap-section-sub">VK-сообщества (<code>vk:groupname</code>) или Telegram-каналы (<code>@channelname</code>). С российского VPS работают только VK-источники.</div>
+              <div class="ap-section-title">Источники новостей (Telegram)</div>
+              <div class="ap-section-sub">Каналы в формате <code>@channelname</code>. Если VPS в России — нужен прокси (<code>TG_PROXY_URL</code> в .env).</div>
             </div>
             <div class="ap-news-fetch-wrap">
               <button class="ap-btn ap-btn-primary" id="news-run-fetch" ${this.newsLoading ? 'disabled' : ''}>
@@ -2848,15 +2877,14 @@ ${this.SIMADESK_KNOWLEDGE}
             <div class="ap-news-add-title">${icon('plus', 14)} Добавить канал</div>
             <div class="ap-news-add-row">
               <select class="ap-input ap-news-mp-sel" id="news-add-mp">
-                ${MP_OPTIONS.map(o => `<option value="${o.v}">${o.l}</option>`).join('')}
+                ${mpSelectOpts}
               </select>
-              <input class="ap-input ap-news-slug-inp" id="news-add-slug" placeholder="vk:groupname или @tgchannel" autocomplete="off">
+              <input class="ap-input ap-news-slug-inp" id="news-add-slug" placeholder="channelname (без @)" autocomplete="off">
               <input class="ap-input ap-news-label-inp" id="news-add-label" placeholder="Название (необязательно)">
               <button class="ap-btn ap-btn-primary" id="news-add-btn">${icon('plus', 14)} Добавить</button>
             </div>
             <div class="ap-news-add-hint">
-              <strong>VK (рекомендуется):</strong> <code>vk:wbsellers</code> — нужен <code>VK_SERVICE_TOKEN</code> в .env.<br>
-              <strong>Telegram:</strong> <code>@channelname</code> — работает только если VPS не в России или настроен <code>TG_PROXY_URL</code>.
+              Telegram-канал, например <code>wbmarketplacenews</code>. Для работы с российского VPS настрой <code>TG_PROXY_URL</code> в .env.
             </div>
           </div>
         </div>
@@ -2864,16 +2892,22 @@ ${this.SIMADESK_KNOWLEDGE}
         <div class="ap-section-card">
           <div class="ap-section-hdr">
             <div>
-              <div class="ap-section-title">Последние собранные новости</div>
-              <div class="ap-section-sub">Только то, что прошло AI-фильтрацию — реклама и спам отсеиваются автоматически</div>
+              <div class="ap-section-title">Новости</div>
+              <div class="ap-section-sub">Собранные и добавленные вручную</div>
             </div>
-            <button class="ap-btn" id="news-clear-btn">${icon('trash', 14)} Очистить все</button>
+            <div style="display:flex;gap:8px">
+              <button class="ap-btn ap-btn-primary" id="news-manual-add-btn">${icon('plus', 14)} Добавить вручную</button>
+              <button class="ap-btn" id="news-clear-btn">${icon('trash', 14)} Очистить все</button>
+            </div>
           </div>
           <table class="ap-news-table ap-news-items-table">
             <thead>
-              <tr><th>МП</th><th>Заголовок</th><th>Краткое содержание</th><th>Дата</th><th>Источник</th></tr>
+              <tr><th>МП</th><th>Заголовок</th><th>Краткое содержание</th><th>Дата</th><th>Источник</th><th style="width:60px"></th></tr>
             </thead>
-            <tbody>${newsRows}</tbody>
+            <tbody id="news-items-tbody">
+              ${manualForm}
+              ${newsRows}
+            </tbody>
           </table>
         </div>
 
@@ -2966,6 +3000,122 @@ ${this.SIMADESK_KNOWLEDGE}
       showToast('Новости очищены', 'success');
       await this.loadNewsData();
       this.render();
+    });
+
+    // Удалить отдельную новость
+    el.querySelectorAll<HTMLButtonElement>('.news-item-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id!;
+        if (!confirm('Удалить эту новость?')) return;
+        const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+        const res = await fetch(`${REST_URL}/mp_news?id=eq.${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+        if (res.ok || res.status === 204) {
+          this.newsItems = this.newsItems.filter(n => n.id !== id);
+          const row = el.querySelector<HTMLTableRowElement>(`tr[data-news-id="${id}"]`);
+          row?.remove();
+          showToast('Новость удалена', 'success');
+        } else {
+          showToast('Ошибка удаления', 'error');
+        }
+      });
+    });
+
+    // Редактировать новость — inline
+    el.querySelectorAll<HTMLButtonElement>('.news-item-edit').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id!;
+        const item = this.newsItems.find(n => n.id === id);
+        if (!item) return;
+        const row = el.querySelector<HTMLTableRowElement>(`tr[data-news-id="${id}"]`);
+        if (!row) return;
+        const MP_OPTIONS = [
+          { v: 'wb', l: 'Wildberries' }, { v: 'ozon', l: 'Ozon' },
+          { v: 'yandex', l: 'Яндекс Маркет' }, { v: 'general', l: 'Общее / другое' },
+        ];
+        const mpOpts = MP_OPTIONS.map(o => `<option value="${o.v}" ${o.v === item.mp ? 'selected' : ''}>${o.l}</option>`).join('');
+        row.innerHTML = `<td colspan="6" style="padding:0">
+          <div class="ap-news-manual-form ap-news-edit-form">
+            <div class="ap-news-manual-row">
+              <select class="ap-input ap-news-manual-mp" id="news-edit-mp-${id}">${mpOpts}</select>
+              <input class="ap-input" id="news-edit-title-${id}" value="${this.esc(item.title)}" placeholder="Заголовок" style="flex:2">
+              <label class="ap-news-manual-imp"><input type="checkbox" id="news-edit-imp-${id}" ${item.is_important ? 'checked' : ''}> Важно</label>
+            </div>
+            <div class="ap-news-manual-row">
+              <textarea class="ap-input" id="news-edit-sum-${id}" rows="2" style="flex:1;resize:vertical">${this.esc(item.summary)}</textarea>
+            </div>
+            <div class="ap-news-manual-row">
+              <input class="ap-input" id="news-edit-url-${id}" value="${this.esc(item.source_url ?? '')}" placeholder="Ссылка на источник" style="flex:1">
+              <div style="display:flex;gap:8px;flex-shrink:0">
+                <button class="ap-btn ap-btn-primary news-edit-save" data-id="${id}">${icon('check', 14)} Сохранить</button>
+                <button class="ap-btn news-edit-cancel" data-id="${id}">Отмена</button>
+              </div>
+            </div>
+          </div>
+        </td>`;
+
+        row.querySelector<HTMLButtonElement>('.news-edit-cancel')?.addEventListener('click', () => {
+          this.render();
+        });
+
+        row.querySelector<HTMLButtonElement>('.news-edit-save')?.addEventListener('click', async () => {
+          const mp    = (el.querySelector<HTMLSelectElement>(`#news-edit-mp-${id}`))?.value ?? item.mp;
+          const title = (el.querySelector<HTMLInputElement>(`#news-edit-title-${id}`))?.value.trim() ?? '';
+          const summary = (el.querySelector<HTMLTextAreaElement>(`#news-edit-sum-${id}`))?.value.trim() ?? '';
+          const is_important = (el.querySelector<HTMLInputElement>(`#news-edit-imp-${id}`))?.checked ?? false;
+          const source_url = (el.querySelector<HTMLInputElement>(`#news-edit-url-${id}`))?.value.trim() || null;
+          if (!title || !summary) { showToast('Заголовок и содержание обязательны', 'error'); return; }
+          const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+          const res = await fetch(`${REST_URL}/mp_news?id=eq.${id}`, {
+            method: 'PATCH',
+            headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+            body: JSON.stringify({ mp, title, summary, is_important, source_url }),
+          });
+          if (res.ok) {
+            const idx = this.newsItems.findIndex(n => n.id === id);
+            if (idx !== -1) this.newsItems[idx] = { ...this.newsItems[idx], mp, title, summary, is_important, source_url: source_url ?? undefined };
+            showToast('Новость обновлена', 'success');
+            this.render();
+          } else {
+            showToast('Ошибка сохранения', 'error');
+          }
+        });
+      });
+    });
+
+    // Добавить вручную — показать/скрыть форму
+    el.querySelector('#news-manual-add-btn')?.addEventListener('click', () => {
+      this.newsManualAdd = !this.newsManualAdd;
+      this.render();
+    });
+
+    // Отмена ручного добавления
+    el.querySelector('#news-manual-cancel')?.addEventListener('click', () => {
+      this.newsManualAdd = false;
+      this.render();
+    });
+
+    // Сохранить ручную новость
+    el.querySelector('#news-manual-save')?.addEventListener('click', async () => {
+      const mp      = (el.querySelector<HTMLSelectElement>('#news-manual-mp'))?.value ?? 'general';
+      const title   = (el.querySelector<HTMLInputElement>('#news-manual-title'))?.value.trim() ?? '';
+      const summary = (el.querySelector<HTMLTextAreaElement>('#news-manual-summary'))?.value.trim() ?? '';
+      const imp     = (el.querySelector<HTMLInputElement>('#news-manual-imp'))?.checked ?? false;
+      const url     = (el.querySelector<HTMLInputElement>('#news-manual-url'))?.value.trim() || null;
+      if (!title || !summary) { showToast('Заголовок и содержание обязательны', 'error'); return; }
+      const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+      const res = await fetch(`${REST_URL}/mp_news`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+        body: JSON.stringify({ mp, title, summary, is_important: imp, source_url: url, published_at: new Date().toISOString() }),
+      });
+      if (res.ok) {
+        showToast('Новость добавлена', 'success');
+        this.newsManualAdd = false;
+        await this.loadNewsData();
+        this.render();
+      } else {
+        showToast('Ошибка сохранения', 'error');
+      }
     });
   }
 }

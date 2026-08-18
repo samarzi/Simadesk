@@ -877,51 +877,10 @@ async function handleMpNewsFetch(req: Request): Promise<Response> {
   const saved: string[] = [];
   const errors: string[] = [];
 
-  const vkToken = Deno.env.get('VK_SERVICE_TOKEN'); // токен VK-приложения для чтения групп
-  const tgProxy = Deno.env.get('TG_PROXY_URL');     // прокси для Telegram (если не заблокирован)
+  const tgProxy = Deno.env.get('TG_PROXY_URL'); // прокси для Telegram (если не заблокирован)
 
   for (const ch of channels) {
     try {
-      // ── VK-источник (slug начинается с "vk:") ──────────────────────────────
-      if (ch.slug.startsWith('vk:')) {
-        if (!vkToken) {
-          errors.push(`${ch.mp} (${ch.slug}): нет VK_SERVICE_TOKEN в .env`);
-          continue;
-        }
-        const vkDomain = ch.slug.replace(/^vk:/, '');
-        const vkRes = await fetch(
-          `https://api.vk.com/method/wall.get?domain=${vkDomain}&count=15&filter=owner&v=5.131&lang=ru&access_token=${vkToken}`,
-          { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SimaDesk/1.0)' } },
-        );
-        if (!vkRes.ok) { errors.push(`${ch.mp}: VK HTTP ${vkRes.status}`); continue; }
-        const vkJson = await vkRes.json() as any;
-        if (vkJson.error) { errors.push(`${ch.mp}: VK error ${vkJson.error.error_msg}`); continue; }
-
-        const posts: Array<{ text: string; url: string; date: string }> = (vkJson.response?.items ?? [])
-          .filter((p: any) => p.text && p.text.length >= 30 && !p.is_pinned)
-          .map((p: any) => ({
-            text: p.text,
-            url: `https://vk.com/wall${p.owner_id}_${p.id}`,
-            date: new Date(p.date * 1000).toISOString(),
-          }));
-
-        const fresh = posts.filter(m => m.date > since).slice(0, 8);
-        for (const msg of fresh) {
-          const { data: existing } = await db.from('mp_news').select('id').eq('source_url', msg.url).maybeSingle();
-          if (existing) continue;
-          const ai = await aiSummarize(msg.text, ch.label, orKey);
-          if (!ai) continue;
-          await db.from('mp_news').insert({
-            mp: ch.mp, title: ai.title, summary: ai.summary,
-            raw_text: msg.text.slice(0, 2000), source_url: msg.url,
-            is_important: ai.is_important, published_at: msg.date,
-          });
-          saved.push(`${ch.mp}: ${ai.title}`);
-          await new Promise(r => setTimeout(r, 500));
-        }
-        continue;
-      }
-
       // ── Telegram-источник (прямой scraping или через прокси) ───────────────
       const tgUrl = tgProxy
         ? `${tgProxy.replace(/\/$/, '')}/${ch.slug}`
@@ -937,7 +896,7 @@ async function handleMpNewsFetch(req: Request): Promise<Response> {
       } catch (fe: unknown) {
         clearTimeout(tmo);
         const msg = fe instanceof Error ? fe.message : 'fetch error';
-        errors.push(`${ch.mp} (${ch.slug}): ${msg.includes('abort') ? 'timeout — Telegram заблокирован. Используй vk: каналы или настрой TG_PROXY_URL' : msg}`);
+        errors.push(`${ch.mp} (${ch.slug}): ${msg.includes('abort') ? 'timeout — Telegram заблокирован на этом VPS. Настрой TG_PROXY_URL в .env' : msg}`);
         continue;
       }
       clearTimeout(tmo);
