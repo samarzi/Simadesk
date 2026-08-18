@@ -1011,8 +1011,10 @@ export async function fetchAllYandexProducts(
         const cur = stocksMap.get(offer.offerId) ?? { total: 0, available: 0 };
         for (const s of offer.stocks ?? []) {
           const cnt = Number(s.count) || 0;
-          // считаем только FIT/AVAILABLE — Яндекс ЛК показывает именно это
-          if (s.type === 'FIT' || s.type === 'AVAILABLE') {
+          // FIT = «готов к продаже» (FBS/DBS). Именно это значение показывает Яндекс.Маркет
+          // в личном кабинете. AVAILABLE не используется в FBS-ответе, поэтому не суммируем
+          // его — иначе при появлении в ответе API остатки задвоятся.
+          if (s.type === 'FIT') {
             cur.total += cnt;
             cur.available += cnt;
           }
@@ -1263,25 +1265,22 @@ export async function getYandexShipmentLabels(
 
 /**
  * Список текущих отгрузок ЯМ FBY.
- * PUT /v2/campaigns/{campaignId}/first-mile/shipments — фильтры передаются в теле запроса.
+ * GET /v2/campaigns/{campaignId}/shipments
+ * Возвращает 404 если кампания не FBY — обработка в SupplyManagementModule.
  */
 export async function getYandexShipments(
   store: YandexStore,
   params: { dateFrom?: string; dateTo?: string; status?: string; limit?: number } = {},
 ): Promise<any[]> {
   if (!store.campaign_id) throw new Error('campaign_id не задан');
-  const body: Record<string, any> = {};
-  if (params.dateFrom) body.dateFrom = params.dateFrom;
-  if (params.dateTo)   body.dateTo   = params.dateTo;
-  if (params.status)   body.status   = params.status;
-  if (params.limit)    body.limit    = params.limit;
+  const q = new URLSearchParams();
+  if (params.dateFrom) q.set('dateFrom', params.dateFrom);
+  if (params.dateTo)   q.set('dateTo',   params.dateTo);
+  if (params.status)   q.set('status',   params.status);
+  if (params.limit)    q.set('limit',    String(params.limit));
   const res = await fetch(
-    `/yandex-api/v2/campaigns/${store.campaign_id}/first-mile/shipments`,
-    {
-      method: 'PUT',
-      headers: { 'Api-Key': store.api_key, 'Accept': 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    },
+    `/yandex-api/v2/campaigns/${store.campaign_id}/shipments?${q}`,
+    { headers: { 'Api-Key': store.api_key, 'Accept': 'application/json' } },
   );
   if (!res.ok) {
     const text = await res.text().catch(() => '');

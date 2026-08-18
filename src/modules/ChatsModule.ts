@@ -363,7 +363,9 @@ export class ChatsModule {
   /** Фоновая подгрузка превью последнего сообщения для чатов Ozon (не блокирует список). */
   private async loadOzonPreviews(e: StoreEntry, creds: { client_id: string; api_key: string }): Promise<void> {
     const chats = e.chats;
-    const CONCURRENCY = 8;
+    // Ozon rate-limits to ~1 req/sec per key; 2 workers + 400ms delay stays within quota
+    const CONCURRENCY = 2;
+    const DELAY_MS = 400;
     let nextIdx = 0;
     let completed = 0;
     let previewErrors = 0;
@@ -380,14 +382,20 @@ export class ChatsModule {
           // Ozon создаёт чат автоматически на каждый заказ — показываем его только
           // если нашли настоящее сообщение (текст или вложение), иначе он остаётся скрытым.
           chat.empty = !chat.lastMessage;
-        } catch (err) {
-          if (previewErrors++ === 0) debug.warn('[Ozon chat] не удалось загрузить превью последнего сообщения:', err);
+        } catch (err: any) {
+          // On rate limit, back off and let other chats load
+          if (String(err?.message ?? err).includes('429')) {
+            await new Promise(r => setTimeout(r, 2000));
+          } else if (previewErrors++ === 0) {
+            debug.warn('[Ozon chat] не удалось загрузить превью последнего сообщения:', err);
+          }
         }
         // Обновляем список постепенно, не дожидаясь загрузки всех превью — так
         // чаты «появляются» с превью по мере загрузки, а не все разом в конце.
         // Используем точечное обновление (refreshChatList), а не полный render(),
         // чтобы не сбрасывать открытую переписку и заметку, которую пользователь печатает.
         if (++completed % 5 === 0) this.refreshChatList();
+        await new Promise(r => setTimeout(r, DELAY_MS));
       }
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, chats.length) }, worker));

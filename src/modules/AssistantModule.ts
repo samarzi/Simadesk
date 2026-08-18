@@ -476,6 +476,17 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 Всегда ищи: аномалии, отклонения от норм, товары в зоне риска.
 Приоритизируй: критичные риски (OOS, штрафы) > важные (падение метрик) > оптимизация.
 
+## АБСОЛЮТНЫЙ ЗАПРЕТ НА ВЫДУМЫВАНИЕ ДАННЫХ
+НЕЛЬЗЯ НИКОГДА выдумывать или предполагать данные о магазине пользователя:
+- НЕ ПРИДУМЫВАЙ артикулы, SKU, названия товаров — только те, что есть в [ТЕКУЩИЕ ДАННЫЕ МАГАЗИНА]
+- НЕ ИЗОБРЕТАЙ метрики: выкуп, возвраты, выручку, заказы, рейтинги, конверсии
+- НЕ ФАБРИКУЙ отзывы, оценки, тексты отзывов, имена покупателей
+- НЕ СОЧИНЯЙ примеры "для наглядности" с цифрами — это дезинформация
+Если [ТЕКУЩИЕ ДАННЫЕ МАГАЗИНА] отсутствуют или не содержат нужных данных:
+→ Прямо скажи: "У меня нет актуальных данных по вашему магазину."
+→ Объясни, куда перейти, чтобы загрузить данные (раздел Аналитика, Товары, Отзывы и т.д.)
+→ НЕ пытайся помочь с выдуманными примерами — это хуже, чем честный отказ.
+
 ## ГЛОБАЛЬНЫЕ КОМАНДЫ (доступны всегда, с любой страницы)
 Следующие действия можно вызвать через {"action":"page_action","name":"...","args":{}} или как шаг в chain:
 ВАЖНО: если обязательный аргумент не указан — используй {"action":"clarify",...} вместо угадывания!
@@ -649,27 +660,11 @@ const HINTS = [
 
 function getStoreContext(): string {
   const sections: string[] = [];
-  const fmt = (n: number) =>
-    n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)} млн ₽`
-    : n >= 1_000 ? `${(n / 1_000).toFixed(0)} тыс ₽`
-    : `${Math.round(n)} ₽`;
-
   try {
     const am = (window as any).analyticsModule;
-    if (am) {
-      const kpi = (am as any).kpi;
-      const orders: any[] = (am as any).orders ?? [];
-      if (kpi && orders.length > 0) {
-        const byMp: Record<string, number> = {};
-        orders.forEach((o: any) => { byMp[o.mp] = (byMp[o.mp] || 0) + 1; });
-        const mpStr = Object.entries(byMp).map(([k, v]) => `${k}: ${v}`).join(', ');
-        sections.push(`АНАЛИТИКА (текущий период):
-Выручка нетто: ${fmt(kpi.revenue)}, Валовая: ${fmt(kpi.revenue_gross)}
-Заказов: ${kpi.orders_delivered + kpi.orders_processing} | Возвраты: ${kpi.orders_returned} | Отмены: ${kpi.orders_cancelled}
-Маржа: ${kpi.margin_pct?.toFixed(1)}% | Ср. чек: ${fmt(kpi.avg_check)}
-Комиссии МП: ${fmt(kpi.commission)} | Логистика: ${fmt(kpi.logistics)}
-По маркетплейсам: ${mpStr}`);
-      }
+    if (am && typeof am.getAiSummary === 'function') {
+      const summary: string = am.getAiSummary();
+      if (summary) sections.push(`АНАЛИТИКА:\n${summary}`);
     }
   } catch { /* ignore */ }
 
@@ -1855,8 +1850,7 @@ export class AssistantModule {
         const content = msg.content;
         el.innerHTML = `<div class="sd-ap-msg-avatar">С</div><div class="sd-ap-msg-bubble">${renderMarkdown(content)}<div class="sd-ap-msg-footer"><button class="msg-copy-btn" title="Копировать"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>`;
         el.querySelector<HTMLElement>('.msg-copy-btn')?.addEventListener('click', (e) => {
-          const plain = content.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/^#{1,3}\s+/gm, '').trim();
-          navigator.clipboard.writeText(plain).catch(() => {});
+          navigator.clipboard.writeText(this.cleanForCopy(content)).catch(() => {});
           const btn = e.currentTarget as HTMLElement;
           btn.classList.add('copied'); btn.title = 'Скопировано!';
           showToast('Скопировано', 'success');
@@ -2697,10 +2691,12 @@ export class AssistantModule {
   }
 
   private setupVoiceHotkey(): void {
-    // Alt+Space — hold to record, release to send
+    // Alt/Option + Space — hold to record, release to send
+    // Uses e.code ('Space') instead of e.key (' ') because on Mac Option+Space
+    // produces a non-breaking space (NBSP, ' ') and e.key check would fail.
     // Fires only when focus is NOT inside an input/textarea (to avoid blocking typing)
     document.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (!e.altKey || e.key !== ' ') return;
+      if (!e.altKey || e.code !== 'Space') return;
       const tag = (document.activeElement as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement as HTMLElement)?.isContentEditable) return;
       if (this.voiceHotkeyHeld) return; // already held
@@ -2715,10 +2711,8 @@ export class AssistantModule {
     });
 
     document.addEventListener('keyup', (e: KeyboardEvent) => {
-      if (e.key !== ' ' && e.key !== 'Alt') return;
+      if (e.code !== 'Space' && e.key !== 'Alt') return;
       if (!this.voiceHotkeyHeld) return;
-      // Only trigger on Space release (Alt release alone = accidental)
-      if (e.key !== ' ' && e.key !== 'Alt') return;
       this.voiceHotkeyHeld = false;
       if (this.isListening) {
         // stopVoice will trigger onresult → isFinal → handleSend via voiceSendOnEnd
@@ -3503,8 +3497,7 @@ export class AssistantModule {
 
     const copyBtn = el.querySelector<HTMLElement>('.msg-copy-btn');
     copyBtn?.addEventListener('click', (e) => {
-      const plain = text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/^#{1,3}\s+/gm, '').trim();
-      navigator.clipboard.writeText(plain).catch(() => {});
+      navigator.clipboard.writeText(this.cleanForCopy(text)).catch(() => {});
       const btn = e.currentTarget as HTMLElement;
       btn.classList.add('copied');
       btn.title = 'Скопировано!';
@@ -3539,8 +3532,7 @@ export class AssistantModule {
       </div>`;
     const copyBtn = bubble.querySelector<HTMLElement>('.msg-copy-btn');
     copyBtn?.addEventListener('click', (e) => {
-      const plain = rawText.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/^#{1,3}\s+/gm, '').trim();
-      navigator.clipboard.writeText(plain).catch(() => {});
+      navigator.clipboard.writeText(this.cleanForCopy(rawText)).catch(() => {});
       const btn = e.currentTarget as HTMLElement;
       btn.classList.add('copied');
       btn.title = 'Скопировано!';
@@ -4984,6 +4976,18 @@ export class AssistantModule {
 
     const ttsBtn = this.addAssistantMessage(summary);
     if (this.ttsEnabled && ttsBtn) this.startMsgTts(summary, ttsBtn);
+  }
+
+  /** Strip JSON artifacts and markdown syntax for clipboard copy. */
+  private cleanForCopy(text: string): string {
+    return text
+      .replace(/\{"suggestions"\s*:\s*\[[^\]]*\]\s*\}/g, '')
+      .replace(/\{[^{}]*"action"\s*:[^{}]*\}/g, '')
+      .replace(/\*\*(.+?)\*\*/g, '$1')
+      .replace(/\*(.+?)\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/^#{1,3}\s+/gm, '')
+      .trim();
   }
 
   private parseFollowUpSuggestions(reply: string): { text: string; suggestions: string[] } {
