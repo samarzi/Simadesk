@@ -123,6 +123,83 @@ export class ReviewsModule {
 
   hide(): void { this.container.style.display = 'none'; }
 
+  /** Все загруженные отзывы из всех магазинов (для AI). */
+  get allReviews(): UnifiedReview[] {
+    return this.entries.flatMap(e => e.reviews);
+  }
+
+  /** Загружены ли отзывы хотя бы одного магазина. */
+  get hasLoadedAny(): boolean {
+    return this.entries.some(e => e.loaded);
+  }
+
+  /**
+   * Загрузить отзывы для указанного МП (или текущего) и вернуть AI-сводку.
+   * mp: 'wb' | 'ozon' | 'yandex' | undefined (текущий активный)
+   * dateFilter: 'today' | 'week' | undefined (без фильтра)
+   */
+  async fetchAndDescribe(mp?: 'wb' | 'ozon' | 'yandex', dateFilter?: 'today' | 'week'): Promise<string> {
+    if (!this.entries.length) await this.reloadStores();
+
+    const targetMp = mp ?? this.activeMp;
+    const mpEntries = this.entries.filter(e => e.mp === targetMp);
+    if (!mpEntries.length) return `Нет подключённых магазинов для ${MP_LABEL[targetMp]}.`;
+
+    // Переключаем вкладку и загружаем для всех магазинов этого МП
+    this.activeMp = targetMp;
+    if (!this.activeStoreId || !mpEntries.find(e => e.storeId === this.activeStoreId)) {
+      this.activeStoreId = mpEntries[0].storeId;
+    }
+    this.render();
+
+    await Promise.all(mpEntries.map(e => {
+      if (!e.loaded && !e.loading) return this.loadReviews(targetMp, e.storeId);
+    }));
+
+    let reviews = mpEntries.flatMap(e => e.reviews);
+
+    // Фильтр по дате
+    if (dateFilter === 'today') {
+      const today = new Date().toLocaleDateString('ru-RU');
+      reviews = reviews.filter(r => {
+        const d = r.createdAt ? new Date(r.createdAt).toLocaleDateString('ru-RU') : '';
+        return d === today;
+      });
+    } else if (dateFilter === 'week') {
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      reviews = reviews.filter(r => r.createdAt && new Date(r.createdAt) >= weekAgo);
+    }
+
+    if (!reviews.length) {
+      const suffix = dateFilter === 'today' ? ' за сегодня' : dateFilter === 'week' ? ' за неделю' : '';
+      return `Отзывов${suffix} на ${MP_LABEL[targetMp]} нет.`;
+    }
+
+    const unanswered = reviews.filter(r => !r.answered);
+    const neg = unanswered.filter(r => r.rating <= 2);
+    const suffix = dateFilter === 'today' ? ' за сегодня' : dateFilter === 'week' ? ' за неделю' : '';
+
+    let out = `Отзывы ${MP_LABEL[targetMp]}${suffix}: всего ${reviews.length}, без ответа ${unanswered.length} (негативных ≤2★: ${neg.length}).`;
+
+    if (reviews.length > 0) {
+      out += `\n\nОтзывы (до 20):`;
+      reviews.slice(0, 20).forEach((r, i) => {
+        const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '';
+        const product = r.productName?.slice(0, 50) ?? '';
+        const sku = r.productSku ? ` [${r.productSku}]` : '';
+        const ansStatus = r.answered ? ' ✓ отвечен' : ' ⚠ без ответа';
+        out += `\n${i + 1}. ${r.rating}★ ${dateStr}${ansStatus}${sku}${product ? ' — ' + product : ''}`;
+        if (r.text) out += `\n   Текст: "${r.text.slice(0, 200)}"`;
+        if (r.advantages) out += `\n   Плюсы: "${r.advantages.slice(0, 100)}"`;
+        if (r.disadvantages) out += `\n   Минусы: "${r.disadvantages.slice(0, 100)}"`;
+        if (r.answerText) out += `\n   Ответ: "${r.answerText.slice(0, 100)}"`;
+      });
+    }
+
+    return out;
+  }
+
   private async reloadStores(): Promise<void> {
     const [wbStores, ozonStores, ymStores] = await Promise.all([
       wbDb.getStores().catch((): WbStore[] => []),

@@ -220,6 +220,28 @@ export class MyAnalysisModule {
     this._paint();
   }
 
+  async retryFixed(uid: string) {
+    if (!this.loaded) await this._load();
+    const fixed = this.fixedItems.find(f => f.uid === uid);
+    if (!fixed) return;
+    const card = this.cards.find(c => c.uid === uid);
+    if (!card) {
+      (window as any).app?.toast?.('Карточка не найдена — попробуйте обновить список', 'error');
+      return;
+    }
+    this.openDrawer(uid);
+    this.drawerName = fixed.newName;
+    this._paint();
+  }
+
+  copyVendorCode(vc: string) {
+    navigator.clipboard.writeText(vc).then(() => {
+      (window as any).app?.toast?.('Артикул скопирован', 'success');
+    }).catch(() => {
+      (window as any).app?.toast?.('Не удалось скопировать', 'error');
+    });
+  }
+
   private _saveFixed() {
     localStorage.setItem('sd_ca_fixed', JSON.stringify(this.fixedItems));
   }
@@ -668,19 +690,33 @@ export class MyAnalysisModule {
       <div class="ca-fx-row">
         <div class="ca-fx-top">
           <span class="ca-mp-b" style="color:${MP_COLOR[f.mp]};border-color:${MP_COLOR[f.mp]}22;background:${MP_COLOR[f.mp]}14">${MP_NAME[f.mp]}</span>
-          <span class="ca-fx-name">${this._e(f.newName || f.oldName)}</span>
+          <span class="ca-fx-store">${this._e(f.storeName)}</span>
           <span class="ca-fx-date">${fmtDate(f.fixedAt)}</span>
         </div>
-        ${f.oldName !== f.newName ? `<div class="ca-fx-rename">Переименовано: «${this._e(f.oldName)}» → «${this._e(f.newName)}»</div>` : ''}
+        <div class="ca-fx-vc-row">
+          <span class="ca-fx-vc-label">Артикул:</span>
+          <span class="ca-fx-vc">${this._e(f.vendorCode)}</span>
+          <button class="ca-fx-copy" title="Скопировать артикул" onclick="window.myAnalysisModule?.copyVendorCode('${this._e(f.vendorCode)}')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            Скопировать
+          </button>
+        </div>
+        ${f.oldName !== f.newName ? `
+        <div class="ca-fx-rename-block">
+          <div class="ca-fx-rename-label">Изменение названия:</div>
+          <div class="ca-fx-rename-old">До: «${this._e(f.oldName)}»</div>
+          <div class="ca-fx-rename-new">После: «${this._e(f.newName)}»</div>
+        </div>` : `<div class="ca-fx-curname">${this._e(f.newName || f.oldName)}</div>`}
         <div class="ca-fx-issues">
-          Было исправлено: ${f.fixedIssues.slice(0,4).map(i=>`<span class="ca-ic sev-${i.severity}">${SEV_ICON[i.severity]} ${i.label}</span>`).join('')}
+          Исправлено: ${f.fixedIssues.slice(0,4).map(i=>`<span class="ca-ic sev-${i.severity}">${SEV_ICON[i.severity]} ${i.label}</span>`).join('')}
           ${f.fixedIssues.length > 4 ? `<span class="ca-ic-more">+${f.fixedIssues.length-4}</span>` : ''}
         </div>
         <div class="ca-fx-status ${f.status}">${statusIcon(f.status)} ${statusLabel(f.status)}${f.verifiedAt ? ` · ${fmtDate(f.verifiedAt)}` : ''}</div>
         <div class="ca-fx-actions">
           <button class="ca-fx-btn${this.fixedVerifying?' busy':''}" onclick="window.myAnalysisModule?.verifyFixed('${this._e(f.uid)}')">
-            ${this.fixedVerifying?'<div class="ca-spin-sm"></div>':''} Проверить сейчас
+            ${this.fixedVerifying?'<div class="ca-spin-sm"></div>':''} Проверить
           </button>
+          <button class="ca-fx-retry" onclick="window.myAnalysisModule?.retryFixed('${this._e(f.uid)}')">↩ Повторить</button>
           <button class="ca-fx-del" onclick="window.myAnalysisModule?.removeFixed('${this._e(f.uid)}')">Удалить</button>
         </div>
       </div>`).join('');
@@ -990,18 +1026,29 @@ export class MyAnalysisModule {
 .ca-fx-list{display:flex;flex-direction:column;gap:8px;}
 .ca-fx-row{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:13px 16px;display:flex;flex-direction:column;gap:8px;}
 .ca-fx-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-.ca-fx-name{font-size:13px;font-weight:600;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ca-fx-store{font-size:12px;color:var(--text2);font-weight:500;}
 .ca-fx-date{font-size:11px;color:var(--text3);white-space:nowrap;margin-left:auto;}
-.ca-fx-rename{font-size:12px;color:var(--text2);font-style:italic;}
+.ca-fx-vc-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.ca-fx-vc-label{font-size:11px;color:var(--text3);}
+.ca-fx-vc{font-size:13px;font-weight:700;color:var(--text);font-family:monospace;letter-spacing:.3px;}
+.ca-fx-copy{display:inline-flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);color:var(--text3);font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;cursor:pointer;}
+.ca-fx-copy:hover{color:var(--accent);border-color:var(--accent);}
+.ca-fx-rename-block{background:var(--bg);border-radius:8px;padding:8px 12px;display:flex;flex-direction:column;gap:3px;}
+.ca-fx-rename-label{font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;}
+.ca-fx-rename-old{font-size:12px;color:var(--text3);text-decoration:line-through;}
+.ca-fx-rename-new{font-size:12px;color:var(--text);font-weight:600;}
+.ca-fx-curname{font-size:13px;font-weight:600;color:var(--text);}
 .ca-fx-issues{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:11px;color:var(--text3);}
 .ca-fx-status{font-size:12px;font-weight:700;padding:5px 10px;border-radius:20px;align-self:flex-start;}
 .ca-fx-status.confirmed{background:rgba(68,221,136,.1);color:var(--green);}
 .ca-fx-status.unchanged{background:rgba(251,191,36,.1);color:#fbbf24;}
 .ca-fx-status.pending{background:var(--bg3);color:var(--text3);}
-.ca-fx-actions{display:flex;gap:8px;}
+.ca-fx-actions{display:flex;gap:8px;flex-wrap:wrap;}
 .ca-fx-btn{background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:700;padding:6px 13px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:5px;}
 .ca-fx-btn:hover:not(.busy){color:var(--text);}
 .ca-fx-btn.busy{opacity:.65;pointer-events:none;}
+.ca-fx-retry{background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.25);color:#6366f1;font-size:12px;font-weight:700;padding:6px 13px;border-radius:8px;cursor:pointer;}
+.ca-fx-retry:hover{background:rgba(99,102,241,.18);}
 .ca-fx-del{background:transparent;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:6px 10px;border-radius:8px;}
 .ca-fx-del:hover{color:var(--red);}
 </style>`;

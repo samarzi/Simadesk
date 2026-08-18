@@ -171,35 +171,30 @@ function describeSupply(): string {
 
 function describeReviews(): string {
   const rm = w().reviewsModule;
-  const reviews: any[] = rm?.reviews ?? rm?.items ?? [];
-  if (!reviews.length) return 'Раздел отзывов. Отзывы ещё не загружены.';
+  if (!rm) return 'Раздел отзывов. Модуль недоступен.';
 
-  const isUnanswered = (r: any) => !r.answered && !r.answer && !r.reply;
-  const unanswered = reviews.filter(isUnanswered);
-  const neg = unanswered.filter(r => (r.stars ?? 5) <= 2);
+  // allReviews — публичный getter, возвращает все отзывы из всех магазинов
+  const reviews: any[] = rm.allReviews ?? [];
+  const activeMp: string = (rm as any).activeMp ?? '';
 
-  let out = `Отзывы: всего ${reviews.length}, без ответа ${unanswered.length} (негативных ≤2★: ${neg.length}). Негатив отрабатывать в течение 12 часов.`;
+  if (!reviews.length) {
+    return `Раздел отзывов (активная вкладка: ${activeMp || 'не выбрана'}). Отзывы ещё не загружены — используй fetch_reviews чтобы загрузить.`;
+  }
+
+  const unanswered = reviews.filter((r: any) => !r.answered);
+  const neg = unanswered.filter((r: any) => r.rating <= 2);
+  const mpLabel: Record<string, string> = { wb: 'WB', ozon: 'Ozon', yandex: 'ЯМ' };
+
+  let out = `Отзывы (вкладка ${mpLabel[activeMp] ?? activeMp}): всего ${reviews.length}, без ответа ${unanswered.length} (негативных ≤2★: ${neg.length}).`;
 
   if (unanswered.length > 0) {
     out += '\n\nОтзывы без ответа (до 15):';
-    unanswered.slice(0, 15).forEach((r, i) => {
-      const stars = (r.stars ?? 0);
-      const product = (r.productName ?? r.product_name ?? r.offer_id ?? '').toString().slice(0, 40);
-      const text = (r.text ?? r.comment ?? '').toString().slice(0, 250);
-      const date = r.created_at ?? r.date ?? '';
-      const dateStr = date ? new Date(date).toLocaleDateString('ru-RU') : '';
-      out += `\n${i + 1}. [id:${r.id}] ${stars}★ ${dateStr}${product ? ' — ' + product : ''}`;
-      if (text) out += `\n   "${text}"`;
-    });
-  }
-
-  const answered = reviews.filter(r => r.answered || r.answer || r.reply).slice(0, 3);
-  if (answered.length > 0) {
-    out += '\n\nПримеры уже отвеченных:';
-    answered.forEach((r, i) => {
-      const text = (r.text ?? r.comment ?? '').toString().slice(0, 100);
-      const ans = (r.answer ?? r.reply ?? '').toString().slice(0, 100);
-      out += `\n${i + 1}. ${r.stars ?? '?'}★ "${text}" → "${ans}"`;
+    unanswered.slice(0, 15).forEach((r: any, i: number) => {
+      const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '';
+      const product = (r.productName ?? '').toString().slice(0, 40);
+      const sku = r.productSku ? ` [${r.productSku}]` : '';
+      out += `\n${i + 1}. ${r.rating}★ ${dateStr}${sku}${product ? ' — ' + product : ''}`;
+      if (r.text) out += `\n   "${r.text.slice(0, 200)}"`;
     });
   }
 
@@ -1930,6 +1925,22 @@ export function installGlobalAiActions(): void {
 
   // ── Новые глобальные actions — настройки ─────────────────────────────────────
   for (const act of SETTINGS_ACTIONS) aiPage.registerGlobal(act);
+
+  // ── Отзывы: загрузить и описать с любой страницы ────────────────────────────
+  aiPage.registerGlobal({
+    name: 'fetch_reviews',
+    description: 'Перейти в раздел Отзывов, загрузить отзывы для нужного маркетплейса и вернуть сводку. Используй когда пользователь спрашивает про отзывы, просит посмотреть отзывы за сегодня/неделю, или спрашивает про конкретный МП. Сам перейдёт в раздел.',
+    args: '{ mp?: "wb"|"ozon"|"yandex", date?: "today"|"week" }',
+    run: async (a: { mp?: string; date?: string }) => {
+      const rm = w().reviewsModule;
+      if (!rm) throw new Error('Модуль отзывов недоступен');
+      await w().app?.navigateTo?.('reviews');
+      if (!rm.hasLoadedAny) await rm.show?.();
+      const mp = (a?.mp === 'wb' || a?.mp === 'ozon' || a?.mp === 'yandex') ? a.mp : undefined;
+      const date = (a?.date === 'today' || a?.date === 'week') ? a.date : undefined;
+      return rm.fetchAndDescribe(mp, date);
+    },
+  });
 
   // ── Аналитика: загрузить данные с любой страницы ─────────────────────────────
   aiPage.registerGlobal({
