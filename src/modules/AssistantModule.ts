@@ -483,8 +483,8 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 - НЕ ФАБРИКУЙ отзывы, оценки, тексты отзывов, имена покупателей
 - НЕ СОЧИНЯЙ примеры "для наглядности" с цифрами — это дезинформация
 Если [ТЕКУЩИЕ ДАННЫЕ МАГАЗИНА] отсутствуют или не содержат нужных данных:
-→ Прямо скажи: "У меня нет актуальных данных по вашему магазину."
-→ Объясни, куда перейти, чтобы загрузить данные (раздел Аналитика, Товары, Отзывы и т.д.)
+→ Если пользователь спрашивает об аналитике, выручке, заказах, маржe, топ-товарах — используй действие fetch_analytics. Оно само откроет раздел и загрузит актуальные данные.
+→ Для других данных (остатки, отзывы, товары) — скажи в каком разделе их найти.
 → НЕ пытайся помочь с выдуманными примерами — это хуже, чем честный отказ.
 
 ## ГЛОБАЛЬНЫЕ КОМАНДЫ (доступны всегда, с любой страницы)
@@ -662,9 +662,24 @@ function getStoreContext(): string {
   const sections: string[] = [];
   try {
     const am = (window as any).analyticsModule;
-    if (am && typeof am.getAiSummary === 'function') {
-      const summary: string = am.getAiSummary();
-      if (summary) sections.push(`АНАЛИТИКА:\n${summary}`);
+    if (am && am.isDataLoaded && typeof am.getAiSummary === 'function') {
+      // getAiSummary is async — but getStoreContext is sync; use cached kpi fields as fallback
+      const kpi = (am as any).kpi;
+      const orders: any[] = (am as any).orders ?? [];
+      if (kpi) {
+        const fmtLocal = (n: number) =>
+          n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)} млн ₽`
+          : n >= 1_000 ? `${(n / 1_000).toFixed(0)} тыс ₽`
+          : `${Math.round(n)} ₽`;
+        const byMp: Record<string, number> = {};
+        orders.forEach((o: any) => { byMp[o.mp] = (byMp[o.mp] || 0) + 1; });
+        const mpStr = Object.entries(byMp).map(([k, v]) => `${k}: ${v}`).join(', ');
+        sections.push(`АНАЛИТИКА (текущий период):
+Выручка нетто: ${fmtLocal(kpi.revenue)}, Валовая: ${fmtLocal(kpi.revenue_gross)}
+Заказов: ${kpi.orders_delivered + kpi.orders_processing} | Возвраты: ${kpi.orders_returned} | Отмены: ${kpi.orders_cancelled}
+Маржа: ${kpi.margin_pct?.toFixed(1)}% | Чистая прибыль: ${fmtLocal(kpi.net_profit)} | Ср. чек: ${fmtLocal(kpi.avg_check)}
+Комиссии МП: ${fmtLocal(kpi.commission)} | Логистика: ${fmtLocal(kpi.logistics)}${mpStr ? `\nПо маркетплейсам: ${mpStr}` : ''}`);
+      }
     }
   } catch { /* ignore */ }
 
