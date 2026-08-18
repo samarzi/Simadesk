@@ -981,6 +981,7 @@ html.light .ap-api-tag.ya { color: #cc2626; }
 .ap-msg.admin { align-self: flex-end; align-items: flex-end; }
 
 .ap-bubble {
+  position: relative;
   padding: 10px 14px;
   font-size: 13px; line-height: 1.55;
   word-break: break-word;
@@ -997,6 +998,21 @@ html.light .ap-api-tag.ya { color: #cc2626; }
   border-radius: 16px 4px 16px 16px;
   border: none;
 }
+.ap-msg-copy {
+  display: none;
+  align-items: center; justify-content: center;
+  position: absolute; top: 6px; right: 6px;
+  width: 26px; height: 26px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 6px; cursor: pointer; color: var(--text3);
+  transition: color .15s, background .15s, opacity .15s;
+}
+.ap-msg-copy svg { width: 13px; height: 13px; }
+.ap-msg-copy:hover { color: var(--accent); background: var(--bg3); }
+.ap-msg-copy.copied { color: var(--accent); }
+.ap-msg.admin .ap-msg-copy { background: rgba(0,0,0,.15); border-color: rgba(0,0,0,.2); color: rgba(0,0,0,.5); }
+.ap-msg.admin .ap-msg-copy:hover { background: rgba(0,0,0,.25); color: rgba(0,0,0,.8); }
+.ap-bubble:hover .ap-msg-copy { display: flex; }
 .ap-msg-time {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 10.5px; color: var(--text3); margin-top: 5px; padding: 0 4px;

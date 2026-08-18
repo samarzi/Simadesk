@@ -1283,9 +1283,10 @@ export class AdminModule {
           : `<div class="ap-msg-file">${icon('paperclip', 13)} ${this.esc(a.name)}</div>`,
       ).join('');
       const timeStr = supportChatService.fmtTime(m.created_at);
+      const copyBtn = cleanText ? `<button class="ap-msg-copy" data-copy="${this.esc(cleanText).replace(/"/g, '&quot;')}" title="Копировать"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : '';
       return `<div class="ap-msg ${isAdmin ? 'admin' : 'user'}">
         ${ctxBadge}
-        <div class="ap-bubble">${cleanText ? this.esc(cleanText).replace(/\n/g, '<br>') : ''}${attach}</div>
+        <div class="ap-bubble">${cleanText ? this.esc(cleanText).replace(/\n/g, '<br>') : ''}${attach}${copyBtn}</div>
         <div class="ap-msg-time">${isAdmin ? icon('shield', 10) + ' Поддержка' : this.esc(name)} · ${timeStr}</div>
       </div>`;
     }).join('');
@@ -1457,6 +1458,17 @@ export class AdminModule {
     });
     sendBtn?.addEventListener('click', doSend);
 
+    detail.querySelector<HTMLElement>('#ap-live-messages')?.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLElement>('.ap-msg-copy');
+      if (!btn) return;
+      const text = btn.dataset.copy ?? '';
+      navigator.clipboard.writeText(text).catch(() => {});
+      btn.classList.add('copied');
+      btn.title = 'Скопировано!';
+      showToast('Скопировано', 'success');
+      setTimeout(() => { btn.classList.remove('copied'); btn.title = 'Копировать'; }, 1500);
+    });
+
     closeBtn?.addEventListener('click', async () => {
       const chat = this.activeLiveChat;
       if (!chat) return;
@@ -1614,7 +1626,8 @@ export class AdminModule {
 • Производители (producers) — база поставщиков, контакты, условия, прайсы
 • Задачи (tasks) — планировщик операционных задач: создать → кнопка «+» или попросить Симу
 • Витрина / SimaStore (simastore) — собственный магазин, URL /s/slug, синхронизация товаров
-• Настройки (settings) — подключение МП, API-ключи, смена пароля, тема, тарифы, команда
+• Настройки (settings) — подключение МП, API-ключи, смена пароля, тема, тарифы, команда, расширение браузера
+• Расширение браузера — ЕСТЬ в SimaDesk. Установить: Настройки → раздел «Расширение браузера». Там кнопка скачивания/установки.
 • Редактор (docs) — встроенный Excel и Word, импорт/экспорт .xlsx/.docx
 • Сима (AI-помощник) — открывается кнопкой «Сима» в правом нижнем углу
 
@@ -1630,12 +1643,14 @@ Q: Где посмотреть остатки? → Раздел «Остатки
 Q: Не работает AI Сима? → Настройки → AI → проверить OpenRouter API-ключ и баланс на openrouter.ai
 Q: Как добавить сотрудника? → Настройки → Команда → «Пригласить пользователя»
 Q: Как изменить тариф? → Настройки → Подписка
+Q: Где скачать / установить расширение для браузера? → Настройки → раздел «Расширение браузера». Расширение существует и доступно для установки прямо из настроек.
 
 АВТОДЕЙСТВИЯ (только если проблема актуальна по контексту [🤖 АВТОКОНТЕКСТ:...]):
 Если пользователь сообщает о проблеме интерфейса и её можно решить кнопкой — добавь в конец ответа ОДИН JSON:
 {"support_action":"toggle_theme_off","label":"Переключить на тёмную тему"} — если жалуется на светлую тему и тема=светлая
 {"support_action":"toggle_theme_on","label":"Переключить на светлую тему"} — если хочет светлую тему и тема=тёмная
 {"support_action":"reload_page","label":"Перезагрузить страницу"} — если данные не обновляются
+{"support_action":"navigate_to","page":"settings","label":"Открыть Настройки → Расширение"} — если пользователь спрашивает про расширение браузера или как его найти/установить
 ВАЖНО: предлагай кнопку ТОЛЬКО если контекст [🤖 АВТОКОНТЕКСТ:...] подтверждает актуальность проблемы.
 Кнопка будет показана пользователю — при нажатии действие выполнится автоматически в его браузере.
 
@@ -2773,7 +2788,7 @@ ${this.SIMADESK_KNOWLEDGE}
           const mpLabel = MP_OPTIONS.find(o => o.v === ch.mp)?.l ?? ch.mp;
           return `<tr data-channel-id="${this.esc(ch.id)}">
             <td><span class="ap-news-mp-badge" style="background:${color}40;color:${color}">${this.esc(mpLabel)}</span></td>
-            <td><code class="ap-news-slug">@${this.esc(ch.channel_slug)}</code></td>
+            <td><code class="ap-news-slug">${ch.channel_slug.startsWith('vk:') ? ch.channel_slug : '@' + this.esc(ch.channel_slug)}</code></td>
             <td>${this.esc(ch.label ?? '—')}</td>
             <td>
               <label class="ap-news-toggle">
@@ -2810,8 +2825,8 @@ ${this.SIMADESK_KNOWLEDGE}
         <div class="ap-section-card">
           <div class="ap-section-hdr">
             <div>
-              <div class="ap-section-title">Telegram-каналы</div>
-              <div class="ap-section-sub">Откуда Сима берёт новости. Добавляйте только официальные каналы МП.</div>
+              <div class="ap-section-title">Источники новостей</div>
+              <div class="ap-section-sub">VK-сообщества (<code>vk:groupname</code>) или Telegram-каналы (<code>@channelname</code>). С российского VPS работают только VK-источники.</div>
             </div>
             <div class="ap-news-fetch-wrap">
               <button class="ap-btn ap-btn-primary" id="news-run-fetch" ${this.newsLoading ? 'disabled' : ''}>
@@ -2835,11 +2850,14 @@ ${this.SIMADESK_KNOWLEDGE}
               <select class="ap-input ap-news-mp-sel" id="news-add-mp">
                 ${MP_OPTIONS.map(o => `<option value="${o.v}">${o.l}</option>`).join('')}
               </select>
-              <input class="ap-input ap-news-slug-inp" id="news-add-slug" placeholder="@channelname или channelname" autocomplete="off">
+              <input class="ap-input ap-news-slug-inp" id="news-add-slug" placeholder="vk:groupname или @tgchannel" autocomplete="off">
               <input class="ap-input ap-news-label-inp" id="news-add-label" placeholder="Название (необязательно)">
               <button class="ap-btn ap-btn-primary" id="news-add-btn">${icon('plus', 14)} Добавить</button>
             </div>
-            <div class="ap-news-add-hint">Вставьте @username канала из Telegram. Канал должен быть публичным — бот читает его без авторизации.</div>
+            <div class="ap-news-add-hint">
+              <strong>VK (рекомендуется):</strong> <code>vk:wbsellers</code> — нужен <code>VK_SERVICE_TOKEN</code> в .env.<br>
+              <strong>Telegram:</strong> <code>@channelname</code> — работает только если VPS не в России или настроен <code>TG_PROXY_URL</code>.
+            </div>
           </div>
         </div>
 

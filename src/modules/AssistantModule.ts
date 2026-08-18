@@ -34,7 +34,7 @@ interface AttachedFile {
 }
 
 interface TaskAction {
-  action: 'create_task' | 'create_tasks' | 'suggest_task';
+  action: 'create_task' | 'create_tasks' | 'suggest_task' | 'edit_task' | 'delete_task';
   title?: string;
   description?: string;
   priority?: 'none' | 'blue' | 'yellow' | 'red';
@@ -1051,12 +1051,37 @@ export class AssistantModule {
 
   // ── Support chat state ─────────────────────────────────────────────────────
   private supportMode: 'ai' | 'support' = 'ai';
-  private supportChatId: string | null = localStorage.getItem('sd_sup_chat_id');
-  private supportReason: string = localStorage.getItem('sd_sup_reason') || '';
+  private supportChats: Array<{ id: string; reason: string; created_at: string }> = (() => {
+    try {
+      const raw = localStorage.getItem('sd_sup_chats');
+      if (raw) return JSON.parse(raw);
+      const oldId = localStorage.getItem('sd_sup_chat_id');
+      const oldReason = localStorage.getItem('sd_sup_reason') ?? '';
+      if (oldId) {
+        const migrated = [{ id: oldId, reason: oldReason, created_at: new Date().toISOString() }];
+        localStorage.setItem('sd_sup_chats', JSON.stringify(migrated));
+        localStorage.removeItem('sd_sup_chat_id');
+        localStorage.removeItem('sd_sup_reason');
+        return migrated;
+      }
+      return [];
+    } catch { return []; }
+  })();
+  private supportActiveChatId: string | null = null;
+  private supportReason = '';
   private supportMessages: SupportMessage[] = [];
   private supportPollTimer: ReturnType<typeof setInterval> | null = null;
   private supportLastMsgTime: string | null = null;
   private supportChatClosed = false;
+
+  private saveSupportChats(): void {
+    localStorage.setItem('sd_sup_chats', JSON.stringify(this.supportChats));
+  }
+
+  private removeSupportChat(id: string): void {
+    this.supportChats = this.supportChats.filter(c => c.id !== id);
+    this.saveSupportChats();
+  }
 
   /** Call after DOM is ready. Safe to call multiple times — only creates panel once. */
   async init(): Promise<void> {
@@ -1075,7 +1100,7 @@ export class AssistantModule {
       this.btn.addEventListener('click', () => this.togglePanel());
       // Если диалог с поддержкой уже открыт — следим за ответом оператора
       // в фоне, чтобы показать бейдж, даже пока панель закрыта.
-      if (this.supportChatId) this.startSupportPolling();
+      // No background polling on init for multi-chat — polling starts when chat is opened
     }
 
     // Load config (may fail if unauthenticated — that's OK, key loads later)
@@ -2472,7 +2497,8 @@ export class AssistantModule {
   // ── Task handling ─────────────────────────────────────────────────────────────
 
   private parseTaskAction(reply: string): TaskAction | null {
-    const match = reply.match(/\{[\s\S]*?"action"\s*:\s*"(?:create_task|create_tasks|suggest_task)"[\s\S]*?\}/);
+    const norm = reply.replace(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g, '$1');
+    const match = norm.match(/\{[\s\S]*?"action"\s*:\s*"(?:create_task|create_tasks|suggest_task|edit_task|delete_task)"[\s\S]*?\}/);
     if (!match) return null;
     try {
       return JSON.parse(match[0]) as TaskAction;
@@ -2489,6 +2515,13 @@ export class AssistantModule {
       this.addAssistantMessage(`Создано задач: ${ta.tasks.length}. Откройте раздел Задачи для просмотра.`);
     } else if (ta.action === 'suggest_task') {
       this.addSuggestTaskCard(ta);
+    } else if (ta.action === 'edit_task' || ta.action === 'delete_task') {
+      try {
+        const result = await aiPage.run(ta.action, ta as any);
+        this.addAssistantMessage(result.summary || 'Готово.');
+      } catch (e: any) {
+        this.addAssistantMessage('Ошибка: ' + e.message);
+      }
     }
   }
 
@@ -2777,6 +2810,13 @@ export class AssistantModule {
     if (!this.panel) return;
     this.supportMode = mode;
 
+    // Adapt header for current mode
+    this.panel.dataset.panelMode = mode;
+    const h3 = this.panel.querySelector<HTMLElement>('.sd-ap-title h3');
+    const p  = this.panel.querySelector<HTMLElement>('.sd-ap-title p');
+    if (h3) h3.textContent = mode === 'support' ? 'Поддержка' : 'Сима';
+    if (p)  p.textContent  = mode === 'support' ? 'Служба поддержки' : 'AI-менеджер маркетплейсов';
+
     // Update tabs
     this.panel.querySelectorAll<HTMLElement>('.sd-ap-mode-tab').forEach(t => {
       t.classList.toggle('active', t.dataset.mode === mode);
@@ -2801,9 +2841,8 @@ export class AssistantModule {
       }
     }
 
-    // Опрос НЕ останавливаем при уходе на вкладку Симы — иначе ответ оператора
-    // остаётся незамеченным. В фоне он только считает непрочитанные.
-    if (mode === 'ai' && this.supportChatId) this.startSupportPolling();
+    // Stop polling when leaving support tab (restart when re-entering with active chat)
+    if (mode === 'ai') this.stopSupportPolling();
   }
 
   /** Счётчик непрочитанных ответов оператора на вкладке «Поддержка». */
@@ -2834,42 +2873,80 @@ export class AssistantModule {
   }
 
   private renderSupportView(container: HTMLElement): void {
-    if (this.supportChatId && !this.supportChatClosed) {
+    if (this.supportActiveChatId && !this.supportChatClosed) {
       this.renderSupportChat(container);
-      // Restore message history from server if not yet loaded
       if (!this.supportMessages.length) {
-        supportChatService.getMyChat().then(chat => {
-          // undefined = запрос не прошёл (сеть/права). Чат не трогаем, показываем ошибку.
-          if (chat === undefined) {
-            this.showSupportError(container, supportChatService.lastError ?? 'Нет связи с сервером');
-            return;
+        supportChatService.getMessagesSince(this.supportActiveChatId).then(msgs => {
+          if (msgs.length) {
+            this.supportMessages = msgs;
+            this.supportLastMsgTime = msgs.at(-1)?.created_at ?? null;
+            this.renderSupportMessages();
           }
-          if (!chat || chat.id !== this.supportChatId) {
-            // Chat no longer active on server — clear stale localStorage
-            localStorage.removeItem('sd_sup_chat_id');
-            localStorage.removeItem('sd_sup_reason');
-            this.supportChatId = null;
-            this.supportChatClosed = false;
-            this.renderSupportReasonSelect(container);
-            return;
-          }
-          this.supportMessages = chat.messages ?? [];
-          this.supportLastMsgTime = this.supportMessages.at(-1)?.created_at ?? null;
-          this.renderSupportMessages();
-          this.startSupportPolling();
         }).catch(() => {});
-      } else {
-        this.startSupportPolling();
       }
+      this.startSupportPolling();
+    } else if (this.supportChats.length > 0) {
+      this.renderSupportChatList(container);
     } else {
       this.renderSupportReasonSelect(container);
     }
   }
 
-  private renderSupportReasonSelect(container: HTMLElement): void {
+  private renderSupportChatList(container: HTMLElement): void {
+    const items = this.supportChats.map(c => {
+      const label = SUPPORT_REASONS[c.reason] ?? c.reason;
+      const date = new Date(c.created_at).toLocaleString('ru-RU', {
+        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+      });
+      return `<button class="sd-sup-chat-row" data-chat-id="${esc(c.id)}">
+        <div class="sd-sup-chat-row-left">
+          <div class="sd-sup-chat-row-reason">${label}</div>
+          <div class="sd-sup-chat-row-date">${date}</div>
+        </div>
+        <svg class="sd-sup-chat-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </button>`;
+    }).join('');
+
+    container.innerHTML = `
+      <div class="sd-sup-list-view">
+        <div class="sd-sup-list-header">
+          <span class="sd-sup-list-title">Мои обращения</span>
+          <button class="sd-sup-list-new-btn" id="sd-sup-new-chat-btn">+ Новое</button>
+        </div>
+        <div class="sd-sup-chat-rows">${items}</div>
+      </div>`;
+
+    container.querySelectorAll<HTMLElement>('.sd-sup-chat-row').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const chatId = btn.dataset.chatId!;
+        const chat = this.supportChats.find(c => c.id === chatId);
+        this.supportActiveChatId = chatId;
+        this.supportReason = chat?.reason ?? '';
+        this.supportMessages = [];
+        this.supportLastMsgTime = null;
+        this.supportChatClosed = false;
+        this.supContextSent = false;
+        this.supAckShown = false;
+        this.renderSupportView(container);
+      });
+    });
+
+    container.querySelector('#sd-sup-new-chat-btn')?.addEventListener('click', () => {
+      this.renderSupportReasonSelect(container, true);
+    });
+  }
+
+  private renderSupportReasonSelect(container: HTMLElement, showBack = false): void {
     const reasons = Object.entries(SUPPORT_REASONS);
+    const backBtn = showBack
+      ? `<button class="sd-sup-back-btn" id="sd-sup-reason-back">
+           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="16" height="16"><path d="M15 18l-6-6 6-6"/></svg>
+           Назад
+         </button>`
+      : '';
     container.innerHTML = `
       <div class="sd-sup-reason-screen">
+        ${backBtn}
         <div class="sd-sup-reason-title">Выберите тему обращения</div>
         <div class="sd-sup-reason-sub">Оператор поддержки ответит вам в этом чате</div>
         <div class="sd-sup-reason-grid">
@@ -2880,14 +2957,20 @@ export class AssistantModule {
         <div class="sd-sup-warn">⚠️ После завершения диалога история чата будет удалена</div>
       </div>`;
 
+    container.querySelector('#sd-sup-reason-back')?.addEventListener('click', () => {
+      this.renderSupportChatList(container);
+    });
+
     container.querySelectorAll<HTMLElement>('.sd-sup-reason-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const reason = btn.dataset.reason!;
         this.supportReason = reason;
         try {
-          this.supportChatId = await supportChatService.createChat(reason);
-          localStorage.setItem('sd_sup_chat_id', this.supportChatId);
-          localStorage.setItem('sd_sup_reason', reason);
+          const newId = await supportChatService.createChat(reason);
+          const entry = { id: newId, reason, created_at: new Date().toISOString() };
+          this.supportChats.push(entry);
+          this.saveSupportChats();
+          this.supportActiveChatId = newId;
           this.supportMessages = [];
           this.supportLastMsgTime = null;
           this.supportChatClosed = false;
@@ -2907,6 +2990,9 @@ export class AssistantModule {
     const reasonLabel = SUPPORT_REASONS[this.supportReason] ?? this.supportReason;
     container.innerHTML = `
       <div class="sd-sup-chat-header">
+        <button class="sd-sup-back-btn" id="sd-sup-back-from-chat" title="К списку обращений">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="16" height="16"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
         <div class="sd-sup-chat-title">
           <span>Поддержка SimaDesk</span>
           <span class="sd-sup-chat-reason">${reasonLabel}</span>
@@ -2945,10 +3031,18 @@ export class AssistantModule {
     const attachBtn = container.querySelector('#sd-sup-attach-btn');
     const fileInput = container.querySelector<HTMLInputElement>('#sd-sup-file-input');
 
+    container.querySelector('#sd-sup-back-from-chat')?.addEventListener('click', () => {
+      this.stopSupportPolling();
+      this.supportActiveChatId = null;
+      this.supportMessages = [];
+      this.supportLastMsgTime = null;
+      this.renderSupportView(container);
+    });
+
     this.supAttachFiles = [];
 
     const doSend = async () => {
-      if (!textarea || !this.supportChatId) return;
+      if (!textarea || !this.supportActiveChatId) return;
       const text = textarea.value.trim();
       if (!text && this.supAttachFiles.length === 0) return;
 
@@ -2987,10 +3081,10 @@ export class AssistantModule {
       this.supportPending.add(optId);
       this.renderSupportMessages();
       try {
-        await supportChatService.sendMessage(this.supportChatId, textToSend, attachSnap);
+        await supportChatService.sendMessage(this.supportActiveChatId!, textToSend, attachSnap);
         this.supportPending.delete(optId);
         // Перечитываем весь диалог — подтверждение, что сообщение реально в базе
-        const msgs = await supportChatService.getMessagesSince(this.supportChatId);
+        const msgs = await supportChatService.getMessagesSince(this.supportActiveChatId!);
         if (msgs.length) {
           this.supportMessages = msgs;
           this.supportLastMsgTime = msgs[msgs.length - 1]?.created_at ?? null;
@@ -3026,7 +3120,7 @@ export class AssistantModule {
     const messagesEl = container.querySelector<HTMLElement>('#sd-sup-messages');
     messagesEl?.addEventListener('click', (e) => {
       const btn = (e.target as HTMLElement).closest<HTMLElement>('.sd-sup-action-btn');
-      if (btn?.dataset.action) this.executeSupportAction(btn.dataset.action);
+      if (btn?.dataset.action) this.executeSupportAction(btn.dataset.action, btn.dataset.page ?? '');
     });
 
     closeBtn?.addEventListener('click', () => this.confirmCloseSupport(container));
@@ -3084,11 +3178,11 @@ export class AssistantModule {
   private supportTypingSentAt = 0;
 
   private signalTyping(): void {
-    if (!this.supportChatId) return;
+    if (!this.supportActiveChatId) return;
     const now = Date.now();
     if (now - this.supportTypingSentAt < 2500) return;
     this.supportTypingSentAt = now;
-    void supportChatService.setTyping(this.supportChatId);
+    void supportChatService.setTyping(this.supportActiveChatId);
   }
 
   // ── Антиспам в ожидании оператора ───────────────────────────────────────────
@@ -3163,12 +3257,13 @@ export class AssistantModule {
       // Parse support_action JSON from admin messages
       let actionHtml = '';
       if (!isUser) {
-        const actionMatch = displayContent.match(/\{"support_action":"([^"]+)","label":"([^"]+)"\}/);
+        const actionMatch = displayContent.match(/\{"support_action":"([^"]+)"(?:,"page":"([^"]*)")?,"label":"([^"]+)"\}/);
         if (actionMatch) {
           displayContent = displayContent.replace(actionMatch[0], '').trim();
           const aName = actionMatch[1];
-          const aLabel = actionMatch[2];
-          actionHtml = `<button class="sd-sup-action-btn" data-action="${esc(aName)}">${esc(aLabel)}</button>`;
+          const aPage = actionMatch[2] ?? '';
+          const aLabel = actionMatch[3];
+          actionHtml = `<button class="sd-sup-action-btn" data-action="${esc(aName)}" data-page="${esc(aPage)}">${esc(aLabel)}</button>`;
         }
       }
 
@@ -3192,17 +3287,17 @@ export class AssistantModule {
         </div>
       </div>`;
     container.querySelector('.sd-sup-confirm-yes')?.addEventListener('click', async () => {
-      if (this.supportChatId) {
-        try { await supportChatService.closeMyChat(this.supportChatId); } catch {}
+      const closingId = this.supportActiveChatId;
+      if (closingId) {
+        try { await supportChatService.closeMyChat(closingId); } catch {}
+        this.removeSupportChat(closingId);
       }
       this.stopSupportPolling();
-      this.supportChatId = null;
+      this.supportActiveChatId = null;
       this.supportMessages = [];
       this.supportLastMsgTime = null;
       this.supportChatClosed = false;
-      localStorage.removeItem('sd_sup_chat_id');
-      localStorage.removeItem('sd_sup_reason');
-      this.renderSupportReasonSelect(container);
+      this.renderSupportView(container);
     });
     container.querySelector('.sd-sup-confirm-no')?.addEventListener('click', () => {
       this.renderSupportChat(container);
@@ -3216,16 +3311,14 @@ export class AssistantModule {
    */
   private startSupportPolling(): void {
     this.stopSupportPolling();
-    if (!this.supportChatId) return;
+    if (!this.supportActiveChatId) return;
 
     this.supportPollTimer = setInterval(async () => {
-      if (!this.supportChatId) { this.stopSupportPolling(); return; }
+      if (!this.supportActiveChatId) { this.stopSupportPolling(); return; }
 
-      // Первая загрузка истории не считается «новыми» сообщениями
       const isBaseline = this.supportLastMsgTime === null && this.supportMessages.length === 0;
-      // Один запрос: сообщения + статус + печатает ли собеседник
-      const res = await supportChatService.poll(this.supportChatId, this.supportLastMsgTime);
-      if (!res) return;            // ошибка сети — состояние чата не трогаем
+      const res = await supportChatService.poll(this.supportActiveChatId, this.supportLastMsgTime);
+      if (!res) return;
 
       const viewing = this.supportMode === 'support' && this.isOpen;
 
@@ -3239,11 +3332,8 @@ export class AssistantModule {
         this.supportMessages = [...this.supportMessages, ...newMsgs];
         this.supportLastMsgTime = newMsgs[newMsgs.length - 1].created_at;
         const fromAdmin = isBaseline ? 0 : newMsgs.filter(m => m.sender_role === 'admin').length;
-        // Оператор ответил — снимаем накопленный антиспам-штраф
         if (newMsgs.some(m => m.sender_role === 'admin')) this.resetSpamGuard();
-        if (viewing) {
-          this.renderSupportMessages();
-        }
+        if (viewing) this.renderSupportMessages();
         if (fromAdmin > 0 && !viewing) {
           this.supportUnread += fromAdmin;
           this.updateSupportBadge();
@@ -3254,26 +3344,22 @@ export class AssistantModule {
       if (res.status !== 'closed') return;
 
       this.stopSupportPolling();
-      this.supportChatId = null;
-      localStorage.removeItem('sd_sup_chat_id');
-      localStorage.removeItem('sd_sup_reason');
+      const closedId = this.supportActiveChatId;
+      this.removeSupportChat(closedId);
+      this.supportActiveChatId = null;
+      this.supportMessages = [];
+      this.supportLastMsgTime = null;
       const supView = this.panel?.querySelector<HTMLElement>('#sd-ap-sup-view');
       if (supView && this.supportMode === 'support') {
         supView.innerHTML = `<div class="sd-sup-closed-msg">
           <div style="font-size:2rem">✅</div>
           <div>Диалог завершён оператором</div>
-          <button class="sd-sup-reason-btn" id="sd-sup-new-chat">Написать снова</button>
+          <button class="sd-sup-reason-btn" id="sd-sup-back-to-list">← К обращениям</button>
         </div>`;
-        supView.querySelector('#sd-sup-new-chat')?.addEventListener('click', () => {
-          this.supportMessages = [];
-          this.supportLastMsgTime = null;
-          this.renderSupportReasonSelect(supView);
+        supView.querySelector('#sd-sup-back-to-list')?.addEventListener('click', () => {
+          this.renderSupportView(supView);
         });
-      } else {
-        this.supportMessages = [];
-        this.supportLastMsgTime = null;
       }
-      // 2 с: отметка набора живёт 6 с, при более редком опросе индикатор мигает
     }, 2000);
   }
 
@@ -3282,7 +3368,7 @@ export class AssistantModule {
     this.supportPeerTyping = false;
   }
 
-  private executeSupportAction(name: string): void {
+  private executeSupportAction(name: string, page = ''): void {
     const root = document.documentElement;
     switch (name) {
       case 'toggle_theme_off':
@@ -3297,6 +3383,12 @@ export class AssistantModule {
         break;
       case 'reload_page':
         location.reload();
+        break;
+      case 'navigate_to':
+        if (page) {
+          (window as any).app?.navigateTo?.(page);
+          showToast('Переход в раздел…', 'success');
+        }
         break;
       default:
         showToast('Действие не поддерживается', 'warning');
@@ -4297,8 +4389,19 @@ export class AssistantModule {
         streamBubble = el.querySelector('.sd-ap-stream-text');
       }
       // Скрываем JSON-блоки действий во время стриминга — они заменятся карточкой
-      const display = partial.replace(/```json\s*\{[\s\S]*$/, '').trim();
-      if (streamBubble) streamBubble.innerHTML = renderMarkdown(display);
+      const display = partial
+        .replace(/```(?:json)?\s*\{[\s\S]*$/, '')
+        .replace(/^\s*\{[\s\S]*$/, '')
+        .trim();
+      if (streamBubble) {
+        if (display) {
+          streamBubble.innerHTML = renderMarkdown(display);
+          streamBubble.classList.remove('sd-ap-stream-action');
+        } else {
+          streamBubble.innerHTML = '';
+          streamBubble.classList.add('sd-ap-stream-action');
+        }
+      }
       this.scrollToBottom();
     };
 
@@ -4404,7 +4507,10 @@ export class AssistantModule {
         const taskAction = this.parseTaskAction(reply);
         if (taskAction) {
           cleanStream();
-          const displayText = reply.replace(/\{[\s\S]*?\}/g, '').trim();
+          const displayText = reply
+            .replace(/```(?:json)?\s*\{[\s\S]*?\}\s*```/g, '')
+            .replace(/\{[\s\S]*?\}/g, '')
+            .trim();
           if (displayText) {
             this.addAssistantMessage(displayText);
           }

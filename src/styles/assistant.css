@@ -1811,6 +1811,33 @@ html.light .sd-sup-msg.user .sd-sup-bubble {
   margin-left: 1px;
 }
 
+/* Анимация когда Сима выполняет действие (JSON-ответ, без текста) */
+.sd-ap-stream-text.sd-ap-stream-action::after { display: none; }
+.sd-ap-stream-text.sd-ap-stream-action {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+  color: var(--ap-muted, var(--text-2));
+  font-size: 12px;
+  font-style: italic;
+}
+.sd-ap-stream-text.sd-ap-stream-action::before {
+  content: '';
+  display: flex;
+  width: 28px;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--ap-accent, var(--accent)) 0%, transparent 100%);
+  background-size: 200% 100%;
+  animation: sd-action-sweep 1.2s ease-in-out infinite;
+}
+@keyframes sd-action-sweep {
+  0%   { background-position: 200% 0; opacity: 0.5; }
+  50%  { background-position: 0% 0;   opacity: 1; }
+  100% { background-position: -200% 0; opacity: 0.5; }
+}
+
 @keyframes stream-cursor {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0; }
@@ -2001,3 +2028,100 @@ html.light .sd-sup-msg.user .sd-sup-bubble {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.6; transform: scale(1.25); }
 }
+
+/* ── Адаптация шапки в режиме поддержки ────────────────────────────────── */
+[data-panel-mode="support"] .sd-ap-sessions-btn,
+[data-panel-mode="support"] .sd-ap-ai-toggle,
+[data-panel-mode="support"] .sd-ap-tts-btn,
+[data-panel-mode="support"] .sd-ap-clear-btn,
+[data-panel-mode="support"] #sd-ap-status { display: none !important; }
+
+/* ── Список обращений ──────────────────────────────────────────────────── */
+.sd-sup-list-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.sd-sup-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px var(--ap-pad) 10px;
+  border-bottom: 1px solid var(--ap-line);
+  flex-shrink: 0;
+}
+.sd-sup-list-title {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ap-txt-2);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.sd-sup-list-new-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--ap-accent);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ap-accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background .14s, color .14s;
+}
+.sd-sup-list-new-btn:hover { background: var(--ap-accent); color: #fff; }
+.sd-sup-chat-rows {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.sd-sup-chat-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px var(--ap-pad);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--ap-line);
+  cursor: pointer;
+  text-align: left;
+  transition: background .14s;
+}
+.sd-sup-chat-row:hover { background: var(--ap-surface-3); }
+.sd-sup-chat-row-left { flex: 1; min-width: 0; }
+.sd-sup-chat-row-reason {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ap-txt);
+  margin-bottom: 2px;
+}
+.sd-sup-chat-row-date {
+  font-size: 11px;
+  color: var(--ap-txt-3);
+}
+.sd-sup-chat-row-arrow {
+  flex-shrink: 0;
+  color: var(--ap-txt-3);
+  width: 16px;
+  height: 16px;
+}
+
+/* ── Кнопка «Назад» в шапке чата ──────────────────────────────────────── */
+.sd-sup-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 5px 8px;
+  background: transparent;
+  border: 1px solid var(--ap-line);
+  border-radius: 8px;
+  color: var(--ap-txt-2);
+  font-size: 11.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background .14s, color .14s;
+}
+.sd-sup-back-btn:hover { background: var(--ap-surface-3); color: var(--ap-txt); }
