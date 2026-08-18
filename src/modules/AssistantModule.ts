@@ -451,6 +451,7 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 
 **Редактор / Документы (docs)**
 Встроенный Excel и Word редактор. Excel: .xlsx/.xls, формулы, форматирование, импорт/экспорт. Word: .docx, форматирование, таблицы. Я умею редактировать файлы командами: "замени значение в ячейке A1", "найди и замени текст в документе".
+ВАЖНО: Я могу СОЗДАТЬ документ (create_doc) и выполнять текстовые команды ("замени", "найди", "подсчитай слова"). Я НЕ МОГУ вставлять произвольный текст в уже открытый документ через действие — этого действия не существует. Если пользователь просит "добавь слово ... в документ" — объясни, что это нужно сделать вручную в редакторе.
 
 **Поддержка SimaDesk (chats / support)**
 Кнопка «Поддержка» в этой панели → вкладка «Поддержка». Живые операторы + AI-помощник. История чата удаляется после завершения диалога.
@@ -4524,7 +4525,12 @@ export class AssistantModule {
           await this.handleTaskAction(taskAction);
         } else {
           // Обычный текст — промоутим стриминговый пузырь на месте (Fix 1)
-          const { text: displayText, suggestions: followUps } = this.parseFollowUpSuggestions(reply);
+          // Strip any orphaned action JSON the AI may have appended
+          const strippedReply = reply
+            .replace(/```(?:json)?\s*\{[^`]*\}\s*```/g, '')
+            .replace(/\{[^{}]*"action"\s*:[^{}]*\}/g, '')
+            .trim();
+          const { text: displayText, suggestions: followUps } = this.parseFollowUpSuggestions(strippedReply);
           let ttsBtn: HTMLElement | null;
           if (streamMsgEl) {
             ttsBtn = this.finalizeStreamBubble(streamMsgEl, displayText, reply);
@@ -4642,10 +4648,23 @@ export class AssistantModule {
   /** Извлечь из ответа действие страницы {"action":"page_action",...} (с вложенными args). */
   private parsePageAction(reply: string): { name: string; args: any; raw: string } | null {
     const found = this.extractBalancedJson(reply, '"page_action"');
-    if (!found) return null;
-    const p = found.value;
-    if (p && p.action === 'page_action' && typeof p.name === 'string') {
-      return { name: p.name, args: p.args ?? {}, raw: found.raw };
+    if (found) {
+      const p = found.value;
+      if (p && p.action === 'page_action' && typeof p.name === 'string') {
+        return { name: p.name, args: p.args ?? {}, raw: found.raw };
+      }
+    }
+    // Shorthand: {"action":"reload_page",...} — action IS the page action name
+    const knownActions = new Set([
+      'reload_page', 'toggle_theme', 'toggle_theme_on', 'toggle_theme_off',
+      'navigate_to', 'daily_checklist', 'run_risk_audit',
+    ]);
+    const shorthand = this.extractBalancedJson(reply, '"action"');
+    if (shorthand) {
+      const p = shorthand.value;
+      if (p && typeof p.action === 'string' && knownActions.has(p.action)) {
+        return { name: p.action, args: p.args ?? {}, raw: shorthand.raw };
+      }
     }
     return null;
   }
