@@ -11,7 +11,7 @@ import { aiPage } from '@/services/aiPageContext';
 import { Mp, MP_LABEL, MP_COLOR, Order, KPI, TimeseriesPoint, PeriodPreset, StoreInfo, TaxModel } from './types';
 import { aggregateOrders, ProductMap } from './services/orderAggregator';
 import { buildCogsResolver } from './services/cogsResolver';
-import { computeKPI, computeTimeseries, computeMissingCogs, MissingCogsItem } from './services/kpiAggregator';
+import { computeKPI, computeTimeseries, computeMissingCogs, MissingCogsItem, computeSkuPerformance } from './services/kpiAggregator';
 import { loadAllStores, buildProductMap, loadOrders, loadTransactions, QueryProgress } from './services/dataLoader';
 import { settingsDb } from './services/settingsDb';
 import { financeSync } from '@/services/financeSync';
@@ -160,7 +160,6 @@ export class AnalyticsModule {
 
     // Топ-5 товаров по выручке
     try {
-      const { computeSkuPerformance } = await import('./services/kpiAggregator');
       const skus = computeSkuPerformance(this.orders).sort((a: any, b: any) => b.revenue - a.revenue).slice(0, 5);
       if (skus.length) {
         lines.push('Топ-5 товаров по выручке:');
