@@ -1284,6 +1284,54 @@ html.light .ap-api-tag.ya { color: #cc2626; }
 .ap-news-manual-imp { display: flex; align-items: center; gap: 5px; font-size: 13px; white-space: nowrap; cursor: pointer; flex-shrink: 0; }
 .ap-news-manual-mp { width: 160px; flex-shrink: 0; }
 
+/* ── Мозг Симы (Brain tab) ──────────────────────────────────────────────────── */
+.ap-brain-wrap { display: flex; flex-direction: column; gap: 20px; }
+
+.ap-brain-stats {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; background: var(--bg2); border-radius: 8px;
+  border: 1px solid var(--border); font-size: 13px;
+}
+.ap-brain-stat-info { display: flex; align-items: center; gap: 6px; color: var(--text-2); }
+.ap-brain-stat-badge {
+  display: inline-block; padding: 2px 10px; border-radius: 20px;
+  font-size: 12px; font-weight: 600;
+}
+.ap-brain-table .ap-brain-title-cell { font-size: 13px; }
+.ap-brain-cat-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;
+  background: var(--bg2); color: var(--text-2); border: 1px solid var(--border); white-space: nowrap;
+}
+.ap-brain-kw-cell { font-size: 11px; color: var(--text-2); max-width: 220px; }
+.ap-brain-date-cell { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+
+/* Модал */
+.ap-brain-modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 9000;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.ap-brain-modal-inner {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+  width: 100%; max-width: 700px; max-height: 90vh; display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,.3);
+}
+.ap-brain-modal-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--border);
+  font-weight: 600; font-size: 15px;
+}
+.ap-brain-modal-body {
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 20px; overflow-y: auto; flex: 1;
+}
+.ap-brain-modal-row { display: flex; gap: 12px; align-items: flex-end; }
+.ap-brain-modal-footer {
+  display: flex; gap: 8px; justify-content: flex-end;
+  padding: 14px 20px; border-top: 1px solid var(--border);
+}
+.ap-brain-content-area { font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.6; }
+.ap-label { display: block; font-size: 11px; color: var(--text-2); margin-bottom: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+
 @media (max-width: 800px) {
   .ap-news-add-form { grid-template-columns: 1fr 1fr; }
   .ap-news-manual-row { flex-wrap: wrap; }

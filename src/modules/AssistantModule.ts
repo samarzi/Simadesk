@@ -11,6 +11,7 @@ import { reportAiUsage } from '@/services/aiUsage';
 import { SupportSpamGuard } from '@/services/supportSpamGuard';
 import { hasQuota, getQuotaInfo, recordDailyTokens, getDailyLimit, FREE_DAILY_TOKENS } from '@/services/aiTokenQuota';
 import { loadRecentNews, countUnread, markAllRead, formatNewsForContext, type MpNews } from '@/services/mpNewsService';
+import { loadSimaMemory, searchMemory, formatMemoryForPrompt, type SimaMemoryEntry } from '@/services/simaMemoryService';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -1043,6 +1044,7 @@ export class AssistantModule {
   // ── MP News ───────────────────────────────────────────────────────────────
   private mpNews: MpNews[] = [];
   private mpNewsUnread = 0;
+  private simaMemory: SimaMemoryEntry[] = [];
 
   // ── Chat sessions ─────────────────────────────────────────────────────────
   private sessions: ChatSession[] = [];
@@ -1213,7 +1215,10 @@ export class AssistantModule {
 
   private async loadMpNews(): Promise<void> {
     try {
-      this.mpNews = await loadRecentNews(7);
+      [this.mpNews, this.simaMemory] = await Promise.all([
+        loadRecentNews(7),
+        loadSimaMemory(),
+      ]);
       this.mpNewsUnread = countUnread(this.mpNews);
       if (this.mpNews.length) this.renderNewsBlock();
       if (this.mpNewsUnread > 0) this.renderNewsBadge();
@@ -4414,8 +4419,10 @@ export class AssistantModule {
       const newsFrag = this.mpNews.length
         ? '\n\n' + formatNewsForContext(this.mpNews)
         : '';
+      const relevantMemory = searchMemory(text, this.simaMemory);
+      const memFrag = formatMemoryForPrompt(relevantMemory);
       const messages: ChatMessage[] = [
-        { role: 'system', content: SYSTEM_PROMPT + storeCtx + pageFrag + selCtxFrag + newsFrag },
+        { role: 'system', content: SYSTEM_PROMPT + storeCtx + pageFrag + selCtxFrag + newsFrag + memFrag },
         ...this.history.slice(-10),
       ];
 

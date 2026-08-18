@@ -42,13 +42,13 @@ import { areaChart, groupedBars, hBars, donut } from './admin/charts';
 
 type AdminTab =
   | 'overview' | 'users' | 'companies' | 'plans' | 'subscriptions'
-  | 'promos' | 'accounting' | 'support' | 'settings' | 'roadmap' | 'news';
+  | 'promos' | 'accounting' | 'support' | 'settings' | 'roadmap' | 'news' | 'brain';
 
 interface TabMeta { title: string; desc: string; icon: string }
 
 const TABS: AdminTab[] = [
   'overview', 'users', 'companies', 'plans', 'subscriptions',
-  'promos', 'accounting', 'support', 'settings', 'roadmap', 'news',
+  'promos', 'accounting', 'support', 'settings', 'roadmap', 'news', 'brain',
 ];
 
 const TAB_META: Record<AdminTab, TabMeta> = {
@@ -63,6 +63,7 @@ const TAB_META: Record<AdminTab, TabMeta> = {
   settings:      { title: 'Настройки',     icon: 'settings',  desc: 'Права администраторов, AI-ассистент и страницы сайта' },
   roadmap:       { title: 'Дорожная карта', icon: 'roadmap',  desc: 'Задачи разработки: приоритеты, статусы и дедупликация' },
   news:          { title: 'Новости МП',    icon: 'news',      desc: 'Telegram-каналы для сбора новостей маркетплейсов' },
+  brain:         { title: 'Мозг Симы',    icon: 'brain',     desc: 'База знаний о маркетплейсах, которую Сима использует в ответах' },
 };
 
 const PLAN_COLORS: Record<string, string> = {
@@ -170,6 +171,11 @@ export class AdminModule {
   private newsLoading = false;
   private newsManualAdd = false;
 
+  /* мозг Симы */
+  private brainEntries: Array<{ id: string; mp: string; category: string; title: string; content: string; keywords: string[]; updated_at: string }> = [];
+  private brainUpdating = false;
+  private brainFilter = { mp: '', category: '' };
+
   constructor(el: HTMLElement) { this.el = el; }
 
   // ── ЖИЗНЕННЫЙ ЦИКЛ ──────────────────────────────────────────────────────
@@ -261,6 +267,7 @@ export class AdminModule {
         }
         case 'roadmap': this.roadmapTasks = await roadmapDb.getTasks(); break;
         case 'news': await this.loadNewsData(); break;
+        case 'brain': await this.loadBrainData(); break;
       }
     } catch (e: unknown) {
       debug.warn('[Admin] loadTab error:', e);
@@ -352,6 +359,7 @@ export class AdminModule {
       case 'settings':      return this.renderSettings();
       case 'roadmap':       return this.renderRoadmap();
       case 'news':          return this.renderNews();
+      case 'brain':         return this.renderBrain();
     }
   }
 
@@ -2117,6 +2125,7 @@ ${this.SIMADESK_KNOWLEDGE}
     this.el.querySelectorAll<HTMLElement>('.ap-picker').forEach(p => this.bindPickerEvents(p));
 
     if (this.tab === 'news' && !this.loading) this.bindNewsEvents();
+    if (this.tab === 'brain' && !this.loading) this.bindBrainEvents();
   }
 
   private debouncedSearch(sel: string, cb: (value: string) => void): void {
@@ -3115,6 +3124,290 @@ ${this.SIMADESK_KNOWLEDGE}
         this.render();
       } else {
         showToast('Ошибка сохранения', 'error');
+      }
+    });
+  }
+
+  // ── МОЗГ СИМЫ ──────────────────────────────────────────────────────────────
+
+  private async loadBrainData(): Promise<void> {
+    const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+    const res = await fetch(`${REST_URL}/sima_memory?select=*&order=updated_at.desc`, { headers: getAuthHeaders() });
+    this.brainEntries = res.ok ? await res.json() : [];
+  }
+
+  private renderBrain(): string {
+    const MP_OPTIONS = [
+      { v: '', l: 'Все МП' }, { v: 'wb', l: 'Wildberries' }, { v: 'ozon', l: 'Ozon' },
+      { v: 'yandex', l: 'Яндекс Маркет' }, { v: 'general', l: 'Общее' },
+    ];
+    const CAT_OPTIONS = [
+      { v: '', l: 'Все категории' }, { v: 'fees', l: 'Комиссии' }, { v: 'logistics', l: 'Логистика' },
+      { v: 'requirements', l: 'Требования' }, { v: 'promotions', l: 'Акции' },
+      { v: 'tech', l: 'Технические' }, { v: 'payments', l: 'Выплаты' }, { v: 'other', l: 'Прочее' },
+    ];
+    const CAT_LABELS: Record<string, string> = { fees: 'Комиссии', logistics: 'Логистика', requirements: 'Требования', promotions: 'Акции', tech: 'Технические', payments: 'Выплаты', other: 'Прочее' };
+    const MP_COLORS: Record<string, string> = { wb: '#cb11ab', ozon: '#005bff', yandex: '#ffd700', general: '#6366f1' };
+
+    const filtered = this.brainEntries.filter(e =>
+      (!this.brainFilter.mp || e.mp === this.brainFilter.mp) &&
+      (!this.brainFilter.category || e.category === this.brainFilter.category)
+    );
+
+    const byMp: Record<string, number> = {};
+    for (const e of this.brainEntries) byMp[e.mp] = (byMp[e.mp] ?? 0) + 1;
+
+    const statsBadges = Object.entries(byMp).map(([mp, cnt]) => {
+      const color = MP_COLORS[mp] ?? '#6366f1';
+      const label = MP_OPTIONS.find(o => o.v === mp)?.l ?? mp;
+      return `<span class="ap-brain-stat-badge" style="background:${color}20;color:${color}">${label}: ${cnt}</span>`;
+    }).join('');
+
+    const lastUpdated = this.brainEntries[0]?.updated_at
+      ? new Date(this.brainEntries[0].updated_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+      : 'никогда';
+
+    const rows = filtered.length
+      ? filtered.map(e => {
+          const color = MP_COLORS[e.mp] ?? '#6366f1';
+          const mpLabel = MP_OPTIONS.find(o => o.v === e.mp)?.l ?? e.mp;
+          const catLabel = CAT_LABELS[e.category] ?? e.category;
+          const date = new Date(e.updated_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short' });
+          const kw = e.keywords.slice(0, 5).join(', ');
+          return `<tr data-brain-id="${this.esc(e.id)}">
+            <td><span class="ap-news-mp-badge" style="background:${color}20;color:${color}">${this.esc(mpLabel)}</span></td>
+            <td><span class="ap-brain-cat-badge">${this.esc(catLabel)}</span></td>
+            <td class="ap-brain-title-cell"><strong>${this.esc(e.title)}</strong></td>
+            <td class="ap-brain-kw-cell">${this.esc(kw)}</td>
+            <td class="ap-brain-date-cell">${date}</td>
+            <td class="ap-news-actions-cell">
+              <button class="ap-btn-icon brain-entry-view" data-id="${this.esc(e.id)}" title="Просмотр/редактировать">${icon('edit', 13)}</button>
+              <button class="ap-btn-icon brain-entry-delete" data-id="${this.esc(e.id)}" title="Удалить">${icon('trash', 13)}</button>
+            </td>
+          </tr>`;
+        }).join('')
+      : `<tr><td colspan="6" class="ap-news-empty-row">
+          ${this.brainEntries.length ? 'Нет записей по выбранному фильтру' : 'Мозг пуст — нажмите «Обновить мозг» чтобы Сима изучила новости'}
+        </td></tr>`;
+
+    return `
+      <div class="ap-brain-wrap">
+
+        <div class="ap-section-card">
+          <div class="ap-section-hdr">
+            <div>
+              <div class="ap-section-title">Память Симы</div>
+              <div class="ap-section-sub">Структурированные знания о маркетплейсах. Сима использует их для точных ответов без поиска по всем файлам.</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <select class="ap-input ap-brain-filter-mp" id="brain-filter-mp" style="width:140px">
+                ${MP_OPTIONS.map(o => `<option value="${o.v}" ${this.brainFilter.mp === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}
+              </select>
+              <select class="ap-input ap-brain-filter-cat" id="brain-filter-cat" style="width:160px">
+                ${CAT_OPTIONS.map(o => `<option value="${o.v}" ${this.brainFilter.category === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}
+              </select>
+              <button class="ap-btn ap-btn-primary" id="brain-update-btn" ${this.brainUpdating ? 'disabled' : ''}>
+                ${this.brainUpdating ? icon('refresh', 14) + ' Обновляю…' : icon('refresh', 14) + ' Обновить мозг'}
+              </button>
+              <button class="ap-btn ap-btn-primary" id="brain-add-btn">${icon('plus', 14)} Добавить</button>
+            </div>
+          </div>
+
+          <div class="ap-brain-stats">
+            <span class="ap-brain-stat-info">${icon('brain', 14)} Всего записей: <strong>${this.brainEntries.length}</strong></span>
+            <span class="ap-brain-stat-info">Обновлено: <strong>${lastUpdated}</strong></span>
+            ${statsBadges}
+          </div>
+        </div>
+
+        <div class="ap-section-card">
+          <table class="ap-news-table ap-brain-table">
+            <thead><tr><th>МП</th><th>Категория</th><th>Тема</th><th>Ключевые слова</th><th>Обновлено</th><th style="width:60px"></th></tr></thead>
+            <tbody id="brain-tbody">${rows}</tbody>
+          </table>
+        </div>
+
+        <!-- Модал просмотра/редактирования -->
+        <div class="ap-brain-modal" id="brain-modal" style="display:none">
+          <div class="ap-brain-modal-inner">
+            <div class="ap-brain-modal-hdr">
+              <span id="brain-modal-title">Запись памяти</span>
+              <button class="ap-btn-icon" id="brain-modal-close">${icon('close', 16)}</button>
+            </div>
+            <div class="ap-brain-modal-body">
+              <div class="ap-brain-modal-row">
+                <div style="flex:0 0 140px">
+                  <label class="ap-label">МП</label>
+                  <select class="ap-input" id="brain-modal-mp">
+                    ${MP_OPTIONS.filter(o => o.v).map(o => `<option value="${o.v}">${o.l}</option>`).join('')}
+                  </select>
+                </div>
+                <div style="flex:0 0 180px">
+                  <label class="ap-label">Категория</label>
+                  <select class="ap-input" id="brain-modal-cat">
+                    ${CAT_OPTIONS.filter(o => o.v).map(o => `<option value="${o.v}">${o.l}</option>`).join('')}
+                  </select>
+                </div>
+                <div style="flex:1">
+                  <label class="ap-label">Тема (заголовок)</label>
+                  <input class="ap-input" id="brain-modal-title-inp" placeholder="Краткое название темы">
+                </div>
+              </div>
+              <div>
+                <label class="ap-label">Содержание (Markdown)</label>
+                <textarea class="ap-input ap-brain-content-area" id="brain-modal-content" rows="10" placeholder="Актуальное знание о теме. Конкретные цифры, даты, правила."></textarea>
+              </div>
+              <div>
+                <label class="ap-label">Ключевые слова (через запятую)</label>
+                <input class="ap-input" id="brain-modal-kw" placeholder="комиссия, тариф, хранение">
+              </div>
+            </div>
+            <div class="ap-brain-modal-footer">
+              <button class="ap-btn" id="brain-modal-cancel">Отмена</button>
+              <button class="ap-btn ap-btn-primary" id="brain-modal-save">${icon('check', 14)} Сохранить</button>
+            </div>
+          </div>
+        </div>
+
+      </div>`;
+  }
+
+  private openBrainModal(entry?: typeof this.brainEntries[0]): void {
+    const el = this.el;
+    const modal = el.querySelector<HTMLElement>('#brain-modal')!;
+    modal.style.display = 'flex';
+    modal.dataset.editId = entry?.id ?? '';
+    (el.querySelector<HTMLElement>('#brain-modal-title'))!.textContent = entry ? 'Редактировать запись' : 'Новая запись';
+    (el.querySelector<HTMLSelectElement>('#brain-modal-mp'))!.value = entry?.mp ?? 'general';
+    (el.querySelector<HTMLSelectElement>('#brain-modal-cat'))!.value = entry?.category ?? 'other';
+    (el.querySelector<HTMLInputElement>('#brain-modal-title-inp'))!.value = entry?.title ?? '';
+    (el.querySelector<HTMLTextAreaElement>('#brain-modal-content'))!.value = entry?.content ?? '';
+    (el.querySelector<HTMLInputElement>('#brain-modal-kw'))!.value = (entry?.keywords ?? []).join(', ');
+  }
+
+  private closeBrainModal(): void {
+    const modal = this.el.querySelector<HTMLElement>('#brain-modal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  private bindBrainEvents(): void {
+    const el = this.el;
+
+    // Фильтры
+    el.querySelector('#brain-filter-mp')?.addEventListener('change', (e) => {
+      this.brainFilter.mp = (e.target as HTMLSelectElement).value;
+      this.render();
+    });
+    el.querySelector('#brain-filter-cat')?.addEventListener('change', (e) => {
+      this.brainFilter.category = (e.target as HTMLSelectElement).value;
+      this.render();
+    });
+
+    // Кнопка "Обновить мозг"
+    el.querySelector('#brain-update-btn')?.addEventListener('click', async () => {
+      const days = parseInt(prompt('За сколько дней обновить мозг из новостей? (7, 30, 90)', '30') ?? '30');
+      if (!days || isNaN(days)) return;
+      this.brainUpdating = true;
+      this.render();
+      try {
+        const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+        const base = REST_URL.replace('/rest/v1', '');
+        const res = await fetch(`${base}/functions/v1/telegram-auth/sima-brain-update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({ since_days: days }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.ok) {
+          showToast(`Мозг обновлён: ${data.updated} записей из ${data.total_news} новостей`, 'success');
+          await this.loadBrainData();
+        } else {
+          showToast('Ошибка: ' + (data.error ?? 'неизвестно'), 'error');
+        }
+      } catch (e: any) {
+        showToast('Ошибка: ' + e.message, 'error');
+      }
+      this.brainUpdating = false;
+      this.render();
+    });
+
+    // Добавить вручную
+    el.querySelector('#brain-add-btn')?.addEventListener('click', () => {
+      this.openBrainModal();
+    });
+
+    // Просмотр/редактирование записи
+    el.querySelectorAll<HTMLButtonElement>('.brain-entry-view').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id!;
+        const entry = this.brainEntries.find(e => e.id === id);
+        if (entry) this.openBrainModal(entry);
+      });
+    });
+
+    // Удаление записи
+    el.querySelectorAll<HTMLButtonElement>('.brain-entry-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id!;
+        const entry = this.brainEntries.find(e => e.id === id);
+        if (!confirm(`Удалить запись «${entry?.title ?? id}»?`)) return;
+        const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+        const res = await fetch(`${REST_URL}/sima_memory?id=eq.${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+        if (res.ok || res.status === 204) {
+          this.brainEntries = this.brainEntries.filter(e => e.id !== id);
+          el.querySelector<HTMLTableRowElement>(`tr[data-brain-id="${id}"]`)?.remove();
+          showToast('Запись удалена', 'success');
+        } else {
+          showToast('Ошибка удаления', 'error');
+        }
+      });
+    });
+
+    // Закрыть модал
+    el.querySelector('#brain-modal-close')?.addEventListener('click', () => this.closeBrainModal());
+    el.querySelector('#brain-modal-cancel')?.addEventListener('click', () => this.closeBrainModal());
+    el.querySelector('#brain-modal')?.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).id === 'brain-modal') this.closeBrainModal();
+    });
+
+    // Сохранить из модала
+    el.querySelector('#brain-modal-save')?.addEventListener('click', async () => {
+      const modal = el.querySelector<HTMLElement>('#brain-modal')!;
+      const editId = modal.dataset.editId || '';
+      const mp       = (el.querySelector<HTMLSelectElement>('#brain-modal-mp'))!.value;
+      const category = (el.querySelector<HTMLSelectElement>('#brain-modal-cat'))!.value;
+      const title    = (el.querySelector<HTMLInputElement>('#brain-modal-title-inp'))!.value.trim();
+      const content  = (el.querySelector<HTMLTextAreaElement>('#brain-modal-content'))!.value.trim();
+      const kwRaw    = (el.querySelector<HTMLInputElement>('#brain-modal-kw'))!.value;
+      const keywords = kwRaw.split(',').map(k => k.trim()).filter(Boolean);
+      if (!title || !content) { showToast('Заголовок и содержание обязательны', 'error'); return; }
+
+      const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+      const payload = { mp, category, title, content, keywords, updated_at: new Date().toISOString() };
+
+      let res: Response;
+      if (editId) {
+        res = await fetch(`${REST_URL}/sima_memory?id=eq.${editId}`, {
+          method: 'PATCH',
+          headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch(`${REST_URL}/sima_memory`, {
+          method: 'POST',
+          headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      if (res.ok) {
+        showToast(editId ? 'Запись обновлена' : 'Запись добавлена', 'success');
+        this.closeBrainModal();
+        await this.loadBrainData();
+        this.render();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast('Ошибка: ' + (err.message ?? res.status), 'error');
       }
     });
   }

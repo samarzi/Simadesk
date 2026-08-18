@@ -836,6 +836,105 @@ is_important=false если: общие советы, статистика бе�
   } catch { return null; }
 }
 
+async function handleSimaBrainUpdate(req: Request): Promise<Response> {
+  const jsonRes = (d: unknown, s = 200) =>
+    new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+  const authHeader = req.headers.get('authorization') || '';
+  if (!authHeader.startsWith('Bearer ') || authHeader.length < 20) return jsonRes({ error: 'Unauthorized' }, 401);
+
+  const orKey = Deno.env.get('OPENROUTER_KEY');
+  if (!orKey) return jsonRes({ error: 'OPENROUTER_KEY not configured' }, 503);
+
+  const body = await req.json().catch(() => ({}));
+  const sinceDays: number = Math.min(Number(body.since_days ?? 30), 90);
+  const since = new Date(Date.now() - sinceDays * 86_400_000).toISOString();
+
+  const db = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+
+  const { data: news } = await db.from('mp_news')
+    .select('id, mp, title, summary, is_important, published_at')
+    .gte('published_at', since)
+    .order('published_at', { ascending: false })
+    .limit(120);
+
+  if (!news?.length) return jsonRes({ ok: true, updated: 0, message: 'Нет новостей за указанный период' });
+
+  const { data: existing } = await db.from('sima_memory').select('mp,category,title,keywords,updated_at');
+
+  const newsText = (news as any[])
+    .map((n: any) => `[${String(n.id).slice(0, 8)} | ${n.mp.toUpperCase()} | ${n.published_at.slice(0, 10)}${n.is_important ? ' ⚠' : ''}] ${n.title}: ${n.summary}`)
+    .join('\n');
+
+  const existingText = existing?.length
+    ? (existing as any[]).map((e: any) => `mp=${e.mp} cat=${e.category} title="${e.title}" kw=[${(e.keywords ?? []).join(',')}] upd=${e.updated_at?.slice(0,10)}`).join('\n')
+    : '(пусто)';
+
+  const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${orKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'google/gemini-flash-1.5',
+      max_tokens: 6000,
+      messages: [
+        {
+          role: 'system',
+          content: `Ты — система формирования памяти AI-ассистента «Сима» для работы с маркетплейсами.
+Анализируй входящие новости и формируй/обновляй записи структурированных знаний.
+
+Правила полей:
+- mp: "wb" | "ozon" | "yandex" | "general" (general = касается всех МП)
+- category: "fees" (комиссии/тарифы) | "logistics" (доставка/склад/хранение) | "requirements" (правила/маркировка/запреты) | "promotions" (акции/реклама) | "tech" (API/кабинет/обновления) | "payments" (выплаты/штрафы/финансы) | "other"
+- title: 3-7 слов, конкретная тема, уникальная в рамках mp+category
+- content: актуальное знание в Markdown. Конкретные цифры, даты, ссылки если есть. Без воды. 3-10 предложений.
+- keywords: 6-12 слов/фраз для поиска (русские), включая синонимы
+- source_news_ids: UUID новостей (первые 8 символов из ID) из которых извлечена информация
+
+Создавай ТОЛЬКО те записи, для которых есть конкретные факты в новостях.
+Если тема уже есть в существующей памяти — обнови её (верни с тем же mp+category+title).
+Отвечай ТОЛЬКО валидным JSON-массивом без markdown-обёртки.`,
+        },
+        {
+          role: 'user',
+          content: `СУЩЕСТВУЮЩАЯ ПАМЯТЬ:\n${existingText}\n\nНОВОСТИ (${news.length} шт, за ${sinceDays} дн):\n${newsText}\n\nСформируй JSON-массив записей памяти для обновления/создания.`,
+        },
+      ],
+    }),
+  });
+
+  if (!aiRes.ok) return jsonRes({ error: `OpenRouter error: ${aiRes.status}` }, 502);
+  const aiJson = await aiRes.json();
+  const content: string = aiJson.choices?.[0]?.message?.content ?? '';
+  const arrMatch = content.match(/\[[\s\S]*\]/);
+  if (!arrMatch) return jsonRes({ ok: false, error: 'AI не вернул JSON', raw: content.slice(0, 300) });
+
+  let entries: any[];
+  try { entries = JSON.parse(arrMatch[0]); } catch { return jsonRes({ ok: false, error: 'JSON parse failed' }); }
+
+  let updated = 0;
+  const errors: string[] = [];
+  for (const e of entries) {
+    if (!e.mp || !e.category || !e.title || !e.content) continue;
+    const { error } = await db.from('sima_memory').upsert({
+      mp: String(e.mp).slice(0, 20),
+      category: String(e.category).slice(0, 40),
+      title: String(e.title).slice(0, 120),
+      content: String(e.content).slice(0, 4000),
+      keywords: Array.isArray(e.keywords) ? e.keywords.slice(0, 15).map((k: any) => String(k).slice(0, 50)) : [],
+      source_news_ids: Array.isArray(e.source_news_ids) ? e.source_news_ids.slice(0, 20) : [],
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'mp,category,title' });
+    if (error) errors.push(error.message);
+    else updated++;
+  }
+
+  return jsonRes({ ok: true, updated, total_news: news.length, errors: errors.length ? errors : undefined });
+}
+
 async function handleMpNewsFetch(req: Request): Promise<Response> {
   const jsonRes = (d: unknown, s = 200) =>
     new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -948,6 +1047,15 @@ Deno.serve(async (req: Request) => {
   // Route to mp-news-fetch handler
   if (sub === 'mp-news-fetch' || path === 'mp-news-fetch') {
     try { return await handleMpNewsFetch(req); }
+    catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'error';
+      return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+  }
+
+  // Route to sima-brain-update handler
+  if (sub === 'sima-brain-update' || path === 'sima-brain-update') {
+    try { return await handleSimaBrainUpdate(req); }
     catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'error';
       return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
