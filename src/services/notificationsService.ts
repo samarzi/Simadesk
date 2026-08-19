@@ -72,20 +72,18 @@ export async function deleteNotif(id: string): Promise<void> {
 // ── Админские операции (требуют admin role на стороне RLS / Edge Function) ──
 
 export async function adminSendNotification(payload: SendNotifPayload): Promise<void> {
-  const FUNC_URL = (import.meta.env.VITE_API_URL as string) + '/functions/v1/admin-send-notification';
-  const token = localStorage.getItem('access_token') ?? '';
-  const res = await fetch(FUNC_URL, {
+  const meta = NOTIF_META[payload.type] ?? NOTIF_META.info;
+  await dbFetch('user_notifications', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      user_id: payload.user_id ?? null,
+      type: payload.type,
+      title: payload.title,
+      body: payload.body ?? null,
+      icon: payload.icon ?? meta.emoji,
+      metadata: payload.metadata ?? {},
+    }),
   });
-  if (!res.ok) {
-    const txt = await res.text().catch(() => '');
-    throw new Error(`Ошибка отправки: ${res.status} ${txt.slice(0, 100)}`);
-  }
 }
 
 export async function adminFetchAllNotifications(): Promise<UserNotification[]> {
