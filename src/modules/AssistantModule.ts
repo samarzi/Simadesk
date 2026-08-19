@@ -565,6 +565,12 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 
 ГЛАВНОЕ ПРАВИЛО: для простых операций без обязательных параметров — выполняй сразу, не переспрашивай. Уточняй только когда без параметра действие бессмысленно (нет маркетплейса для изменения цен, нет артикула для скрытия и т.п.).
 
+## НЕОДНОЗНАЧНЫЙ ВВОД
+Если сообщение непонятно (только цифры, короткая фраза без глагола, набор слов не связанных с текущим разделом, явно случайный ввод) — НЕ угадывай намерение, НЕ предлагай действия немедленно. Сначала спроси что имел в виду пользователь, предложив варианты через clarify. Последним вариантом всегда добавляй "Другое..." — система покажет поле ввода.
+Пример: пользователь в разделе «Остатки» написал «1 2 3 4 5»:
+{"action":"clarify","question":"Что вы имели в виду, написав «1 2 3 4 5»?","field":"intent","options":["Записать в ячейки таблицы","Это артикулы товаров","Номера строк для фильтра","Другое..."]}
+Правила: question — конкретный вопрос с цитатой ввода. options — 2–4 варианта + «Другое...» последним. Всегда учитывай текущий раздел при формировании вариантов.
+
 ## ЦЕПОЧКИ ДЕЙСТВИЙ (CHAIN ACTIONS)
 Для выполнения нескольких шагов последовательно — ответь ОДНИМ JSON без пояснений:
 {"action":"chain","plan":"Что делаем: краткое описание всех шагов","steps":[
@@ -1232,6 +1238,10 @@ export class AssistantModule {
   private speakingBtn: HTMLElement | null = null;
   private voiceSendOnEnd = false;  // when true: auto-send after voice stops
   private voiceHotkeyHeld = false; // Alt+Space hotkey currently held
+  private hotkeyConfig = {
+    holdVoice:  localStorage.getItem('sd_hk_hold')  ?? 'Alt+Space',
+    quickVoice: localStorage.getItem('sd_hk_quick') ?? 'Shift+Alt+Space',
+  };
 
 
   // ── AI Cursor ──────────────────────────────────────────────────────────────
@@ -1584,6 +1594,14 @@ export class AssistantModule {
         localStorage.setItem('sd_tts_voice', this.ttsVoiceName);
       });
     }
+    panel.querySelectorAll<HTMLButtonElement>('.sd-ap-hk-change').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const field = btn.dataset.hk as 'holdVoice' | 'quickVoice';
+        const badgeId = field === 'holdVoice' ? 'sd-hk-hold' : 'sd-hk-quick';
+        const badge = panel.querySelector<HTMLElement>(`#${badgeId}`);
+        if (badge) this.captureHotkey(field, badge);
+      });
+    });
     panel.querySelectorAll('.sd-ap-hint').forEach(h => {
       h.addEventListener('click', () => this.sendMessage((h as HTMLElement).textContent || ''));
     });
@@ -1848,6 +1866,22 @@ export class AssistantModule {
               </select>
             </div>
             <div class="sd-ap-setting-note">Microsoft Edge-TTS Neural — тот же движок что в SIMA OS. Работает в любом браузере.</div>
+            <div class="sd-ap-setting-divider">Горячие клавиши</div>
+            <div class="sd-ap-setting-row">
+              <span class="sd-ap-setting-sublabel">Удерживать и говорить</span>
+              <div class="sd-ap-hk-row">
+                <kbd class="sd-ap-hk-badge" id="sd-hk-hold">${this.formatHotkeyLabel(this.hotkeyConfig.holdVoice)}</kbd>
+                <button class="sd-ap-hk-change" data-hk="holdVoice">Изменить</button>
+              </div>
+            </div>
+            <div class="sd-ap-setting-row">
+              <span class="sd-ap-setting-sublabel">Открыть и записать</span>
+              <div class="sd-ap-hk-row">
+                <kbd class="sd-ap-hk-badge" id="sd-hk-quick">${this.formatHotkeyLabel(this.hotkeyConfig.quickVoice)}</kbd>
+                <button class="sd-ap-hk-change" data-hk="quickVoice">Изменить</button>
+              </div>
+            </div>
+            <div class="sd-ap-setting-note">Нажми «Изменить», затем нажми нужную комбинацию клавиш (нужен хотя бы один модификатор: ⌥ ⇧ ⌃ ⌘). Без модификатора — отмена.</div>
           </div>
         </div>
       </div>
@@ -2892,46 +2926,95 @@ export class AssistantModule {
     this.panel.appendChild(overlay);
   }
 
-  private setupVoiceHotkey(): void {
-    // Alt/Option + Space — hold to record, release to send
-    // Uses e.code ('Space') instead of e.key (' ') because on Mac Option+Space
-    // produces a non-breaking space (NBSP, ' ') and e.key check would fail.
-    // Fires only when focus is NOT inside an input/textarea (to avoid blocking typing)
-    document.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (!e.altKey || e.code !== 'Space') return;
-      const tag = (document.activeElement as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement as HTMLElement)?.isContentEditable) return;
+   // Returns true if the keyboard event matches a hotkey combo string like "Alt+Space"
+   private matchesHotkey(e: KeyboardEvent, combo: string): boolean {
+     const parts = combo.split('+');
+     const keyCode = parts.at(-1)!.trim();
+     const mods = parts.slice(0, -1).map(m => m.trim().toLowerCase());
+     return (
+       (e.code === keyCode || e.key === keyCode) &&
+       e.altKey   === mods.includes('alt') &&
+       e.shiftKey === mods.includes('shift') &&
+       e.ctrlKey  === (mods.includes('ctrl') || mods.includes('control')) &&
+       e.metaKey  === (mods.includes('meta') || mods.includes('cmd'))
+     );
+   }
 
-      // Shift+Alt+Space — one-shot: open panel and immediately start recording (no hold needed)
-      if (e.shiftKey) {
-        e.preventDefault();
-        if (!this.isOpen) this.openPanel();
-        this.voiceSendOnEnd = true;
-        setTimeout(() => { if (!this.isListening) this.startVoice(); }, 150);
-        return;
-      }
+   formatHotkeyLabel(combo: string): string {
+     return combo
+       .replace(/Shift/g, '⇧').replace(/Alt/g, '⌥').replace(/Ctrl/g, '⌃')
+       .replace(/Meta|Cmd/g, '⌘').replace(/Space/g, '␣')
+       .replace(/Key([A-Z])/g, '$1').replace(/Digit(\d)/g, '$1');
+   }
 
-      if (this.voiceHotkeyHeld) return; // already held
-      e.preventDefault();
-      this.voiceHotkeyHeld = true;
-      this.voiceSendOnEnd = true;
-      if (!this.isOpen) this.openPanel();
-      // Small delay so panel renders before we start listening
-      setTimeout(() => {
-        if (this.voiceHotkeyHeld) this.startVoice();
-      }, 150);
-    });
+   captureHotkey(field: 'holdVoice' | 'quickVoice', badgeEl: HTMLElement): void {
+     badgeEl.textContent = 'Нажми…';
+     badgeEl.classList.add('sd-ap-hk-capturing');
+     const capture = (e: KeyboardEvent) => {
+       e.preventDefault(); e.stopPropagation();
+       if (['Alt', 'Shift', 'Control', 'Meta'].includes(e.key)) return;
+       if (!e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+         document.removeEventListener('keydown', capture, true);
+         badgeEl.classList.remove('sd-ap-hk-capturing');
+         badgeEl.textContent = this.formatHotkeyLabel(this.hotkeyConfig[field]);
+         return;
+       }
+       const mods: string[] = [];
+       if (e.ctrlKey)  mods.push('Ctrl');
+       if (e.metaKey)  mods.push('Meta');
+       if (e.altKey)   mods.push('Alt');
+       if (e.shiftKey) mods.push('Shift');
+       const combo = [...mods, e.code].join('+');
+       document.removeEventListener('keydown', capture, true);
+       badgeEl.classList.remove('sd-ap-hk-capturing');
+       this.hotkeyConfig[field] = combo;
+       localStorage.setItem(field === 'holdVoice' ? 'sd_hk_hold' : 'sd_hk_quick', combo);
+       badgeEl.textContent = this.formatHotkeyLabel(combo);
+     };
+     document.addEventListener('keydown', capture, true);
+   }
 
-    document.addEventListener('keyup', (e: KeyboardEvent) => {
-      if (e.code !== 'Space' && e.key !== 'Alt') return;
-      if (!this.voiceHotkeyHeld) return;
-      this.voiceHotkeyHeld = false;
-      if (this.isListening) {
-        // stopVoice will trigger onresult → isFinal → handleSend via voiceSendOnEnd
-        this.recognition?.stop();
-      }
-    });
-  }
+   private setupVoiceHotkey(): void {
+     document.addEventListener('keydown', (e: KeyboardEvent) => {
+       const activeEl = document.activeElement as HTMLElement;
+       const isSimaTextarea = activeEl === this.textareaEl;
+       if (!isSimaTextarea && (activeEl?.tagName === 'INPUT' || activeEl?.tagName === 'TEXTAREA' || activeEl?.isContentEditable)) return;
+
+       if (this.matchesHotkey(e, this.hotkeyConfig.quickVoice)) {
+         e.preventDefault();
+         if (this.isListening) { this.recognition?.stop(); return; }
+         if (!this.isOpen) this.openPanel();
+         this.voiceSendOnEnd = true;
+         setTimeout(() => { if (!this.isListening) this.startVoice(); }, 150);
+         return;
+       }
+
+       if (this.matchesHotkey(e, this.hotkeyConfig.holdVoice)) {
+         if (this.voiceHotkeyHeld) return;
+         e.preventDefault();
+         this.voiceHotkeyHeld = true;
+         this.voiceSendOnEnd = true;
+         if (!this.isOpen) this.openPanel();
+         setTimeout(() => { if (this.voiceHotkeyHeld) this.startVoice(); }, 150);
+         return;
+       }
+     });
+
+     document.addEventListener('keyup', (e: KeyboardEvent) => {
+       if (!this.voiceHotkeyHeld) return;
+       const holdParts = this.hotkeyConfig.holdVoice.split('+');
+       const holdKey = holdParts.at(-1)!;
+       const holdMods = holdParts.slice(0, -1).map(m => m.toLowerCase());
+       const keyReleased = e.code === holdKey || e.key === holdKey;
+       const modReleased = (holdMods.includes('alt') && e.key === 'Alt')
+         || (holdMods.includes('shift') && e.key === 'Shift')
+         || (holdMods.includes('ctrl') && e.key === 'Control')
+         || (holdMods.includes('meta') && e.key === 'Meta');
+       if (!keyReleased && !modReleased) return;
+       this.voiceHotkeyHeld = false;
+       if (this.isListening) this.recognition?.stop();
+     });
+   }
 
   togglePanel(): void {
     if (this.isOpen) this.closePanel();
@@ -5290,10 +5373,19 @@ export class AssistantModule {
     if (!this.messagesEl) return;
     const el = document.createElement('div');
     el.className = 'sd-ap-msg assistant';
-    const optionsHtml = (clarify.options ?? []).map(opt =>
+    const opts = clarify.options ?? [];
+    const safeQ = clarify.question.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // Separate "Другое..." from normal options — it shows a free-text field instead
+    const normalOpts = opts.filter(o => !/^другое/i.test(o));
+    const hasOther = opts.some(o => /^другое/i.test(o));
+
+    const optionsHtml = normalOpts.map(opt =>
       `<button class="sd-ap-clarify-opt">${opt.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</button>`
     ).join('');
-    const safeQ = clarify.question.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const otherHtml = hasOther
+      ? `<button class="sd-ap-clarify-opt sd-ap-clarify-other">Другое…</button>`
+      : '';
 
     el.innerHTML = `
       <div class="sd-ap-msg-avatar">С</div>
@@ -5306,21 +5398,39 @@ export class AssistantModule {
             Уточняющий вопрос
           </div>
           <div class="sd-ap-plan-body">${safeQ}</div>
-          ${optionsHtml ? `<div class="sd-ap-clarify-opts">${optionsHtml}</div>` : ''}
+          ${(optionsHtml || otherHtml) ? `<div class="sd-ap-clarify-opts">${optionsHtml}${otherHtml}</div>` : ''}
+          <div class="sd-ap-clarify-free" style="display:none">
+            <input class="sd-ap-clarify-input" type="text" placeholder="Напишите свой ответ…">
+            <button class="sd-ap-clarify-send">Отправить</button>
+          </div>
         </div>
       </div>`;
 
-    el.querySelectorAll<HTMLButtonElement>('.sd-ap-clarify-opt').forEach(btn => {
+    el.querySelectorAll<HTMLButtonElement>('.sd-ap-clarify-opt:not(.sd-ap-clarify-other)').forEach(btn => {
       btn.addEventListener('click', () => {
         const answer = btn.textContent ?? '';
         el.remove();
-        if (this.textareaEl) {
-          this.textareaEl.value = answer;
-          this.textareaEl.focus();
-        }
         this.sendMessage(answer);
       });
     });
+
+    const otherBtn = el.querySelector<HTMLButtonElement>('.sd-ap-clarify-other');
+    const freeEl = el.querySelector<HTMLElement>('.sd-ap-clarify-free');
+    const freeInput = el.querySelector<HTMLInputElement>('.sd-ap-clarify-input');
+    const sendBtn = el.querySelector<HTMLButtonElement>('.sd-ap-clarify-send');
+    otherBtn?.addEventListener('click', () => {
+      el.querySelector<HTMLElement>('.sd-ap-clarify-opts')!.style.display = 'none';
+      freeEl!.style.display = 'flex';
+      freeInput?.focus();
+    });
+    const sendFree = () => {
+      const answer = freeInput?.value.trim() ?? '';
+      if (!answer) return;
+      el.remove();
+      this.sendMessage(answer);
+    };
+    sendBtn?.addEventListener('click', sendFree);
+    freeInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendFree(); });
 
     this.messagesEl.appendChild(el);
     this.scrollToBottom();
