@@ -2065,6 +2065,21 @@ export class DocsModule {
       if (dragging) { dragging = false; stopAutoScroll(); if (selStart && selEnd) applySel(); }
     });
 
+    // Column hover highlight
+    let hoverCol = -1;
+    const applyColHover = (c: number) => {
+      if (c === hoverCol) return;
+      if (hoverCol >= 0) body.querySelectorAll<HTMLElement>(`td.dx-col-hover`).forEach(td => td.classList.remove('dx-col-hover'));
+      hoverCol = c;
+      if (c >= 0) body.querySelectorAll<HTMLElement>(`td[data-c="${c}"]`).forEach(td => td.classList.add('dx-col-hover'));
+    };
+    body.addEventListener('mouseover', (e) => {
+      const td = (e.target as HTMLElement).closest('td'); if (!td) return;
+      const c = +(td.getAttribute('data-c') ?? '-1');
+      applyColHover(c);
+    });
+    body.addEventListener('mouseleave', () => applyColHover(-1));
+
     body.addEventListener('dblclick', (e) => {
       const td = (e.target as HTMLElement).closest('td'); if (!td) return;
       const r = +(td.getAttribute('data-r') ?? '0'), c = +(td.getAttribute('data-c') ?? '0');

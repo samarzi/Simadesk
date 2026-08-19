@@ -734,6 +734,10 @@ html:not(.light) .docs-excel-wrap { --xl-cell: #ffffff; --xl-cell-txt: #111111; 
 .docs-excel td.dx-cur.dx-selected {
   background: var(--xl-cell) !important;
 }
+/* Active cell border — always visible regardless of selection state */
+.docs-excel td.dx-cur {
+  box-shadow: inset 0 0 0 2px var(--accent) !important;
+}
 /* AutoFill preview */
 .docs-excel td.dx-autofill-preview {
   background: color-mix(in srgb, var(--accent) 10%, var(--xl-cell)) !important;
@@ -752,6 +756,10 @@ html:not(.light) .docs-excel-wrap { --xl-cell: #ffffff; --xl-cell-txt: #111111; 
 /* Row heights — 24px default. Inline style overrides imported heights. */
 .docs-excel tbody tr { height: 24px; background: var(--xl-cell); cursor: default; }
 .docs-excel tbody tr:hover > td:not(.dx-selected):not(.dx-cur) {
+  background: color-mix(in srgb, var(--accent) 6%, var(--xl-cell));
+}
+/* Column hover highlight — applied via JS on td.dx-col-hover */
+.docs-excel td.dx-col-hover:not(.dx-selected):not(.dx-cur) {
   background: color-mix(in srgb, var(--accent) 6%, var(--xl-cell));
 }
 /* Selected header highlight */
