@@ -19,11 +19,14 @@ interface CellData {
   s?: string;  // inline style cssText
 }
 
+interface MergeRange { r1: number; c1: number; r2: number; c2: number; }
+
 interface SheetData {
   name: string;
   data: CellData[][];
   colWidths?: (number | null)[];
   rowHeights?: (number | null)[];
+  merges?: MergeRange[];
   truncated?: boolean;
 }
 
@@ -60,6 +63,7 @@ export class DocsModule {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private activeSheetIdx: number = 0;
   private xlVirtData: CellData[][] | null = null;
+  private xlVirtMerges: MergeRange[] | null = null;
   private isFullscreen: boolean = false;
   private recent: Array<{id:string;title:string;type:DocType;updated_at:number;content?:string}> = [];
   private xlLastSel: { r1: number; c1: number; r2: number; c2: number; docId: string; sheetIdx: number } | null = null;
@@ -294,6 +298,7 @@ export class DocsModule {
             data: this.normalizeCellGrid(s.data || []),
             colWidths: s.colWidths,
             rowHeights: s.rowHeights,
+            merges: s.merges,
           }))
         };
       }
@@ -319,16 +324,65 @@ export class DocsModule {
   // ── SheetJS style → CSS ────────────────────────────────────────────────────
   // ── OOXML full-style reader ────────────────────────────────────────────────
   // Builds a Map<cellAddr, cssString> by reading raw sheet XML + wb.Styles tables.
-  // This gives accurate font/fill/alignment — SheetJS CE's cell.s is incomplete.
+  // This gives accurate font/fill/alignment/borders — SheetJS CE's cell.s is incomplete.
+
+  /** Read theme color palette (12 slots) from xl/theme/theme1.xml */
+  private xlReadThemeColors(wb: any): string[] {
+    const colors: string[] = new Array(12).fill('');
+    if (!wb.files) return colors;
+    const entry = wb.files['xl/theme/theme1.xml'] ?? wb.files['xl/theme/Theme1.xml'];
+    if (!entry) return colors;
+    const xml = new TextDecoder().decode(entry.content as Uint8Array);
+    const slots = ['dk1','lt1','dk2','lt2','accent1','accent2','accent3','accent4','accent5','accent6','hlink','folHlink'];
+    slots.forEach((slot, i) => {
+      const srgb = xml.match(new RegExp(`<a:${slot}[^>]*>\\s*<a:srgbClr val="([0-9A-Fa-f]{6})"`));
+      if (srgb) { colors[i] = srgb[1].toLowerCase(); return; }
+      const sys = xml.match(new RegExp(`<a:${slot}[^>]*>\\s*<a:sysClr[^>]+lastClr="([0-9A-Fa-f]{6})"`));
+      if (sys) colors[i] = sys[1].toLowerCase();
+    });
+    return colors;
+  }
+
+  /** Apply Excel tint/shade to a 6-char hex color (ECMA-376 §18.8.3). */
+  private xlTintHex(hex: string, tint: number): string {
+    const r = parseInt(hex.slice(0,2),16)/255, g = parseInt(hex.slice(2,4),16)/255, b = parseInt(hex.slice(4,6),16)/255;
+    const max = Math.max(r,g,b), min = Math.min(r,g,b);
+    let l = (max+min)/2;
+    const s = max === min ? 0 : l <= 0.5 ? (max-min)/(2*l) : (max-min)/(2-2*l);
+    const h = max === min ? 0 : max === r ? ((g-b)/(max-min)+6)%6/6 : max === g ? ((b-r)/(max-min)+2)/6 : ((r-g)/(max-min)+4)/6;
+    l = tint >= 0 ? l + (1-l)*tint : l*(1+tint);
+    l = Math.max(0, Math.min(1, l));
+    const hue2rgb = (p: number, q: number, t: number) => { if(t<0)t++;if(t>1)t--;if(t<1/6)return p+(q-p)*6*t;if(t<.5)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p; };
+    const q = l < .5 ? l*(1+s) : l+s-l*s, p = 2*l-q;
+    const nr = s ? hue2rgb(p,q,h+1/3) : l, ng = s ? hue2rgb(p,q,h) : l, nb = s ? hue2rgb(p,q,h-1/3) : l;
+    return [nr,ng,nb].map(x => Math.round(x*255).toString(16).padStart(2,'0')).join('');
+  }
+
+  /** Resolve OOXML color object {rgb?, theme?, tint?, indexed?} → 6-char hex or null */
+  private xlResolveColor(colorObj: any, themeColors: string[]): string | null {
+    if (!colorObj) return null;
+    if (colorObj.rgb && typeof colorObj.rgb === 'string') {
+      const raw = colorObj.rgb;
+      const h = raw.length === 8 ? raw.slice(2) : raw;
+      if (h.length !== 6) return null;
+      const hex = h.toLowerCase();
+      const tint = colorObj.tint ? +colorObj.tint : 0;
+      return tint ? this.xlTintHex(hex, tint) : hex;
+    }
+    if (colorObj.theme != null) {
+      const base = themeColors[+colorObj.theme] ?? '';
+      if (!base) return null;
+      const tint = colorObj.tint ? +colorObj.tint : 0;
+      return tint ? this.xlTintHex(base, tint) : base;
+    }
+    return null;
+  }
+
   private xlBuildStyleMap(wb: any, sheetFilePath: string): Map<string, string> {
     const S = wb.Styles;
     if (!S || !wb.files || !sheetFilePath) return new Map();
 
-    const toHex = (rgb: unknown): string | null => {
-      if (!rgb || typeof rgb !== 'string') return null;
-      const h = rgb.length === 8 ? rgb.slice(2) : rgb;
-      return h.length === 6 ? h.toLowerCase() : null;
-    };
+    const themeColors = this.xlReadThemeColors(wb);
 
     // Pre-compute CellXf index → CSS string
     const xfCSS: string[] = (S.CellXf || []).map((xf: any) => {
@@ -337,8 +391,8 @@ export class DocsModule {
 
       // Background fill
       const fill = S.Fills?.[+xf.fillId];
-      if (fill?.patternType === 'solid' && fill.fgColor?.rgb) {
-        const hex = toHex(fill.fgColor.rgb);
+      if (fill?.patternType === 'solid') {
+        const hex = this.xlResolveColor(fill.fgColor, themeColors);
         if (hex && !/^f{6}$/i.test(hex) && !/^0{6}$/.test(hex)) {
           parts.push(`background-color:#${hex}`);
         }
@@ -352,28 +406,36 @@ export class DocsModule {
         if (font.underline) parts.push('text-decoration:underline');
         if (font.strike)    parts.push('text-decoration:line-through');
         const sz = font.sz;
-        // Always import font size (including default 11pt)
         if (sz) parts.push(`font-size:${Math.round(sz * 1.333)}px`);
         const fname = font.name;
-        // Always import font family (including Calibri)
         if (fname) parts.push(`font-family:"${fname}",sans-serif`);
-        // Skip only near-white colors (invisible on white cell background)
-        const hex = toHex(font.color?.rgb);
+        const hex = this.xlResolveColor(font.color, themeColors);
         if (hex) {
           const lum = 0.299 * parseInt(hex.slice(0,2),16) + 0.587 * parseInt(hex.slice(2,4),16) + 0.114 * parseInt(hex.slice(4,6),16);
           if (lum < 220) parts.push(`color:#${hex}`);
         }
       }
 
-      // Alignment — wrapText intentionally NOT applied:
-      // HTML table rows expand to fit wrapped content; we clip instead (like default Excel).
-      // Full value is visible in the formula bar when the cell is selected.
+      // Alignment
       const al = xf.alignment;
       if (al) {
         if (al.horizontal === 'center') parts.push('text-align:center');
         else if (al.horizontal === 'right') parts.push('text-align:right');
         if (al.vertical === 'top') parts.push('vertical-align:top');
         else if (al.vertical === 'center') parts.push('vertical-align:middle');
+      }
+
+      // Borders
+      const border = S.Borders?.[+xf.borderId];
+      if (border) {
+        for (const side of ['left','right','top','bottom'] as const) {
+          const b = border[side];
+          if (b?.style && b.style !== 'none' && b.style !== 'hair') {
+            const bHex = this.xlResolveColor(b.color, themeColors) ?? '000000';
+            const w = (b.style === 'medium' || b.style === 'thick') ? 2 : 1;
+            parts.push(`border-${side}:${w}px solid #${bHex}`);
+          }
+        }
       }
 
       return parts.join(';');
@@ -484,9 +546,14 @@ export class DocsModule {
             rowHeights.push(ri?.hpx ? Math.round(ri.hpx) : ri?.hpt ? Math.round(ri.hpt * 1.33) : null);
           }
 
+          // Merged cells
+          const merges: MergeRange[] = (ws['!merges'] ?? []).map((m: any) => ({
+            r1: m.s.r, c1: m.s.c, r2: m.e.r, c2: m.e.c
+          }));
+
           const truncated = data.length > MAX_IMPORT_ROWS;
           if (truncated) data.length = MAX_IMPORT_ROWS;
-          return { name: sheetName, data, colWidths, rowHeights, ...(truncated ? { truncated: true as const } : {}) };
+          return { name: sheetName, data, colWidths, rowHeights, ...(merges.length ? { merges } : {}), ...(truncated ? { truncated: true as const } : {}) };
         });
 
         this.addDoc({ id: this.newId(), type: 'excel', title: bare, content: JSON.stringify({ sheets }), updated_at: now });
@@ -729,6 +796,11 @@ export class DocsModule {
           // Row heights
           if (sh.rowHeights?.some(h => h != null)) {
             ws['!rows'] = (sh.rowHeights ?? []).slice(0, trimmed.length).map(h => h ? { hpx: h } : {});
+          }
+
+          // Merged cells
+          if (sh.merges?.length) {
+            ws['!merges'] = sh.merges.map(m => ({ s: { r: m.r1, c: m.c1 }, e: { r: m.r2, c: m.c2 } }));
           }
 
           XLSX.utils.book_append_sheet(wb, ws, sh.name);
@@ -1171,8 +1243,8 @@ export class DocsModule {
     const colWidths = sheet.colWidths ?? [];
     const rowHeights = sheet.rowHeights ?? [];
     const isVirt = rows.length > XL_VX_THRESH;
-    if (isVirt) { this.xlVirtData = rows; }
-    else { this.xlVirtData = null; }
+    if (isVirt) { this.xlVirtData = rows; this.xlVirtMerges = sheet.merges ?? null; }
+    else { this.xlVirtData = null; this.xlVirtMerges = null; }
     const cols = rows[0]?.length ?? XL_COLS;
     const colHeaders = Array.from({ length: cols }, (_, i) => this.colLetter(i));
 
@@ -1323,6 +1395,7 @@ export class DocsModule {
         </thead>
         <tbody id="docs-excel-body">
           ${(() => {
+            const mergeInfo = this.buildMergeInfo(sheet.merges);
             const renderRow = (row: CellData[], r: number) => {
               const h = rowHeights[r];
               const hStyle = h ? ` style="height:${h}px"` : '';
@@ -1338,7 +1411,7 @@ export class DocsModule {
                 ${row.map((cell, c) => {
                   const cw = colWidths[c];
                   const cwStyle = cw ? `min-width:${cw}px;width:${cw}px;` : '';
-                  return this.renderCell(rows, r, c, cell, cwStyle);
+                  return this.renderCell(rows, r, c, cell, cwStyle, mergeInfo);
                 }).join('')}
               </tr>`;
             };
@@ -1376,6 +1449,7 @@ export class DocsModule {
 
     // Snapshot currently visible DOM cells back into xlVirtData
     const vd = this.xlVirtData;
+    const vdMerges = this.xlVirtMerges;
 
     // Virtual-scroll helpers — assigned later in the `if (vd)` block
     let vxUpdateWindow: ((startR: number) => void) | null = null;
@@ -2947,11 +3021,12 @@ export class DocsModule {
         const topH = vCumH_[startR];
         const botH = totalVH - vCumH_[endR];
         const span = vCols + 1;
+        const vxMergeInfo = this.buildMergeInfo(vdMerges ?? undefined);
         let html = '';
         if (topH > 0) html += `<tr class="vx-spacer" style="height:${topH}px"><td colspan="${span}" style="padding:0;border:0;pointer-events:none"></td></tr>`;
         for (let r = startR; r < endR; r++) {
           const h = vRowH[r]; const hStyle = h ? ` style="height:${h}px"` : '';
-          html += `<tr data-row="${r}"${hStyle}><th class="dx-rowhdr" data-row-hdr="${r}"><span class="dx-hdr-label">${r+1}</span><div class="dx-hdr-actions dx-hdr-actions-row"><button class="dx-hdr-btn" data-row-add="${r}" title="Добавить строку ниже">+</button><button class="dx-hdr-btn dx-danger" data-row-del="${r}" title="Удалить строку">−</button></div><div class="dx-row-resize" data-row-r="${r}"></div></th>${vd[r].map((cell,c)=>{const cw=vColW[c];return this.renderCell(vd,r,c,cell,cw?`min-width:${cw}px;width:${cw}px;`:'');}).join('')}</tr>`;
+          html += `<tr data-row="${r}"${hStyle}><th class="dx-rowhdr" data-row-hdr="${r}"><span class="dx-hdr-label">${r+1}</span><div class="dx-hdr-actions dx-hdr-actions-row"><button class="dx-hdr-btn" data-row-add="${r}" title="Добавить строку ниже">+</button><button class="dx-hdr-btn dx-danger" data-row-del="${r}" title="Удалить строку">−</button></div><div class="dx-row-resize" data-row-r="${r}"></div></th>${vd[r].map((cell,c)=>{const cw=vColW[c];return this.renderCell(vd,r,c,cell,cw?`min-width:${cw}px;width:${cw}px;`:'',vxMergeInfo);}).join('')}</tr>`;
         }
         if (botH > 0) html += `<tr class="vx-spacer" style="height:${botH}px"><td colspan="${span}" style="padding:0;border:0;pointer-events:none"></td></tr>`;
         body.innerHTML = html;
@@ -3089,16 +3164,35 @@ export class DocsModule {
     else this.bindExcel(doc);
   }
 
+  // ── Merge helpers ──────────────────────────────────────────────────────────
+  private buildMergeInfo(merges?: MergeRange[]): { spans: Map<string, [number,number]>; covered: Set<string> } {
+    const spans = new Map<string, [number,number]>(); // "r,c" → [rowspan, colspan]
+    const covered = new Set<string>();
+    for (const m of merges ?? []) {
+      spans.set(`${m.r1},${m.c1}`, [m.r2 - m.r1 + 1, m.c2 - m.c1 + 1]);
+      for (let rr = m.r1; rr <= m.r2; rr++) {
+        for (let cc = m.c1; cc <= m.c2; cc++) {
+          if (rr !== m.r1 || cc !== m.c1) covered.add(`${rr},${cc}`);
+        }
+      }
+    }
+    return { spans, covered };
+  }
+
   // ── Cell rendering ─────────────────────────────────────────────────────────
-  private renderCell(rows: CellData[][], r: number, c: number, cell: CellData, extraStyle = ''): string {
+  private renderCell(rows: CellData[][], r: number, c: number, cell: CellData, extraStyle = '',
+    mergeInfo?: { spans: Map<string, [number,number]>; covered: Set<string> }): string {
+    if (mergeInfo?.covered.has(`${r},${c}`)) return '';
+    const span = mergeInfo?.spans.get(`${r},${c}`);
+    const spanAttrs = span ? ` rowspan="${span[0]}" colspan="${span[1]}"` : '';
     const v = cell.v ?? '';
     const combined = [extraStyle, cell.s || ''].filter(Boolean).join(';');
     const styleAttr = combined ? ` style="${this.esc(combined)}"` : '';
     if (v.startsWith('=')) {
       const result = this.evalFormula(v, rows);
-      return `<td data-r="${r}" data-c="${c}" data-formula="${this.esc(v)}"${styleAttr}>${this.esc(result)}</td>`;
+      return `<td data-r="${r}" data-c="${c}"${spanAttrs}${styleAttr} data-formula="${this.esc(v)}">${this.esc(result)}</td>`;
     }
-    return `<td data-r="${r}" data-c="${c}"${styleAttr}>${this.esc(v)}</td>`;
+    return `<td data-r="${r}" data-c="${c}"${spanAttrs}${styleAttr}>${this.esc(v)}</td>`;
   }
 
   private colLetter(n: number): string {
