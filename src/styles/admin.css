@@ -229,7 +229,19 @@ html.light .ap {
   scroll-behavior: smooth;
 }
 .ap-content > * { max-width: 1560px; margin-left: auto; margin-right: auto; }
-.ap-content.is-flush { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.ap-content.is-flush {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.ap-content.is-flush > * {
+  max-width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
 
 /* ═════════════════════════════  ОБЩИЕ ЭЛЕМЕНТЫ  ══════════════════════════ */
 
@@ -823,7 +835,13 @@ html.light .ap-api-tag.ya { color: #cc2626; }
 }
 
 /* ── Список чатов ─────────────────────────────────────────────────────────── */
-.ap-sup { flex: 1; display: grid; grid-template-columns: 300px minmax(0,1fr); min-height: 0; }
+.ap-sup {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
 .ap-sup-list {
   border-right: 1px solid var(--ap-line);
   display: flex; flex-direction: column; min-height: 0;
@@ -927,7 +945,7 @@ html.light .ap-api-tag.ya { color: #cc2626; }
 .ap-sup-pstat span { font-size: 10.5px; color: var(--text3); font-weight: 600; }
 
 /* ── Правая панель / чат ──────────────────────────────────────────────────── */
-.ap-sup-detail { display: flex; flex-direction: column; min-height: 0; background: var(--ap-surface); }
+.ap-sup-detail { display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--ap-surface); }
 .ap-sup-detail-inner { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
 .ap-sup-detail-head {
@@ -1283,6 +1301,42 @@ html.light .ap-api-tag.ya { color: #cc2626; }
 .ap-news-manual-row { display: flex; gap: 8px; align-items: center; }
 .ap-news-manual-imp { display: flex; align-items: center; gap: 5px; font-size: 13px; white-space: nowrap; cursor: pointer; flex-shrink: 0; }
 .ap-news-manual-mp { width: 160px; flex-shrink: 0; }
+
+/* Вложения новостей */
+.ap-news-att-row { flex-wrap: wrap; gap: 8px; }
+.ap-news-att-label {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 6px; border: 1px dashed var(--border);
+  font-size: 12px; cursor: pointer; color: var(--text-2); flex-shrink: 0;
+  transition: border-color .15s, color .15s;
+}
+.ap-news-att-label:hover { border-color: var(--ap-accent); color: var(--ap-accent); }
+.ap-news-files-preview { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
+.ap-news-file-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 4px; padding: 2px 7px; font-size: 11px; max-width: 160px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ap-news-file-chip--existing { background: color-mix(in srgb, var(--ap-accent) 10%, var(--bg3)); }
+.ap-news-att-del {
+  background: none; border: none; cursor: pointer; color: var(--text-2);
+  padding: 0 2px; font-size: 13px; line-height: 1; flex-shrink: 0;
+}
+.ap-news-att-del:hover { color: var(--ap-rose); }
+.ap-news-att-cell { white-space: nowrap; }
+.ap-news-att-thumb {
+  width: 28px; height: 28px; border-radius: 4px; object-fit: cover;
+  border: 1px solid var(--border); vertical-align: middle;
+}
+.ap-news-att-video {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 4px;
+  background: var(--bg3); border: 1px solid var(--border);
+  font-size: 11px; vertical-align: middle; cursor: default;
+}
+.ap-news-att-more { font-size: 11px; color: var(--text-2); vertical-align: middle; }
+.ap-news-att-none { font-size: 12px; color: var(--text-2); }
 
 /* ── Мозг Симы (Brain tab) ──────────────────────────────────────────────────── */
 .ap-brain-wrap { display: flex; flex-direction: column; gap: 20px; }

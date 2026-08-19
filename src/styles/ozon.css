@@ -3840,11 +3840,88 @@
 
 /* ── Шапка ─────────────────────────────────────────────────────── */
 .cmd-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
   gap: 16px;
-  flex-wrap: wrap;
+  position: relative;
+}
+.cmd-header-left { min-width: 0; }
+.cmd-header-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+
+/* ── Кнопка «Мой лид-центр» — всегда по центру ─────────────────── */
+.cmd-lead-center-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.cmd-lead-center-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 22px 10px 16px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--card));
+  border-radius: 14px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  letter-spacing: -.2px;
+  transition: border-color .18s, background .18s, transform .14s, box-shadow .18s;
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
+  overflow: visible;
+  white-space: nowrap;
+}
+.cmd-lead-center-btn:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--card));
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.cmd-lc-glow {
+  position: absolute;
+  inset: -1px;
+  border-radius: 14px;
+  background: radial-gradient(ellipse 60% 40% at 50% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%);
+  pointer-events: none;
+}
+.cmd-lc-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 60%, transparent));
+}
+.cmd-lc-label {
+  background: linear-gradient(135deg, var(--text) 40%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.cmd-lc-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: background .2s, box-shadow .2s;
+  flex-shrink: 0;
+}
+.cmd-lc-dot.active {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+@keyframes cmd-lc-pulse {
+  0%, 100% { box-shadow: 0 0 6px var(--accent); }
+  50% { box-shadow: 0 0 12px 2px var(--accent); }
+}
+.cmd-lc-dot.active {
+  animation: cmd-lc-pulse 2.5s ease-in-out infinite;
+}
+@media (max-width: 700px) {
+  .cmd-header { grid-template-columns: 1fr; gap: 12px; }
+  .cmd-header-actions { justify-content: flex-start; }
+  .cmd-lead-center-wrap { justify-content: flex-start; }
 }
 .cmd-greeting {
   font-size: 26px;
@@ -3862,7 +3939,6 @@
   gap: 6px;
 }
 .cmd-subtitle svg { color: #16a34a; }
-.cmd-header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 .cmd-edit-btn, .cmd-refresh-btn {
   display: inline-flex;

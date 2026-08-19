@@ -167,7 +167,7 @@ export class AdminModule {
 
   /* новости МП */
   private newsChannels: Array<{ id: string; mp: string; channel_slug: string; label: string; enabled: boolean }> = [];
-  private newsItems: Array<{ id: string; mp: string; title: string; summary: string; is_important: boolean; published_at: string; source_url?: string }> = [];
+  private newsItems: Array<{ id: string; mp: string; title: string; summary: string; is_important: boolean; published_at: string; source_url?: string; attachments?: Array<{ id: string; file_url: string; file_type: string; file_name?: string }> }> = [];
   private newsLoading = false;
   private newsManualAdd = false;
 
@@ -2773,12 +2773,42 @@ ${this.SIMADESK_KNOWLEDGE}
 
   private async loadNewsData(): Promise<void> {
     const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
-    const [chRes, newsRes] = await Promise.all([
+    const [chRes, newsRes, attRes] = await Promise.all([
       fetch(`${REST_URL}/mp_news_channels?select=*&order=mp.asc,created_at.asc`, { headers: getAuthHeaders() }),
       fetch(`${REST_URL}/mp_news?select=*&order=published_at.desc&limit=30`, { headers: getAuthHeaders() }),
+      fetch(`${REST_URL}/mp_news_attachments?select=*&order=created_at.asc`, { headers: getAuthHeaders() }),
     ]);
     this.newsChannels = chRes.ok ? await chRes.json() : [];
-    this.newsItems    = newsRes.ok ? await newsRes.json() : [];
+    const items: typeof this.newsItems = newsRes.ok ? await newsRes.json() : [];
+    const atts: Array<{ id: string; news_id: string; file_url: string; file_type: string; file_name?: string }> = attRes.ok ? await attRes.json() : [];
+    this.newsItems = items.map(n => ({
+      ...n,
+      attachments: atts.filter(a => a.news_id === n.id),
+    }));
+  }
+
+  private async _uploadNewsAttachment(file: File, newsId: string): Promise<string> {
+    const apiUrl = import.meta.env.VITE_API_URL as string;
+    const apiKey = import.meta.env.VITE_API_KEY as string;
+    const token = localStorage.getItem('access_token');
+    const rawExt = (file.name.split('.').pop() ?? 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const safeExt = ['jpg','jpeg','png','webp','gif','mp4','mov','webm'].includes(rawExt) ? rawExt : 'bin';
+    const path = `${newsId}/${Date.now()}.${safeExt}`;
+    const res = await fetch(`${apiUrl}/storage/v1/object/mp-news-media/${path}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token ?? apiKey}`,
+        'apikey': apiKey,
+        'Content-Type': file.type || 'application/octet-stream',
+        'x-upsert': 'true',
+      },
+      body: file,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as { message?: string }).message || `Upload failed ${res.status}`);
+    }
+    return `${apiUrl}/storage/v1/object/public/mp-news-media/${path}`;
   }
 
   private renderNews(): string {
@@ -2820,10 +2850,19 @@ ${this.SIMADESK_KNOWLEDGE}
           const mpLabel = MP_OPTIONS.find(o => o.v === n.mp)?.l ?? n.mp;
           const date = new Date(n.published_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
           const imp = n.is_important ? `<span class="ap-news-imp-badge">⚠ важно</span>` : '';
+          const atts = n.attachments ?? [];
+          const attThumb = atts.slice(0, 3).map(a => {
+            if (a.file_type === 'video') {
+              return `<span class="ap-news-att-video" title="${this.esc(a.file_name ?? 'видео')}">▶</span>`;
+            }
+            return `<img class="ap-news-att-thumb" src="${this.esc(a.file_url)}" alt="" loading="lazy">`;
+          }).join('');
+          const attExtra = atts.length > 3 ? `<span class="ap-news-att-more">+${atts.length - 3}</span>` : '';
           return `<tr data-news-id="${this.esc(n.id)}">
             <td><span class="ap-news-mp-badge" style="background:${color}40;color:${color}">${this.esc(mpLabel)}</span></td>
             <td class="ap-news-title-cell">${this.esc(n.title)} ${imp}</td>
             <td class="ap-news-sum-cell">${this.esc(n.summary)}</td>
+            <td class="ap-news-att-cell">${attThumb}${attExtra}${atts.length === 0 ? '<span class="ap-news-att-none">—</span>' : ''}</td>
             <td class="ap-news-date-cell" style="white-space:nowrap">${date}</td>
             <td>${n.source_url ? `<a class="ap-news-src-link" href="${this.esc(n.source_url)}" target="_blank" rel="noopener">→</a>` : '—'}</td>
             <td class="ap-news-actions-cell">
@@ -2832,11 +2871,11 @@ ${this.SIMADESK_KNOWLEDGE}
             </td>
           </tr>`;
         }).join('')
-      : `<tr><td colspan="6" class="ap-news-empty-row">Новостей ещё нет — запустите первый сбор или добавьте вручную</td></tr>`;
+      : `<tr><td colspan="7" class="ap-news-empty-row">Новостей ещё нет — запустите первый сбор или добавьте вручную</td></tr>`;
 
     const manualForm = this.newsManualAdd ? `
       <tr id="news-manual-row">
-        <td colspan="6" style="padding:0">
+        <td colspan="7" style="padding:0">
           <div class="ap-news-manual-form">
             <div class="ap-news-manual-row">
               <select class="ap-input ap-news-manual-mp" id="news-manual-mp">${mpSelectOpts}</select>
@@ -2848,7 +2887,14 @@ ${this.SIMADESK_KNOWLEDGE}
             </div>
             <div class="ap-news-manual-row">
               <input class="ap-input" id="news-manual-url" placeholder="Ссылка на источник (необязательно)" style="flex:1">
-              <div style="display:flex;gap:8px;flex-shrink:0">
+            </div>
+            <div class="ap-news-manual-row ap-news-att-row">
+              <label class="ap-news-att-label">
+                ${icon('plus', 13)} Вложения (фото/видео)
+                <input type="file" id="news-manual-files" multiple accept="image/*,video/*" style="display:none">
+              </label>
+              <div id="news-manual-files-preview" class="ap-news-files-preview"></div>
+              <div style="display:flex;gap:8px;flex-shrink:0;margin-left:auto">
                 <button class="ap-btn ap-btn-primary" id="news-manual-save">${icon('check', 14)} Сохранить</button>
                 <button class="ap-btn" id="news-manual-cancel">Отмена</button>
               </div>
@@ -2911,7 +2957,7 @@ ${this.SIMADESK_KNOWLEDGE}
           </div>
           <table class="ap-news-table ap-news-items-table">
             <thead>
-              <tr><th>МП</th><th>Заголовок</th><th>Краткое содержание</th><th>Дата</th><th>Источник</th><th style="width:60px"></th></tr>
+              <tr><th>МП</th><th>Заголовок</th><th>Краткое содержание</th><th>Вложения</th><th>Дата</th><th>Источник</th><th style="width:60px"></th></tr>
             </thead>
             <tbody id="news-items-tbody">
               ${manualForm}
@@ -3042,7 +3088,14 @@ ${this.SIMADESK_KNOWLEDGE}
           { v: 'yandex', l: 'Яндекс Маркет' }, { v: 'general', l: 'Общее / другое' },
         ];
         const mpOpts = MP_OPTIONS.map(o => `<option value="${o.v}" ${o.v === item.mp ? 'selected' : ''}>${o.l}</option>`).join('');
-        row.innerHTML = `<td colspan="6" style="padding:0">
+        const existingAtts = (item.attachments ?? []);
+        const existingAttHtml = existingAtts.map(a => `
+          <span class="ap-news-file-chip ap-news-file-chip--existing">
+            ${a.file_type === 'video' ? '▶' : '🖼'} ${this.esc((a.file_name ?? a.file_url.split('/').pop() ?? '').slice(0, 20))}
+            <button class="ap-news-att-del" data-att-id="${this.esc(a.id)}" data-news-id="${this.esc(id)}" title="Удалить">×</button>
+          </span>`).join('');
+
+        row.innerHTML = `<td colspan="7" style="padding:0">
           <div class="ap-news-manual-form ap-news-edit-form">
             <div class="ap-news-manual-row">
               <select class="ap-input ap-news-manual-mp" id="news-edit-mp-${id}">${mpOpts}</select>
@@ -3054,7 +3107,16 @@ ${this.SIMADESK_KNOWLEDGE}
             </div>
             <div class="ap-news-manual-row">
               <input class="ap-input" id="news-edit-url-${id}" value="${this.esc(item.source_url ?? '')}" placeholder="Ссылка на источник" style="flex:1">
-              <div style="display:flex;gap:8px;flex-shrink:0">
+            </div>
+            <div class="ap-news-manual-row ap-news-att-row">
+              <label class="ap-news-att-label">
+                ${icon('plus', 13)} Добавить вложения
+                <input type="file" id="news-edit-files-${id}" multiple accept="image/*,video/*" style="display:none">
+              </label>
+              <div class="ap-news-files-preview" id="news-edit-files-preview-${id}">
+                ${existingAttHtml}
+              </div>
+              <div style="display:flex;gap:8px;flex-shrink:0;margin-left:auto">
                 <button class="ap-btn ap-btn-primary news-edit-save" data-id="${id}">${icon('check', 14)} Сохранить</button>
                 <button class="ap-btn news-edit-cancel" data-id="${id}">Отмена</button>
               </div>
@@ -3066,12 +3128,48 @@ ${this.SIMADESK_KNOWLEDGE}
           this.render();
         });
 
+        // Файл-пикер при редактировании
+        row.querySelector<HTMLLabelElement>('.ap-news-att-label')?.addEventListener('click', () => {
+          row.querySelector<HTMLInputElement>(`#news-edit-files-${id}`)?.click();
+        });
+        row.querySelector<HTMLInputElement>(`#news-edit-files-${id}`)?.addEventListener('change', (e) => {
+          const files = Array.from((e.target as HTMLInputElement).files ?? []);
+          const preview = row.querySelector(`#news-edit-files-preview-${id}`)!;
+          const chips = files.map(f => {
+            const isVid = f.type.startsWith('video/');
+            return `<span class="ap-news-file-chip">${isVid ? '▶' : '🖼'} ${this.esc(f.name.slice(0, 20))}</span>`;
+          }).join('');
+          // Append after existing att chips
+          const existing = preview.querySelectorAll('.ap-news-file-chip--existing');
+          const lastExisting = existing[existing.length - 1];
+          if (lastExisting) {
+            lastExisting.insertAdjacentHTML('afterend', chips);
+          } else {
+            preview.insertAdjacentHTML('beforeend', chips);
+          }
+        });
+
+        // Удалить существующее вложение
+        row.querySelectorAll<HTMLButtonElement>('.ap-news-att-del').forEach(delBtn => {
+          delBtn.addEventListener('click', async () => {
+            const attId = delBtn.dataset.attId!;
+            const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+            await fetch(`${REST_URL}/mp_news_attachments?id=eq.${attId}`, { method: 'DELETE', headers: getAuthHeaders() });
+            delBtn.closest('.ap-news-file-chip')?.remove();
+            const newsItem = this.newsItems.find(n => n.id === id);
+            if (newsItem?.attachments) {
+              newsItem.attachments = newsItem.attachments.filter(a => a.id !== attId);
+            }
+          });
+        });
+
         row.querySelector<HTMLButtonElement>('.news-edit-save')?.addEventListener('click', async () => {
-          const mp    = (el.querySelector<HTMLSelectElement>(`#news-edit-mp-${id}`))?.value ?? item.mp;
-          const title = (el.querySelector<HTMLInputElement>(`#news-edit-title-${id}`))?.value.trim() ?? '';
-          const summary = (el.querySelector<HTMLTextAreaElement>(`#news-edit-sum-${id}`))?.value.trim() ?? '';
-          const is_important = (el.querySelector<HTMLInputElement>(`#news-edit-imp-${id}`))?.checked ?? false;
-          const source_url = (el.querySelector<HTMLInputElement>(`#news-edit-url-${id}`))?.value.trim() || null;
+          const mp    = (row.querySelector<HTMLSelectElement>(`#news-edit-mp-${id}`))?.value ?? item.mp;
+          const title = (row.querySelector<HTMLInputElement>(`#news-edit-title-${id}`))?.value.trim() ?? '';
+          const summary = (row.querySelector<HTMLTextAreaElement>(`#news-edit-sum-${id}`))?.value.trim() ?? '';
+          const is_important = (row.querySelector<HTMLInputElement>(`#news-edit-imp-${id}`))?.checked ?? false;
+          const source_url = (row.querySelector<HTMLInputElement>(`#news-edit-url-${id}`))?.value.trim() || null;
+          const files = Array.from((row.querySelector<HTMLInputElement>(`#news-edit-files-${id}`))?.files ?? []);
           if (!title || !summary) { showToast('Заголовок и содержание обязательны', 'error'); return; }
           const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
           const res = await fetch(`${REST_URL}/mp_news?id=eq.${id}`, {
@@ -3079,14 +3177,24 @@ ${this.SIMADESK_KNOWLEDGE}
             headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
             body: JSON.stringify({ mp, title, summary, is_important, source_url }),
           });
-          if (res.ok) {
-            const idx = this.newsItems.findIndex(n => n.id === id);
-            if (idx !== -1) this.newsItems[idx] = { ...this.newsItems[idx], mp, title, summary, is_important, source_url: source_url ?? undefined };
-            showToast('Новость обновлена', 'success');
-            this.render();
-          } else {
-            showToast('Ошибка сохранения', 'error');
+          if (!res.ok) { showToast('Ошибка сохранения', 'error'); return; }
+          // Загружаем новые вложения
+          for (const file of files) {
+            try {
+              const fileUrl = await this._uploadNewsAttachment(file, id);
+              const isVideo = file.type.startsWith('video/');
+              await fetch(`${REST_URL}/mp_news_attachments`, {
+                method: 'POST',
+                headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ news_id: id, file_url: fileUrl, file_type: isVideo ? 'video' : 'image', file_name: file.name }),
+              });
+            } catch (e: any) {
+              showToast('Ошибка загрузки файла: ' + e.message, 'error');
+            }
           }
+          showToast('Новость обновлена', 'success');
+          await this.loadNewsData();
+          this.render();
         });
       });
     });
@@ -3103,6 +3211,19 @@ ${this.SIMADESK_KNOWLEDGE}
       this.render();
     });
 
+    // Файл-пикер для ручного добавления: показываем превью выбранных файлов
+    el.querySelector<HTMLLabelElement>('.ap-news-att-label')?.addEventListener('click', () => {
+      el.querySelector<HTMLInputElement>('#news-manual-files')?.click();
+    });
+    el.querySelector<HTMLInputElement>('#news-manual-files')?.addEventListener('change', (e) => {
+      const files = Array.from((e.target as HTMLInputElement).files ?? []);
+      const preview = el.querySelector('#news-manual-files-preview')!;
+      preview.innerHTML = files.map(f => {
+        const isVid = f.type.startsWith('video/');
+        return `<span class="ap-news-file-chip">${isVid ? '▶' : '🖼'} ${this.esc(f.name.slice(0, 20))}</span>`;
+      }).join('');
+    });
+
     // Сохранить ручную новость
     el.querySelector('#news-manual-save')?.addEventListener('click', async () => {
       const mp      = (el.querySelector<HTMLSelectElement>('#news-manual-mp'))?.value ?? 'general';
@@ -3110,6 +3231,7 @@ ${this.SIMADESK_KNOWLEDGE}
       const summary = (el.querySelector<HTMLTextAreaElement>('#news-manual-summary'))?.value.trim() ?? '';
       const imp     = (el.querySelector<HTMLInputElement>('#news-manual-imp'))?.checked ?? false;
       const url     = (el.querySelector<HTMLInputElement>('#news-manual-url'))?.value.trim() || null;
+      const files   = Array.from((el.querySelector<HTMLInputElement>('#news-manual-files'))?.files ?? []);
       if (!title || !summary) { showToast('Заголовок и содержание обязательны', 'error'); return; }
       const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
       const res = await fetch(`${REST_URL}/mp_news`, {
@@ -3117,14 +3239,28 @@ ${this.SIMADESK_KNOWLEDGE}
         headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
         body: JSON.stringify({ mp, title, summary, is_important: imp, source_url: url, published_at: new Date().toISOString() }),
       });
-      if (res.ok) {
-        showToast('Новость добавлена', 'success');
-        this.newsManualAdd = false;
-        await this.loadNewsData();
-        this.render();
-      } else {
-        showToast('Ошибка сохранения', 'error');
+      if (!res.ok) { showToast('Ошибка сохранения: ' + (await res.text()), 'error'); return; }
+      const [saved] = await res.json() as [{ id: string }];
+      // Загружаем вложения
+      if (files.length > 0 && saved?.id) {
+        for (const file of files) {
+          try {
+            const fileUrl = await this._uploadNewsAttachment(file, saved.id);
+            const isVideo = file.type.startsWith('video/');
+            await fetch(`${REST_URL}/mp_news_attachments`, {
+              method: 'POST',
+              headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+              body: JSON.stringify({ news_id: saved.id, file_url: fileUrl, file_type: isVideo ? 'video' : 'image', file_name: file.name }),
+            });
+          } catch (e: any) {
+            showToast('Ошибка загрузки файла: ' + e.message, 'error');
+          }
+        }
       }
+      showToast('Новость добавлена', 'success');
+      this.newsManualAdd = false;
+      await this.loadNewsData();
+      this.render();
     });
   }
 

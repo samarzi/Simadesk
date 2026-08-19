@@ -307,9 +307,21 @@ export class HomeDashboardModule {
     content.innerHTML = `
       <div class="cmd-wrap">
         <div class="cmd-header">
-          <div>
+          <div class="cmd-header-left">
             <div class="cmd-greeting">${this.greeting()}</div>
             <div class="cmd-subtitle">${I.radio('', 12)} Командный центр · обновление каждые 30 сек</div>
+          </div>
+          <div class="cmd-lead-center-wrap">
+            <button class="cmd-lead-center-btn" onclick="window.app.switchHomeTab('dashboard')" title="Мой лид-центр">
+              <span class="cmd-lc-glow"></span>
+              <svg class="cmd-lc-icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="10" cy="10" r="8.5"/>
+                <path d="M10 6.5v3.5l2.5 2"/>
+                <circle cx="10" cy="10" r="1.5" fill="currentColor" stroke="none"/>
+              </svg>
+              <span class="cmd-lc-label">Мой лид-центр</span>
+              <span class="cmd-lc-dot ${!isNews ? 'active' : ''}"></span>
+            </button>
           </div>
           <div class="cmd-header-actions">
             <div class="cmd-tab-pills">
