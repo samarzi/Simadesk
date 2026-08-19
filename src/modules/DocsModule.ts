@@ -670,142 +670,13 @@ export class DocsModule {
     return null;
   }
 
-  // ── CSS → SheetJS style object (for xlsx export) ──────────────────────────
-  private cssToXlsxStyle(css: string): any {
-    if (!css) return null;
-    const props: Record<string, string> = {};
-    css.split(';').forEach(p => {
-      const colon = p.indexOf(':');
-      if (colon < 0) return;
-      const k = p.slice(0, colon).trim().toLowerCase();
-      const v = p.slice(colon + 1).trim();
-      if (k) props[k] = v;
-    });
-
-    const parseColor = (val: string): string | null => {
-      const hex6 = val.match(/^#([0-9a-f]{6})$/i);
-      if (hex6) return hex6[1].toUpperCase();
-      const rgb = val.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
-      if (rgb) return [rgb[1], rgb[2], rgb[3]]
-        .map(n => parseInt(n).toString(16).padStart(2, '0')).join('').toUpperCase();
-      return null;
-    };
-
-    const style: any = {};
-    const font: any = {};
-    let fill: any = null;
-    const alignment: any = {};
-    const border: any = {};
-
-    for (const [prop, rawVal] of Object.entries(props)) {
-      const val = rawVal.trim();
-      switch (prop) {
-        case 'background-color':
-        case 'background': {
-          const rgb = parseColor(val.split(/\s+/)[0]);
-          if (rgb) fill = { patternType: 'solid', fgColor: { rgb } };
-          break;
-        }
-        case 'color': {
-          const rgb = parseColor(val);
-          if (rgb) font.color = { rgb };
-          break;
-        }
-        case 'font-weight':
-          if (val === 'bold' || parseInt(val) >= 700) font.bold = true;
-          break;
-        case 'font-style':
-          if (val === 'italic') font.italic = true;
-          break;
-        case 'text-decoration':
-          if (val.includes('underline')) font.underline = true;
-          if (val.includes('line-through')) font.strike = true;
-          break;
-        case 'font-size': {
-          const px = parseFloat(val);
-          if (!isNaN(px)) font.sz = Math.max(6, Math.round(px / 1.333));
-          break;
-        }
-        case 'font-family': {
-          const name = val.split(',')[0].trim().replace(/['"]/g, '');
-          if (name) font.name = name;
-          break;
-        }
-        case 'text-align':
-          if (['left','center','right','justify'].includes(val)) alignment.horizontal = val;
-          break;
-        case 'vertical-align':
-          if (val === 'middle') alignment.vertical = 'center';
-          else if (val === 'top' || val === 'bottom') alignment.vertical = val;
-          break;
-        case 'border': {
-          if (val && val !== 'none' && !val.startsWith('0')) {
-            const cm = val.match(/#([0-9a-f]{6})/i);
-            const clr = cm ? cm[1].toUpperCase() : '000000';
-            const brd = { style: 'thin', color: { rgb: clr } };
-            border.top = border.bottom = border.left = border.right = brd;
-          }
-          break;
-        }
-        case 'border-top': case 'border-bottom': case 'border-left': case 'border-right': {
-          if (val && val !== 'none' && !val.startsWith('0')) {
-            const cm = val.match(/#([0-9a-f]{6})/i);
-            const clr = cm ? cm[1].toUpperCase() : '000000';
-            const side = prop.replace('border-', '') as 'top'|'bottom'|'left'|'right';
-            border[side] = { style: 'thin', color: { rgb: clr } };
-          }
-          break;
-        }
-      }
-    }
-
-    if (Object.keys(font).length) style.font = font;
-    if (fill) style.fill = fill;
-    if (Object.keys(alignment).length) style.alignment = alignment;
-    if (Object.keys(border).length) style.border = border;
-    return Object.keys(style).length ? style : null;
-  }
-
   // ── Export ─────────────────────────────────────────────────────────────────
   private exportDoc(doc: DocItem, format: string): void {
     if (doc.type === 'excel') {
       const ec = this.parseExcelContent(doc.content);
       if (format === 'xlsx') {
-        const wb = XLSX.utils.book_new();
-        ec.sheets.forEach(sh => {
-          const trimmed = this.trimEmpty(sh.data);
-          const values = trimmed.map(r => r.map(c => c.v));
-          const ws = XLSX.utils.aoa_to_sheet(values);
-
-          // Apply cell styles
-          trimmed.forEach((row, r) => {
-            row.forEach((cell, c) => {
-              if (!cell.s) return;
-              const addr = XLSX.utils.encode_cell({ r, c });
-              if (!ws[addr]) return;
-              const xlStyle = this.cssToXlsxStyle(cell.s);
-              if (xlStyle) ws[addr].s = xlStyle;
-            });
-          });
-
-          // Column widths
-          if (sh.colWidths?.some(w => w != null)) {
-            ws['!cols'] = (sh.colWidths ?? []).map(w => w ? { wpx: w } : {});
-          }
-
-          // Row heights
-          if (sh.rowHeights?.some(h => h != null)) {
-            ws['!rows'] = (sh.rowHeights ?? []).slice(0, trimmed.length).map(h => h ? { hpx: h } : {});
-          }
-
-          // Merged cells
-          if (sh.merges?.length) {
-            ws['!merges'] = sh.merges.map(m => ({ s: { r: m.r1, c: m.c1 }, e: { r: m.r2, c: m.c2 } }));
-          }
-
-          XLSX.utils.book_append_sheet(wb, ws, sh.name);
-        });
-        XLSX.writeFile(wb, `${doc.title}.xlsx`, { cellStyles: true });
+        this.exportExcelXlsx(doc, ec).catch(e => showToast('Ошибка экспорта: ' + e.message, 'error'));
+        return;
       } else if (format === 'csv') {
         const sh = ec.sheets[this.activeSheetIdx] ?? ec.sheets[0];
         const values = this.trimEmpty(sh.data).map(r => r.map(c => c.v));
@@ -912,15 +783,25 @@ export class DocsModule {
     const ex = (s: string) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
     const cssHex = (css: string): string | null => {
+      if (!css || css === 'transparent' || css === 'inherit') return null;
       const rgb = css.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i);
-      if (rgb) return [rgb[1],rgb[2],rgb[3]].map(n => (+n).toString(16).padStart(2,'0')).join('').toUpperCase();
-      const h = css.match(/^#([0-9a-f]{6})$/i); if (h) return h[1].toUpperCase();
+      if (rgb) {
+        // Skip near-transparent rgba
+        const alpha = css.match(/rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)/i);
+        if (alpha && parseFloat(alpha[1]) < 0.1) return null;
+        return [rgb[1],rgb[2],rgb[3]].map(n => (+n).toString(16).padStart(2,'0')).join('').toUpperCase();
+      }
+      const h6 = css.match(/^#([0-9a-f]{6})$/i); if (h6) return h6[1].toUpperCase();
       const h3 = css.match(/^#([0-9a-f]{3})$/i); if (h3) { const v=h3[1]; return (v[0]+v[0]+v[1]+v[1]+v[2]+v[2]).toUpperCase(); }
-      return null;
+      // Named colors
+      const named: Record<string,string> = {black:'000000',white:'FFFFFF',red:'FF0000',green:'008000',blue:'0000FF',yellow:'FFFF00',orange:'FFA500',purple:'800080',gray:'808080',grey:'808080'};
+      const lower = css.toLowerCase().trim();
+      return named[lower] ?? null;
     };
 
     interface RP { bold?:boolean; italic?:boolean; under?:boolean; strike?:boolean; sz?:number; color?:string; bg?:string; font?:string; }
 
+    // b wins over undefined; if both defined, b (child/more specific) wins
     const mergeRP = (a: RP, b: RP): RP => ({
       bold:   b.bold   ?? a.bold,
       italic: b.italic ?? a.italic,
@@ -940,110 +821,394 @@ export class DocsModule {
       if (tag==='i'||tag==='em')     rp.italic=true;
       if (tag==='u')                 rp.under=true;
       if (tag==='s'||tag==='strike'||tag==='del') rp.strike=true;
-      if (st.fontWeight==='bold'||parseInt(st.fontWeight)>=700) rp.bold=true;
-      if (st.fontStyle==='italic') rp.italic=true;
-      if (st.textDecoration?.includes('underline'))    rp.under=true;
-      if (st.textDecoration?.includes('line-through')) rp.strike=true;
-      if (st.fontSize) { const px=parseFloat(st.fontSize); if(!isNaN(px)) rp.sz=Math.round(px/0.666); }
-      if (st.color)           { const h=cssHex(st.color);            if(h && h!=='000000') rp.color=h; }
-      if (st.backgroundColor){ const h=cssHex(st.backgroundColor);  if(h && !/^F{6}$/i.test(h)) rp.bg=h; }
-      if (st.fontFamily) { const n=st.fontFamily.split(',')[0].trim().replace(/['"]/g,''); if(n) rp.font=n; }
+      if (tag==='mark') rp.bg='FFFF00';
+      const fw=st?.fontWeight; if(fw==='bold'||parseInt(fw)>=700) rp.bold=true;
+      const fi=st?.fontStyle;  if(fi==='italic'||fi==='oblique') rp.italic=true;
+      const td=st?.textDecoration||'';
+      if(td.includes('underline'))    rp.under=true;
+      if(td.includes('line-through')) rp.strike=true;
+      if(st?.fontSize) { const px=parseFloat(st.fontSize); if(!isNaN(px) && px>0) rp.sz=Math.round(px*1.5); }
+      if(st?.color) { const h=cssHex(st.color); if(h) rp.color=h; }
+      if(st?.backgroundColor) { const h=cssHex(st.backgroundColor); if(h && h!=='FFFFFF') rp.bg=h; }
+      if(st?.fontFamily) { const n=st.fontFamily.split(',')[0].trim().replace(/['"]/g,''); if(n) rp.font=n; }
       return rp;
     };
 
     const rprXml = (rp: RP): string => {
       let x='';
-      if(rp.font)   x+=`<w:rFonts w:ascii="${ex(rp.font)}" w:hAnsi="${ex(rp.font)}"/>`;
+      if(rp.font)   x+=`<w:rFonts w:ascii="${ex(rp.font)}" w:hAnsi="${ex(rp.font)}" w:cs="${ex(rp.font)}"/>`;
       if(rp.sz)     x+=`<w:sz w:val="${rp.sz}"/><w:szCs w:val="${rp.sz}"/>`;
-      if(rp.bold)   x+='<w:b/>';
-      if(rp.italic) x+='<w:i/>';
+      if(rp.bold)   x+='<w:b/><w:bCs/>';
+      if(rp.italic) x+='<w:i/><w:iCs/>';
       if(rp.under)  x+='<w:u w:val="single"/>';
       if(rp.strike) x+='<w:strike/>';
-      if(rp.color)  x+=`<w:color w:val="${rp.color}"/>`;
-      if(rp.bg)     x+=`<w:shd w:val="clear" w:color="auto" w:fill="${rp.bg}"/>`;
+      if(rp.color && rp.color!=='000000') x+=`<w:color w:val="${rp.color}"/>`;
+      if(rp.bg)     x+=`<w:highlight w:val="none"/><w:shd w:val="clear" w:color="auto" w:fill="${rp.bg}"/>`;
       return x ? `<w:rPr>${x}</w:rPr>` : '';
     };
 
+    // Collect inline runs from a node tree, inheriting rp from parent
     const collectRuns = (node: Node, rp: RP): string => {
       if (node.nodeType===Node.TEXT_NODE) {
-        const t = node.textContent??''; if(!t) return '';
+        // Normalize newlines that are just HTML source formatting, not meaningful whitespace
+        const raw = node.textContent ?? '';
+        const t = raw.replace(/[\r\n]/g, ' ');
+        if (!t) return '';
         return `<w:r>${rprXml(rp)}<w:t xml:space="preserve">${ex(t)}</w:t></w:r>`;
       }
       if (node.nodeType!==Node.ELEMENT_NODE) return '';
       const el=node as Element; const tag=el.tagName.toLowerCase();
       if (tag==='br') return '<w:r><w:br/></w:r>';
-      if (tag==='img') return '';
-      const merged=mergeRP(rp,rpFromEl(el));
+      if (tag==='img'||tag==='script'||tag==='style') return '';
+      // Don't recurse into block-like elements that escaped into inline context
+      const merged=mergeRP(rp, rpFromEl(el));
       return Array.from(el.childNodes).map(c=>collectRuns(c,merged)).join('');
     };
 
-    const BLOCK_TAGS = new Set(['p','div','h1','h2','h3','h4','h5','h6','blockquote','pre','article','section','header','footer','main','nav','aside','li']);
+    const BLOCK_TAGS = new Set(['p','div','h1','h2','h3','h4','h5','h6','blockquote','pre','article','section','header','footer','main','nav','aside','li','address','figure','figcaption']);
 
-    const pprXml = (el: Element, lstStyle?: 'bullet'|'num', lvl=0): string => {
+    // Build paragraph properties XML including paragraph-level background
+    const pprXml = (el: Element, bgHex: string|null, lstStyle?: 'bullet'|'num', lvl=0): string => {
       let pp='';
       const tag=el.tagName.toLowerCase();
       const st=(el as HTMLElement).style;
       const m=/^h([1-6])$/.exec(tag);
-      if(m) pp+=`<w:pStyle w:val="Heading${m[1]}"/>`;
+      if(m && !lstStyle) pp+=`<w:pStyle w:val="Heading${m[1]}"/>`;
+      if(lstStyle) {
+        const numId=lstStyle==='bullet'?'1':'2';
+        if(!m) pp+=`<w:pStyle w:val="ListParagraph"/>`;
+        pp+=`<w:numPr><w:ilvl w:val="${lvl}"/><w:numId w:val="${numId}"/></w:numPr>`;
+      }
       const align=st?.textAlign;
       if(align==='center') pp+='<w:jc w:val="center"/>';
       else if(align==='right') pp+='<w:jc w:val="right"/>';
       else if(align==='justify') pp+='<w:jc w:val="both"/>';
-      if(lstStyle) {
-        const numId=lstStyle==='bullet'?'1':'2';
-        pp+=`<w:numPr><w:ilvl w:val="${lvl}"/><w:numId w:val="${numId}"/></w:numPr>`;
-        if(!m) pp+=`<w:pStyle w:val="ListParagraph"/>`;
-      }
+      // Paragraph background (full paragraph shading — more faithful than run shading)
+      if(bgHex && bgHex!=='FFFFFF') pp+=`<w:shd w:val="clear" w:color="auto" w:fill="${bgHex}"/>`;
+      // Paragraph spacing — honour margin-bottom/top
+      const mbPx = parseFloat(st?.marginBottom||'0'); const mtPx = parseFloat(st?.marginTop||'0');
+      if(mbPx>0||mtPx>0) pp+=`<w:spacing w:before="${Math.round(mtPx*15)}" w:after="${Math.round(mbPx*15)}"/>`;
       return pp ? `<w:pPr>${pp}</w:pPr>` : '';
+    };
+
+    // Check if a node is only br / whitespace
+    const isEmptyBlock = (el: Element): boolean => {
+      const kids = Array.from(el.childNodes);
+      if(kids.length===0) return true;
+      return kids.every(k => {
+        if(k.nodeType===Node.TEXT_NODE) return !(k.textContent??'').trim();
+        if(k.nodeType===Node.ELEMENT_NODE) return (k as Element).tagName.toLowerCase()==='br';
+        return true;
+      });
     };
 
     let out = '';
 
-    const processBlock = (node: Node, lstStyle?: 'bullet'|'num', lvl=0): void => {
+    // inheritedRP: styles from ancestor block elements (colour, font, etc.)
+    const processBlock = (node: Node, inheritedRP: RP = {}, lstStyle?: 'bullet'|'num', lvl=0): void => {
       if (node.nodeType===Node.TEXT_NODE) {
-        const t=(node.textContent??'').trim(); if(t) out+=`<w:p><w:r><w:t xml:space="preserve">${ex(t)}</w:t></w:r></w:p>`; return;
+        const t=(node.textContent??'').replace(/[\r\n]/g,' ');
+        if(t.trim()) {
+          const rpr = rprXml(inheritedRP);
+          out+=`<w:p>${rpr?`<w:r>${rpr}<w:t xml:space="preserve">${ex(t)}</w:t></w:r>`:''}</w:p>`;
+        }
+        return;
       }
       if (node.nodeType!==Node.ELEMENT_NODE) return;
       const el=node as Element; const tag=el.tagName.toLowerCase();
 
-      if(tag==='table') { out+=processTable(el); return; }
-      if(tag==='ul') { Array.from(el.childNodes).forEach(c=>processBlock(c,'bullet',lvl)); return; }
-      if(tag==='ol') { Array.from(el.childNodes).forEach(c=>processBlock(c,'num',lvl)); return; }
+      if(tag==='table') { out+=processTable(el, inheritedRP); return; }
+      if(tag==='ul') { Array.from(el.childNodes).forEach(c=>processBlock(c, inheritedRP,'bullet',lvl)); return; }
+      if(tag==='ol') { Array.from(el.childNodes).forEach(c=>processBlock(c, inheritedRP,'num',lvl)); return; }
 
       if(BLOCK_TAGS.has(tag)) {
+        // Merge this element's own props into inherited for children
+        const elRP = rpFromEl(el);
+        const childRP = mergeRP(inheritedRP, elRP);
+
+        // Detect paragraph background at this block level
+        const bgCss=(el as HTMLElement).style?.backgroundColor;
+        const bgHex=bgCss?cssHex(bgCss):null;
+        // Effective bg = own or inherited (rough: only own for paragraph shading)
+        const effectiveBg = (bgHex && bgHex!=='FFFFFF') ? bgHex : null;
+
         const kids=Array.from(el.childNodes);
-        const hasBlock=kids.some(c=>{if(c.nodeType!==Node.ELEMENT_NODE)return false;const ct=(c as Element).tagName.toLowerCase();return BLOCK_TAGS.has(ct)||ct==='table'||ct==='ul'||ct==='ol';});
-        if(hasBlock) { kids.forEach(c=>processBlock(c, lstStyle, lvl)); return; }
-        const pp=pprXml(el, lstStyle, lvl);
-        const runs=collectRuns(el,{});
-        out+=`<w:p>${pp}${runs||'<w:r><w:t></w:t></w:r>'}</w:p>`;
+        const hasBlock=kids.some(c=>{
+          if(c.nodeType!==Node.ELEMENT_NODE) return false;
+          const ct=(c as Element).tagName.toLowerCase();
+          return BLOCK_TAGS.has(ct)||ct==='table'||ct==='ul'||ct==='ol';
+        });
+
+        if(hasBlock) {
+          // Container element — recurse, passing our merged props down
+          kids.forEach(c=>processBlock(c, childRP, lstStyle, lvl));
+          return;
+        }
+
+        // Leaf block → emit paragraph
+        if(isEmptyBlock(el)) { out+='<w:p/>'; return; }
+
+        const pp=pprXml(el, effectiveBg, lstStyle, lvl);
+        // Start collectRuns with childRP so parent-inherited styles apply to runs
+        const runs=collectRuns(el, childRP);
+        out+=`<w:p>${pp}${runs}</w:p>`;
         return;
       }
-      // inline at top level
-      const runs=collectRuns(el,{});
+
+      // Bare <br> or inline at body level
+      if(tag==='br') { out+='<w:p/>'; return; }
+      const runs=collectRuns(el, inheritedRP);
       if(runs) out+=`<w:p>${runs}</w:p>`;
     };
 
-    const processTable = (table: Element): string => {
+    const processTable = (table: Element, inheritedRP: RP): string => {
       const borders='<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>';
       let txml=`<w:tbl><w:tblPr>${borders}<w:tblW w:w="0" w:type="auto"/></w:tblPr>`;
-      table.querySelectorAll('tr').forEach(tr=>{
+      table.querySelectorAll(':scope > * tr, :scope > tr').forEach(tr=>{
         txml+='<w:tr>';
-        tr.querySelectorAll('td,th').forEach(td=>{
+        tr.querySelectorAll(':scope > td, :scope > th').forEach(td=>{
           const isHdr=td.tagName.toLowerCase()==='th';
-          const bgStyle=(td as HTMLElement).style.backgroundColor;
-          const bgHex=bgStyle?cssHex(bgStyle):null;
-          const tcPr=bgHex?`<w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="${bgHex}"/></w:tcPr>`:''
-          const runs=collectRuns(td, isHdr?{bold:true}:{});
-          txml+=`<w:tc>${tcPr}<w:p>${runs||'<w:r><w:t></w:t></w:r>'}</w:p></w:tc>`;
+          const bgCss=(td as HTMLElement).style?.backgroundColor;
+          const bgHex=bgCss?cssHex(bgCss):null;
+          const bgTd=bgHex&&bgHex!=='FFFFFF'?bgHex:null;
+          const tcPr=bgTd?`<w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="${bgTd}"/></w:tcPr>`:'';
+          const cellRP=mergeRP(inheritedRP, isHdr?{bold:true}:{});
+          // Collect sub-blocks inside cell
+          let cellXml='';
+          const cellKids=Array.from(td.childNodes);
+          const hasCellBlock=cellKids.some(c=>{
+            if(c.nodeType!==Node.ELEMENT_NODE)return false;
+            const ct=(c as Element).tagName.toLowerCase();
+            return BLOCK_TAGS.has(ct)||ct==='table'||ct==='ul'||ct==='ol';
+          });
+          if(hasCellBlock) {
+            const savedOut=out; out='';
+            cellKids.forEach(c=>processBlock(c,cellRP));
+            cellXml=out||'<w:p/>';
+            out=savedOut;
+          } else {
+            cellXml=`<w:p>${collectRuns(td,cellRP)}</w:p>`;
+          }
+          txml+=`<w:tc>${tcPr}${cellXml}</w:tc>`;
         });
         txml+='</w:tr>';
       });
       return txml+'</w:tbl>';
     };
 
-    Array.from(body.childNodes).forEach(c=>processBlock(c));
-    return out || '<w:p><w:r><w:t></w:t></w:r></w:p>';
+    Array.from(body.childNodes).forEach(c=>processBlock(c, {}));
+    return out || '<w:p/>';
+  }
+
+  // ── Excel OOXML Export via JSZip (SheetJS CE cannot write cell styles) ────
+  private async exportExcelXlsx(doc: DocItem, ec: ExcelContent): Promise<void> {
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+    const ex = (s: string) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+    // ── CSS → normalised style properties ──────────────────────────────────
+    interface XFont { name?:string; sz?:number; bold?:boolean; italic?:boolean; under?:boolean; strike?:boolean; color?:string; }
+    interface XAlign { h?:string; v?:string; }
+    interface XStyle { font?:XFont; fillColor?:string; border?: { left?:[string,string]; right?:[string,string]; top?:[string,string]; bottom?:[string,string] }; align?:XAlign; }
+
+    const parseCssToXl = (css: string): XStyle => {
+      if (!css) return {};
+      const props: Record<string,string> = {};
+      css.split(';').forEach(p => { const i=p.indexOf(':'); if(i<0) return; const k=p.slice(0,i).trim().toLowerCase(),v=p.slice(i+1).trim(); if(k) props[k]=v; });
+      const toArgb = (v: string): string|null => {
+        const h6=v.match(/^#([0-9a-f]{6})$/i); if(h6) return 'FF'+h6[1].toUpperCase();
+        const h3=v.match(/^#([0-9a-f]{3})$/i); if(h3){const c=h3[1];return 'FF'+(c[0]+c[0]+c[1]+c[1]+c[2]+c[2]).toUpperCase();}
+        const rgb=v.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i); if(rgb) return 'FF'+[rgb[1],rgb[2],rgb[3]].map(n=>(+n).toString(16).padStart(2,'0')).join('').toUpperCase();
+        return null;
+      };
+      const parseBorder = (v: string): [string,string]|undefined => {
+        if(!v||v==='none'||/^0\s/.test(v)) return undefined;
+        const cm=v.match(/#([0-9a-f]{6})/i);
+        const w=parseFloat(v);
+        const style = w>=2?'medium':w>=1?'thin':'hair';
+        return [style, 'FF'+(cm?cm[1].toUpperCase():'000000')];
+      };
+      const st: XStyle = {};
+      for(const [k,v] of Object.entries(props)) {
+        switch(k) {
+          case 'background-color': case 'background': { const c=toArgb(v.split(/\s+/)[0]); if(c&&c!=='FFFFFFFF'&&c!=='FF000000') { st.fillColor=c; } break; }
+          case 'color':           { const c=toArgb(v); if(c) { st.font??={}; st.font.color=c; } break; }
+          case 'font-weight':     if(v==='bold'||+v>=700){st.font??={};st.font.bold=true;} break;
+          case 'font-style':      if(v==='italic'){st.font??={};st.font.italic=true;} break;
+          case 'text-decoration': if(v.includes('underline')){st.font??={};st.font.under=true;} if(v.includes('line-through')){st.font??={};st.font.strike=true;} break;
+          case 'font-size':       { const px=parseFloat(v); if(!isNaN(px)&&px>0){st.font??={};st.font.sz=Math.max(6,Math.round(px/1.333));} break; }
+          case 'font-family':     { const n=v.split(',')[0].trim().replace(/['"]/g,''); if(n){st.font??={};st.font.name=n;} break; }
+          case 'text-align':      { const h=v==='justify'?'distributed':v; if(['left','center','right','distributed'].includes(h)){st.align??={};st.align.h=h;} break; }
+          case 'vertical-align':  { const vv=v==='middle'?'center':v; if(['top','center','bottom'].includes(vv)){st.align??={};st.align.v=vv;} break; }
+          case 'border':          { const b=parseBorder(v); if(b){st.border??={};st.border.left=st.border.right=st.border.top=st.border.bottom=b;} break; }
+          case 'border-left':     { const b=parseBorder(v); if(b){st.border??={};st.border.left=b;} break; }
+          case 'border-right':    { const b=parseBorder(v); if(b){st.border??={};st.border.right=b;} break; }
+          case 'border-top':      { const b=parseBorder(v); if(b){st.border??={};st.border.top=b;} break; }
+          case 'border-bottom':   { const b=parseBorder(v); if(b){st.border??={};st.border.bottom=b;} break; }
+        }
+      }
+      return st;
+    };
+
+    // ── Deduplicate fonts / fills / borders → indices ───────────────────────
+    const fonts: XFont[] = [{ name:'Calibri', sz:11 }]; // 0 = default
+    const fills: Array<string|null> = [null, null];      // 0=none, 1=gray125 (OOXML required)
+    const borders: Array<XStyle['border']|null> = [null];// 0 = no border
+    const fntMap = new Map<string,number>([['',0]]);
+    const fllMap = new Map<string,number>([['',0]]);
+    const brdMap = new Map<string,number>([['',0]]);
+
+    const addFont = (f?: XFont): number => { const k=JSON.stringify(f||{}); if(fntMap.has(k)) return fntMap.get(k)!; const i=fonts.length; fonts.push(f||{}); fntMap.set(k,i); return i; };
+    const addFill = (c?: string): number => { if(!c) return 0; if(fllMap.has(c)) return fllMap.get(c)!; const i=fills.length; fills.push(c); fllMap.set(c,i); return i; };
+    const addBorder = (b?: XStyle['border']): number => { const k=JSON.stringify(b||null); if(brdMap.has(k)) return brdMap.get(k)!; const i=borders.length; borders.push(b||null); brdMap.set(k,i); return i; };
+
+    // cellXfs: index 0 = default (no style)
+    interface XF { fId:number; lId:number; bId:number; align?:XAlign; }
+    const xfs: XF[] = [{ fId:0, lId:0, bId:0 }];
+    const xfMap = new Map<string,number>([['',0]]);
+
+    const getXfIdx = (css: string|undefined): number => {
+      const key = css||'';
+      if(xfMap.has(key)) return xfMap.get(key)!;
+      const st = parseCssToXl(key);
+      const fId = addFont(st.font);
+      const lId = addFill(st.fillColor);
+      const bId = addBorder(st.border);
+      const xf: XF = { fId, lId, bId, ...(st.align?{align:st.align}:{}) };
+      const idx = xfs.length; xfs.push(xf); xfMap.set(key,idx); return idx;
+    };
+
+    // Pre-scan all cells to populate tables deterministically
+    ec.sheets.forEach(sh => sh.data.forEach(row => row.forEach(cell => { if(cell.s) getXfIdx(cell.s); })));
+
+    // ── Build styles.xml ────────────────────────────────────────────────────
+    const fntXml = (f: XFont) => {
+      let x = f.bold?'<b/>':'' + (f.italic?'<i/>':'') + (f.under?'<u/>':'') + (f.strike?'<strike/>':'');
+      if(f.color) x+=`<color rgb="${f.color}"/>`;
+      x+=`<sz val="${f.sz??11}"/><name val="${ex(f.name??'Calibri')}"/>`;
+      return `<font>${x}</font>`;
+    };
+    const fillXml = (c: string|null, i: number) => {
+      if(i===0) return '<fill><patternFill patternType="none"/></fill>';
+      if(i===1) return '<fill><patternFill patternType="gray125"/></fill>';
+      if(!c)    return '<fill><patternFill patternType="none"/></fill>';
+      return `<fill><patternFill patternType="solid"><fgColor rgb="${c}"/><bgColor indexed="64"/></patternFill></fill>`;
+    };
+    const brdSide = (b?: [string,string], tag='left') => b ? `<${tag} style="${b[0]}"><color rgb="${b[1]}"/></${tag}>` : `<${tag}/>`;
+    const brdXml = (b: XStyle['border']|null) => b
+      ? `<border>${brdSide(b.left,'left')}${brdSide(b.right,'right')}${brdSide(b.top,'top')}${brdSide(b.bottom,'bottom')}<diagonal/></border>`
+      : '<border><left/><right/><top/><bottom/><diagonal/></border>';
+    const xfXml  = (xf: XF, base=false) => {
+      const app = base?'':' applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"';
+      const al = xf.align ? `<alignment${xf.align.h?` horizontal="${xf.align.h}"`:''}${xf.align.v?` vertical="${xf.align.v}"`:''}/>` : '';
+      return `<xf numFmtId="0" fontId="${xf.fId}" fillId="${xf.lId}" borderId="${xf.bId}" xfId="0"${app}>${al}</xf>`;
+    };
+
+    const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts count="${fonts.length}">${fonts.map(fntXml).join('')}</fonts>
+<fills count="${fills.length}">${fills.map((c,i)=>fillXml(c,i)).join('')}</fills>
+<borders count="${borders.length}">${borders.map(brdXml).join('')}</borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="${xfs.length}">${xfs.map((xf,i)=>xfXml(xf,i===0)).join('')}</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+
+    // ── Build worksheets ────────────────────────────────────────────────────
+    const colLtr = (n: number): string => {
+      let s=''; n++;
+      while(n>0){const r=(n-1)%26;s=String.fromCharCode(65+r)+s;n=Math.floor((n-1)/26);}
+      return s;
+    };
+
+    const sheetXmls: string[] = [];
+    ec.sheets.forEach(sh => {
+      const trimmed = this.trimEmpty(sh.data);
+      const numCols = trimmed.reduce((m,r)=>Math.max(m,r.length),0);
+      const colWidths = sh.colWidths??[];
+      const rowHeights = sh.rowHeights??[];
+
+      // <cols>
+      let colsXml='';
+      if(colWidths.some(w=>w!=null)) {
+        const parts=colWidths.slice(0,numCols).map((w,i)=>w?`<col min="${i+1}" max="${i+1}" width="${(w/7).toFixed(2)}" customWidth="1"/>`:null).filter(Boolean);
+        if(parts.length) colsXml=`<cols>${parts.join('')}</cols>`;
+      }
+
+      // <sheetData>
+      let rowsXml='';
+      trimmed.forEach((row,rIdx)=>{
+        const h=rowHeights[rIdx];
+        const rowAttr=h?` ht="${h}" customHeight="1"`:'';
+        let cells='';
+        row.forEach((cell,cIdx)=>{
+          const ref=colLtr(cIdx)+(rIdx+1);
+          const sIdx=getXfIdx(cell.s);
+          const sAttr=sIdx?` s="${sIdx}"`:' s="0"';
+          const v=cell.v??'';
+          if(!v&&!sIdx) return;
+          if(!v) { cells+=`<c r="${ref}"${sAttr}/>`; return; }
+          // Detect numeric (not formula, not starts with 0 unless "0" exactly, finite)
+          const num = !v.startsWith('=') && v.trim()!=='' && !isNaN(Number(v)) && isFinite(Number(v)) && !/^0\d/.test(v.trim());
+          if(num) {
+            cells+=`<c r="${ref}"${sAttr}><v>${ex(v)}</v></c>`;
+          } else if(v.startsWith('=')) {
+            cells+=`<c r="${ref}" t="str"${sAttr}><f>${ex(v.slice(1))}</f></c>`;
+          } else {
+            cells+=`<c r="${ref}" t="inlineStr"${sAttr}><is><t xml:space="preserve">${ex(v)}</t></is></c>`;
+          }
+        });
+        if(cells||h!=null) rowsXml+=`<row r="${rIdx+1}"${rowAttr}>${cells}</row>`;
+      });
+
+      // <mergeCells>
+      let mergesXml='';
+      const validMerges=(sh.merges??[]).filter(m=>m.r2<trimmed.length&&m.c2<numCols);
+      if(validMerges.length) mergesXml=`<mergeCells count="${validMerges.length}">${validMerges.map(m=>`<mergeCell ref="${colLtr(m.c1)}${m.r1+1}:${colLtr(m.c2)}${m.r2+1}"/>`).join('')}</mergeCells>`;
+
+      sheetXmls.push(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheetViews><sheetView tabSelected="0" workbookViewId="0"/></sheetViews>
+${colsXml}<sheetData>${rowsXml}</sheetData>${mergesXml}
+</worksheet>`);
+    });
+
+    // ── Workbook, Content Types, Relationships ──────────────────────────────
+    const wbXml=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets>${ec.sheets.map((sh,i)=>`<sheet name="${ex(sh.name)}" sheetId="${i+1}" r:id="rId${i+2}"/>`).join('')}</sheets>
+</workbook>`;
+    const ctXml=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+${ec.sheets.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}
+</Types>`;
+    const rootRels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`;
+    const wbRels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join('')}
+</Relationships>`;
+
+    zip.file('[Content_Types].xml', ctXml);
+    zip.file('_rels/.rels', rootRels);
+    zip.file('xl/workbook.xml', wbXml);
+    zip.file('xl/styles.xml', stylesXml);
+    zip.file('xl/_rels/workbook.xml.rels', wbRels);
+    sheetXmls.forEach((xml,i) => zip.file(`xl/worksheets/sheet${i+1}.xml`, xml));
+
+    const blob = await zip.generateAsync({
+      type: 'blob',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      compression: 'DEFLATE',
+    });
+    this.download(`${doc.title}.xlsx`, blob);
   }
 
   private trimEmpty(rows: CellData[][]): CellData[][] {

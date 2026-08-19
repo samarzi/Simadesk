@@ -1586,6 +1586,15 @@ export class AssistantModule {
       }
     });
 
+    // Model selector
+    const modelSelect = panel.querySelector<HTMLSelectElement>('#sd-ap-model-select');
+    if (modelSelect) {
+      modelSelect.addEventListener('change', () => {
+        this.aiModel = modelSelect.value;
+        localStorage.setItem('sd_ai_model', this.aiModel);
+      });
+    }
+
     // Speed slider
     const speedSlider = panel.querySelector<HTMLInputElement>('.sd-ap-speed-slider');
     const speedVal    = panel.querySelector<HTMLElement>('.sd-ap-speed-val');
@@ -1864,6 +1873,19 @@ export class AssistantModule {
         </div>
         <div class="sd-ap-qa-body">
           <div class="sd-ap-settings-body">
+            <div class="sd-ap-setting-divider">Модель AI</div>
+            <div class="sd-ap-setting-row">
+              <label class="sd-ap-setting-label">Модель</label>
+              <select class="sd-ap-model-select" id="sd-ap-model-select">
+                <option value="anthropic/claude-haiku-4-5" ${(this.aiModel||'anthropic/claude-haiku-4-5')==='anthropic/claude-haiku-4-5'?'selected':''}>Claude Haiku 4.5 — быстрая</option>
+                <option value="anthropic/claude-sonnet-4-5" ${this.aiModel==='anthropic/claude-sonnet-4-5'?'selected':''}>Claude Sonnet 4.5 — умная</option>
+                <option value="anthropic/claude-opus-4-5" ${this.aiModel==='anthropic/claude-opus-4-5'?'selected':''}>Claude Opus 4.5 — мощная</option>
+                <option value="google/gemini-flash-1.5" ${this.aiModel==='google/gemini-flash-1.5'?'selected':''}>Gemini Flash 1.5</option>
+                <option value="openai/gpt-4o-mini" ${this.aiModel==='openai/gpt-4o-mini'?'selected':''}>GPT-4o mini</option>
+                <option value="openai/gpt-4o" ${this.aiModel==='openai/gpt-4o'?'selected':''}>GPT-4o</option>
+              </select>
+            </div>
+            <div class="sd-ap-setting-divider">Голос и озвучка</div>
             <div class="sd-ap-setting-row">
               <label class="sd-ap-setting-label">Скорость озвучки</label>
               <div class="sd-ap-speed-row">
@@ -3993,9 +4015,9 @@ export class AssistantModule {
   private updateChatLayout(): void {
     if (!this.panel) return;
     const hasMessages = this.messagesEl ? this.messagesEl.childElementCount > 0 : false;
-    // When chatting, hide collapsible sections and hints to reduce clutter
+    // When chatting, hide quick actions and hints; keep settings always accessible
     const hideWhenChatting = this.panel.querySelectorAll<HTMLElement>(
-      '#sd-ap-quick-actions, #sd-ap-settings-section, .sd-ap-hints'
+      '#sd-ap-quick-actions, .sd-ap-hints'
     );
     hideWhenChatting.forEach(el => {
       el.style.display = hasMessages ? 'none' : '';
@@ -5126,14 +5148,19 @@ export class AssistantModule {
             .replace(/\{[^{}]*"action"\s*:[^{}]*\}/g, '')
             .trim();
           const { text: displayText, suggestions: followUps } = this.parseFollowUpSuggestions(strippedReply);
-          let ttsBtn: HTMLElement | null;
+          let ttsBtn: HTMLElement | null = null;
           if (streamMsgEl) {
-            ttsBtn = this.finalizeStreamBubble(streamMsgEl, displayText, reply);
+            const streamEl = streamMsgEl;
+            if (displayText) {
+              ttsBtn = this.finalizeStreamBubble(streamEl, displayText, reply);
+            } else {
+              (streamEl as HTMLElement).remove(); // don't render blank bubble when AI returned pure JSON
+            }
             streamMsgEl = null; streamBubble = null;
-          } else {
+          } else if (displayText) {
             ttsBtn = this.addAssistantMessage(displayText);
           }
-          if (this.ttsEnabled && ttsBtn) this.startMsgTts(displayText, ttsBtn);
+          if (displayText && this.ttsEnabled && ttsBtn) this.startMsgTts(displayText, ttsBtn);
           if (followUps.length) this.addFollowUpSuggestions(followUps);
         }
       }

@@ -661,6 +661,20 @@ html.light .sd-ap-mode-tab.active { color: #fff; }
   background: var(--ap-accent);
   border: 2px solid var(--ap-surface);
 }
+.sd-ap-model-select {
+  padding: 7px 9px;
+  border: 1px solid var(--ap-line);
+  border-radius: 9px;
+  background: var(--ap-surface-2);
+  color: var(--ap-txt);
+  font-size: 11.5px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  width: 100%;
+}
+.sd-ap-model-select:focus { border-color: var(--ap-accent); }
+.sd-ap-model-select option { background: var(--ap-surface); color: var(--ap-txt); }
 .sd-ap-voice-select {
   padding: 7px 9px;
   border: 1px solid var(--ap-line);
