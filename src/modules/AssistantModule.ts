@@ -2977,8 +2977,7 @@ export class AssistantModule {
    private setupVoiceHotkey(): void {
      document.addEventListener('keydown', (e: KeyboardEvent) => {
        const activeEl = document.activeElement as HTMLElement;
-       const isSimaTextarea = activeEl === this.textareaEl;
-       if (!isSimaTextarea && (activeEl?.tagName === 'INPUT' || activeEl?.tagName === 'TEXTAREA' || activeEl?.isContentEditable)) return;
+       if (activeEl?.tagName === 'INPUT' || activeEl?.tagName === 'TEXTAREA' || activeEl?.isContentEditable) return;
 
        if (this.matchesHotkey(e, this.hotkeyConfig.quickVoice)) {
          e.preventDefault();
@@ -4997,6 +4996,16 @@ export class AssistantModule {
         this.addAssistantMessage(`Открываю «${label}»…`, navAction);
         setTimeout(() => this.navigateTo(navAction!.page), 400);
       } else {
+        // Safety net: if clarify JSON slipped through (e.g. AI prefixed with text), catch it here
+        const clarifyFallback = this.parseClarifyAction(replyNorm);
+        if (clarifyFallback) {
+          cleanStream();
+          const textBefore = replyNorm.replace(/\{[\s\S]*?"action"\s*:\s*"clarify"[\s\S]*?\}/g, '').trim();
+          if (textBefore) this.addAssistantMessage(textBefore);
+          this.addClarifyCard(clarifyFallback, text);
+          this.setStatus('Готова');
+          return;
+        }
         // Check for task actions
         const taskAction = this.parseTaskAction(reply);
         if (taskAction) {
@@ -5085,6 +5094,7 @@ export class AssistantModule {
         max_tokens: 1500,
         temperature: 0.7,
         stream: useStream,
+        ...(useStream ? { stream_options: { include_usage: true } } : {}),
       }),
     });
     if (!res.ok) {
@@ -5400,8 +5410,11 @@ export class AssistantModule {
           <div class="sd-ap-plan-body">${safeQ}</div>
           ${(optionsHtml || otherHtml) ? `<div class="sd-ap-clarify-opts">${optionsHtml}${otherHtml}</div>` : ''}
           <div class="sd-ap-clarify-free" style="display:none">
-            <input class="sd-ap-clarify-input" type="text" placeholder="Напишите свой ответ…">
-            <button class="sd-ap-clarify-send">Отправить</button>
+            <span class="sd-ap-clarify-free-hint">Опишите, что вы имели в виду:</span>
+            <div class="sd-ap-clarify-input-row">
+              <input class="sd-ap-clarify-input" type="text" placeholder="Напишите свой ответ…">
+              <button class="sd-ap-clarify-send">→</button>
+            </div>
           </div>
         </div>
       </div>`;

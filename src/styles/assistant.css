@@ -676,6 +676,96 @@ html.light .sd-ap-mode-tab.active { color: #fff; }
 .sd-ap-voice-select option { background: var(--ap-surface); color: var(--ap-txt); }
 .sd-ap-setting-note { font-size: 10px; color: var(--ap-txt-3); line-height: 1.4; }
 
+/* Разделитель и подзаголовок внутри настроек */
+.sd-ap-setting-divider {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ap-txt-3);
+  padding: 4px 0 2px;
+  border-top: 1px solid var(--ap-line);
+  margin-top: 2px;
+}
+.sd-ap-setting-sublabel { font-size: 11px; color: var(--ap-txt-2); font-weight: 500; }
+
+/* Горячие клавиши */
+.sd-ap-hk-row { display: flex; align-items: center; gap: 7px; }
+.sd-ap-hk-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--ap-line);
+  background: var(--ap-surface-2);
+  color: var(--ap-txt);
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  min-width: 60px;
+  justify-content: center;
+  transition: border-color 0.15s, color 0.15s;
+}
+.sd-ap-hk-badge.sd-ap-hk-capturing {
+  border-color: var(--ap-accent);
+  color: var(--ap-accent);
+  animation: hk-blink 0.7s infinite;
+}
+@keyframes hk-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.sd-ap-hk-change {
+  padding: 4px 10px;
+  border: 1px solid var(--ap-line);
+  border-radius: 7px;
+  background: var(--ap-surface-2);
+  color: var(--ap-txt-2);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.13s, border-color 0.13s, color 0.13s;
+}
+.sd-ap-hk-change:hover { background: var(--ap-accent-soft); border-color: var(--ap-accent); color: var(--ap-accent); }
+
+/* Clarify — поле свободного ввода (ответ «Другое…») */
+.sd-ap-clarify-free {
+  display: none;
+  flex-direction: column;
+  gap: 7px;
+  padding: 6px 11px 10px;
+}
+.sd-ap-clarify-free-hint {
+  font-size: 11px;
+  color: var(--ap-txt-3);
+}
+.sd-ap-clarify-input-row { display: flex; gap: 6px; align-items: center; }
+.sd-ap-clarify-input {
+  flex: 1;
+  padding: 7px 11px;
+  border: 1px solid var(--ap-line);
+  border-radius: 10px;
+  background: var(--ap-surface-2);
+  color: var(--ap-txt);
+  font-size: 12.5px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.sd-ap-clarify-input:focus { border-color: var(--ap-accent); }
+.sd-ap-clarify-send {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 10px;
+  background: var(--ap-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: filter 0.13s;
+}
+.sd-ap-clarify-send:hover { filter: brightness(1.1); }
+
 /* ═══ ПОДСКАЗКИ ═══════════════════════════════════════════════════════════════ */
 
 .sd-ap-hints {
