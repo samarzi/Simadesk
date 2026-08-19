@@ -691,6 +691,158 @@ const HINTS = [
   'Создай отчёт',
 ];
 
+// ── Context-aware suggestions ────────────────────────────────────────────────
+
+function buildContextSuggestions(): string[] {
+  const w = () => window as any;
+  const page: string = w().__sdCurrentPage ?? '';
+
+  // Helpers — collected once
+  const wbm = w().wbModule;
+  const ozm = w().ozonModule;
+  const ymm = w().yandexModule;
+  const wbConn  = !!(wbm?.connected);
+  const ozConn  = !!(ozm?.connected);
+  const ymConn  = !!(ymm?.connected);
+  const wbName  = wbm?.shopName  ? ` (${wbm.shopName})`  : '';
+  const ozName  = ozm?.shopName  ? ` (${ozm.shopName})`  : '';
+  const ymName  = ymm?.shopName  ? ` (${ymm.shopName})`  : '';
+
+  const reviews: any[] = w().reviewsModule?.allReviews ?? [];
+  const unanswered = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply);
+  const negUnanswered = unanswered.filter((r: any) => (r.stars ?? 5) <= 2);
+
+  const stockItems: any[] = w().stockModule?.items ?? [];
+  const oosCount = stockItems.filter((i: any) => i.stockTotal === 0).length;
+  const lowCount = stockItems.filter((i: any) => i.stockTotal > 0 && i.stockTotal < 10).length;
+
+  const orders: any[] = w().allOrdersModule?.orders ?? [];
+  const urgentOrders = orders.filter((o: any) =>
+    o.status === 'awaiting_packaging' && o.shipment_date &&
+    new Date(o.shipment_date).getTime() - Date.now() < 4 * 3600_000
+  ).length;
+
+  const tasks: any[] = w().taskManagerModule?.tasks ?? [];
+  const openTasks = tasks.filter((t: any) => t.status !== 'done').length;
+  const overdueTasks = tasks.filter((t: any) => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()).length;
+
+  const campaigns: any[] = w().advertisingModule?.campaigns ?? [];
+  const activeCampaigns = campaigns.filter((c: any) => c.status === 'active').length;
+  const losingCampaigns = campaigns.filter((c: any) => (c.roi ?? 0) < -15 && (c.spent ?? 0) > 200).length;
+
+  const docs = w().docsModule;
+  const hasDocs = !!(docs?.docs?.length);
+
+  const suggs: string[] = [];
+
+  switch (page) {
+    case 'docs': {
+      suggs.push('Создать Excel', 'Создать Word');
+      if (hasDocs) {
+        suggs.push('Улучшить дизайн таблицы', 'Закрась все ячейки красным', 'Экспорт заказов в Excel');
+      } else {
+        suggs.push('Отчёт аналитики');
+      }
+      break;
+    }
+    case 'analytics': {
+      if (wbConn) suggs.push(`Аналитика WB${wbName} за 7 дней`, `Аналитика WB за 30 дней`);
+      if (ozConn) suggs.push(`Аналитика Ozon${ozName} за 7 дней`);
+      if (ymConn) suggs.push(`Аналитика ЯМ${ymName} за 7 дней`);
+      suggs.push('Экспорт аналитики', 'Топ товаров по выручке');
+      break;
+    }
+    case 'orders': {
+      if (urgentOrders > 0) suggs.push(`Срочные заказы (${urgentOrders})`);
+      if (wbConn) suggs.push(`Заказы WB${wbName}`);
+      if (ozConn) suggs.push(`Заказы Ozon${ozName}`);
+      if (ymConn) suggs.push(`Заказы ЯМ${ymName}`);
+      suggs.push('Экспорт заказов в Excel');
+      break;
+    }
+    case 'reviews': {
+      if (negUnanswered.length > 0) suggs.push(`Ответить на ${negUnanswered.length} негативных`);
+      if (unanswered.length > 0) suggs.push('Ответить на все без ответа');
+      if (wbConn) suggs.push(`Отзывы WB${wbName}`);
+      if (ozConn) suggs.push(`Отзывы Ozon${ozName}`);
+      if (ymConn) suggs.push(`Отзывы ЯМ${ymName}`);
+      break;
+    }
+    case 'stock': {
+      if (oosCount > 0) suggs.push(`Задачи по ${oosCount} OOS`);
+      if (lowCount > 0) suggs.push(`Критично мало (${lowCount} SKU)`);
+      suggs.push('Нулевые остатки', 'Аудит рисков остатков');
+      break;
+    }
+    case 'products-hub': {
+      if (oosCount > 0) suggs.push(`Задачи по ${oosCount} OOS`);
+      if (wbConn) suggs.push(`Товары WB${wbName}`);
+      if (ozConn) suggs.push(`Товары Ozon${ozName}`);
+      suggs.push('Обновить описания', 'Скрытые товары');
+      break;
+    }
+    case 'repricer': {
+      suggs.push('Список правил репрайсера');
+      if (wbConn) suggs.push(`Снизить цены WB${wbName} на 5%`);
+      if (ozConn) suggs.push(`Снизить цены Ozon${ozName} на 5%`);
+      suggs.push('Анализ позиций', 'Поднять цены на 10%');
+      break;
+    }
+    case 'advertising': {
+      if (losingCampaigns > 0) suggs.push(`Убыточные кампании (${losingCampaigns})`);
+      suggs.push('Статистика рекламы');
+      if (wbConn) suggs.push(`Кампании WB${wbName}`);
+      if (ozConn) suggs.push(`Кампании Ozon${ozName}`);
+      if (activeCampaigns > 0) suggs.push('Остановить убыточные');
+      break;
+    }
+    case 'supply': {
+      suggs.push('Статистика поставок');
+      if (wbConn) suggs.push(`Создать поставку WB${wbName}`);
+      if (ymConn) suggs.push(`Слоты ЯМ FBY${ymName}`);
+      suggs.push('Список поставок');
+      break;
+    }
+    case 'tasks': {
+      if (overdueTasks > 0) suggs.push(`Просроченных задач: ${overdueTasks}`);
+      suggs.push('Дневной чеклист', 'Задачи по OOS');
+      if (openTasks > 0) suggs.push(`Открытых задач: ${openTasks}`);
+      break;
+    }
+    case 'simastore': {
+      suggs.push('Ссылка на витрину', 'Опубликовать витрину', 'Добавить товары на витрину');
+      break;
+    }
+    case 'marketplaces':
+    case 'wb':
+    case 'ozon':
+    case 'yandex': {
+      suggs.push('Проверить API ключи', 'Синхронизировать данные');
+      if (wbConn) suggs.push(`WB${wbName}: статус`);
+      if (ozConn) suggs.push(`Ozon${ozName}: статус`);
+      if (ymConn) suggs.push(`ЯМ${ymName}: статус`);
+      break;
+    }
+    case 'settings':
+    case 'profile':
+    case 'billing': {
+      suggs.push('Мой тариф', 'Проверить ключи', 'Пригласить сотрудника');
+      break;
+    }
+    case 'home':
+    default: {
+      if (urgentOrders > 0) suggs.push(`Срочные заказы (${urgentOrders})`);
+      if (negUnanswered.length > 0) suggs.push(`Ответить на ${negUnanswered.length} негативных`);
+      else if (unanswered.length > 0) suggs.push('Ответить на все отзывы');
+      if (oosCount > 0) suggs.push(`Задачи по ${oosCount} OOS`);
+      suggs.push('Что важного сегодня?', 'Аудит рисков', 'Дневной чеклист');
+      break;
+    }
+  }
+
+  return suggs.slice(0, 5);
+}
+
 // ── Store context collector ───────────────────────────────────────────────────
 
 function getStoreContext(): string {
@@ -2803,10 +2955,32 @@ export class AssistantModule {
     document.getElementById('nav-assistant')?.querySelector('.sima-alert-dot')?.remove();
     this.lastAlertKey = ''; // сброс — чтобы при следующей проверке снова показать если актуально
 
+    this.renderContextHints();
     setTimeout(() => this.maybeShowMorningBrief(), 800);
     if (!this.voiceOnboarded) {
       setTimeout(() => this.showVoiceOnboarding(), 600);
     }
+  }
+
+  private renderContextHints(): void {
+    const hintsEl = this.panel?.querySelector<HTMLElement>('.sd-ap-hints');
+    if (!hintsEl) return;
+    const suggs = buildContextSuggestions();
+    if (!suggs.length) return;
+    hintsEl.innerHTML = suggs
+      .map(s => `<button class="sd-ap-hint">${s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</button>`)
+      .join('');
+    hintsEl.querySelectorAll<HTMLButtonElement>('.sd-ap-hint').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const t = btn.textContent ?? '';
+        if (this.textareaEl) {
+          this.textareaEl.value = t;
+          this.textareaEl.focus();
+          this.autoResizeTextarea();
+        }
+        this.sendMessage(t);
+      });
+    });
   }
 
   /** Последние применённые координаты — чтобы не трогать DOM без нужды. */
