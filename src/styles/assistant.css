@@ -1317,6 +1317,15 @@ html.light .sd-ap-msg-bubble pre { background: rgba(20, 10, 40, 0.05); }
 }
 .sd-ap-send-btn:hover { filter: brightness(1.12); }
 .sd-ap-send-btn:disabled { opacity: 0.45; filter: none; cursor: default; }
+.sd-ap-send-btn.is-stop {
+  background: linear-gradient(140deg, #ef4444, #dc2626) !important;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.35);
+  animation: stop-pulse 1.4s ease-in-out infinite;
+}
+@keyframes stop-pulse {
+  0%, 100% { box-shadow: 0 2px 8px rgba(239, 68, 68, 0.35); }
+  50% { box-shadow: 0 2px 14px rgba(239, 68, 68, 0.6); }
+}
 
 /* ═══ ОНБОРДИНГ ГОЛОСА ════════════════════════════════════════════════════════ */
 

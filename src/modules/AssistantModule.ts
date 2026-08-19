@@ -1213,6 +1213,7 @@ export class AssistantModule {
   private isOpen = false;
   private isResizing = false;
   private isLoading = false;
+  private abortController: AbortController | null = null;
   private pageActionsUnsub: (() => void) | null = null;
   private isListening = false;
   private recognition: any = null;
@@ -1504,7 +1505,14 @@ export class AssistantModule {
     this.statusEl    = panel.querySelector('.sd-ap-status');
 
     panel.querySelector('.sd-ap-close')?.addEventListener('click', () => this.closePanel());
-    panel.querySelector('.sd-ap-send-btn')?.addEventListener('click', () => this.handleSend());
+    panel.querySelector('.sd-ap-send-btn')?.addEventListener('click', () => {
+      const btn = panel.querySelector<HTMLButtonElement>('.sd-ap-send-btn');
+      if (btn?.classList.contains('is-stop')) {
+        this.abortController?.abort();
+      } else {
+        this.handleSend();
+      }
+    });
     const micBtn = panel.querySelector<HTMLElement>('.sd-ap-mic-btn');
     if (micBtn) {
       micBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.voiceSendOnEnd = false; this.startVoice(); });
@@ -1849,7 +1857,7 @@ export class AssistantModule {
           </div>
         </div>
       </div>
-      <div class="sd-ap-quick-actions" id="sd-ap-settings-section">
+      <div class="sd-ap-quick-actions open" id="sd-ap-settings-section">
         <div class="sd-ap-qa-header" id="sd-ap-settings-header">
           <span class="sd-ap-qa-title">Настройки ассистента</span>
           <svg class="sd-ap-qa-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
@@ -2989,7 +2997,7 @@ export class AssistantModule {
          e.preventDefault();
          if (this.isListening) { this.recognition?.stop(); return; }
          if (!this.isOpen) this.openPanel();
-         this.voiceSendOnEnd = true;
+         this.voiceSendOnEnd = false;
          setTimeout(() => { if (!this.isListening) this.startVoice(); }, 150);
          return;
        }
@@ -2998,7 +3006,7 @@ export class AssistantModule {
          if (this.voiceHotkeyHeld) return;
          e.preventDefault();
          this.voiceHotkeyHeld = true;
-         this.voiceSendOnEnd = true;
+         this.voiceSendOnEnd = false;
          if (!this.isOpen) this.openPanel();
          setTimeout(() => { if (this.voiceHotkeyHeld) this.startVoice(); }, 150);
          return;
@@ -5127,6 +5135,10 @@ export class AssistantModule {
       this.setStatus('Готова');
     } catch (err: unknown) {
       this.removeTypingIndicator(typing);
+      if (err instanceof Error && err.name === 'AbortError') {
+        this.setStatus('Остановлено');
+        return;
+      }
       const msg = (err instanceof Error ? err.message : String(err))?.includes('401')
         ? 'Неверный API-ключ OpenRouter. Проверьте ключ в настройках AI.'
         : (err instanceof Error ? err.message : String(err))?.includes('429')
@@ -5166,8 +5178,12 @@ export class AssistantModule {
 
     const useStream = !!onChunk;
 
+    this.abortController = new AbortController();
+    const { signal } = this.abortController;
+
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
+      signal,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${this.aiKey}`,
@@ -5747,7 +5763,18 @@ export class AssistantModule {
     const send = this.panel?.querySelector<HTMLButtonElement>('.sd-ap-send-btn');
     const mic  = this.panel?.querySelector<HTMLButtonElement>('.sd-ap-mic-btn');
     if (this.textareaEl) this.textareaEl.disabled = !enabled;
-    if (send) send.disabled = !enabled;
+    if (send) {
+      send.disabled = false;
+      if (!enabled) {
+        send.classList.add('is-stop');
+        send.title = 'Остановить';
+        send.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>`;
+      } else {
+        send.classList.remove('is-stop');
+        send.title = 'Отправить';
+        send.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>`;
+      }
+    }
     if (mic)  mic.disabled  = !enabled;
   }
 
