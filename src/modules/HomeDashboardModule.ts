@@ -73,6 +73,7 @@ interface StoreCard {
   cancels: number;
   lastActivity: Date | null;
   connected: boolean;
+  fetchError?: string;  // текст ошибки API, если заказы не загрузились
   // Остатки (из локальной БД, загружаются параллельно с заказами)
   stockInStock: number;  // товаров с остатком > 3
   stockLow: number;      // товаров с остатком 1–3
@@ -850,11 +851,18 @@ export class HomeDashboardModule {
         try {
           const creds = { client_id: store.client_id, api_key: store.api_key };
           type OzPost = Awaited<ReturnType<typeof ozonOrdersApi.getFboPostings>>;
+          let fbsErr: unknown, fboErr: unknown;
           const [fbs, fbo]: [OzPost, OzPost] = await Promise.all([
-            fetchAllPagesByCursor((lim, cursor, sig) => ozonOrdersApi.getFbsPostings(creds, sinceIso, toIso, null, lim, cursor, sig), 50, signal).catch(() => [] as OzPost),
-            fetchAllPages((lim, off, sig) => ozonOrdersApi.getFboPostings(creds, sinceIso, toIso, lim, off as number, sig), 50, signal).catch(() => [] as OzPost),
+            fetchAllPagesByCursor((lim, cursor, sig) => ozonOrdersApi.getFbsPostings(creds, sinceIso, toIso, null, lim, cursor, sig), 50, signal).catch(e => { fbsErr = e; return [] as OzPost; }),
+            fetchAllPages((lim, off, sig) => ozonOrdersApi.getFboPostings(creds, sinceIso, toIso, lim, off as number, sig), 50, signal).catch(e => { fboErr = e; return [] as OzPost; }),
           ]);
-          card.connected = true;
+          if (fbsErr || fboErr) {
+            const msg = [fbsErr, fboErr].filter(Boolean).map(e => e instanceof Error ? e.message : String(e)).join(' | ');
+            console.error(`[Дашборд] Ozon "${store.name}" — ошибка загрузки заказов:`, msg);
+            card.fetchError = msg;
+          } else {
+            card.connected = true;
+          }
           for (const p of [...fbs, ...fbo]) {
             const total = p.products.reduce((s, pr) => s + (parseFloat(pr.price) || 0) * pr.quantity, 0);
             const created = new Date(p.created_at || p.in_process_at || '');
@@ -871,7 +879,11 @@ export class HomeDashboardModule {
               storeName: store.name, storeColor: color,
             });
           }
-        } catch (e: unknown) { debug.warn('[Home] Ozon', (e instanceof Error ? e.message : String(e)) ?? e); }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(`[Дашборд] Ozon "${store.name}" — необработанная ошибка:`, msg);
+          card.fetchError = msg;
+        }
         finally { clear(); }
       })());
     });
@@ -894,7 +906,11 @@ export class HomeDashboardModule {
               storeName: store.name, storeColor: color,
             });
           }
-        } catch (e: unknown) { debug.warn('[Home] YM', (e instanceof Error ? e.message : String(e)) ?? e); }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(`[Дашборд] ЯМ "${store.name}" — ошибка загрузки заказов:`, msg);
+          card.fetchError = msg;
+        }
         finally { clear(); }
       })());
     });
@@ -918,7 +934,11 @@ export class HomeDashboardModule {
               storeName: store.name, storeColor: color,
             });
           }
-        } catch (e: unknown) { debug.warn('[Home] WB', (e instanceof Error ? e.message : String(e)) ?? e); }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(`[Дашборд] WB "${store.name}" — ошибка загрузки заказов:`, msg);
+          card.fetchError = msg;
+        }
         finally { clear(); }
       })());
     });
@@ -1227,10 +1247,30 @@ export class HomeDashboardModule {
 
       const storeRows = g.cards.map(c => {
         const hasStoreStock = c.stockInStock + c.stockLow + c.stockOut > 0;
-        return `<div class="mpb-store-row" style="--c:${c.mpColor}" onclick="window.app.navigateTo('${dest}')">
+        return `<div class="mpb-store-row${c.fetchError ? ' mpb-store-row-err' : ''}" style="--c:${c.mpColor}" onclick="window.app.navigateTo('${dest}')">
           <span class="mpb-store-dot"></span>
           <span class="mpb-store-name">${escHtml(c.storeName)}</span>
           <span class="mpb-store-stats">
+            ${c.fetchError ? `
+            <span class="mpb-stat mpb-stat-error" title="${escHtml(c.fetchError)}">
+              <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="6"/><path d="M7 4v3M7 10h.01"/></svg>
+              Ошибка API — проверьте консоль браузера
+            </span>
+            ${hasStoreStock ? `
+            <span class="mpb-stat mpb-stat-sep"></span>
+            <span class="mpb-stat">
+              <span class="mpb-stat-lbl">В наличии</span>
+              <span class="mpb-stat-val mpb-stock-ok">${c.stockInStock}</span>
+            </span>
+            <span class="mpb-stat">
+              <span class="mpb-stat-lbl">Мало</span>
+              <span class="mpb-stat-val ${c.stockLow > 0 ? 'mpb-stock-low' : ''}">${c.stockLow}</span>
+            </span>
+            <span class="mpb-stat">
+              <span class="mpb-stat-lbl">Нет</span>
+              <span class="mpb-stat-val ${c.stockOut > 0 ? 'mpb-stock-out' : ''}">${c.stockOut}</span>
+            </span>` : ''}
+            ` : `
             <span class="mpb-stat">
               <span class="mpb-stat-lbl">Выручка 30д</span>
               <span class="mpb-stat-val mpb-money">${fmtRub(c.revenue30)}</span>
@@ -1259,6 +1299,7 @@ export class HomeDashboardModule {
               <span class="mpb-stat-lbl">Нет</span>
               <span class="mpb-stat-val ${c.stockOut > 0 ? 'mpb-stock-out' : ''}">${c.stockOut}</span>
             </span>` : ''}
+            `}
           </span>
           <span class="mpb-store-status ${c.connected ? 'live' : 'off'}"></span>
         </div>`;
