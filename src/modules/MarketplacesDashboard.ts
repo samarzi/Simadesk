@@ -187,7 +187,7 @@ export class MarketplacesDashboard {
         const entry = this.syncLog[idx];
         entry.status = 'syncing';
         entry.stage = 'Загружаем товары...';
-        this.render();
+        this.renderSyncPanel();
         try {
           const products = await fetchAllOzonProducts(store);
           entry.stage = `Сохраняем ${products.length} товаров...`;
@@ -203,7 +203,7 @@ export class MarketplacesDashboard {
           entry.error = (e instanceof Error ? e.message : String(e)) || String(e);
         }
         idx++;
-        this.render();
+        this.renderSyncPanel();
       }
 
       // WB
@@ -211,7 +211,7 @@ export class MarketplacesDashboard {
         const entry = this.syncLog[idx];
         entry.status = 'syncing';
         entry.stage = 'Загружаем карточки...';
-        this.render();
+        this.renderSyncPanel();
         try {
           const products = await fetchAllWbProducts(store);
           entry.stage = `Сохраняем ${products.length} товаров...`;
@@ -227,7 +227,7 @@ export class MarketplacesDashboard {
           entry.error = (e instanceof Error ? e.message : String(e)) || String(e);
         }
         idx++;
-        this.render();
+        this.renderSyncPanel();
       }
 
       // Yandex
@@ -235,7 +235,7 @@ export class MarketplacesDashboard {
         const entry = this.syncLog[idx];
         entry.status = 'syncing';
         entry.stage = 'Загружаем товары...';
-        this.render();
+        this.renderSyncPanel();
         try {
           const products = await fetchAllYandexProducts(store);
           entry.stage = `Сохраняем ${products.length} товаров...`;
@@ -251,7 +251,7 @@ export class MarketplacesDashboard {
           entry.error = (e instanceof Error ? e.message : String(e)) || String(e);
         }
         idx++;
-        this.render();
+        this.renderSyncPanel();
       }
 
       await this.load();
