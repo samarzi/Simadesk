@@ -4517,7 +4517,12 @@ export class AssistantModule {
       const pageAct = this.parsePageAction(replyNorm);
       if (pageAct) {
         cleanStream();
-        const textPart = pageAct.raw ? replyNorm.split(pageAct.raw).join('').trim() : '';
+        const textPart = pageAct.raw
+          ? replyNorm.split(pageAct.raw).join('')
+            .replace(/\{"suggestions"\s*:\s*\[[^\]]*\]\s*\}/gs, '')
+            .replace(/```[\s\S]*?```/g, '')
+            .trim()
+          : '';
         if (textPart) this.addAssistantMessage(textPart);
         await this.executePageAction(pageAct.name, pageAct.args, text);
         return;
@@ -4700,16 +4705,59 @@ export class AssistantModule {
         return { name: p.name, args: p.args ?? {}, raw: found.raw };
       }
     }
-    // Shorthand: {"action":"reload_page",...} — action IS the page action name
+    // Shorthand: {"action":"create_doc","type":"excel"} — action IS the page action name.
+    // Accept any registered global action name, extract args from nested "args" or flat fields.
     const knownActions = new Set([
       'reload_page', 'toggle_theme', 'toggle_theme_on', 'toggle_theme_off',
       'navigate_to', 'daily_checklist', 'run_risk_audit',
+      // document actions
+      'create_doc', 'generate_report', 'export_analytics_report',
+      'export_orders_excel', 'export_orders_excel_global',
+      // task actions
+      'create_task_global', 'edit_task', 'delete_task', 'mark_task_done',
+      'create_oos_tasks', 'create_urgent_orders_task', 'create_low_stock_tasks',
+      // reviews
+      'fetch_reviews', 'reply_review', 'ai_generate_review_reply', 'reply_all_unanswered',
+      // analytics
+      'fetch_analytics',
+      // ads
+      'get_ad_stats', 'toggle_campaign', 'set_campaign_budget',
+      // marketplace / sync
+      'sync_marketplace',
+      // products
+      'bulk_price_change', 'bulk_price_filtered', 'set_price',
+      'hide_product', 'show_product', 'update_product_description',
+      // repricer
+      'list_repricer_rules', 'edit_repricer_rule', 'create_repricer_rule',
+      // store
+      'simastore_get_link', 'simastore_publish', 'simastore_add_products',
+      // settings
+      'get_subscription_info', 'check_api_keys', 'invite_team_member',
+      // supply
+      'get_ym_fby_slots', 'create_ym_supply', 'create_supply_wb', 'get_supply_stats',
     ]);
     const shorthand = this.extractBalancedJson(reply, '"action"');
     if (shorthand) {
       const p = shorthand.value;
       if (p && typeof p.action === 'string' && knownActions.has(p.action)) {
-        return { name: p.action, args: p.args ?? {}, raw: shorthand.raw };
+        // Support both nested args and flat fields at top level
+        const { action: _a, args: nestedArgs, ...flatFields } = p;
+        const args = nestedArgs && Object.keys(nestedArgs).length > 0 ? nestedArgs : flatFields;
+        return { name: p.action, args, raw: shorthand.raw };
+      }
+    }
+    // Also try aiPage.hasAction for any registered global not in the static set above
+    const anyShorthand = this.extractBalancedJson(reply, '"action"');
+    if (anyShorthand) {
+      const p = anyShorthand.value;
+      if (p && typeof p.action === 'string' && !['page_action','page_action_plan','chain','clarify','navigate','create_task','open_support'].includes(p.action)) {
+        try {
+          if ((window as any).aiPageContext?.hasAction?.(p.action) || aiPage.hasAction(p.action)) {
+            const { action: _a, args: nestedArgs, ...flatFields } = p;
+            const args = nestedArgs && Object.keys(nestedArgs).length > 0 ? nestedArgs : flatFields;
+            return { name: p.action, args, raw: anyShorthand.raw };
+          }
+        } catch { /* ignore */ }
       }
     }
     return null;
