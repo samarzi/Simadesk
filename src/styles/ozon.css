@@ -4678,6 +4678,16 @@
 .mpb-stat-val.mpb-stock-ok  { color: #16a34a; }
 .mpb-stat-val.mpb-stock-low { color: #f59e0b; }
 .mpb-stat-val.mpb-stock-out { color: #ef4444; }
+.mpb-stat.mpb-stat-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #ef4444;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: help;
+}
+.mpb-store-row-err { background: rgba(239,68,68,.04); }
 
 .mpb-store-status {
   width: 7px;
