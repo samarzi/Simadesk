@@ -559,12 +559,11 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 - options: массив быстрых кнопок (показываются в интерфейсе) — всегда добавляй если возможно
 - Задавай максимум ОДИН вопрос за раз
 - После ответа пользователя — выполни action с полученным параметром
-- НЕ уточняй параметры для: navigate, reload_page, toggle_theme, daily_checklist, run_risk_audit (они не требуют обязательных аргументов)
+- НЕ уточняй параметры для: navigate, reload_page, toggle_theme, daily_checklist, run_risk_audit, create_doc, fetch_reviews, fetch_analytics, get_supply_stats, list_repricer_rules, get_subscription_info, check_api_keys, simastore_get_link, get_ad_stats, sync_marketplace (они не требуют обязательных аргументов или имеют разумные дефолты)
 - ОБЯЗАТЕЛЬНО спрашивай для: set_price (mp, article, price), bulk_price_change (mp), bulk_price_filtered (mp), export_orders (mp если нужен), toggle_campaign (campaign_id), hide_product (article), show_product (article)
-- ОБЯЗАТЕЛЬНО спрашивай для: create_doc — если название документа не указано явно пользователем
-- Примеры когда спрашивать: «снизь цены на 10%» → спроси «На каком маркетплейсе снижать цены?»; «удали задачу» → спроси «Какую задачу удалить? Напиши название»; «скрой товар» → спроси «Укажи артикул товара который нужно скрыть»; «создай таблицу эксель» → спроси «Как назвать таблицу?»
+- Примеры когда спрашивать: «снизь цены на 10%» → спроси «На каком маркетплейсе снижать цены?»; «удали задачу» → спроси «Какую задачу удалить? Напиши название»; «скрой товар» → спроси «Укажи артикул товара который нужно скрыть»
 
-ГЛАВНОЕ ПРАВИЛО: лучше переспросить, чем сделать что-то не то. Если есть малейшая неопределённость в параметре — спроси. Не угадывай, не придумывай из контекста беседы.
+ГЛАВНОЕ ПРАВИЛО: для простых операций без обязательных параметров — выполняй сразу, не переспрашивай. Уточняй только когда без параметра действие бессмысленно (нет маркетплейса для изменения цен, нет артикула для скрытия и т.п.).
 
 ## ЦЕПОЧКИ ДЕЙСТВИЙ (CHAIN ACTIONS)
 Для выполнения нескольких шагов последовательно — ответь ОДНИМ JSON без пояснений:
@@ -4307,6 +4306,176 @@ export class AssistantModule {
     if (aiReplyRe.test(t) && aiPage.hasAction('ai_generate_review_reply')) {
       await this.runFastAction('ai_generate_review_reply', {},
         'Генерирую AI-ответ на отзыв…', 'Генерирую ответ…');
+      return;
+    }
+
+    // ═══ EXCEL СТИЛИ ════════════════════════════════════════════════════════════
+
+    // Color name → hex map for fast Excel styling
+    const COLOR_MAP: Record<string, string> = {
+      красн: '#FF4444', красного: '#FF4444', красным: '#FF4444',
+      синий: '#4488FF', синего: '#4488FF', синим: '#4488FF', голуб: '#00BBFF',
+      зелён: '#44BB44', зелёного: '#44BB44', зелёным: '#44BB44',
+      жёлт: '#FFD700', жёлтого: '#FFD700', жёлтым: '#FFD700', желт: '#FFD700',
+      оранжев: '#FF8C00', оранжевого: '#FF8C00', оранжевым: '#FF8C00',
+      фиолетов: '#9966CC', фиолетового: '#9966CC', фиолетовым: '#9966CC',
+      розов: '#FF88BB', розового: '#FF88BB', розовым: '#FF88BB',
+      сер: '#888888', серого: '#888888', серым: '#888888',
+      бел: '#FFFFFF', белого: '#FFFFFF', белым: '#FFFFFF',
+      чёрн: '#222222', чёрного: '#222222', чёрным: '#222222', черн: '#222222',
+      бирюзов: '#00CCBB', бирюзового: '#00CCBB', коричнев: '#AA7744',
+    };
+    const resolveColor = (word: string): string | null => {
+      for (const [key, hex] of Object.entries(COLOR_MAP)) {
+        if (word.toLowerCase().startsWith(key.toLowerCase())) return hex;
+      }
+      if (/^#[0-9a-fA-F]{3,8}$/.test(word)) return word;
+      return null;
+    };
+
+    // Fast: закрась [всё/диапазон] [цветом] / сделай фон [цветом] / покрась [цветом]
+    const colorRangeRe = /^(?:закрась|покрась|сделай\s+фон|покрасить|закрасить|colorize)\s+(?:(все|весь|all|всю\s+таблицу?|всё|целиком)|(A?\d+:[A-Z]+\d+|[A-Z]+\d+:[A-Z]+\d+))?\s*(?:ячейки\s+)?(?:в\s+)?(\S+)$/i;
+    const colorRangeMatch = t.match(colorRangeRe);
+    if (colorRangeMatch && aiPage.hasAction('excel_style_range')) {
+      const rangeArg = colorRangeMatch[2] ?? 'all';
+      const colorWord = colorRangeMatch[3];
+      const hex = resolveColor(colorWord);
+      if (hex) {
+        await this.runFastAction('excel_style_range', { range: rangeArg, bg: hex },
+          `Закрашиваю ячейки в ${colorWord}…`, 'Закрашиваю ячейки…');
+        return;
+      }
+    }
+    // Fast: цвет текста [цветом] / шрифт [цветом]
+    const textColorRe = /^(?:цвет\s+(?:текста|шрифта?)|шрифт\s+цвет|text\s+color)\s+(?:в\s+)?(\S+)$/i;
+    const textColorMatch = t.match(textColorRe);
+    if (textColorMatch && aiPage.hasAction('excel_style_range')) {
+      const hex = resolveColor(textColorMatch[1]);
+      if (hex) {
+        await this.runFastAction('excel_style_range', { range: 'all', color: hex },
+          'Меняю цвет текста…', 'Меняю цвет текста…');
+        return;
+      }
+    }
+    // Fast: жирный шрифт для всей таблицы
+    const boldAllRe = /^(?:сделай\s+весь\s+текст\s+жирным|жирный\s+шрифт\s+везде|жирный\s+все?\s+ячейки|bold\s+all)$/i;
+    if (boldAllRe.test(t) && aiPage.hasAction('excel_style_range')) {
+      await this.runFastAction('excel_style_range', { range: 'all', bold: true },
+        'Делаю весь текст жирным…', 'Делаю жирным…');
+      return;
+    }
+
+    // ═══ СИНХРОНИЗАЦИЯ ═══════════════════════════════════════════════════════════
+
+    // Fast: синхронизировать данные
+    const syncFastRe = /^(?:синхронизируй|синх|sync|обнови\s+данные|синхронизация)(?:\s+(?:wb|ozon|яндекс|yandex|все|all))?$/i;
+    if (syncFastRe.test(t)) {
+      const mpM = t.match(/\b(wb|ozon|яндекс|yandex)\b/i);
+      const mp = mpM ? mpM[1].toLowerCase() : undefined;
+      await this.runFastAction('sync_marketplace', { mp },
+        'Синхронизирую данные…', 'Синхронизирую…');
+      return;
+    }
+
+    // ═══ ЗАГРУЗКА ДАННЫХ ════════════════════════════════════════════════════════
+
+    // Fast: загрузить отзывы
+    const fetchReviewsRe = /^(?:загрузи?\s+отзывы?|обнови?\s+отзывы?|получи?\s+отзывы?|fetch\s+reviews?)$/i;
+    if (fetchReviewsRe.test(t)) {
+      await this.runFastAction('fetch_reviews', {},
+        'Загружаю отзывы…', 'Загружаю отзывы…');
+      return;
+    }
+
+    // Fast: загрузить аналитику
+    const fetchAnalyticsRe = /^(?:загрузи?\s+аналитик[ую]|обнови?\s+аналитик[ую]|получи?\s+аналитик[ую]|fetch\s+analytics?)$/i;
+    if (fetchAnalyticsRe.test(t)) {
+      await this.runFastAction('fetch_analytics', {},
+        'Загружаю аналитику…', 'Загружаю данные…');
+      return;
+    }
+
+    // ═══ ЗАДАЧИ ══════════════════════════════════════════════════════════════════
+
+    // Fast: создать задачу — "создай задачу [название]" / "добавь задачу [название]"
+    const createTaskFastRe = /^(?:создай|добавь|создать|добавить)\s+задач[ую]\s+(.+)$/i;
+    const createTaskMatch = t.match(createTaskFastRe);
+    if (createTaskMatch) {
+      const title = createTaskMatch[1].trim();
+      await this.runFastAction('create_task_global', { title },
+        `Создаю задачу «${title}»…`, 'Создаю задачу…');
+      return;
+    }
+
+    // Fast: отметить задачу выполненной — "выполнена задача [название]" / "отметь задачу [название] выполненной"
+    const doneTaskRe = /^(?:отметь\s+задач[ую]\s+(.+?)\s+выполненной|задача\s+(.+?)\s+выполнена|выполнена\s+задача\s+(.+)|mark\s+task\s+(.+)\s+done)$/i;
+    const doneTaskMatch = t.match(doneTaskRe);
+    if (doneTaskMatch) {
+      const title = (doneTaskMatch[1] ?? doneTaskMatch[2] ?? doneTaskMatch[3] ?? doneTaskMatch[4]).trim();
+      await this.runFastAction('mark_task_done', { title },
+        `Отмечаю «${title}» выполненной…`, 'Отмечаю задачу…');
+      return;
+    }
+
+    // ═══ СЕРВИС / ПОДПИСКА ═══════════════════════════════════════════════════════
+
+    // Fast: информация о подписке / тарифе
+    const subInfoRe = /^(?:мой\s+тариф|тарифный\s+план|моя\s+подписка|информация\s+о\s+(?:подписке|тарифе)|что\s+вход[иa]т\s+в\s+тариф|my\s+plan|subscription)$/i;
+    if (subInfoRe.test(t)) {
+      await this.runFastAction('get_subscription_info', {},
+        'Получаю информацию о подписке…', 'Загружаю тариф…');
+      return;
+    }
+
+    // Fast: проверить API ключи
+    const checkKeysRe = /^(?:провер[ьи]\s+(?:api\s+)?ключи|check\s+(?:api\s+)?keys?|статус\s+(?:api\s+)?ключей|api\s+ключи)$/i;
+    if (checkKeysRe.test(t)) {
+      await this.runFastAction('check_api_keys', {},
+        'Проверяю API ключи…', 'Проверяю ключи…');
+      return;
+    }
+
+    // ═══ ВИТРИНА ═════════════════════════════════════════════════════════════════
+
+    // Fast: ссылка на витрину
+    const storelinRe = /^(?:ссылка\s+(?:на\s+)?(?:витрин[ую]|магазин[ау]?)|поделись?\s+витриной?|get\s+store\s+link)$/i;
+    if (storelinRe.test(t)) {
+      await this.runFastAction('simastore_get_link', {},
+        'Получаю ссылку на витрину…', 'Загружаю ссылку…');
+      return;
+    }
+
+    // Fast: опубликовать / снять витрину
+    const publishStoreRe = /^(?:опубликуй\s+(?:витрин[ую]|магазин[ую]?)|publish\s+store)$/i;
+    const unpublishStoreRe = /^(?:скрой\s+(?:витрин[ую]|магазин[ую]?)|сними\s+(?:витрин[ую]|с публикации)|unpublish\s+store)$/i;
+    if (publishStoreRe.test(t)) {
+      await this.runFastAction('simastore_publish', { publish: true },
+        'Публикую витрину…', 'Публикую…');
+      return;
+    }
+    if (unpublishStoreRe.test(t)) {
+      await this.runFastAction('simastore_publish', { publish: false },
+        'Снимаю витрину с публикации…', 'Снимаю…');
+      return;
+    }
+
+    // ═══ РЕПРАЙСЕР ═══════════════════════════════════════════════════════════════
+
+    // Fast: список правил репрайсера
+    const repricerRulesRe = /^(?:правила\s+репрайсера|список\s+правил|rules?\s+repricer|repricer\s+rules?)$/i;
+    if (repricerRulesRe.test(t)) {
+      await this.runFastAction('list_repricer_rules', {},
+        'Загружаю правила репрайсера…', 'Загружаю правила…');
+      return;
+    }
+
+    // ═══ ПОСТАВКИ ════════════════════════════════════════════════════════════════
+
+    // Fast: статистика поставок
+    const supplyStatsRe = /^(?:статистика\s+поставок|список\s+поставок|поставки?\s+(?:статистика|список|статус)|supply\s+stats?)$/i;
+    if (supplyStatsRe.test(t)) {
+      await this.runFastAction('get_supply_stats', {},
+        'Загружаю статистику поставок…', 'Загружаю поставки…');
       return;
     }
 
