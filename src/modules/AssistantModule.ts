@@ -1260,7 +1260,9 @@ export class AssistantModule {
   private sessionMenuOpen = false;
 
   // ── Support chat state ─────────────────────────────────────────────────────
-  private supportMode: 'ai' | 'support' = 'ai';
+  private supportMode: 'ai' | 'support' | 'notifications' = 'ai';
+  private myNotifications: import('@/services/notificationsService').UserNotification[] = [];
+  private notifUnread = 0;
   private supportChats: Array<{ id: string; reason: string; created_at: string }> = (() => {
     try {
       const raw = localStorage.getItem('sd_sup_chats');
@@ -1512,7 +1514,7 @@ export class AssistantModule {
 
     // Mode tabs: Сима / Поддержка
     panel.querySelectorAll<HTMLElement>('.sd-ap-mode-tab').forEach(tab => {
-      tab.addEventListener('click', () => this.switchSupportMode(tab.dataset.mode as 'ai' | 'support'));
+      tab.addEventListener('click', () => this.switchSupportMode(tab.dataset.mode as 'ai' | 'support' | 'notifications'));
     });
 
     // Close panel on click outside only when clicking nav/dock area — not on page content.
@@ -1811,6 +1813,9 @@ export class AssistantModule {
       <div class="sd-ap-mode-tabs" id="sd-ap-mode-tabs">
         <button class="sd-ap-mode-tab active" data-mode="ai">Сима</button>
         <button class="sd-ap-mode-tab" data-mode="support">Поддержка<span class="sd-ap-tab-dot" id="sd-ap-sup-dot" style="display:none"></span></button>
+        <button class="sd-ap-mode-tab" data-mode="notifications">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="13" height="13" style="display:inline;vertical-align:-1px;margin-right:3px"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Уведомления<span class="sd-ap-tab-dot" id="sd-ap-notif-dot" style="display:none"></span>
+        </button>
       </div>
       <div class="sd-ap-scroll" id="sd-ap-scroll">
       ${noKey ? `
@@ -1931,7 +1936,8 @@ export class AssistantModule {
           </svg>
         </button>
       </div>
-      <div id="sd-ap-sup-view" style="display:none;flex-direction:column;flex:1;min-height:0"></div>`;
+      <div id="sd-ap-sup-view" style="display:none;flex-direction:column;flex:1;min-height:0"></div>
+      <div id="sd-ap-notif-view" style="display:none;flex-direction:column;flex:1;min-height:0;overflow-y:auto"></div>`;
   }
 
   private saveKeyFromPanel(): void {
@@ -3038,6 +3044,7 @@ export class AssistantModule {
     this.lastAlertKey = ''; // сброс — чтобы при следующей проверке снова показать если актуально
 
     this.renderContextHints();
+    void this.refreshNotifCount();
     setTimeout(() => this.maybeShowMorningBrief(), 800);
     if (!this.voiceOnboarded) {
       setTimeout(() => this.showVoiceOnboarding(), 600);
@@ -3122,7 +3129,7 @@ export class AssistantModule {
     }
   }
 
-  private switchSupportMode(mode: 'ai' | 'support'): void {
+  private switchSupportMode(mode: 'ai' | 'support' | 'notifications'): void {
     if (!this.panel) return;
     this.supportMode = mode;
 
@@ -3130,23 +3137,21 @@ export class AssistantModule {
     this.panel.dataset.panelMode = mode;
     const h3 = this.panel.querySelector<HTMLElement>('.sd-ap-title h3');
     const p  = this.panel.querySelector<HTMLElement>('.sd-ap-title p');
-    if (h3) h3.textContent = mode === 'support' ? 'Поддержка' : 'Сима';
-    if (p)  p.textContent  = mode === 'support' ? 'Служба поддержки' : 'AI-менеджер маркетплейсов';
+    if (h3) h3.textContent = mode === 'support' ? 'Поддержка' : mode === 'notifications' ? 'Уведомления' : 'Сима';
+    if (p)  p.textContent  = mode === 'support' ? 'Служба поддержки' : mode === 'notifications' ? 'Системные оповещения' : 'AI-менеджер маркетплейсов';
 
     // Update tabs
     this.panel.querySelectorAll<HTMLElement>('.sd-ap-mode-tab').forEach(t => {
       t.classList.toggle('active', t.dataset.mode === mode);
     });
 
-    const aiContent = this.panel.querySelector<HTMLElement>('.sd-ap-key-setup, .sd-ap-quick-actions, .sd-ap-hints, .sd-ap-page-actions, .sd-ap-messages, .sd-ap-attach-chips, .sd-ap-input-area');
-    const supView = this.panel.querySelector<HTMLElement>('#sd-ap-sup-view');
-
-    // Show/hide by class on a wrapper — use attribute selector on all AI-only elements
     const aiEls = this.panel.querySelectorAll<HTMLElement>(
       '.sd-ap-scroll, .sd-ap-attach-chips, .sd-ap-input-area'
     );
     aiEls.forEach(el => { el.style.display = mode === 'ai' ? '' : 'none'; });
-    void aiContent; // suppress unused warning
+
+    const supView   = this.panel.querySelector<HTMLElement>('#sd-ap-sup-view');
+    const notifView = this.panel.querySelector<HTMLElement>('#sd-ap-notif-view');
 
     if (supView) {
       supView.style.display = mode === 'support' ? 'flex' : 'none';
@@ -3157,8 +3162,17 @@ export class AssistantModule {
       }
     }
 
-    // Stop polling when leaving support tab (restart when re-entering with active chat)
-    if (mode === 'ai') this.stopSupportPolling();
+    if (notifView) {
+      notifView.style.display = mode === 'notifications' ? 'flex' : 'none';
+      if (mode === 'notifications') {
+        this.notifUnread = 0;
+        this.updateNotifBadge();
+        void this.loadAndRenderNotifications(notifView);
+      }
+    }
+
+    // Stop polling when leaving support tab
+    if (mode !== 'support') this.stopSupportPolling();
   }
 
   /** Счётчик непрочитанных ответов оператора на вкладке «Поддержка». */
@@ -3173,6 +3187,78 @@ export class AssistantModule {
     } else {
       dot.style.display = 'none';
     }
+  }
+
+  private updateNotifBadge(): void {
+    const dot = this.panel?.querySelector<HTMLElement>('#sd-ap-notif-dot');
+    if (!dot) return;
+    if (this.notifUnread > 0 && this.supportMode !== 'notifications') {
+      dot.textContent = this.notifUnread > 9 ? '9+' : String(this.notifUnread);
+      dot.style.display = '';
+    } else {
+      dot.style.display = 'none';
+    }
+  }
+
+  private async loadAndRenderNotifications(container: HTMLElement): Promise<void> {
+    container.innerHTML = '<div class="sd-ap-notif-loading">Загрузка…</div>';
+    try {
+      const { fetchMyNotifications, markAllNotifsRead, deleteNotif,
+              formatNotifTime, NOTIF_META } = await import('@/services/notificationsService');
+      const notifs = await fetchMyNotifications();
+      this.myNotifications = notifs;
+
+      // Сразу помечаем все прочитанными
+      const unread = notifs.filter(n => !n.read);
+      if (unread.length) void markAllNotifsRead();
+
+      const renderList = () => {
+        if (!this.myNotifications.length) {
+          container.innerHTML = `
+            <div class="sd-ap-notif-empty">
+              <div style="font-size:2rem">🔔</div>
+              <div>Уведомлений пока нет</div>
+              <div style="font-size:11px;opacity:0.6;margin-top:4px">Здесь появятся системные оповещения, подарки токенов и алерты от Симы</div>
+            </div>`;
+          return;
+        }
+        container.innerHTML = `<div class="sd-ap-notif-list">` +
+          this.myNotifications.map(n => {
+            const m = NOTIF_META[n.type] ?? NOTIF_META.info;
+            return `
+              <div class="sd-ap-notif-item${n.read ? '' : ' unread'}" data-id="${n.id}">
+                <div class="sd-ap-notif-item-icon" style="color:${m.color}">${n.icon || m.emoji}</div>
+                <div class="sd-ap-notif-item-body">
+                  <div class="sd-ap-notif-item-title">${n.title.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>
+                  ${n.body ? `<div class="sd-ap-notif-item-text">${n.body.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>` : ''}
+                  <div class="sd-ap-notif-item-time">${formatNotifTime(n.created_at)}</div>
+                </div>
+                <button class="sd-ap-notif-del" data-id="${n.id}" title="Удалить">×</button>
+              </div>`;
+          }).join('') + `</div>`;
+
+        container.querySelectorAll<HTMLElement>('.sd-ap-notif-del').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id = btn.dataset.id!;
+            await deleteNotif(id).catch(() => {});
+            this.myNotifications = this.myNotifications.filter(n => n.id !== id);
+            renderList();
+          });
+        });
+      };
+      renderList();
+    } catch (e) {
+      container.innerHTML = `<div class="sd-ap-notif-empty">Ошибка загрузки уведомлений</div>`;
+    }
+  }
+
+  /** Загрузить количество непрочитанных уведомлений (вызывается при открытии панели). */
+  private async refreshNotifCount(): Promise<void> {
+    try {
+      const { countUnreadNotifications } = await import('@/services/notificationsService');
+      this.notifUnread = await countUnreadNotifications();
+      this.updateNotifBadge();
+    } catch { /* ignore */ }
   }
 
   /** Экран ошибки поддержки с кнопкой повтора — вместо молчаливого пустого чата. */

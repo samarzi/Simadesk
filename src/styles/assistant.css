@@ -1620,6 +1620,83 @@ html.light .sd-sup-msg.user .sd-sup-bubble {
 }
 .sd-sup-error button:hover { background: var(--ap-surface-3); }
 
+/* ── Вкладка Уведомления ─────────────────────────────────────────────────── */
+#sd-ap-notif-view { flex-direction: column; overflow-y: auto; }
+
+.sd-ap-notif-loading, .sd-ap-notif-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 20px;
+  color: var(--ap-txt-3);
+  font-size: 13px;
+  text-align: center;
+}
+
+.sd-ap-notif-list {
+  display: flex;
+  flex-direction: column;
+  padding: 8px var(--ap-pad) 16px;
+  gap: 6px;
+}
+
+.sd-ap-notif-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--ap-surface-2);
+  border: 1px solid var(--ap-line);
+  transition: border-color 0.15s;
+  position: relative;
+}
+.sd-ap-notif-item.unread {
+  border-color: var(--ap-accent);
+  background: var(--ap-accent-soft);
+}
+.sd-ap-notif-item-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  line-height: 1;
+  padding-top: 1px;
+}
+.sd-ap-notif-item-body { flex: 1; min-width: 0; }
+.sd-ap-notif-item-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ap-txt);
+  line-height: 1.35;
+  margin-bottom: 3px;
+}
+.sd-ap-notif-item-text {
+  font-size: 11.5px;
+  color: var(--ap-txt-2);
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+.sd-ap-notif-item-time {
+  font-size: 10px;
+  color: var(--ap-txt-3);
+}
+.sd-ap-notif-del {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--ap-txt-3);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.sd-ap-notif-item:hover .sd-ap-notif-del { opacity: 1; }
+.sd-ap-notif-del:hover { color: var(--ap-err); }
+
 /* ── Полоса квоты токенов под лентой Симы ───────────────────────────────── */
 .sd-ap-quota-bar { padding: 0 var(--ap-pad); }
 .sd-ap-quota {

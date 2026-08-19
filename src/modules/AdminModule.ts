@@ -42,13 +42,14 @@ import { areaChart, groupedBars, hBars, donut } from './admin/charts';
 
 type AdminTab =
   | 'overview' | 'users' | 'companies' | 'plans' | 'subscriptions'
-  | 'promos' | 'accounting' | 'support' | 'settings' | 'roadmap' | 'news' | 'brain';
+  | 'promos' | 'accounting' | 'support' | 'settings' | 'roadmap' | 'news' | 'brain'
+  | 'notifications';
 
 interface TabMeta { title: string; desc: string; icon: string }
 
 const TABS: AdminTab[] = [
   'overview', 'users', 'companies', 'plans', 'subscriptions',
-  'promos', 'accounting', 'support', 'settings', 'roadmap', 'news', 'brain',
+  'promos', 'accounting', 'support', 'notifications', 'settings', 'roadmap', 'news', 'brain',
 ];
 
 const TAB_META: Record<AdminTab, TabMeta> = {
@@ -64,6 +65,7 @@ const TAB_META: Record<AdminTab, TabMeta> = {
   roadmap:       { title: 'Дорожная карта', icon: 'roadmap',  desc: 'Задачи разработки: приоритеты, статусы и дедупликация' },
   news:          { title: 'Новости МП',    icon: 'news',      desc: 'Telegram-каналы для сбора новостей маркетплейсов' },
   brain:         { title: 'Мозг Симы',    icon: 'brain',     desc: 'База знаний о маркетплейсах, которую Сима использует в ответах' },
+  notifications: { title: 'Уведомления',  icon: 'bell',      desc: 'Отправка уведомлений пользователям — системные, подарки токенов, алерты' },
 };
 
 const PLAN_COLORS: Record<string, string> = {
@@ -176,6 +178,10 @@ export class AdminModule {
   private brainUpdating = false;
   private brainFilter = { mp: '', category: '' };
 
+  /* уведомления */
+  private adminNotifications: import('@/services/notificationsService').UserNotification[] = [];
+  private notifSending = false;
+
   constructor(el: HTMLElement) { this.el = el; }
 
   // ── ЖИЗНЕННЫЙ ЦИКЛ ──────────────────────────────────────────────────────
@@ -268,6 +274,11 @@ export class AdminModule {
         case 'roadmap': this.roadmapTasks = await roadmapDb.getTasks(); break;
         case 'news': await this.loadNewsData(); break;
         case 'brain': await this.loadBrainData(); break;
+        case 'notifications': {
+          const { adminFetchAllNotifications } = await import('@/services/notificationsService');
+          this.adminNotifications = await adminFetchAllNotifications();
+          break;
+        }
       }
     } catch (e: unknown) {
       debug.warn('[Admin] loadTab error:', e);
@@ -360,6 +371,7 @@ export class AdminModule {
       case 'roadmap':       return this.renderRoadmap();
       case 'news':          return this.renderNews();
       case 'brain':         return this.renderBrain();
+      case 'notifications': return this.renderNotifications();
     }
   }
 
@@ -2126,6 +2138,7 @@ ${this.SIMADESK_KNOWLEDGE}
 
     if (this.tab === 'news' && !this.loading) this.bindNewsEvents();
     if (this.tab === 'brain' && !this.loading) this.bindBrainEvents();
+    if (this.tab === 'notifications' && !this.loading) this.bindNotificationsEvents();
   }
 
   private debouncedSearch(sel: string, cb: (value: string) => void): void {
@@ -3545,6 +3558,159 @@ ${this.SIMADESK_KNOWLEDGE}
         const err = await res.json().catch(() => ({}));
         showToast('Ошибка: ' + (err.message ?? res.status), 'error');
       }
+    });
+  }
+
+  // ── УВЕДОМЛЕНИЯ ─────────────────────────────────────────────────────────────
+
+  private renderNotifications(): string {
+    const notifs = this.adminNotifications;
+    const esc = (s: string) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+    const typeOptions = [
+      { v: 'info',        l: '📌 Информация' },
+      { v: 'success',     l: '✅ Успех' },
+      { v: 'warning',     l: '⚠️ Предупреждение' },
+      { v: 'error',       l: '❌ Ошибка' },
+      { v: 'token_gift',  l: '🎁 Подарок токенов' },
+      { v: 'store_alert', l: '📦 Алерт магазина' },
+      { v: 'system',      l: '⚙️ Системное' },
+    ].map(o => `<option value="${o.v}">${o.l}</option>`).join('');
+
+    const iconFor = (type: string) => ({
+      info: '📌', success: '✅', warning: '⚠️', error: '❌',
+      token_gift: '🎁', store_alert: '📦', system: '⚙️',
+    }[type] ?? '🔔');
+
+    const colorFor = (type: string) => ({
+      info: '#3b82f6', success: '#10b981', warning: '#f59e0b', error: '#ef4444',
+      token_gift: '#8b5cf6', store_alert: '#f97316', system: '#64748b',
+    }[type] ?? '#64748b');
+
+    const fmtTime = (iso: string) => {
+      const d = new Date(iso);
+      const diff = Date.now() - d.getTime();
+      if (diff < 60_000) return 'только что';
+      if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} мин назад`;
+      if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} ч назад`;
+      return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    };
+
+    const rows = notifs.length
+      ? notifs.map(n => `
+        <div class="ap-notif-row" data-id="${n.id}">
+          <div class="ap-notif-icon" style="color:${colorFor(n.type)}">${iconFor(n.type)}</div>
+          <div class="ap-notif-info">
+            <div class="ap-notif-title">${esc(n.title)}</div>
+            ${n.body ? `<div class="ap-notif-body">${esc(n.body)}</div>` : ''}
+            <div class="ap-notif-meta">
+              ${n.user_id ? `<span class="ap-notif-badge ap-notif-personal">Личное</span>` : `<span class="ap-notif-badge ap-notif-broadcast">Всем</span>`}
+              <span class="ap-notif-time">${fmtTime(n.created_at)}</span>
+            </div>
+          </div>
+          <button class="ap-notif-del" data-id="${n.id}" title="Удалить">${icon('trash', 14)}</button>
+        </div>`).join('')
+      : `<div class="ap-notif-empty">Уведомлений пока нет</div>`;
+
+    return `
+      <div class="ap-notif-wrap">
+        <div class="ap-notif-send-card">
+          <div class="ap-notif-send-title">${icon('send', 15)} Отправить уведомление</div>
+          <div class="ap-notif-send-form">
+            <div class="ap-notif-field-row">
+              <label class="ap-label">Кому</label>
+              <div class="ap-notif-target-row">
+                <select class="ap-select" id="notif-target-mode">
+                  <option value="broadcast">Всем пользователям</option>
+                  <option value="user">Конкретному пользователю</option>
+                </select>
+                <div id="notif-user-picker-wrap" style="display:none">
+                  ${this.renderPicker('user', '', '', 'Найти пользователя…')}
+                </div>
+              </div>
+            </div>
+            <div class="ap-notif-field-row">
+              <label class="ap-label">Тип</label>
+              <select class="ap-select" id="notif-type">${typeOptions}</select>
+            </div>
+            <div class="ap-notif-field-row">
+              <label class="ap-label">Заголовок</label>
+              <input class="ap-input" id="notif-title" placeholder="Заголовок уведомления…" maxlength="120">
+            </div>
+            <div class="ap-notif-field-row">
+              <label class="ap-label">Текст (необязательно)</label>
+              <textarea class="ap-input ap-notif-textarea" id="notif-body" placeholder="Дополнительный текст…" rows="3"></textarea>
+            </div>
+            <div class="ap-notif-send-actions">
+              <button class="ap-btn ap-btn-primary" id="notif-send-btn" ${this.notifSending ? 'disabled' : ''}>
+                ${this.notifSending ? 'Отправка…' : `${icon('send', 14)} Отправить`}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="ap-notif-list-card">
+          <div class="ap-notif-list-hdr">
+            <span class="ap-notif-list-title">Отправленные (${notifs.length})</span>
+            <button class="ap-btn" id="notif-refresh">${icon('refresh', 14)}<span>Обновить</span></button>
+          </div>
+          <div class="ap-notif-list">${rows}</div>
+        </div>
+      </div>`;
+  }
+
+  private bindNotificationsEvents(): void {
+    const targetSel = this.el.querySelector<HTMLSelectElement>('#notif-target-mode');
+    const pickerWrap = this.el.querySelector<HTMLElement>('#notif-user-picker-wrap');
+    targetSel?.addEventListener('change', () => {
+      if (pickerWrap) pickerWrap.style.display = targetSel.value === 'user' ? 'block' : 'none';
+    });
+
+    this.el.querySelector('#notif-send-btn')?.addEventListener('click', async () => {
+      const title = (this.el.querySelector<HTMLInputElement>('#notif-title'))?.value.trim();
+      const body  = (this.el.querySelector<HTMLTextAreaElement>('#notif-body'))?.value.trim() || undefined;
+      const type  = (this.el.querySelector<HTMLSelectElement>('#notif-type'))?.value || 'info';
+      const mode  = (this.el.querySelector<HTMLSelectElement>('#notif-target-mode'))?.value;
+      const userId = mode === 'user'
+        ? (this.el.querySelector<HTMLInputElement>('[name="user_id_hidden"]'))?.value || null
+        : null;
+
+      if (!title) { showToast('Введите заголовок', 'error'); return; }
+
+      this.notifSending = true;
+      this.render();
+      try {
+        const { adminSendNotification } = await import('@/services/notificationsService');
+        await adminSendNotification({ user_id: userId, type: type as any, title, body });
+        showToast('Уведомление отправлено', 'success');
+        const { adminFetchAllNotifications } = await import('@/services/notificationsService');
+        this.adminNotifications = await adminFetchAllNotifications();
+      } catch (e) {
+        showToast(this.errText(e, 'Ошибка отправки'), 'error');
+      }
+      this.notifSending = false;
+      this.render();
+    });
+
+    this.el.querySelector('#notif-refresh')?.addEventListener('click', async () => {
+      try {
+        const { adminFetchAllNotifications } = await import('@/services/notificationsService');
+        this.adminNotifications = await adminFetchAllNotifications();
+        this.render();
+      } catch (e) { showToast('Ошибка обновления', 'error'); }
+    });
+
+    this.el.querySelectorAll<HTMLElement>('.ap-notif-del').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id!;
+        try {
+          const { adminDeleteNotif } = await import('@/services/notificationsService');
+          await adminDeleteNotif(id);
+          this.adminNotifications = this.adminNotifications.filter(n => n.id !== id);
+          this.render();
+          showToast('Удалено', 'success');
+        } catch (e) { showToast('Ошибка удаления', 'error'); }
+      });
     });
   }
 }
