@@ -139,8 +139,14 @@ export class DocsModule {
     } catch (e) {
       debug.warn('[DocsModule] save failed', e);
       try {
-        const slim = this.docs.map(d => ({ ...d, content: d.content.length > 50000 ? d.content.slice(0, 50000) : d.content }));
+        // Oversized docs: save with empty content so metadata is preserved;
+        // their content will be restored from DB on next syncFromDb.
+        const slim = this.docs.map(d => ({ ...d, content: d.content.length > 50000 ? '' : d.content }));
         localStorage.setItem(this.sk(), JSON.stringify(slim));
+        // Push oversized docs to DB so their content isn't permanently lost.
+        for (const doc of this.docs) {
+          if (doc.content.length > 50000) this.saveDocToDb(doc);
+        }
       } catch { /* ignore */ }
     }
   }
@@ -158,7 +164,7 @@ export class DocsModule {
         if (!local) {
           this.docs.push(row);
           changed = true;
-        } else if (row.updated_at > local.updated_at) {
+        } else if (row.updated_at > local.updated_at || (row.content && !local.content)) {
           Object.assign(local, row);
           changed = true;
         }
