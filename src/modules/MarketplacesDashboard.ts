@@ -13,6 +13,7 @@ import { fetchAllWbProducts } from '@/services/wbApi';
 import { fetchAllYandexProducts } from '@/services/yandexApi';
 import { refreshNavLockState } from '@/modules/NavigationModule';
 import { debug } from '@/utils/debug';
+import { getInvalidApiStores } from '@/services/apiHealthCheck';
 
 interface SyncLogEntry {
   store: string;
@@ -48,7 +49,12 @@ export class MarketplacesDashboard {
   private syncing = false;
   private syncLog: SyncLogEntry[] = [];
 
-  constructor(container: HTMLElement) { this.container = container; }
+  constructor(container: HTMLElement) {
+    this.container = container;
+    window.addEventListener('api-health-checked', () => {
+      if (this.container.style.display !== 'none') this.render();
+    });
+  }
 
   show(): void {
     this.container.style.display = 'flex';
@@ -429,6 +435,25 @@ export class MarketplacesDashboard {
         <div style="flex:1;overflow:auto;padding:20px 24px 80px">
           <div style="max-width:1280px;margin:0 auto">
 
+            <!-- ── Предупреждение о недействительных API ── -->
+            ${(() => {
+              const invalid = getInvalidApiStores();
+              if (!invalid.length) return '';
+              const names = invalid.map(e => {
+                const mp = e.mp === 'wb' ? 'WB' : e.mp === 'ozon' ? 'Ozon' : 'ЯМ';
+                return `${this.esc(e.name)} (${mp})`;
+              }).join(', ');
+              return `
+                <div style="margin-bottom:20px;background:color-mix(in srgb,#f59e0b 10%,var(--bg));border:1.5px solid #f59e0b;border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                  <div style="flex:1">
+                    <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:2px">API не действительно</div>
+                    <div style="font-size:12px;color:var(--text-2)">Недействительный ключ: ${names}. Обновите API-ключ в настройках магазина.</div>
+                  </div>
+                </div>
+              `;
+            })()}
+
             <!-- ── Сводная строка ── -->
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
               ${[
@@ -496,6 +521,8 @@ export class MarketplacesDashboard {
     const isEmpty = m.storesCount === 0;
     const syncEntry = this.syncLog.find(l => l.mp === (m.key === 'ozon' ? 'Ozon' : m.key === 'wb' ? 'WB' : 'ЯМ'));
     const isSyncing = syncEntry?.status === 'syncing';
+    const invalidStoreIds = new Set(getInvalidApiStores().filter(e => e.mp === m.key).map(e => e.id));
+    const hasInvalidApi = invalidStoreIds.size > 0;
 
     // MP-specific icons
     const mpIcon = m.key === 'ozon'
@@ -518,12 +545,17 @@ export class MarketplacesDashboard {
               ${isEmpty ? 'Не подключено' : `Синхронизация: ${this.fmtAgo(m.lastSync)}`}
             </div>
           </div>
-          ${!isEmpty ? `
+          ${!isEmpty ? (hasInvalidApi ? `
+            <div style="display:flex;align-items:center;gap:4px;background:rgba(239,68,68,.85);border-radius:20px;padding:3px 10px">
+              <svg viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" style="width:11px;height:11px;flex-shrink:0"><path d="M8 2.5L1.5 13h13z"/><line x1="8" y1="7" x2="8" y2="10"/><circle cx="8" cy="12" r=".5" fill="#fff"/></svg>
+              <span style="font-size:10px;color:#fff;font-weight:700">API не действительно</span>
+            </div>
+          ` : `
             <div style="display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.18);border-radius:20px;padding:3px 10px">
               <span style="width:6px;height:6px;border-radius:50%;background:#4ade80;flex-shrink:0"></span>
               <span style="font-size:10px;color:#fff;font-weight:600">${m.storesCount} маг.</span>
             </div>
-          ` : ''}
+          `) : ''}
         </div>
 
         <div style="padding:16px 18px;flex:1;display:flex;flex-direction:column;gap:0">
@@ -564,13 +596,19 @@ export class MarketplacesDashboard {
             <!-- Магазины -->
             <div style="margin-bottom:14px">
               <div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Магазины</div>
-              ${m.stores.map(s => `
-                <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
-                  <span style="width:6px;height:6px;border-radius:50%;background:${m.color};flex-shrink:0"></span>
-                  <span style="flex:1;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.esc(s.name)}</span>
-                  <span style="font-size:11px;color:var(--text-2);white-space:nowrap">${this.fmtN(s.products)} тов.</span>
-                </div>
-              `).join('')}
+              ${m.stores.map(s => {
+                const isInvalid = invalidStoreIds.has(s.id);
+                return `
+                  <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+                    <span style="width:6px;height:6px;border-radius:50%;background:${isInvalid ? '#ef4444' : m.color};flex-shrink:0"></span>
+                    <span style="flex:1;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.esc(s.name)}</span>
+                    ${isInvalid
+                      ? `<span style="font-size:10px;font-weight:700;color:#ef4444;white-space:nowrap;background:color-mix(in srgb,#ef4444 12%,var(--bg));border:1px solid #ef4444;border-radius:4px;padding:1px 6px">API не действительно</span>`
+                      : `<span style="font-size:11px;color:var(--text-2);white-space:nowrap">${this.fmtN(s.products)} тов.</span>`
+                    }
+                  </div>
+                `;
+              }).join('')}
             </div>
 
             <!-- Кнопки действий -->

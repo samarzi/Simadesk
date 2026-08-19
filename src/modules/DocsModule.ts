@@ -817,12 +817,233 @@ export class DocsModule {
     }
     if (format === 'html') {
       this.download(`${doc.title}.html`, new Blob([`<!doctype html><html><head><meta charset="utf-8"><title>${this.esc(doc.title)}</title></head><body>${doc.content}</body></html>`], { type: 'text/html;charset=utf-8' }));
-    } else if (format === 'doc') {
-      this.download(`${doc.title}.doc`, new Blob([`<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset="utf-8"></head><body>${doc.content}</body></html>`], { type: 'application/msword' }));
+    } else if (format === 'docx') {
+      this.exportWordDocx(doc).catch(err => showToast('Ошибка экспорта .docx: ' + err.message, 'error'));
     } else if (format === 'txt') {
       const div = document.createElement('div'); div.innerHTML = doc.content;
       this.download(`${doc.title}.txt`, new Blob([div.innerText], { type: 'text/plain;charset=utf-8' }));
     }
+  }
+
+  /** Export Word document as proper .docx (OOXML) using JSZip. */
+  private async exportWordDocx(doc: DocItem): Promise<void> {
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+
+    const bodyXml = this.htmlBodyToWordXml(doc.content);
+
+    const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+  xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
+  mc:Ignorable="w14">
+  <w:body>${bodyXml}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
+  </w:body>
+</w:document>`;
+
+    const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr/><w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="52"/><w:szCs w:val="52"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="40"/><w:szCs w:val="40"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:pPr><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:pPr><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/><w:pPr><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720"/></w:pPr></w:style>
+</w:styles>`;
+
+    const numberingXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="0">
+    <w:multiLevelType w:val="hybridMultilevel"/>
+    ${[0,1,2,3,4,5,6,7,8].map(i => `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${720*(i+1)}" w:hanging="360"/></w:pPr></w:lvl>`).join('')}
+  </w:abstractNum>
+  <w:abstractNum w:abstractNumId="1">
+    <w:multiLevelType w:val="hybridMultilevel"/>
+    ${[0,1,2,3,4,5,6,7,8].map(i => `<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%${i+1}."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${720*(i+1)}" w:hanging="360"/></w:pPr></w:lvl>`).join('')}
+  </w:abstractNum>
+  <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+  <w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>
+</w:numbering>`;
+
+    const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
+</Types>`;
+
+    const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`;
+
+    const docRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>
+</Relationships>`;
+
+    zip.file('[Content_Types].xml', contentTypes);
+    zip.file('_rels/.rels', rootRels);
+    zip.file('word/document.xml', docXml);
+    zip.file('word/styles.xml', stylesXml);
+    zip.file('word/numbering.xml', numberingXml);
+    zip.file('word/_rels/document.xml.rels', docRels);
+
+    const blob = await zip.generateAsync({
+      type: 'blob',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+    this.download(`${doc.title}.docx`, blob);
+  }
+
+  /** Convert HTML string to WordprocessingML body content (w:p, w:tbl, etc.). */
+  private htmlBodyToWordXml(html: string): string {
+    const parser = new DOMParser();
+    const dom = parser.parseFromString(`<!doctype html><html><body>${html}</body></html>`, 'text/html');
+    const body = dom.body;
+
+    const ex = (s: string) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+    const cssHex = (css: string): string | null => {
+      const rgb = css.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i);
+      if (rgb) return [rgb[1],rgb[2],rgb[3]].map(n => (+n).toString(16).padStart(2,'0')).join('').toUpperCase();
+      const h = css.match(/^#([0-9a-f]{6})$/i); if (h) return h[1].toUpperCase();
+      const h3 = css.match(/^#([0-9a-f]{3})$/i); if (h3) { const v=h3[1]; return (v[0]+v[0]+v[1]+v[1]+v[2]+v[2]).toUpperCase(); }
+      return null;
+    };
+
+    interface RP { bold?:boolean; italic?:boolean; under?:boolean; strike?:boolean; sz?:number; color?:string; bg?:string; font?:string; }
+
+    const mergeRP = (a: RP, b: RP): RP => ({
+      bold:   b.bold   ?? a.bold,
+      italic: b.italic ?? a.italic,
+      under:  b.under  ?? a.under,
+      strike: b.strike ?? a.strike,
+      sz:     b.sz     ?? a.sz,
+      color:  b.color  ?? a.color,
+      bg:     b.bg     ?? a.bg,
+      font:   b.font   ?? a.font,
+    });
+
+    const rpFromEl = (el: Element): RP => {
+      const rp: RP = {};
+      const tag = el.tagName.toLowerCase();
+      const st  = (el as HTMLElement).style;
+      if (tag==='b'||tag==='strong') rp.bold=true;
+      if (tag==='i'||tag==='em')     rp.italic=true;
+      if (tag==='u')                 rp.under=true;
+      if (tag==='s'||tag==='strike'||tag==='del') rp.strike=true;
+      if (st.fontWeight==='bold'||parseInt(st.fontWeight)>=700) rp.bold=true;
+      if (st.fontStyle==='italic') rp.italic=true;
+      if (st.textDecoration?.includes('underline'))    rp.under=true;
+      if (st.textDecoration?.includes('line-through')) rp.strike=true;
+      if (st.fontSize) { const px=parseFloat(st.fontSize); if(!isNaN(px)) rp.sz=Math.round(px/0.666); }
+      if (st.color)           { const h=cssHex(st.color);            if(h && h!=='000000') rp.color=h; }
+      if (st.backgroundColor){ const h=cssHex(st.backgroundColor);  if(h && !/^F{6}$/i.test(h)) rp.bg=h; }
+      if (st.fontFamily) { const n=st.fontFamily.split(',')[0].trim().replace(/['"]/g,''); if(n) rp.font=n; }
+      return rp;
+    };
+
+    const rprXml = (rp: RP): string => {
+      let x='';
+      if(rp.font)   x+=`<w:rFonts w:ascii="${ex(rp.font)}" w:hAnsi="${ex(rp.font)}"/>`;
+      if(rp.sz)     x+=`<w:sz w:val="${rp.sz}"/><w:szCs w:val="${rp.sz}"/>`;
+      if(rp.bold)   x+='<w:b/>';
+      if(rp.italic) x+='<w:i/>';
+      if(rp.under)  x+='<w:u w:val="single"/>';
+      if(rp.strike) x+='<w:strike/>';
+      if(rp.color)  x+=`<w:color w:val="${rp.color}"/>`;
+      if(rp.bg)     x+=`<w:shd w:val="clear" w:color="auto" w:fill="${rp.bg}"/>`;
+      return x ? `<w:rPr>${x}</w:rPr>` : '';
+    };
+
+    const collectRuns = (node: Node, rp: RP): string => {
+      if (node.nodeType===Node.TEXT_NODE) {
+        const t = node.textContent??''; if(!t) return '';
+        return `<w:r>${rprXml(rp)}<w:t xml:space="preserve">${ex(t)}</w:t></w:r>`;
+      }
+      if (node.nodeType!==Node.ELEMENT_NODE) return '';
+      const el=node as Element; const tag=el.tagName.toLowerCase();
+      if (tag==='br') return '<w:r><w:br/></w:r>';
+      if (tag==='img') return '';
+      const merged=mergeRP(rp,rpFromEl(el));
+      return Array.from(el.childNodes).map(c=>collectRuns(c,merged)).join('');
+    };
+
+    const BLOCK_TAGS = new Set(['p','div','h1','h2','h3','h4','h5','h6','blockquote','pre','article','section','header','footer','main','nav','aside','li']);
+
+    const pprXml = (el: Element, lstStyle?: 'bullet'|'num', lvl=0): string => {
+      let pp='';
+      const tag=el.tagName.toLowerCase();
+      const st=(el as HTMLElement).style;
+      const m=/^h([1-6])$/.exec(tag);
+      if(m) pp+=`<w:pStyle w:val="Heading${m[1]}"/>`;
+      const align=st?.textAlign;
+      if(align==='center') pp+='<w:jc w:val="center"/>';
+      else if(align==='right') pp+='<w:jc w:val="right"/>';
+      else if(align==='justify') pp+='<w:jc w:val="both"/>';
+      if(lstStyle) {
+        const numId=lstStyle==='bullet'?'1':'2';
+        pp+=`<w:numPr><w:ilvl w:val="${lvl}"/><w:numId w:val="${numId}"/></w:numPr>`;
+        if(!m) pp+=`<w:pStyle w:val="ListParagraph"/>`;
+      }
+      return pp ? `<w:pPr>${pp}</w:pPr>` : '';
+    };
+
+    let out = '';
+
+    const processBlock = (node: Node, lstStyle?: 'bullet'|'num', lvl=0): void => {
+      if (node.nodeType===Node.TEXT_NODE) {
+        const t=(node.textContent??'').trim(); if(t) out+=`<w:p><w:r><w:t xml:space="preserve">${ex(t)}</w:t></w:r></w:p>`; return;
+      }
+      if (node.nodeType!==Node.ELEMENT_NODE) return;
+      const el=node as Element; const tag=el.tagName.toLowerCase();
+
+      if(tag==='table') { out+=processTable(el); return; }
+      if(tag==='ul') { Array.from(el.childNodes).forEach(c=>processBlock(c,'bullet',lvl)); return; }
+      if(tag==='ol') { Array.from(el.childNodes).forEach(c=>processBlock(c,'num',lvl)); return; }
+
+      if(BLOCK_TAGS.has(tag)) {
+        const kids=Array.from(el.childNodes);
+        const hasBlock=kids.some(c=>{if(c.nodeType!==Node.ELEMENT_NODE)return false;const ct=(c as Element).tagName.toLowerCase();return BLOCK_TAGS.has(ct)||ct==='table'||ct==='ul'||ct==='ol';});
+        if(hasBlock) { kids.forEach(c=>processBlock(c, lstStyle, lvl)); return; }
+        const pp=pprXml(el, lstStyle, lvl);
+        const runs=collectRuns(el,{});
+        out+=`<w:p>${pp}${runs||'<w:r><w:t></w:t></w:r>'}</w:p>`;
+        return;
+      }
+      // inline at top level
+      const runs=collectRuns(el,{});
+      if(runs) out+=`<w:p>${runs}</w:p>`;
+    };
+
+    const processTable = (table: Element): string => {
+      const borders='<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>';
+      let txml=`<w:tbl><w:tblPr>${borders}<w:tblW w:w="0" w:type="auto"/></w:tblPr>`;
+      table.querySelectorAll('tr').forEach(tr=>{
+        txml+='<w:tr>';
+        tr.querySelectorAll('td,th').forEach(td=>{
+          const isHdr=td.tagName.toLowerCase()==='th';
+          const bgStyle=(td as HTMLElement).style.backgroundColor;
+          const bgHex=bgStyle?cssHex(bgStyle):null;
+          const tcPr=bgHex?`<w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="${bgHex}"/></w:tcPr>`:''
+          const runs=collectRuns(td, isHdr?{bold:true}:{});
+          txml+=`<w:tc>${tcPr}<w:p>${runs||'<w:r><w:t></w:t></w:r>'}</w:p></w:tc>`;
+        });
+        txml+='</w:tr>';
+      });
+      return txml+'</w:tbl>';
+    };
+
+    Array.from(body.childNodes).forEach(c=>processBlock(c));
+    return out || '<w:p><w:r><w:t></w:t></w:r></w:p>';
   }
 
   private trimEmpty(rows: CellData[][]): CellData[][] {
@@ -957,7 +1178,7 @@ export class DocsModule {
   private renderEditor(doc: DocItem): string {
     const editor = doc.type === 'word' ? this.renderWord(doc) : this.renderExcel(doc);
     const exportMenu = doc.type === 'word'
-      ? `<option value="html">HTML</option><option value="doc">Word (.doc)</option><option value="txt">Текст</option>`
+      ? `<option value="docx">Word (.docx)</option><option value="html">HTML</option><option value="txt">Текст</option>`
       : `<option value="xlsx">Excel (.xlsx)</option><option value="csv">CSV</option>`;
     return `<div class="docs-editor-wrap">
       <div class="docs-editor-head">

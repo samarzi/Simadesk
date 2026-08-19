@@ -170,6 +170,11 @@ init('producers-section',      (el) => new ProducersModule(el),       'producers
   // Запускаем фоновую синхронизацию заказов (не блокирует UI)
   orderSyncService.init().catch(e => debug.warn('[boot] orderSyncService:', e));
 
+  // Проверяем действительность API-ключей всех маркетплейсов после загрузки приложения
+  setTimeout(() => {
+    import('./services/apiHealthCheck').then(m => m.runApiHealthCheck()).catch(() => {/* ignore */});
+  }, 4000);
+
   // Применяем per-company конфиг dock после того как company стала известна
   (window as any).applyDockNavConfig?.();
 
