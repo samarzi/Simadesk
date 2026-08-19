@@ -3849,79 +3849,16 @@
 .cmd-header-left { min-width: 0; }
 .cmd-header-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 
-/* ── Кнопка «Мой лид-центр» — всегда по центру ─────────────────── */
-.cmd-lead-center-wrap {
+/* ── Центральные таб-кнопки — зафиксированы по центру ──────────── */
+.cmd-tab-pills-center {
   display: flex;
   justify-content: center;
   align-items: center;
 }
-.cmd-lead-center-btn {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 22px 10px 16px;
-  border: 1.5px solid color-mix(in srgb, var(--accent) 50%, transparent);
-  background: color-mix(in srgb, var(--accent) 8%, var(--card));
-  border-radius: 14px;
-  cursor: pointer;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
-  font-family: inherit;
-  letter-spacing: -.2px;
-  transition: border-color .18s, background .18s, transform .14s, box-shadow .18s;
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
-  overflow: visible;
-  white-space: nowrap;
-}
-.cmd-lead-center-btn:hover {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, var(--card));
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 20%, transparent);
-}
-.cmd-lc-glow {
-  position: absolute;
-  inset: -1px;
-  border-radius: 14px;
-  background: radial-gradient(ellipse 60% 40% at 50% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%);
-  pointer-events: none;
-}
-.cmd-lc-icon {
-  color: var(--accent);
-  flex-shrink: 0;
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 60%, transparent));
-}
-.cmd-lc-label {
-  background: linear-gradient(135deg, var(--text) 40%, var(--accent) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-.cmd-lc-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--muted);
-  transition: background .2s, box-shadow .2s;
-  flex-shrink: 0;
-}
-.cmd-lc-dot.active {
-  background: var(--accent);
-  box-shadow: 0 0 6px var(--accent);
-}
-@keyframes cmd-lc-pulse {
-  0%, 100% { box-shadow: 0 0 6px var(--accent); }
-  50% { box-shadow: 0 0 12px 2px var(--accent); }
-}
-.cmd-lc-dot.active {
-  animation: cmd-lc-pulse 2.5s ease-in-out infinite;
-}
 @media (max-width: 700px) {
   .cmd-header { grid-template-columns: 1fr; gap: 12px; }
   .cmd-header-actions { justify-content: flex-start; }
-  .cmd-lead-center-wrap { justify-content: flex-start; }
+  .cmd-tab-pills-center { justify-content: flex-start; }
 }
 .cmd-greeting {
   font-size: 26px;
@@ -5322,30 +5259,43 @@
 /* ── Home tab pills ─────────────────────────────────────────────────── */
 .cmd-tab-pills {
   display: flex;
-  gap: 4px;
+  gap: 3px;
   background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 3px;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
 }
 .cmd-tab-pill {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 12px;
-  border-radius: 6px;
+  gap: 7px;
+  padding: 8px 18px;
+  border-radius: 9px;
   border: none;
   background: transparent;
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 500;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  letter-spacing: -.1px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background .15s, color .15s, box-shadow .15s, transform .1s;
+  white-space: nowrap;
 }
-.cmd-tab-pill:hover { background: var(--bg3, var(--border)); color: var(--text); }
-.cmd-tab-pill.active { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
-.cmd-tab-pill svg { opacity: 0.7; }
-.cmd-tab-pill.active svg { opacity: 1; }
+.cmd-tab-pill:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg3, var(--border)));
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.cmd-tab-pill.active {
+  background: var(--card);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgba(0,0,0,.14), 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.cmd-tab-pill svg { opacity: 0.6; transition: opacity .15s, color .15s; }
+.cmd-tab-pill:hover svg { opacity: 0.85; }
+.cmd-tab-pill.active svg { opacity: 1; color: var(--accent); }
 
 /* ── News tab content ───────────────────────────────────────────────── */
 .cmd-news-tab-wrap { padding: 16px 0; }

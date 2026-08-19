@@ -312,29 +312,19 @@ export class HomeDashboardModule {
             <div class="cmd-greeting">${this.greeting()}</div>
             <div class="cmd-subtitle">${I.radio('', 12)} Командный центр · обновление каждые 30 сек</div>
           </div>
-          <div class="cmd-lead-center-wrap">
-            <button class="cmd-lead-center-btn" onclick="window.app.switchHomeTab('dashboard')" title="Мой лид-центр">
-              <span class="cmd-lc-glow"></span>
-              <svg class="cmd-lc-icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="10" cy="10" r="8.5"/>
-                <path d="M10 6.5v3.5l2.5 2"/>
-                <circle cx="10" cy="10" r="1.5" fill="currentColor" stroke="none"/>
-              </svg>
-              <span class="cmd-lc-label">Мой лид-центр</span>
-              <span class="cmd-lc-dot ${!isNews ? 'active' : ''}"></span>
-            </button>
-          </div>
-          <div class="cmd-header-actions">
+          <div class="cmd-tab-pills-center">
             <div class="cmd-tab-pills">
               <button class="cmd-tab-pill ${!isNews ? 'active' : ''}" onclick="window.app.switchHomeTab('dashboard')">
-                <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="5" height="6" rx="1"/><rect x="8" y="1" width="5" height="4" rx="1"/><rect x="8" y="7" width="5" height="6" rx="1"/><rect x="1" y="9" width="5" height="4" rx="1"/></svg>
+                <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="5" height="6" rx="1"/><rect x="8" y="1" width="5" height="4" rx="1"/><rect x="8" y="7" width="5" height="6" rx="1"/><rect x="1" y="9" width="5" height="4" rx="1"/></svg>
                 Дашборд
               </button>
               <button class="cmd-tab-pill ${isNews ? 'active' : ''}" onclick="window.app.switchHomeTab('news')">
-                <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h10a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v8a1 1 0 0 1-1 1zm0 0a1 1 0 0 1-1-1V6c0-.6.4-1 1-1h1"/><path d="M10 7H7M9 10H7M6.5 4h3"/></svg>
+                <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h10a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v8a1 1 0 0 1-1 1zm0 0a1 1 0 0 1-1-1V6c0-.6.4-1 1-1h1"/><path d="M10 7H7M9 10H7M6.5 4h3"/></svg>
                 Новости МП
               </button>
             </div>
+          </div>
+          <div class="cmd-header-actions">
             ${!isNews ? `
             <button class="cmd-edit-btn ${editMode ? 'active' : ''}" onclick="window.app.toggleHomeEdit()">
               ${editMode
