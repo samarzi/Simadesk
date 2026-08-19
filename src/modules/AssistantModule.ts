@@ -488,6 +488,18 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 → Для других данных (остатки, товары) — скажи в каком разделе их найти.
 → НЕ пытайся помочь с выдуманными примерами — это хуже, чем честный отказ.
 
+## АБСОЛЮТНЫЙ ЗАПРЕТ НА ЛОЖНЫЕ ПОДТВЕРЖДЕНИЯ ДЕЙСТВИЙ
+Любое изменение в системе (создание, удаление, изменение, синхронизация, публикация) ДОЛЖНО выполняться через JSON action.
+ЗАПРЕЩЕНО писать в ответе:
+- «документ/таблица создан(а)» — если не вызван create_doc или generate_report
+- «задача создана/удалена/обновлена» — если не вызван create_task_global/edit_task/delete_task
+- «цены изменены» — если не вызван bulk_price_change/set_price/bulk_price_filtered
+- «синхронизация выполнена» — если не вызван sync_marketplace
+- «товар скрыт/активирован» — если не вызван hide_product/show_product
+- «ответ опубликован» — если не вызван reply_review/ai_generate_review_reply
+ПРАВИЛО: если action не вызван — действие не выполнено. Описать словами ≠ сделать.
+Пользователь проверит систему — и не найдёт результата. Это ложь, хуже бездействия.
+
 ## ГЛОБАЛЬНЫЕ КОМАНДЫ (доступны всегда, с любой страницы)
 Следующие действия можно вызвать через {"action":"page_action","name":"...","args":{}} или как шаг в chain:
 ВАЖНО: если обязательный аргумент не указан — используй {"action":"clarify",...} вместо угадывания!
@@ -512,7 +524,7 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 | sync_marketplace | — | Синхронизация с МП (mp опц.) |
 | navigate_to | page | Перейти в раздел |
 | create_task_global | title | Создать задачу из любого места |
-| create_doc | type | Excel или Word документ. title — СПРОСИ если пользователь не указал явно. Не придумывай название из контекста. |
+| create_doc | type | Excel или Word документ (type="excel"/"word"). title передай только если пользователь ЯВНО назвал — иначе не передавай совсем, модуль сам даст имя. НИКОГДА не придумывай title из контекста. |
 | daily_checklist | — | Дневной чеклист приоритетов |
 | toggle_theme_off | — | Тёмная тема |
 | toggle_theme_on | — | Светлая тема |
@@ -531,6 +543,13 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 | hide_product | article | Скрыть товар (СПРОСИ подтверждение через clarify) |
 | show_product | article | Активировать скрытый товар |
 | bulk_price_filtered | mp, delta | Цены по условию: mp + маржа (min_margin?, percent?) |
+| fetch_reviews | — | Перейти в Отзывы, загрузить и вернуть сводку (mp?, date?) |
+| fetch_analytics | — | Перейти в Аналитику, загрузить и вернуть отчёт |
+| mark_task_done | title | Отметить задачу выполненной по части названия |
+| get_ym_fby_slots | — | Доступные слоты приёмки ЯМ FBY (days? — кол-во дней) |
+| create_ym_supply | date | Создать отгрузку ЯМ FBY на конкретную дату |
+| create_supply_wb | — | Создать поставку WB из текущих заказов |
+| get_supply_stats | — | Статистика и список поставок |
 
 ## УТОЧНЯЮЩИЙ ВОПРОС (CLARIFY)
 Если пользователь просит выполнить action, но не указал нужный параметр — НИКОГДА не угадывай и не придумывай из контекста. Спроси ровно один параметр через JSON:
@@ -4401,6 +4420,7 @@ export class AssistantModule {
     }
 
     this.isLoading = true;
+    aiGlow(true);
     this.setStatus('Думаю…', 'thinking');
     const typing = this.addTypingIndicator();
     this.setInputEnabled(false);
@@ -4580,6 +4600,7 @@ export class AssistantModule {
       this.setStatus('Ошибка');
     } finally {
       this.isLoading = false;
+      aiGlow(false);
       this.setInputEnabled(true);
       this.saveSession();
       this.renderQuotaBar();

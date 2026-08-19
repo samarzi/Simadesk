@@ -612,6 +612,7 @@ const MARKETPLACES_ACTIONS: AiAction[] = [
       const app = w().app;
       const mps = a.mp ? [a.mp] : ['wb', 'ozon', 'yandex'];
       const synced: string[] = [];
+      const failed: string[] = [];
       for (const mp of mps) {
         try {
           if (mp === 'wb' && w().wbModule?.syncOrders) {
@@ -624,14 +625,18 @@ const MARKETPLACES_ACTIONS: AiAction[] = [
             await w().yandexModule.syncOrders();
             synced.push('Яндекс Маркет');
           } else {
-            app?.navigateTo?.(mp === 'wb' ? 'wb' : mp === 'ozon' ? 'ozon' : 'yandex');
-            synced.push(mp.toUpperCase());
+            const page = mp === 'wb' ? 'wb' : mp === 'ozon' ? 'ozon' : 'yandex';
+            app?.navigateTo?.(page);
+            failed.push(`${mp.toUpperCase()} (открываю раздел — нажми «Обновить» вручную)`);
           }
         } catch (e) {
-          synced.push(`${mp} (ошибка)`);
+          synced.push(`${mp} (ошибка: ${(e as Error)?.message ?? e})`);
         }
       }
-      return `Синхронизация запущена: ${synced.join(', ')}. Данные обновятся в течение 1-2 минут.`;
+      const parts: string[] = [];
+      if (synced.length) parts.push(`Синхронизировано: ${synced.join(', ')}.`);
+      if (failed.length) parts.push(failed.join(', ') + '.');
+      return parts.join('\n') || 'Нет доступных модулей для синхронизации.';
     },
   },
 ];
