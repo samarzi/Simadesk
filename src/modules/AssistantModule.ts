@@ -512,7 +512,7 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 | sync_marketplace | — | Синхронизация с МП (mp опц.) |
 | navigate_to | page | Перейти в раздел |
 | create_task_global | title | Создать задачу из любого места |
-| create_doc | type | Excel или Word документ |
+| create_doc | type | Excel или Word документ. title — СПРОСИ если пользователь не указал явно. Не придумывай название из контекста. |
 | daily_checklist | — | Дневной чеклист приоритетов |
 | toggle_theme_off | — | Тёмная тема |
 | toggle_theme_on | — | Светлая тема |
@@ -533,7 +533,7 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 | bulk_price_filtered | mp, delta | Цены по условию: mp + маржа (min_margin?, percent?) |
 
 ## УТОЧНЯЮЩИЙ ВОПРОС (CLARIFY)
-Если пользователь просит выполнить action, но не указал ОБЯЗАТЕЛЬНЫЙ параметр — НИКОГДА не угадывай. Спроси ровно один параметр через JSON:
+Если пользователь просит выполнить action, но не указал нужный параметр — НИКОГДА не угадывай и не придумывай из контекста. Спроси ровно один параметр через JSON:
 {"action":"clarify","question":"Какой маркетплейс? WB, Ozon или Яндекс Маркет?","field":"mp","options":["wb","ozon","yandex"]}
 - question: конкретный вопрос с вариантами прямо в тексте
 - field: имя параметра который нужно узнать
@@ -542,7 +542,10 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 - После ответа пользователя — выполни action с полученным параметром
 - НЕ уточняй параметры для: navigate, reload_page, toggle_theme, daily_checklist, run_risk_audit (они не требуют обязательных аргументов)
 - ОБЯЗАТЕЛЬНО спрашивай для: set_price (mp, article, price), bulk_price_change (mp), bulk_price_filtered (mp), export_orders (mp если нужен), toggle_campaign (campaign_id), hide_product (article), show_product (article)
-- Примеры когда спрашивать: «снизь цены на 10%» → спроси «На каком маркетплейсе снижать цены?»; «удали задачу» → спроси «Какую задачу удалить? Напиши название»; «скрой товар» → спроси «Укажи артикул товара который нужно скрыть»
+- ОБЯЗАТЕЛЬНО спрашивай для: create_doc — если название документа не указано явно пользователем
+- Примеры когда спрашивать: «снизь цены на 10%» → спроси «На каком маркетплейсе снижать цены?»; «удали задачу» → спроси «Какую задачу удалить? Напиши название»; «скрой товар» → спроси «Укажи артикул товара который нужно скрыть»; «создай таблицу эксель» → спроси «Как назвать таблицу?»
+
+ГЛАВНОЕ ПРАВИЛО: лучше переспросить, чем сделать что-то не то. Если есть малейшая неопределённость в параметре — спроси. Не угадывай, не придумывай из контекста беседы.
 
 ## ЦЕПОЧКИ ДЕЙСТВИЙ (CHAIN ACTIONS)
 Для выполнения нескольких шагов последовательно — ответь ОДНИМ JSON без пояснений:
@@ -740,7 +743,7 @@ function getStoreContext(): string {
   try {
     const rm = (window as any).reviewsModule;
     if (rm) {
-      const reviews: any[] = (rm as any).reviews ?? [];
+      const reviews: any[] = rm.allReviews ?? [];
       if (reviews.length > 0) {
         const unanswered = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply);
         const negative = unanswered.filter((r: any) => (r.stars ?? 5) <= 2);
@@ -1199,7 +1202,7 @@ export class AssistantModule {
     } catch { /* ignore */ }
 
     try {
-      const reviews: any[] = (window as any).reviewsModule?.reviews ?? [];
+      const reviews: any[] = (window as any).reviewsModule?.allReviews ?? [];
       const unanswered = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= 2);
       if (unanswered.length > 0) {
         alerts.push(`⭐ Негативных отзывов без ответа: ${unanswered.length}`);
@@ -1976,7 +1979,7 @@ export class AssistantModule {
     } catch { /* ignore */ }
 
     try {
-      const reviews: any[] = (window as any).reviewsModule?.reviews ?? [];
+      const reviews: any[] = (window as any).reviewsModule?.allReviews ?? [];
       const unanswered = reviews.filter((r: any) => !r.replied && !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= 2);
       if (unanswered.length > 0) alerts.push(`**Негативных отзывов без ответа: ${unanswered.length}**`);
     } catch { /* ignore */ }
@@ -3670,7 +3673,7 @@ export class AssistantModule {
       if (urgent.length) lines.push(`⚠️ FBS с дедлайном <4ч: **${urgent.length}**`);
     } catch { /* ignore */ }
     try {
-      const reviews: any[] = (window as any).reviewsModule?.reviews ?? [];
+      const reviews: any[] = (window as any).reviewsModule?.allReviews ?? [];
       const neg = reviews.filter((r: any) => !r.reply && !r.answered && !r.answer && r.stars <= 2);
       const allUnans = reviews.filter((r: any) => !r.reply && !r.answered && !r.answer);
       if (neg.length) lines.push(`⭐ Негативных без ответа: **${neg.length}**`);
@@ -3681,9 +3684,10 @@ export class AssistantModule {
       if (campaigns.length) {
         const active = campaigns.filter((c: any) => c.status === 'active');
         const loss = active.filter((c: any) => {
+          if (c.roi != null) return c.roi < -15;
           const spent = c.spent ?? 0;
-          const revenue = (c.orders ?? 0) * 1000;
-          return spent > 0 && (revenue - spent) / spent * 100 < -15;
+          const revenue = (c.orders ?? 0) * (c.avg_price ?? 1000);
+          return spent > 0 && revenue > 0 && (revenue - spent) / spent * 100 < -15;
         });
         const totalSpent = active.reduce((s: number, c: any) => s + (c.spent ?? 0), 0);
         const spentFmt = totalSpent >= 1_000_000 ? `${(totalSpent/1_000_000).toFixed(1)} млн ₽`

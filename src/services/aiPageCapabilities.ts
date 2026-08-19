@@ -384,7 +384,7 @@ function describeHome(): string {
   // Reviews unanswered
   const rm = w().reviewsModule;
   if (rm) {
-    const reviews: any[] = rm.reviews ?? rm.items ?? [];
+    const reviews: any[] = rm.allReviews ?? [];
     const unans = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply).length;
     const neg = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= 2).length;
     if (unans > 0) lines.push(`Отзывы: ${unans} без ответа${neg ? `, из них ${neg} негативных` : ''}`);
@@ -580,7 +580,7 @@ const HOME_ACTIONS: AiAction[] = [
       }
 
       // Задачи по отзывам
-      const reviews: any[] = w().reviewsModule?.reviews ?? [];
+      const reviews: any[] = w().reviewsModule?.allReviews ?? [];
       const unanswered = reviews.filter((r: any) => !r.answered && !r.answer && (r.stars ?? 5) <= 2).slice(0, 3);
       if (unanswered.length > 0) {
         await taskDb.createTask({
@@ -768,7 +768,7 @@ const REVIEWS_ACTIONS: AiAction[] = [
     run: async (a: { text: string; review_id?: string }) => {
       const rm = w().reviewsModule;
       if (!rm) throw new Error('Модуль отзывов недоступен на этой странице');
-      const reviews: any[] = rm.reviews ?? rm.items ?? [];
+      const reviews: any[] = rm.allReviews ?? [];
       const review = a.review_id
         ? reviews.find(r => String(r.id) === String(a.review_id))
         : reviews.find(r => !r.answered && !r.answer && !r.reply);
@@ -789,7 +789,7 @@ const REVIEWS_ACTIONS: AiAction[] = [
         rm = w().reviewsModule;
         if (!rm) return 'Открываю Отзывы — после загрузки страницы повтори команду.';
       }
-      const reviews: any[] = rm.reviews ?? rm.items ?? [];
+      const reviews: any[] = rm.allReviews ?? [];
       const review = a.review_id
         ? reviews.find(r => String(r.id) === String(a.review_id))
         : reviews.find(r => !r.answered && !r.answer && !r.reply);
@@ -1006,9 +1006,9 @@ const ANALYTICS_ACTIONS: AiAction[] = [
       const am = w().analyticsModule;
       const kpi = am?.kpi;
       w().app?.navigateTo?.('docs');
-      await new Promise(r => setTimeout(r, 1200));
+      await waitFor(() => !!w().docsModule?.aiCreateDoc, 3000);
       const dm = w().docsModule;
-      if (!dm?.aiCreateDoc) return 'Открываю Редактор для создания отчёта. Нажмите «Новый Excel» и скопируйте данные из Аналитики.';
+      if (!dm?.aiCreateDoc) return 'Редактор не загрузился. Перейди в раздел «Редактор» вручную и создай Excel там.';
 
       const title = a.title ?? `Отчёт аналитики ${new Date().toLocaleDateString('ru-RU')}`;
       await dm.aiCreateDoc('excel', title);
@@ -1034,7 +1034,9 @@ const ANALYTICS_ACTIONS: AiAction[] = [
         }
       }
 
-      return `Отчёт «${title}» создан в Редакторе. Данные аналитики внесены в таблицу.`;
+      const dataInserted = !!(kpi && docId);
+      return `Отчёт «${title}» создан в Редакторе.${dataInserted ? ' Данные аналитики внесены в таблицу.' : ' Аналитика не загружена — добавьте данные вручную.'}`;
+
     },
   },
 ];
@@ -1096,12 +1098,12 @@ const ORDERS_ACTIONS: AiAction[] = [
 
 async function exportOrdersToExcel(orders: any[], title: string): Promise<string> {
   w().app?.navigateTo?.('docs');
-  await new Promise(r => setTimeout(r, 1200));
+  await waitFor(() => !!w().docsModule?.aiCreateDoc, 3000);
   const dm = w().docsModule;
-  if (!dm?.aiCreateDoc) return 'Редактор недоступен. Перейди в раздел «Редактор» и создай Excel вручную.';
+  if (!dm?.aiCreateDoc) return 'Редактор не загрузился. Перейди в раздел «Редактор» вручную и создай Excel там.';
 
   await dm.aiCreateDoc('excel', title);
-  await new Promise(r => setTimeout(r, 400));
+  await waitFor(() => !!w().docsModule?.activeDocId, 2000);
   const docId = dm.activeDocId;
   if (!docId) return `Отчёт «${title}» создан. Вставь данные вручную.`;
 
@@ -1701,7 +1703,7 @@ export function installGlobalAiActions(): void {
       if (overdue.length) risks.push({ text: `Просроченных задач: ${overdue.length}`, priority: 'red' });
 
       // Отзывы
-      const reviews: any[] = w().reviewsModule?.reviews ?? [];
+      const reviews: any[] = w().reviewsModule?.allReviews ?? [];
       const badUnans = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= 2);
       if (badUnans.length) risks.push({ text: `Негативных отзывов без ответа: ${badUnans.length}`, priority: 'yellow' });
       const allUnans = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply);
@@ -1743,7 +1745,7 @@ export function installGlobalAiActions(): void {
         w().app?.navigateTo?.('reviews');
         return 'Перехожу в раздел Отзывы. После загрузки повторите команду.';
       }
-      const reviews: any[] = rm.reviews ?? rm.items ?? [];
+      const reviews: any[] = rm.allReviews ?? [];
       const maxStars = a.stars_max ?? 5;
       const unanswered = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= maxStars);
       if (!unanswered.length) return `Отзывов без ответа (≤${maxStars}★) не найдено.`;
@@ -1796,7 +1798,7 @@ export function installGlobalAiActions(): void {
 
       // Негативные отзывы без ответа
       try {
-        const reviews: any[] = w().reviewsModule?.reviews ?? [];
+        const reviews: any[] = w().reviewsModule?.allReviews ?? [];
         const neg = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= 2);
         const allUnans = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply);
         if (neg.length) items.push({ priority: 'high', text: `⭐ Ответить на ${neg.length} негативных отзыв(ов) (≤2★)` });
