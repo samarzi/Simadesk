@@ -2750,6 +2750,16 @@ export class AssistantModule {
       if (!e.altKey || e.code !== 'Space') return;
       const tag = (document.activeElement as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement as HTMLElement)?.isContentEditable) return;
+
+      // Shift+Alt+Space — one-shot: open panel and immediately start recording (no hold needed)
+      if (e.shiftKey) {
+        e.preventDefault();
+        if (!this.isOpen) this.openPanel();
+        this.voiceSendOnEnd = true;
+        setTimeout(() => { if (!this.isListening) this.startVoice(); }, 150);
+        return;
+      }
+
       if (this.voiceHotkeyHeld) return; // already held
       e.preventDefault();
       this.voiceHotkeyHeld = true;
@@ -4876,12 +4886,21 @@ export class AssistantModule {
         { role: 'system', content: `[РЕЗУЛЬТАТ ДЕЙСТВИЯ ${name}]: ${resultMsg}\nНапиши пользователю короткое подтверждение результата по-русски — только обычный текст, без JSON, без кнопок, без планов.` },
       ]);
     } catch { follow = resultMsg; }
-    follow = follow.replace(/\{[\s\S]*?"action"[\s\S]*?\}/g, '').trim() || resultMsg;
 
-    this.history.push({ role: 'assistant', content: follow });
+    // Strip any JSON artifacts and code blocks from follow-up
+    follow = follow
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/`[^`]*`/g, '')
+      .replace(/\{[\s\S]*?"action"[\s\S]*?\}/g, '')
+      .replace(/\{"suggestions"\s*:\s*\[[^\]]*\]\s*\}/gs, '')
+      .trim() || resultMsg;
+
+    const { text: followText, suggestions: followSuggs } = this.parseFollowUpSuggestions(follow);
+    this.history.push({ role: 'assistant', content: followText });
     this.saveSession();
-    const ttsBtn = this.addAssistantMessage(follow);
-    if (this.ttsEnabled && ttsBtn) this.startMsgTts(follow, ttsBtn);
+    const ttsBtn = this.addAssistantMessage(followText);
+    if (this.ttsEnabled && ttsBtn) this.startMsgTts(followText, ttsBtn);
+    if (followSuggs.length) this.addFollowUpSuggestions(followSuggs);
     this.setStatus('Готова');
   }
 

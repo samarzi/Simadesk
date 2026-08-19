@@ -3353,6 +3353,12 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
           run: (a) => this.aiMultiCount(a),
         },
         {
+          name: 'excel_style_range',
+          description: 'Применить форматирование к явно заданному диапазону ячеек. Использовать когда пользователь говорит «закрась все ячейки», «весь лист», «колонку A», «строки 1-5», «диапазон A1:D10» — т.е. указывает конкретный диапазон или весь лист. range — "all" для всего листа, или Excel-диапазон вида "A1:Z100".',
+          args: '{ range: "all"|"A1:Z100", bold?: boolean, italic?: boolean, underline?: boolean, strikethrough?: boolean, color?: "#hex", bg?: "#hex", align?: "left"|"center"|"right" }',
+          run: (a) => this.aiStyleRange(a),
+        },
+        {
           name: 'excel_style_selection',
           description: 'Применить форматирование к выделенным ячейкам. Использовать когда пользователь говорит «эти ячейки», «выделенные», «сделай их красными/жирными» и т.п. — то есть ссылается на текущий выбор. Не требует указания диапазона — берёт из контекста выделения.',
           args: '{ bold?: boolean, italic?: boolean, underline?: boolean, strikethrough?: boolean, color?: "#hex", bg?: "#hex", align?: "left"|"center"|"right" }',
@@ -3572,6 +3578,48 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     }
     this.aiPersist(doc, ec);
     return this.docsResult(doc.id, before, `Оформлена колонка ${this.colLetter(idx)} (${n} ячеек).`, 'Отменить оформление');
+  }
+
+  private aiStyleRange(a: { range: string; bold?: boolean; italic?: boolean; underline?: boolean; strikethrough?: boolean; color?: string; bg?: string; align?: 'left' | 'center' | 'right' }): AiActionResult {
+    const s = this.aiSheet();
+    if (!s) throw new Error('Нет активного Excel-документа');
+    const { ec, sheet, doc } = s;
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
+    const before = doc.content;
+    const css: string[] = [];
+    if (a.bold !== undefined)          css.push(`font-weight:${a.bold ? 'bold' : 'normal'}`);
+    if (a.italic !== undefined)        css.push(`font-style:${a.italic ? 'italic' : 'normal'}`);
+    if (a.underline !== undefined)     css.push(`text-decoration:${a.underline ? 'underline' : 'none'}`);
+    if (a.strikethrough !== undefined) css.push(`text-decoration:${a.strikethrough ? 'line-through' : 'none'}`);
+    if (a.color && /^#[0-9a-fA-F]{3,8}$/.test(a.color)) css.push(`color:${a.color}`);
+    if (a.bg && /^#[0-9a-fA-F]{3,8}$/.test(a.bg))       css.push(`background:${a.bg}`);
+    if (a.align && ['left','center','right'].includes(a.align)) css.push(`text-align:${a.align}`);
+    if (!css.length) throw new Error('Не заданы параметры оформления');
+    const addStyle = css.join(';') + ';';
+    let r1 = 0, c1 = 0, r2: number, c2: number;
+    if (!a.range || a.range === 'all') {
+      r2 = Math.max(sheet.data.length - 1, 0);
+      c2 = Math.max(...sheet.data.map(row => row.length), 1) - 1;
+    } else {
+      const m = a.range.toUpperCase().match(/^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/);
+      if (!m) throw new Error(`Неверный формат диапазона: ${a.range}. Пример: "A1:D10" или "all"`);
+      c1 = this.letterToCol(m[1]); r1 = parseInt(m[2]) - 1;
+      c2 = m[3] ? this.letterToCol(m[3]) : c1;
+      r2 = m[4] ? parseInt(m[4]) - 1 : r1;
+    }
+    let count = 0;
+    for (let r = r1; r <= r2; r++) {
+      if (!sheet.data[r]) sheet.data[r] = [];
+      for (let c = c1; c <= c2; c++) {
+        while (sheet.data[r].length <= c) sheet.data[r].push({ v: '' });
+        const cell = sheet.data[r][c] ?? { v: '' };
+        sheet.data[r][c] = { ...cell, s: ((cell.s ?? '') + ';' + addStyle).replace(/;+/g, ';').replace(/^;/, '') };
+        count++;
+      }
+    }
+    this.aiPersist(doc, ec);
+    const rangeStr = a.range === 'all' ? 'весь лист' : `${this.colLetter(c1)}${r1+1}:${this.colLetter(c2)}${r2+1}`;
+    return this.docsResult(doc.id, before, `Применено оформление к ${count} ячейкам (${rangeStr}).`, 'Отменить оформление');
   }
 
   private aiStyleSelection(a: { bold?: boolean; italic?: boolean; underline?: boolean; strikethrough?: boolean; color?: string; bg?: string; align?: 'left' | 'center' | 'right' }): AiActionResult {
