@@ -2095,9 +2095,15 @@ export class AssistantModule {
         });
         this.messagesEl.appendChild(el);
       } else {
+        // Strip raw JSON action blocks before displaying — they are stored for AI context
+        // but should never be shown to the user as plain text
+        const content = msg.content
+          .replace(/```(?:json)?\s*\{[\s\S]*?"action"[\s\S]*?\}\s*```/g, '')
+          .replace(/\{[\s\S]*?"action"\s*:\s*"[^"]*"[\s\S]*?\}/g, '')
+          .trim();
+        if (!content) continue;
         const el = document.createElement('div');
         el.className = 'sd-ap-msg assistant';
-        const content = msg.content;
         el.innerHTML = `<div class="sd-ap-msg-avatar">С</div><div class="sd-ap-msg-bubble">${renderMarkdown(content)}<div class="sd-ap-msg-footer"><button class="msg-copy-btn" title="Копировать"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>`;
         el.querySelector<HTMLElement>('.msg-copy-btn')?.addEventListener('click', (e) => {
           navigator.clipboard.writeText(this.cleanForCopy(content)).catch(() => {});
