@@ -3128,10 +3128,7 @@ ${this.SIMADESK_KNOWLEDGE}
           this.render();
         });
 
-        // Файл-пикер при редактировании
-        row.querySelector<HTMLLabelElement>('.ap-news-att-label')?.addEventListener('click', () => {
-          row.querySelector<HTMLInputElement>(`#news-edit-files-${id}`)?.click();
-        });
+        // Файл-пикер при редактировании (label нативно открывает input — JS-click не нужен)
         row.querySelector<HTMLInputElement>(`#news-edit-files-${id}`)?.addEventListener('change', (e) => {
           const files = Array.from((e.target as HTMLInputElement).files ?? []);
           const preview = row.querySelector(`#news-edit-files-preview-${id}`)!;
@@ -3193,6 +3190,8 @@ ${this.SIMADESK_KNOWLEDGE}
             }
           }
           showToast('Новость обновлена', 'success');
+          const { clearNewsCache } = await import('@/services/mpNewsService');
+          clearNewsCache();
           await this.loadNewsData();
           this.render();
         });
@@ -3212,9 +3211,7 @@ ${this.SIMADESK_KNOWLEDGE}
     });
 
     // Файл-пикер для ручного добавления: показываем превью выбранных файлов
-    el.querySelector<HTMLLabelElement>('.ap-news-att-label')?.addEventListener('click', () => {
-      el.querySelector<HTMLInputElement>('#news-manual-files')?.click();
-    });
+    // (label нативно открывает input — JS-click не нужен, иначе диалог открывается дважды)
     el.querySelector<HTMLInputElement>('#news-manual-files')?.addEventListener('change', (e) => {
       const files = Array.from((e.target as HTMLInputElement).files ?? []);
       const preview = el.querySelector('#news-manual-files-preview')!;
@@ -3259,6 +3256,9 @@ ${this.SIMADESK_KNOWLEDGE}
       }
       showToast('Новость добавлена', 'success');
       this.newsManualAdd = false;
+      // Сбрасываем кэш, чтобы новость появилась на Главной
+      const { clearNewsCache } = await import('@/services/mpNewsService');
+      clearNewsCache();
       await this.loadNewsData();
       this.render();
     });
