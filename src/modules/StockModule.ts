@@ -419,10 +419,44 @@ export class StockModule {
   }
   setLowThreshold(n: number): void { this.lowThreshold = Math.max(1, n); this.render(); }
 
+  /**
+   * Мерж дублирующихся ЯМ-офферов (один оффер в FBY-кампании и FBS-кампании):
+   * когда конкретный магазин не выбран — показываем одну строку на оффер,
+   * объединяя FBY-склад (stockFbo) и FBS-сток (stockFbs, редактируемый).
+   */
+  private mergeYmDuplicates(list: StockItem[]): StockItem[] {
+    const ymMap = new Map<string, StockItem>();
+    const rest: StockItem[] = [];
+    for (const item of list) {
+      if (item.mp !== 'yandex') { rest.push(item); continue; }
+      const key = item.ymOfferId ?? item.offerId;
+      const ex = ymMap.get(key);
+      if (!ex) {
+        ymMap.set(key, { ...item });
+      } else {
+        // FBS/DBS — редактируемая запись; FBY — добавляет склад МП
+        if (item.stockLabel === 'FBY' && ex.stockLabel !== 'FBY') {
+          ex.stockFbo = item.stockFbo || ex.stockFbo;
+          ex.stockTotal = ex.stockFbs + ex.stockFbo;
+        } else if (item.stockLabel !== 'FBY' && ex.stockLabel === 'FBY') {
+          const fbo = ex.stockFbo;
+          ymMap.set(key, { ...item, stockFbo: fbo, stockTotal: item.stockFbs + fbo });
+        }
+        // Оба одного типа — оставляем первый (дубль в рамках одной кампании)
+      }
+    }
+    return [...rest, ...ymMap.values()];
+  }
+
   private getFiltered(): StockItem[] {
     let list = this.items;
     if (this.mpFilter)    list = list.filter(i => i.mp === this.mpFilter);
-    if (this.storeFilter) list = list.filter(i => i.storeId === this.storeFilter);
+    if (this.storeFilter) {
+      list = list.filter(i => i.storeId === this.storeFilter);
+    } else {
+      // Без конкретного магазина — схлопываем ЯМ-дубликаты FBY+FBS в одну строку
+      list = this.mergeYmDuplicates(list);
+    }
     if (this.search) {
       const q = this.search.toLowerCase();
       list = list.filter(i => `${i.offerId} ${i.name}`.toLowerCase().includes(q));
@@ -568,11 +602,14 @@ export class StockModule {
     }
 
     const filtered    = this.getFiltered();
-    const total       = this.items.length;
-    const inStock     = this.items.filter(i => i.stockTotal > this.lowThreshold).length;
-    const low         = this.items.filter(i => i.stockTotal > 0 && i.stockTotal <= this.lowThreshold).length;
-    const outOfStock  = this.items.filter(i => i.stockTotal === 0).length;
-    const totalUnits  = this.items.reduce((s, i) => s + i.stockTotal, 0);
+    // Базовый список с учётом мержа дубликатов (без поиска/фильтра по стоку)
+    const baseMerged  = this.storeFilter ? this.items.filter(i => i.storeId === this.storeFilter)
+                        : this.mergeYmDuplicates(this.mpFilter ? this.items.filter(i => i.mp === this.mpFilter) : this.items);
+    const total       = baseMerged.length;
+    const inStock     = baseMerged.filter(i => i.stockTotal > this.lowThreshold).length;
+    const low         = baseMerged.filter(i => i.stockTotal > 0 && i.stockTotal <= this.lowThreshold).length;
+    const outOfStock  = baseMerged.filter(i => i.stockTotal === 0).length;
+    const totalUnits  = baseMerged.reduce((s, i) => s + i.stockTotal, 0);
     const totalValue  = this.items.reduce((s, i) => s + (i.price ?? 0) * i.stockTotal, 0);
 
     const availableStores = this.mpFilter ? this.stores.filter(s => s.mp === this.mpFilter) : this.stores;
