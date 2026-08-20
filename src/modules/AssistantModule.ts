@@ -1276,7 +1276,7 @@ export class AssistantModule {
   private sessionMenuOpen = false;
 
   // ── Support chat state ─────────────────────────────────────────────────────
-  private supportMode: 'ai' | 'support' | 'notifications' = 'ai';
+  private supportMode: 'ai' | 'support' | 'notifications' | 'settings' = 'ai';
   private myNotifications: import('@/services/notificationsService').UserNotification[] = [];
   private notifUnread = 0;
   private supportChats: Array<{ id: string; reason: string; created_at: string }> = (() => {
@@ -1867,6 +1867,7 @@ export class AssistantModule {
       <div class="sd-ap-mode-tabs" id="sd-ap-mode-tabs">
         <button class="sd-ap-mode-tab active" data-mode="ai">Сима</button>
         <button class="sd-ap-mode-tab" data-mode="support">Поддержка<span class="sd-ap-tab-dot" id="sd-ap-sup-dot" style="display:none"></span></button>
+        <button class="sd-ap-mode-tab" data-mode="settings">Настройки</button>
         <button class="sd-ap-mode-tab" data-mode="notifications">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="13" height="13" style="display:inline;vertical-align:-1px;margin-right:3px"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Уведомления<span class="sd-ap-tab-dot" id="sd-ap-notif-dot" style="display:none"></span>
         </button>
@@ -1900,60 +1901,6 @@ export class AssistantModule {
             <button class="sd-ap-qa-btn" data-action="unitEconomy">🧮 Unit-экономика</button>
             <button class="sd-ap-qa-btn" data-action="priceAnalysis">💸 Репрайсер</button>
             <button class="sd-ap-qa-btn" data-action="growthPlan">🚀 План роста</button>
-          </div>
-        </div>
-      </div>
-      <div class="sd-ap-quick-actions open" id="sd-ap-settings-section">
-        <div class="sd-ap-qa-header" id="sd-ap-settings-header">
-          <span class="sd-ap-qa-title">Настройки ассистента</span>
-          <svg class="sd-ap-qa-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
-        </div>
-        <div class="sd-ap-qa-body">
-          <div class="sd-ap-settings-body">
-            <div class="sd-ap-setting-divider">Модель AI</div>
-            <div class="sd-ap-setting-row">
-              <label class="sd-ap-setting-label">Модель</label>
-              <select class="sd-ap-model-select" id="sd-ap-model-select">
-                <option value="anthropic/claude-haiku-4-5" ${(this.aiModel||'anthropic/claude-haiku-4-5')==='anthropic/claude-haiku-4-5'?'selected':''}>Claude Haiku 4.5 — быстрая</option>
-                <option value="anthropic/claude-sonnet-4-5" ${this.aiModel==='anthropic/claude-sonnet-4-5'?'selected':''}>Claude Sonnet 4.5 — умная</option>
-                <option value="anthropic/claude-opus-4-5" ${this.aiModel==='anthropic/claude-opus-4-5'?'selected':''}>Claude Opus 4.5 — мощная</option>
-                <option value="google/gemini-flash-1.5" ${this.aiModel==='google/gemini-flash-1.5'?'selected':''}>Gemini Flash 1.5</option>
-                <option value="openai/gpt-4o-mini" ${this.aiModel==='openai/gpt-4o-mini'?'selected':''}>GPT-4o mini</option>
-                <option value="openai/gpt-4o" ${this.aiModel==='openai/gpt-4o'?'selected':''}>GPT-4o</option>
-              </select>
-            </div>
-            <div class="sd-ap-setting-divider">Голос и озвучка</div>
-            <div class="sd-ap-setting-row">
-              <label class="sd-ap-setting-label">Скорость озвучки</label>
-              <div class="sd-ap-speed-row">
-                <span class="sd-ap-speed-val">${(this.ttsRate).toFixed(1)}×</span>
-                <input type="range" class="sd-ap-speed-slider" min="0.5" max="2" step="0.1" value="${this.ttsRate}">
-              </div>
-            </div>
-            <div class="sd-ap-setting-row">
-              <label class="sd-ap-setting-label">Голос Edge-TTS</label>
-              <select class="sd-ap-voice-select">
-                <option value="ru-RU-SvetlanaNeural">Svetlana Neural — женский (рекомендуется)</option>
-                <option value="ru-RU-DmitryNeural">Dmitry Neural — мужской</option>
-              </select>
-            </div>
-            <div class="sd-ap-setting-note">Microsoft Edge-TTS Neural — тот же движок что в SIMA OS. Работает в любом браузере.</div>
-            <div class="sd-ap-setting-divider">Горячие клавиши</div>
-            <div class="sd-ap-setting-row">
-              <span class="sd-ap-setting-sublabel">Удерживать и говорить</span>
-              <div class="sd-ap-hk-row">
-                <kbd class="sd-ap-hk-badge" id="sd-hk-hold">${this.formatHotkeyLabel(this.hotkeyConfig.holdVoice)}</kbd>
-                <button class="sd-ap-hk-change" data-hk="holdVoice">Изменить</button>
-              </div>
-            </div>
-            <div class="sd-ap-setting-row">
-              <span class="sd-ap-setting-sublabel">Открыть и записать</span>
-              <div class="sd-ap-hk-row">
-                <kbd class="sd-ap-hk-badge" id="sd-hk-quick">${this.formatHotkeyLabel(this.hotkeyConfig.quickVoice)}</kbd>
-                <button class="sd-ap-hk-change" data-hk="quickVoice">Изменить</button>
-              </div>
-            </div>
-            <div class="sd-ap-setting-note">Нажми «Изменить», затем нажми нужную комбинацию клавиш (нужен хотя бы один модификатор: ⌥ ⇧ ⌃ ⌘). Без модификатора — отмена.</div>
           </div>
         </div>
       </div>
@@ -2004,7 +1951,55 @@ export class AssistantModule {
         </button>
       </div>
       <div id="sd-ap-sup-view" style="display:none;flex-direction:column;flex:1;min-height:0"></div>
-      <div id="sd-ap-notif-view" style="display:none;flex-direction:column;flex:1;min-height:0;overflow-y:auto"></div>`;
+      <div id="sd-ap-notif-view" style="display:none;flex-direction:column;flex:1;min-height:0;overflow-y:auto"></div>
+      <div id="sd-ap-settings-view" style="display:none;flex-direction:column;flex:1;min-height:0;overflow-y:auto;padding:10px 0">
+        <div class="sd-ap-settings-body">
+          <div class="sd-ap-setting-divider">Модель AI</div>
+          <div class="sd-ap-setting-row">
+            <label class="sd-ap-setting-label">Модель</label>
+            <select class="sd-ap-model-select" id="sd-ap-model-select">
+              <option value="anthropic/claude-haiku-4-5" ${(this.aiModel||'anthropic/claude-haiku-4-5')==='anthropic/claude-haiku-4-5'?'selected':''}>Claude Haiku 4.5 — быстрая</option>
+              <option value="anthropic/claude-sonnet-4-5" ${this.aiModel==='anthropic/claude-sonnet-4-5'?'selected':''}>Claude Sonnet 4.5 — умная</option>
+              <option value="anthropic/claude-opus-4-5" ${this.aiModel==='anthropic/claude-opus-4-5'?'selected':''}>Claude Opus 4.5 — мощная</option>
+              <option value="google/gemini-flash-1.5" ${this.aiModel==='google/gemini-flash-1.5'?'selected':''}>Gemini Flash 1.5</option>
+              <option value="openai/gpt-4o-mini" ${this.aiModel==='openai/gpt-4o-mini'?'selected':''}>GPT-4o mini</option>
+              <option value="openai/gpt-4o" ${this.aiModel==='openai/gpt-4o'?'selected':''}>GPT-4o</option>
+            </select>
+          </div>
+          <div class="sd-ap-setting-divider">Голос и озвучка</div>
+          <div class="sd-ap-setting-row">
+            <label class="sd-ap-setting-label">Скорость озвучки</label>
+            <div class="sd-ap-speed-row">
+              <span class="sd-ap-speed-val">${(this.ttsRate).toFixed(1)}×</span>
+              <input type="range" class="sd-ap-speed-slider" min="0.5" max="2" step="0.1" value="${this.ttsRate}">
+            </div>
+          </div>
+          <div class="sd-ap-setting-row">
+            <label class="sd-ap-setting-label">Голос Edge-TTS</label>
+            <select class="sd-ap-voice-select">
+              <option value="ru-RU-SvetlanaNeural">Svetlana Neural — женский (рекомендуется)</option>
+              <option value="ru-RU-DmitryNeural">Dmitry Neural — мужской</option>
+            </select>
+          </div>
+          <div class="sd-ap-setting-note">Microsoft Edge-TTS Neural — тот же движок что в SIMA OS. Работает в любом браузере.</div>
+          <div class="sd-ap-setting-divider">Горячие клавиши</div>
+          <div class="sd-ap-setting-row">
+            <span class="sd-ap-setting-sublabel">Удерживать и говорить</span>
+            <div class="sd-ap-hk-row">
+              <kbd class="sd-ap-hk-badge" id="sd-hk-hold">${this.formatHotkeyLabel(this.hotkeyConfig.holdVoice)}</kbd>
+              <button class="sd-ap-hk-change" data-hk="holdVoice">Изменить</button>
+            </div>
+          </div>
+          <div class="sd-ap-setting-row">
+            <span class="sd-ap-setting-sublabel">Открыть и записать</span>
+            <div class="sd-ap-hk-row">
+              <kbd class="sd-ap-hk-badge" id="sd-hk-quick">${this.formatHotkeyLabel(this.hotkeyConfig.quickVoice)}</kbd>
+              <button class="sd-ap-hk-change" data-hk="quickVoice">Изменить</button>
+            </div>
+          </div>
+          <div class="sd-ap-setting-note">Нажми «Изменить», затем нажми нужную комбинацию клавиш (нужен хотя бы один модификатор: ⌥ ⇧ ⌃ ⌘). Без модификатора — отмена.</div>
+        </div>
+      </div>`;
   }
 
   private saveKeyFromPanel(): void {
@@ -3202,7 +3197,7 @@ export class AssistantModule {
     }
   }
 
-  private switchSupportMode(mode: 'ai' | 'support' | 'notifications'): void {
+  private switchSupportMode(mode: 'ai' | 'support' | 'notifications' | 'settings'): void {
     if (!this.panel) return;
     this.supportMode = mode;
 
@@ -3210,8 +3205,8 @@ export class AssistantModule {
     this.panel.dataset.panelMode = mode;
     const h3 = this.panel.querySelector<HTMLElement>('.sd-ap-title h3');
     const p  = this.panel.querySelector<HTMLElement>('.sd-ap-title p');
-    if (h3) h3.textContent = mode === 'support' ? 'Поддержка' : mode === 'notifications' ? 'Уведомления' : 'Сима';
-    if (p)  p.textContent  = mode === 'support' ? 'Служба поддержки' : mode === 'notifications' ? 'Системные оповещения' : 'AI-менеджер маркетплейсов';
+    if (h3) h3.textContent = mode === 'support' ? 'Поддержка' : mode === 'notifications' ? 'Уведомления' : mode === 'settings' ? 'Настройки' : 'Сима';
+    if (p)  p.textContent  = mode === 'support' ? 'Служба поддержки' : mode === 'notifications' ? 'Системные оповещения' : mode === 'settings' ? 'Настройки ассистента' : 'AI-менеджер маркетплейсов';
 
     // Update tabs
     this.panel.querySelectorAll<HTMLElement>('.sd-ap-mode-tab').forEach(t => {
@@ -3223,8 +3218,9 @@ export class AssistantModule {
     );
     aiEls.forEach(el => { el.style.display = mode === 'ai' ? '' : 'none'; });
 
-    const supView   = this.panel.querySelector<HTMLElement>('#sd-ap-sup-view');
-    const notifView = this.panel.querySelector<HTMLElement>('#sd-ap-notif-view');
+    const supView      = this.panel.querySelector<HTMLElement>('#sd-ap-sup-view');
+    const notifView    = this.panel.querySelector<HTMLElement>('#sd-ap-notif-view');
+    const settingsView = this.panel.querySelector<HTMLElement>('#sd-ap-settings-view');
 
     if (supView) {
       supView.style.display = mode === 'support' ? 'flex' : 'none';
@@ -3242,6 +3238,10 @@ export class AssistantModule {
         this.updateNotifBadge();
         void this.loadAndRenderNotifications(notifView);
       }
+    }
+
+    if (settingsView) {
+      settingsView.style.display = mode === 'settings' ? 'flex' : 'none';
     }
 
     // Stop polling when leaving support tab
