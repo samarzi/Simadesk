@@ -1329,19 +1329,8 @@ export class OzonOrdersModule {
     });
   }
 
-  private toastTimer: number | null = null;
   private showToast(msg: string): void {
-    let t = document.getElementById('ord-toast') as HTMLElement | null;
-    if (!t) {
-      t = document.createElement('div');
-      t.id = 'ord-toast';
-      t.className = 'ord-toast';
-      document.body.appendChild(t);
-    }
-    t.textContent = msg;
-    t.classList.add('on');
-    if (this.toastTimer) window.clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => t!.classList.remove('on'), 1800);
+    showToast(msg, 'success', 1800);
   }
 
   /** @deprecated kept for backward compat */

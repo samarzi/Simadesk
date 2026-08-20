@@ -2470,33 +2470,6 @@
   opacity: 1;
 }
 
-/* TOAST — нотификация о копировании */
-.ord-toast {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translate(-50%, 20px);
-  background: var(--text);
-  color: var(--bg);
-  padding: 10px 18px;
-  border-radius: 10px;
-  font-size: 13px;
-  font-weight: 600;
-  box-shadow: 0 8px 24px rgba(0,0,0,.25);
-  opacity: 0;
-  pointer-events: none;
-  z-index: 99999;
-  transition: opacity .2s ease, transform .2s ease;
-  max-width: 90vw;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ord-toast.on {
-  opacity: 1;
-  transform: translate(-50%, 0);
-}
 
 /* ══════════════════════════════════════════════════════════════
    МУЛЬТИ-МАРКЕТПЛЕЙС

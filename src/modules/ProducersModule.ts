@@ -29,6 +29,7 @@ import { yandexDb } from '@/services/yandexDb';
 import { orderSyncService } from '@/services/orderSyncService';
 import { costPriceDb } from '@/services/costPriceDb';
 import { costProducerLinks } from '@/services/costProducerLinks';
+import { showToast } from '@/utils/toast';
 
 type Tab = 'producers' | 'products' | 'mappings' | 'consignment' | 'supply' | 'history';
 
@@ -417,9 +418,7 @@ export class ProducersModule {
   }
 
   private toast(text: string, kind: 'success' | 'error' | 'info' = 'info'): void {
-    const app = (window as any).app;
-    if (app?.toast) { app.toast(text, kind); return; }
-    /* fallback */ console.log(`[producers] ${kind}: ${text}`);
+    showToast(text, kind);
   }
 
   // ── Loaders ──────────────────────────────────────────────────────────────

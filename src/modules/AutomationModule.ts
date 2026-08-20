@@ -14,6 +14,7 @@
 import { debug } from '@/utils/debug';
 import { warehouseScanDb, WarehouseScanRecord } from '../services/warehouseScanDb';
 import { automationReportDb } from '../services/automationReportDb';
+import { showToast } from '@/utils/toast';
 
 // ── Типы ─────────────────────────────────────────────────────────────────────
 
@@ -1866,18 +1867,7 @@ export class AutomationModule {
   }
 
   private showToast(msg: string, type: 'warning' | 'error' | 'success' = 'warning'): void {
-    const colors = { warning: '#f59e0b', error: '#ef4444', success: '#22c55e' };
-    const toast = document.createElement('div');
-    toast.textContent = msg;
-    Object.assign(toast.style, {
-      position: 'fixed', bottom: '20px', right: '20px', zIndex: '9999',
-      padding: '12px 20px', borderRadius: '8px', fontSize: '13px', fontWeight: '600',
-      color: '#fff', background: colors[type],
-      boxShadow: '0 4px 12px rgba(0,0,0,.15)',
-      animation: 'fadeIn .3s',
-    });
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 3000);
+    showToast(msg, type);
   }
 
   private pluralize(n: number): string {
