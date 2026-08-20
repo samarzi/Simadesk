@@ -2235,12 +2235,12 @@ export class AssistantModule {
         });
         this.messagesEl.appendChild(el);
       } else {
-        // Strip raw JSON action blocks before displaying — they are stored for AI context
-        // but should never be shown to the user as plain text
-        const content = msg.content
+        // Strip raw JSON action/suggestions blocks before displaying
+        const rawContent = msg.content
           .replace(/```(?:json)?\s*\{[\s\S]*?"action"[\s\S]*?\}\s*```/g, '')
           .replace(/\{[\s\S]*?"action"\s*:\s*"[^"]*"[\s\S]*?\}/g, '')
           .trim();
+        const { text: content, suggestions: msgSuggs } = this.parseFollowUpSuggestions(rawContent);
         if (!content) continue;
         const el = document.createElement('div');
         el.className = 'sd-ap-msg assistant';
@@ -2253,6 +2253,9 @@ export class AssistantModule {
           setTimeout(() => { btn.classList.remove('copied'); btn.title = 'Копировать'; }, 1500);
         });
         this.messagesEl.appendChild(el);
+        // Re-render suggestion buttons only for the last assistant message
+        const isLast = this.history.slice(this.history.findIndex(m => m === msg) + 1).every(m => m.role !== 'assistant');
+        if (isLast && msgSuggs.length) this.addFollowUpSuggestions(msgSuggs);
       }
     }
     this.scrollToBottom();
