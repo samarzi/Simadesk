@@ -441,8 +441,8 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 После подключения первая синхронизация 15-30 минут.
 
 **Настройки (settings)**
-Профиль и безопасность, смена пароля. Подключение маркетплейсов. Настройки AI (Сима): здесь вводится OpenRouter API-ключ — без него я не работаю. Управление командой: добавить/удалить пользователей компании. Тарифы и подписка.
-Сима ВИДИТ: статус API-ключей МП, настроен ли AI-ключ, кол-во пользователей, тариф. Может: проверить ключи (check_api_keys), показать подписку (get_subscription_info), пригласить сотрудника (invite_team_member).
+Профиль и безопасность, смена пароля. Подключение маркетплейсов. Управление командой: добавить/удалить пользователей компании. Тарифы и подписка. Модель AI (выбирается в настройках ⚙ прямо в этой панели).
+Сима ВИДИТ: статус API-ключей МП, кол-во пользователей, тариф. Может: проверить ключи (check_api_keys), показать подписку (get_subscription_info), пригласить сотрудника (invite_team_member).
 
 **Профиль (profile)**
 Личные данные, фото профиля, контакты. История входов и устройств.
@@ -467,7 +467,7 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 "Где посмотреть остатки?" → Остатки (Склад) → колонка "Дней до OOS"
 "Как ответить на отзыв?" → Отзывы → найти отзыв → "Ответить"
 "Как узнать выручку за месяц?" → Аналитика → период "Месяц" → карточка "Выручка нетто"
-"Сима не отвечает / ошибка AI?" → Настройки → Настройки AI → проверить OpenRouter API-ключ и баланс на openrouter.ai
+"Сима не отвечает / ошибка AI?" → обратитесь к администратору системы — настройка AI выполняется только в админ-панели
 "Не могу войти в аккаунт?" → кнопка "Забыли пароль?" на форме входа
 "Как изменить тариф?" → Настройки → Подписка → или обратись в поддержку через вкладку «Поддержка»
 "Как добавить сотрудника?" → Настройки → Команда → "Пригласить пользователя"
@@ -488,6 +488,18 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 → Если пользователь спрашивает про отзывы (в т.ч. "за сегодня", "на Яндексе", "без ответа") — используй fetch_reviews с нужными mp и date. Передавай mp="yandex"/"wb"/"ozon" если указан МП, date="today"/"week" если указан период.
 → Для других данных (остатки, товары) — скажи в каком разделе их найти.
 → НЕ пытайся помочь с выдуманными примерами — это хуже, чем честный отказ.
+
+## ПРАВИЛО: НЕ УПОМИНАЙ OPENROUTER ПОЛЬЗОВАТЕЛЯМ
+ЗАПРЕЩЕНО сообщать пользователям о OpenRouter, openrouter.ai, API-ключах, балансе или регистрации на openrouter.ai.
+Пользователи SimaDesk не управляют OpenRouter — это техническая инфраструктура, которую настраивает только администратор.
+Если пользователь спрашивает «как настроить API-ключ Симы» или «Сима не работает» → ответь:
+«Настройка AI выполняется администратором системы. Если Сима не отвечает — обратитесь к вашему администратору SimaDesk.»
+НЕЛЬЗЯ давать никаких инструкций по регистрации, получению ключей, пополнению баланса на каких-либо AI-платформах.
+
+## ПРАВИЛО: ИСПОЛЬЗУЙ ГИПЕРССЫЛКИ ДЛЯ ВНЕШНИХ САЙТОВ
+При упоминании внешних сайтов используй markdown-гиперссылки: [название](https://url.com)
+Например: [SimaDesk](https://simadesk.ru), [Ozon Seller](https://seller.ozon.ru)
+НЕ пиши голые URL типа https://example.com — вставляй в читаемую ссылку.
 
 ## ПРАВИЛО: ЛИБО JSON, ЛИБО ТЕКСТ — НИКОГДА ВМЕСТЕ
 В одном ответе может быть ЛИБО один JSON-action (и больше ничего), ЛИБО обычный текст (и ни одного JSON).
@@ -1314,6 +1326,8 @@ export class AssistantModule {
   private supportPollTimer: ReturnType<typeof setInterval> | null = null;
   private supportLastMsgTime: string | null = null;
   private supportChatClosed = false;
+  private supportNewMsgFrom: string | null = null; // ISO — messages after this are "new"
+  private supportChatHasNew: Set<string> = new Set(); // chatIds with unseen admin messages
 
   private saveSupportChats(): void {
     localStorage.setItem('sd_sup_chats', JSON.stringify(this.supportChats));
@@ -3431,9 +3445,10 @@ export class AssistantModule {
       const date = new Date(c.created_at).toLocaleString('ru-RU', {
         day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
       });
-      return `<button class="sd-sup-chat-row" data-chat-id="${esc(c.id)}">
+      const hasNew = this.supportChatHasNew.has(c.id);
+      return `<button class="sd-sup-chat-row${hasNew ? ' has-new' : ''}" data-chat-id="${esc(c.id)}">
         <div class="sd-sup-chat-row-left">
-          <div class="sd-sup-chat-row-reason">${label}</div>
+          <div class="sd-sup-chat-row-reason">${label}${hasNew ? '<span class="sd-sup-row-dot"></span>' : ''}</div>
           <div class="sd-sup-chat-row-date">${date}</div>
         </div>
         <svg class="sd-sup-chat-row-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
@@ -3460,6 +3475,7 @@ export class AssistantModule {
         this.supportChatClosed = false;
         this.supContextSent = false;
         this.supAckShown = false;
+        this.supportChatHasNew.delete(chatId);
         this.renderSupportView(container);
       });
     });
@@ -3520,6 +3536,8 @@ export class AssistantModule {
   }
 
   private renderSupportChat(container: HTMLElement): void {
+    // Mark current message count so messages arriving after are "new"
+    this.supportNewMsgFrom = this.supportMessages.at(-1)?.created_at ?? new Date().toISOString();
     const reasonLabel = SUPPORT_REASONS[this.supportReason] ?? this.supportReason;
     container.innerHTML = `
       <div class="sd-sup-chat-header">
@@ -3771,8 +3789,15 @@ export class AssistantModule {
         `<div class="sd-sup-empty">Напишите ваш вопрос — оператор ответит в ближайшее время</div>`;
       return;
     }
+    let newDividerShown = false;
     el.innerHTML = this.supportMessages.map(m => {
       const isUser = m.sender_role === 'user';
+      // Show "new messages" divider before first admin message that arrived after chat was opened
+      let dividerHtml = '';
+      if (!isUser && !newDividerShown && this.supportNewMsgFrom && m.created_at > this.supportNewMsgFrom) {
+        newDividerShown = true;
+        dividerHtml = `<div class="sd-sup-new-divider"><span>Новые сообщения</span></div>`;
+      }
       const time = supportChatService.fmtTime(m.created_at);
       const failed = this.supportFailed.get(m.id);
       const pending = this.supportPending.has(m.id);
@@ -3800,8 +3825,9 @@ export class AssistantModule {
         }
       }
 
-      return `<div class="${cls}">
-        <div class="sd-sup-bubble">${esc(displayContent).replace(/\n/g, '<br>')}${attachHtml}${actionHtml}</div>
+      return `${dividerHtml}<div class="${cls}">
+        <div class="sd-sup-bubble">${esc(displayContent).replace(/\n/g, '<br>')}${attachHtml}</div>
+        ${actionHtml ? `<div class="sd-sup-action-wrap">${actionHtml}</div>` : ''}
         <div class="sd-sup-msg-time">${meta}</div>
       </div>`;
     }).join('') + typingHtml;
@@ -3870,6 +3896,7 @@ export class AssistantModule {
         if (fromAdmin > 0 && !viewing) {
           this.supportUnread += fromAdmin;
           this.updateSupportBadge();
+          if (this.supportActiveChatId) this.supportChatHasNew.add(this.supportActiveChatId);
           if (!this.isOpen) showToast('Поддержка ответила на ваше обращение', 'success');
         }
       }
