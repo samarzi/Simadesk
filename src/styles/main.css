@@ -2375,10 +2375,9 @@ mark {
 .toast {
   position: relative;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  padding-right: 36px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px 12px;
   border-radius: 10px;
   font-size: 13px;
   font-weight: 500;
@@ -2386,31 +2385,47 @@ mark {
   animation: toastIn 0.22s cubic-bezier(0.34, 1.2, 0.64, 1) both;
   box-shadow: 0 4px 20px rgba(0,0,0,0.45), 0 1px 4px rgba(0,0,0,0.3);
   max-width: 340px;
-  min-width: 220px;
+  min-width: 240px;
   overflow: hidden;
   pointer-events: all;
 }
 
+/* ── Header row: icon + type label + pin + close ── */
+.toast-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .toast-icon {
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
   opacity: 0.9;
 }
 
-.toast-msg {
+.toast-type {
   flex: 1;
   min-width: 0;
-  word-break: break-word;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.7;
 }
 
+.toast-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.toast-pin,
 .toast-close {
-  position: absolute;
-  top: 6px;
-  right: 6px;
   width: 22px;
   height: 22px;
   display: flex;
@@ -2420,15 +2435,60 @@ mark {
   border: none;
   cursor: pointer;
   border-radius: 4px;
-  opacity: 0.45;
-  font-size: 14px;
-  line-height: 1;
+  opacity: 0.4;
   color: inherit;
   transition: opacity .15s, background .15s;
   padding: 0;
 }
+.toast-pin:hover,
 .toast-close:hover { opacity: 1; background: rgba(255,255,255,0.1); }
+html.light .toast-pin:hover,
+html.light .toast-close:hover { background: rgba(0,0,0,0.07); }
 
+.toast-pin.active {
+  opacity: 1;
+  color: #f5a623;
+}
+
+/* ── Message body ── */
+.toast-msg {
+  font-size: 13px;
+  font-weight: 400;
+  opacity: 0.88;
+  word-break: break-word;
+  padding-left: 23px;
+}
+
+/* ── Optional link ── */
+.toast-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 23px;
+  font-size: 12px;
+  font-weight: 500;
+  color: inherit;
+  opacity: 0.75;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+  transition: opacity .15s;
+}
+.toast-link:hover { opacity: 1; }
+
+/* ── Optional media (image / video) ── */
+.toast-media {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  border-radius: 6px;
+  object-fit: cover;
+  margin-top: 2px;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+html.light .toast-media { border-color: rgba(0,0,0,0.1); }
+
+/* ── Progress bar ── */
 .toast-bar {
   position: absolute;
   bottom: 0;
@@ -2439,6 +2499,13 @@ mark {
   opacity: 0.35;
   transform-origin: left center;
   animation: toastBar linear forwards;
+}
+.toast.pinned .toast-bar { display: none; }
+
+/* ── Pinned state: stronger border ── */
+.toast.pinned {
+  border-width: 1.5px !important;
+  box-shadow: 0 4px 24px rgba(245,166,35,0.18), 0 1px 4px rgba(0,0,0,0.3);
 }
 
 @keyframes toastBar {
@@ -2520,7 +2587,6 @@ html.light .toast.warning {
   color: #8a5f00;
   box-shadow: 0 4px 20px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.08);
 }
-html.light .toast-close:hover { background: rgba(0,0,0,0.07); }
 
 /* ── Universal animations ── */
 

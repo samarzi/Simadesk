@@ -2987,8 +2987,8 @@ ${this.SIMADESK_KNOWLEDGE}
               </label>
               <div id="news-manual-files-preview" class="ap-news-files-preview"></div>
               <div style="display:flex;gap:8px;flex-shrink:0;margin-left:auto">
-                <button class="ap-btn ap-btn-primary" id="news-manual-save">${icon('check', 14)} Сохранить</button>
-                <button class="ap-btn" id="news-manual-cancel">Отмена</button>
+                <button type="button" class="ap-btn ap-btn-primary" id="news-manual-save">${icon('check', 14)} Сохранить</button>
+                <button type="button" class="ap-btn" id="news-manual-cancel">Отмена</button>
               </div>
             </div>
           </div>
@@ -3209,8 +3209,8 @@ ${this.SIMADESK_KNOWLEDGE}
                 ${existingAttHtml}
               </div>
               <div style="display:flex;gap:8px;flex-shrink:0;margin-left:auto">
-                <button class="ap-btn ap-btn-primary news-edit-save" data-id="${id}">${icon('check', 14)} Сохранить</button>
-                <button class="ap-btn news-edit-cancel" data-id="${id}">Отмена</button>
+                <button type="button" class="ap-btn ap-btn-primary news-edit-save" data-id="${id}">${icon('check', 14)} Сохранить</button>
+                <button type="button" class="ap-btn news-edit-cancel" data-id="${id}">Отмена</button>
               </div>
             </div>
           </div>
@@ -3220,23 +3220,47 @@ ${this.SIMADESK_KNOWLEDGE}
           this.render();
         });
 
-        // Файл-пикер при редактировании (label нативно открывает input — JS-click не нужен)
-        row.querySelector<HTMLInputElement>(`#news-edit-files-${id}`)?.addEventListener('change', (e) => {
-          const files = Array.from((e.target as HTMLInputElement).files ?? []);
-          const preview = row.querySelector(`#news-edit-files-preview-${id}`)!;
-          const chips = files.map(f => {
-            const isVid = f.type.startsWith('video/');
-            return `<span class="ap-news-file-chip">${isVid ? '▶' : '🖼'} ${this.esc(f.name.slice(0, 20))}</span>`;
-          }).join('');
-          // Append after existing att chips
-          const existing = preview.querySelectorAll('.ap-news-file-chip--existing');
-          const lastExisting = existing[existing.length - 1];
-          if (lastExisting) {
-            lastExisting.insertAdjacentHTML('afterend', chips);
-          } else {
-            preview.insertAdjacentHTML('beforeend', chips);
+        // Файл-пикер при редактировании: превью с кнопкой удаления каждого файла
+        {
+          const editFileInput = row.querySelector<HTMLInputElement>(`#news-edit-files-${id}`)!;
+          const editPreview = row.querySelector<HTMLElement>(`#news-edit-files-preview-${id}`)!;
+          if (editFileInput && editPreview) {
+            let newFiles: File[] = [];
+
+            const renderEditChips = () => {
+              // Удаляем все чипы новых файлов (но не существующих вложений)
+              editPreview.querySelectorAll('.ap-news-file-chip:not(.ap-news-file-chip--existing)').forEach(c => c.remove());
+              const chips = newFiles.map((f, i) => {
+                const isVid = f.type.startsWith('video/');
+                return `<span class="ap-news-file-chip">
+                  ${isVid ? '▶' : '🖼'} ${this.esc(f.name.slice(0, 22))}
+                  <button type="button" class="ap-news-chip-del" data-idx="${i}" title="Убрать">×</button>
+                </span>`;
+              }).join('');
+              editPreview.insertAdjacentHTML('beforeend', chips);
+              editPreview.querySelectorAll<HTMLButtonElement>('.ap-news-chip-del').forEach(btn => {
+                btn.addEventListener('click', (ev) => {
+                  ev.stopPropagation();
+                  const idx = parseInt(btn.dataset.idx ?? '0');
+                  newFiles.splice(idx, 1);
+                  const dt = new DataTransfer();
+                  newFiles.forEach(f => dt.items.add(f));
+                  editFileInput.files = dt.files;
+                  renderEditChips();
+                });
+              });
+            };
+
+            editFileInput.addEventListener('change', (e) => {
+              const incoming = Array.from((e.target as HTMLInputElement).files ?? []);
+              newFiles = [...newFiles, ...incoming];
+              const dt = new DataTransfer();
+              newFiles.forEach(f => dt.items.add(f));
+              editFileInput.files = dt.files;
+              renderEditChips();
+            });
           }
-        });
+        }
 
         // Удалить существующее вложение
         row.querySelectorAll<HTMLButtonElement>('.ap-news-att-del').forEach(delBtn => {
@@ -3302,16 +3326,47 @@ ${this.SIMADESK_KNOWLEDGE}
       this.render();
     });
 
-    // Файл-пикер для ручного добавления: показываем превью выбранных файлов
+    // Файл-пикер для ручного добавления: превью с кнопкой удаления каждого файла
     // (label нативно открывает input — JS-click не нужен, иначе диалог открывается дважды)
-    el.querySelector<HTMLInputElement>('#news-manual-files')?.addEventListener('change', (e) => {
-      const files = Array.from((e.target as HTMLInputElement).files ?? []);
-      const preview = el.querySelector('#news-manual-files-preview')!;
-      preview.innerHTML = files.map(f => {
-        const isVid = f.type.startsWith('video/');
-        return `<span class="ap-news-file-chip">${isVid ? '▶' : '🖼'} ${this.esc(f.name.slice(0, 20))}</span>`;
-      }).join('');
-    });
+    {
+      const fileInput = el.querySelector<HTMLInputElement>('#news-manual-files')!;
+      const preview = el.querySelector<HTMLElement>('#news-manual-files-preview')!;
+      if (fileInput && preview) {
+        let selectedFiles: File[] = [];
+
+        const renderManualChips = () => {
+          preview.innerHTML = selectedFiles.map((f, i) => {
+            const isVid = f.type.startsWith('video/');
+            return `<span class="ap-news-file-chip">
+              ${isVid ? '▶' : '🖼'} ${this.esc(f.name.slice(0, 22))}
+              <button type="button" class="ap-news-chip-del" data-idx="${i}" title="Убрать">×</button>
+            </span>`;
+          }).join('');
+          preview.querySelectorAll<HTMLButtonElement>('.ap-news-chip-del').forEach(btn => {
+            btn.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              const idx = parseInt(btn.dataset.idx ?? '0');
+              selectedFiles.splice(idx, 1);
+              // Обновляем files у input через DataTransfer
+              const dt = new DataTransfer();
+              selectedFiles.forEach(f => dt.items.add(f));
+              fileInput.files = dt.files;
+              renderManualChips();
+            });
+          });
+        };
+
+        fileInput.addEventListener('change', (e) => {
+          const incoming = Array.from((e.target as HTMLInputElement).files ?? []);
+          selectedFiles = [...selectedFiles, ...incoming];
+          // Синхронизируем input с полным списком
+          const dt = new DataTransfer();
+          selectedFiles.forEach(f => dt.items.add(f));
+          fileInput.files = dt.files;
+          renderManualChips();
+        });
+      }
+    }
 
     // Сохранить ручную новость
     el.querySelector('#news-manual-save')?.addEventListener('click', async () => {

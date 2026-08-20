@@ -1356,6 +1356,12 @@ html.light .ap-api-tag.ya { color: #cc2626; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ap-news-file-chip--existing { background: color-mix(in srgb, var(--ap-accent) 10%, var(--bg3)); }
+.ap-news-chip-del {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; cursor: pointer; padding: 0 0 0 4px;
+  color: var(--text-2); font-size: 14px; line-height: 1; opacity: .7;
+}
+.ap-news-chip-del:hover { opacity: 1; color: #ef4444; }
 .ap-news-att-del {
   background: none; border: none; cursor: pointer; color: var(--text-2);
   padding: 0 2px; font-size: 13px; line-height: 1; flex-shrink: 0;
