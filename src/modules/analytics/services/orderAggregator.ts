@@ -100,6 +100,24 @@ function isCancelTx(tx: MpTransaction): boolean {
   return op.includes('cancel');
 }
 
+/** Нетто-расход по услугам МП за одну транзакцию.
+ *
+ *  Почему не `Math.abs(services_total)`: у Ozon поле `services[]` содержит и удержания
+ *  (price < 0), и компенсации/возвраты услуг (price > 0). financeSync складывает их
+ *  через Math.abs(), из-за чего компенсация попадала в расходы вторым удержанием и
+ *  завышала «Расходы». Если raw_json с разбивкой есть — считаем со знаком по нему,
+ *  иначе падаем на агрегат (WB/ЯМ пишут туда уже нормализованный положительный расход).
+ */
+function servicesExpenseOf(tx: MpTransaction): number {
+  const raw = (tx.raw_json as any)?.services;
+  if (Array.isArray(raw) && raw.length) {
+    // price < 0 = удержание → расход положительный
+    return raw.reduce((sum: number, s: any) => sum - (Number(s?.price) || 0), 0);
+  }
+  const svc = tx.services_total || 0;
+  return svc < 0 ? -svc : svc;
+}
+
 // ── Fee breakdown из raw_json (где МП раскрывает) ───────────────────────────
 
 function buildFeeBreakdown(txs: MpTransaction[]): FeeBreakdown[] {
@@ -135,9 +153,8 @@ function buildFeeBreakdown(txs: MpTransaction[]): FeeBreakdown[] {
         else add('service', s.name || 'Сервис МП', amt);
       }
     } else if (tx.services_total) {
-      // Если детализации нет — используем агрегат как есть (со знаком)
-      const svc = tx.services_total;
-      add('other', 'Прочие услуги МП', svc < 0 ? -svc : svc);
+      // Если детализации нет — используем агрегат (WB/ЯМ пишут уже положительный расход)
+      add('other', 'Прочие услуги МП', servicesExpenseOf(tx));
     }
   }
 
@@ -295,7 +312,80 @@ export function aggregateOrders(input: AggregateInput): Order[] {
     }));
   }
 
+  estimatePendingFinancials(orders, storeMap);
+
   return orders.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+}
+
+/** Типовые ставки МП — fallback, когда в срезе вообще нет заказов с финотчётом. */
+const FALLBACK_RATES: Record<Mp, { commission: number; logistics: number; services: number }> = {
+  ozon:   { commission: 0.16, logistics: 0.07, services: 0.01 },
+  wb:     { commission: 0.19, logistics: 0.08, services: 0.01 },
+  yandex: { commission: 0.13, logistics: 0.06, services: 0.01 },
+};
+
+/**
+ * Дозаполняет удержания у заказов без финотчёта (pending_settlement).
+ *
+ * Зачем: раньше такие заказы просто выбрасывались из всех денежных расчётов
+ * (`if (o.pending_settlement) continue`), при этом продолжая считаться в
+ * «Заказов доставлено». Получалась картина вида «94 доставлено, выручка 121 тыс»,
+ * где выручка покрывала лишь 40% этих заказов, график был из одного пика,
+ * а Топ-товаров пустовал. Теперь по ним считаются оценочные удержания
+ * по фактическим ставкам этого же среза, а флаг fees_estimated позволяет
+ * честно показать долю оценки в интерфейсе.
+ */
+function estimatePendingFinancials(orders: Order[], storeMap: Map<string, StoreInfo>): void {
+  // Фактические ставки по каждому МП — из заказов, где финотчёт уже есть.
+  const acc = new Map<Mp, { revenue: number; commission: number; logistics: number; services: number }>();
+  for (const o of orders) {
+    if (o.pending_settlement || o.revenue <= 0) continue;
+    const cur = acc.get(o.mp) ?? { revenue: 0, commission: 0, logistics: 0, services: 0 };
+    cur.revenue    += o.revenue;
+    cur.commission += o.commission;
+    cur.logistics  += o.logistics + o.logistics_return;
+    cur.services   += o.services;
+    acc.set(o.mp, cur);
+  }
+
+  const rateFor = (mp: Mp) => {
+    const a = acc.get(mp);
+    const fb = FALLBACK_RATES[mp];
+    // Требуем осмысленную базу — на паре заказов ставка шумит сильнее, чем типовая.
+    if (!a || a.revenue < 1000) return fb;
+    const clamp = (v: number, max: number) => (isFinite(v) && v > 0 ? Math.min(v, max) : 0);
+    return {
+      commission: clamp(a.commission / a.revenue, 0.5) || fb.commission,
+      logistics:  clamp(a.logistics  / a.revenue, 0.5),
+      services:   clamp(a.services   / a.revenue, 0.3),
+    };
+  };
+
+  for (const o of orders) {
+    if (!o.pending_settlement) continue;
+    if (o.status === 'cancelled' || o.status === 'returned') continue;
+    if (o.revenue <= 0) continue;
+
+    const r = rateFor(o.mp);
+    o.commission = o.revenue * r.commission;
+    o.logistics  = o.revenue * r.logistics;
+    o.services   = o.revenue * r.services;
+    o.fees_estimated = true;
+    o.source = 'estimated';
+
+    const store = storeMap.get(o.store_id);
+    const taxOv = store ? settingsDb.taxFor(store.id) : { model: 'none' as const, rate: 0 };
+    o.tax = calcTax(o.revenue, o.commission + o.logistics + o.logistics_return + o.services + o.cogs, taxOv.model, taxOv.rate);
+
+    const totalExpenses = o.commission + o.logistics + o.logistics_return + o.services + o.cogs + o.tax;
+    o.net_profit = o.revenue - totalExpenses;
+
+    const denom = o.items.reduce((s, it) => s + Math.max(0, it.revenue), 0);
+    for (const it of o.items) {
+      const share = denom > 0 ? it.revenue / denom : 1 / Math.max(1, o.items.length);
+      it.net_profit = it.revenue - ((totalExpenses - o.cogs) * share + it.cogs);
+    }
+  }
 }
 
 function groupTxByOrder(transactions: MpTransaction[]): Map<string, MpTransaction[]> {
@@ -341,10 +431,7 @@ function makeOrder(p: MakeOrderInput): Order {
       commission       += -(tx.sale_commission || 0);
       logistics        += -(tx.delivery_charge || 0);
       logistics_return += -(tx.return_delivery_charge || 0);
-      // services_total: Ozon шлёт со знаком, WB/YM пишут уже abs. Берём как есть —
-      // если итог отрицательный (преобладают компенсации) тоже учтём правильно.
-      const svc = tx.services_total || 0;
-      services += svc < 0 ? -svc : svc;
+      services += servicesExpenseOf(tx);
       payout_actual += tx.amount || 0;
     }
     // Защита: если из-за компенсаций сумма ушла в минус (МП вернул больше чем удержал) —
@@ -368,9 +455,15 @@ function makeOrder(p: MakeOrderInput): Order {
 
   // Cancel / Return: revenue зануляем. Возврат — покупатель вернул товар,
   // значит нет чистой продажи. Себес при этом тоже не списываем (уже в cogsTotal ниже).
+  // revenue_lost сохраняет исходную сумму — без неё строка «Возвраты» в P&L всегда 0.
+  let revenue_lost = 0;
   if (status === 'cancelled' || status === 'returned') {
+    revenue_lost = revenue;
     revenue = 0;
-    for (const it of p.items) { it.revenue = 0; it.net_profit = 0; }
+    // Позиции сохраняют исходную выручку — она нужна и для карточки заказа,
+    // и для корректного вычитания возврата в разбивке по SKU. Обнуляется только
+    // прибыль: заработка по этому заказу нет.
+    for (const it of p.items) { it.net_profit = 0; }
   }
 
   // Если есть реальные транзакции но revenue = 0 — это сервисная/компенсационная операция
@@ -396,8 +489,11 @@ function makeOrder(p: MakeOrderInput): Order {
     it.net_profit = it.revenue - itemExpenses;
   }
 
+  // ВАЖНО: отсутствие себестоимости НЕ делает финотчёт «нереальным».
+  // Раньше здесь стоял downgrade source → 'estimated', из-за чего показатель
+  // «Финотчёт пришёл по N% заказов» падал до 40-50% на магазинах без заполненных
+  // себестоимостей и выдавал ложную тревогу. Пробел в COGS отражает missing_cogs_count.
   const missing_cogs_count = p.items.filter(it => it.cost_price == null && it.quantity > 0).length;
-  if (missing_cogs_count > 0 && source === 'real') source = 'estimated';
 
   // Финотчёта по заказу ещё нет вообще — комиссия/логистика неизвестны,
   // а заказ ещё может быть отменён на ПВЗ. Cancel/return уже занулены явно выше.
@@ -413,6 +509,7 @@ function makeOrder(p: MakeOrderInput): Order {
     status_raw: p.status_raw,
     items: p.items,
     revenue,
+    revenue_lost,
     commission,
     logistics,
     logistics_return,

@@ -356,7 +356,7 @@ export class ReviewsModule {
           orderId: f.orderId ?? '',
           reviewPhotos: f.reviewPhotos ?? [],
           reviewVideo: f.reviewVideo ?? '',
-          answered: !!f.answerText, answerText: f.answerText,
+          answered: !!f.answerText || f.state === 'PROCESSED', answerText: f.answerText,
           answeredBy: null,
         }));
         // Применяем локальный кеш отвеченных — API может не сразу отразить ответ
@@ -1200,7 +1200,7 @@ export class ReviewsModule {
                   const card=document.getElementById('ar-master-card');
                   const title=document.getElementById('ar-master-title');
                   if(card){card.style.background=on?'#f0fdf4':'var(--bg2)';card.style.borderColor=on?'#16a34a40':'var(--border)';}
-                  if(title){title.style.color=on?'#16a34a':'var(--text)';title.innerHTML=on?'${I.checkCircle('', 14)} Авто-ответы включены':'${I.circleDot('', 14)} Авто-ответы выключены';}
+                  if(title){title.style.color=on?'#16a34a':'var(--text)';title.textContent=on?'✓ Авто-ответы включены':'○ Авто-ответы выключены';}
                 ">
               <span style="position:absolute;inset:0;background:${settings.enabled ? '#16a34a' : '#94a3b8'};
                 border-radius:28px;transition:background .2s">

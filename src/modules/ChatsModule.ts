@@ -242,10 +242,24 @@ export class ChatsModule {
         mp: 'ozon', storeId: s.id, storeName: s.name,
         loading: false, error: null, chats: [], loaded: false,
       }),
-      ...yandexStores.filter(s => s.campaign_id).map((s): StoreEntry => existing.get(`yandex:${s.id}`) ?? {
-        mp: 'yandex', storeId: s.id, storeName: s.name, campaignId: s.campaign_id,
-        loading: false, error: null, chats: [], loaded: false,
-      }),
+      // Яндекс Chat API работает на уровне businessId (не campaignId), поэтому все кампании
+      // с одним api_key отдают одинаковый список чатов — группируем в одну кнопку.
+      ...(() => {
+        const byKey = new Map<string, YandexStore[]>();
+        for (const s of yandexStores.filter(s => s.campaign_id)) {
+          if (!byKey.has(s.api_key)) byKey.set(s.api_key, []);
+          byKey.get(s.api_key)!.push(s);
+        }
+        return [...byKey.values()].map((group): StoreEntry => {
+          const sorted = [...group].sort((a, b) => a.name.localeCompare(b.name));
+          const first = sorted[0];
+          const name = sorted.length === 1 ? first.name : sorted.map(s => s.name).join(' / ');
+          return existing.get(`yandex:${first.id}`) ?? {
+            mp: 'yandex', storeId: first.id, storeName: name, campaignId: first.campaign_id,
+            loading: false, error: null, chats: [], loaded: false,
+          };
+        });
+      })(),
     ];
 
     const mps: Mp[] = ['wb', 'ozon', 'yandex'];

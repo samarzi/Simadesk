@@ -617,10 +617,12 @@ export const yandexApi = {
     if (businessId) {
       let firstErr: any = null;
       try {
+        // POST /businesses/{businessId}/goods-feedback/comments
+        // feedbackId передаётся как число в теле (Int64)
         await yandexFetch(
-          `/businesses/${businessId}/goods-feedback/${feedbackId}/response`,
+          `/businesses/${businessId}/goods-feedback/comments`,
           'POST', apiKey,
-          { text },
+          { feedbackId: Number(feedbackId), comment: { text } },
           signal,
         );
         debug.log(`[YM replyFeedback] ✓ success via new endpoint`);
@@ -636,7 +638,7 @@ export const yandexApi = {
       try {
         await yandexFetch(
           `/v2/campaigns/${campaignId}/feedback/updates/${feedbackId}/respond`,
-          'POST', apiKey, { text }, signal,
+          'POST', apiKey, { comment: { text } }, signal,
         );
         debug.log(`[YM replyFeedback] ✓ success via old endpoint`);
       } catch (e2: any) {
@@ -648,7 +650,7 @@ export const yandexApi = {
     console.warn(`[YM replyFeedback] businessId is null — using old endpoint`);
     await yandexFetch(
       `/v2/campaigns/${campaignId}/feedback/updates/${feedbackId}/respond`,
-      'POST', apiKey, { text }, signal,
+      'POST', apiKey, { comment: { text } }, signal,
     );
   },
 

@@ -8,6 +8,10 @@ export interface KpiCardOpts {
   tint?: string;            // CSS color для радиального фона
   sparkline?: number[];     // 12-30 точек
   invertDelta?: boolean;    // для расходов: рост = плохо
+  /** Ключ детальной страницы. Задан → карточка кликабельна. */
+  detail?: string;
+  /** Мелкая подпись под значением (контекст: из чего сложилось). */
+  hint?: string;
 }
 
 function renderSpark(points: number[]): string {
@@ -45,12 +49,19 @@ export function renderKpiCard(opts: KpiCardOpts): string {
   const tint = opts.tint ?? 'var(--accent-dim)';
   const spark = opts.sparkline ? renderSpark(opts.sparkline) : '';
 
+  const rootCls = `an2-kpi${opts.detail ? ' an2-kpi-clickable' : ''}`;
+  const attrs = opts.detail
+    ? `onclick="window.analyticsModule?.openDetail('${opts.detail}')" title="Открыть подробный разбор: ${opts.label}"`
+    : '';
+
   return `
-    <div class="an2-kpi" style="--an-tint: ${tint}; color: ${opts.tint ?? 'var(--accent)'}">
+    <div class="${rootCls}" ${attrs} style="--an-tint: ${tint}; color: ${opts.tint ?? 'var(--accent)'}">
       <div class="an2-kpi-label" style="color: var(--text3)">${opts.label}</div>
       <div class="an2-kpi-value an2-anim-count" style="color: var(--text)">${valueText}</div>
       ${deltaHtml}
+      ${opts.hint ? `<div class="an2-kpi-hint">${opts.hint}</div>` : ''}
       ${spark}
+      ${opts.detail ? '<div class="an2-kpi-arrow">&rsaquo;</div>' : ''}
     </div>
   `;
 }

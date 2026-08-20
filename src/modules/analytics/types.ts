@@ -99,8 +99,12 @@ export interface Order {
   net_profit: number;
   /** Фактически выплачено (Σ tx.amount по этому posting). */
   payout_actual: number;
-  /** Финальный финотчёт ещё не пришёл, цифры предварительные. */
+  /** Финальный финотчёт ещё не пришёл, цифры предварительные (оценка). */
   pending_settlement?: boolean;
+  /** Выручка, потерянная из-за возврата/отмены (до зануления revenue). */
+  revenue_lost: number;
+  /** Комиссия/логистика/услуги посчитаны оценочно (финотчёта нет). */
+  fees_estimated?: boolean;
   /** Техническая строка расходов без найденного заказа. */
   is_orphan?: boolean;
 
@@ -133,11 +137,20 @@ export interface KPI {
   orders_processing: number;
   orders_returned: number;
   orders_cancelled: number;
+  orders_total: number;       // всего заказов в срезе (без orphan-строк расходов)
   units_sold: number;
   avg_check: number;
   // Качество данных
-  source_real_pct: number;   // % заказов с реальными финданными
+  source_real_pct: number;     // % заказов с реальным финотчётом МП
   missing_cogs_orders: number; // заказов с хотя бы одним SKU без себестоимости
+  /** Заказов, по которым финотчёт ещё не пришёл — их удержания оценены. */
+  orders_estimated: number;
+  /** Доля выручки, посчитанной по оценке (0-100). */
+  estimated_revenue_pct: number;
+  /** Выручка отменённых заказов (не попала ни в gross, ни в returns). */
+  cancelled_revenue: number;
+  /** % выкупа = delivered / (delivered + returned + cancelled). */
+  buyout_pct: number;
 }
 
 export interface TimeseriesPoint {

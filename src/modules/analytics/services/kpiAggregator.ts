@@ -40,13 +40,16 @@ export function computeMissingCogs(orders: Order[], knownVendorCodes?: Set<strin
 }
 
 export function computeKPI(orders: Order[]): KPI {
-  let revenue_gross = 0, returns_revenue = 0;
+  let revenue_gross = 0, returns_revenue = 0, cancelled_revenue = 0, revenue_delivered = 0;
   let commission = 0, logistics = 0, services = 0, cogs = 0, tax = 0;
   let units_sold = 0;
   let delivered = 0, processing = 0, returned = 0, cancelled = 0;
   let realCount = 0, missingCogsOrders = 0;
+  let estimatedOrders = 0, estimatedRevenue = 0;
+  let ordersTotal = 0;
 
   for (const o of orders) {
+    if (!o.is_orphan) ordersTotal++;
     switch (o.status) {
       case 'delivered':   delivered++;  break;
       case 'processing':
@@ -56,18 +59,19 @@ export function computeKPI(orders: Order[]): KPI {
     }
     if (o.source === 'real') realCount++;
     if (o.missing_cogs_count > 0) missingCogsOrders++;
+    if (o.fees_estimated) { estimatedOrders++; estimatedRevenue += o.revenue; }
 
-    // Финотчёта МП по заказу ещё нет — комиссия/логистика неизвестны, а сам заказ
-    // ещё может быть отменён на ПВЗ. Считаем только для статусов/счётчиков выше,
-    // в денежные суммы не включаем — во избежание завышенной "предварительной" прибыли.
-    if (o.pending_settlement) continue;
+    // Заказы без финотчёта больше не выбрасываются: их удержания дозаполнены
+    // оценкой в orderAggregator.estimatePendingFinancials(). Иначе выручка
+    // покрывала лишь часть заказов, а счётчики — все, и цифры противоречили друг другу.
 
     if (o.status === 'returned') {
-      returns_revenue += o.revenue;
+      returns_revenue += o.revenue_lost || 0;
     } else if (o.status === 'cancelled') {
-      // skip
+      cancelled_revenue += o.revenue_lost || 0;
     } else {
       revenue_gross += o.revenue;
+      if (o.status === 'delivered') revenue_delivered += o.revenue;
     }
     commission += o.commission;
     logistics  += o.logistics + o.logistics_return;
@@ -75,17 +79,25 @@ export function computeKPI(orders: Order[]): KPI {
     cogs       += o.cogs;
     tax        += o.tax;
 
-    if (o.status !== 'cancelled') {
+    if (o.status !== 'cancelled' && o.status !== 'returned') {
       for (const it of o.items) units_sold += it.quantity;
     }
   }
 
-  const revenue = revenue_gross - returns_revenue;
+  // «Выручка» = сумма по заказам, которые дошли до покупателя и не вернулись.
+  // Возвраты и отмены НЕ вычитаются повторно: их выручка вообще не попадала в
+  // revenue_gross (она осталась в revenue_lost). Раньше здесь стояло
+  // `revenue_gross - returns_revenue` — при заполненном returns_revenue это
+  // вычло бы продажу, которую никогда не прибавляли. Потери на возвратах
+  // показываются отдельной строкой как упущенная выручка.
+  const revenue = revenue_gross;
   const total_expenses = commission + logistics + services + cogs + tax;
   const net_profit = revenue - total_expenses;
   const margin_pct = revenue > 0 ? (net_profit / revenue) * 100 : 0;
-  const avg_check = delivered > 0 ? revenue / delivered : 0;
-  const source_real_pct = orders.length > 0 ? (realCount / orders.length) * 100 : 0;
+  const avg_check = delivered > 0 ? revenue_delivered / delivered : 0;
+  const finalizable = orders.filter(o => !o.is_orphan).length;
+  const source_real_pct = finalizable > 0 ? (realCount / finalizable) * 100 : 0;
+  const closed = delivered + returned + cancelled;
 
   return {
     revenue, revenue_gross, returns_revenue,
@@ -93,8 +105,13 @@ export function computeKPI(orders: Order[]): KPI {
     total_expenses, net_profit, margin_pct,
     orders_delivered: delivered, orders_processing: processing,
     orders_returned: returned, orders_cancelled: cancelled,
+    orders_total: ordersTotal,
     units_sold, avg_check,
     source_real_pct, missing_cogs_orders: missingCogsOrders,
+    orders_estimated: estimatedOrders,
+    estimated_revenue_pct: revenue_gross > 0 ? (estimatedRevenue / revenue_gross) * 100 : 0,
+    cancelled_revenue,
+    buyout_pct: closed > 0 ? (delivered / closed) * 100 : 0,
   };
 }
 
@@ -102,13 +119,12 @@ export function computeTimeseries(orders: Order[], dateFrom: Date, dateTo: Date)
   const byDay = new Map<string, { revenue: number; expenses: number }>();
   for (const o of orders) {
     if (!o.date) continue;
-    if (o.pending_settlement) continue; // финотчёта ещё нет — не искажаем график предварительными цифрами
     const day = o.date.slice(0, 10);
     const cur = byDay.get(day) ?? { revenue: 0, expenses: 0 };
     if (o.status === 'cancelled') { byDay.set(day, cur); continue; }
     if (o.status === 'returned') {
-      // возврат бьёт по тому же дню, но в выручку записываем 0, а возврат — в расходы
-      cur.expenses += o.revenue;
+      // возврат бьёт по тому же дню: выручки нет, а возвращённая сумма — в расходы
+      cur.expenses += o.revenue_lost || 0;
     } else {
       cur.revenue += o.revenue;
     }
@@ -137,8 +153,7 @@ export function computeSkuPerformance(orders: Order[]): SkuPerformance[] {
   const map = new Map<string, Acc>();
   for (const o of orders) {
     if (o.status === 'cancelled') continue;
-    if (o.pending_settlement) continue; // финотчёта ещё нет — не искажаем разбивку по SKU
-    const sign = o.status === 'returned' ? -1 : 1;
+    const isReturn = o.status === 'returned';
     // Доли по позиции от заказа: распределяем commission/logistics пропорционально revenue
     const denom = o.items.reduce((s, it) => s + Math.max(0, it.revenue), 0);
     for (const it of o.items) {
@@ -149,12 +164,19 @@ export function computeSkuPerformance(orders: Order[]): SkuPerformance[] {
         orders: new Set<string>(),
       };
       const share = denom > 0 ? it.revenue / denom : 1 / Math.max(1, o.items.length);
-      cur.units      += sign * it.quantity;
-      cur.revenue    += sign * it.revenue;
-      cur.commission += sign * o.commission * share;
-      cur.logistics  += sign * (o.logistics + o.logistics_return) * share;
-      cur.cogs       += sign * it.cogs;
-      cur.net_profit += sign * it.net_profit;
+      const fees = (o.commission + o.logistics + o.logistics_return + o.services) * share;
+      cur.commission += o.commission * share;
+      cur.logistics  += (o.logistics + o.logistics_return) * share;
+      if (isReturn) {
+        // Возврат не приносит ни выручки, ни проданных единиц — только расходы
+        // на обратную логистику и невозвращённую часть комиссии.
+        cur.net_profit -= fees;
+      } else {
+        cur.units      += it.quantity;
+        cur.revenue    += it.revenue;
+        cur.cogs       += it.cogs;
+        cur.net_profit += it.net_profit;
+      }
       cur.orders.add(o.order_id);
       map.set(key, cur);
     }
