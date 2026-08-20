@@ -157,6 +157,8 @@ export class AdminModule {
   private supAdminMode: 'ai' | 'manual' = 'ai';
   private supAiRespondingFor: string | null = null;
   private supBatchTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  // chatId → timestamp when greeting was sent (ms)
+  private supGreeted: Map<string, number> = new Map();
   private supTypingSentAt = 0;
 
   /* дорожная карта */
@@ -1599,30 +1601,58 @@ export class AdminModule {
     this.renderUserTyping(false);
   }
 
-  /** Запускает/продлевает 30-секундное окно тишины перед AI-ответом. */
-  private startSupBatchTimer(chatId: string): void {
+  /**
+   * Новый AI-флоу:
+   *  3 с  → отправить приветствие + запустить AI параллельно
+   *  ≥5 с после приветствия → отправить ответ AI (ждём если ещё не готов)
+   */
+  private startAiFlow(chatId: string): void {
+    if (this.supAiProcessing.has(chatId)) return;
+    if (this.supGreeted.has(chatId)) return;        // уже в процессе для этого чата
     const existing = this.supBatchTimers.get(chatId);
     if (existing) clearTimeout(existing);
+
     const handle = setTimeout(async () => {
       this.supBatchTimers.delete(chatId);
+      if (!this.supAiEnabled) return;
       if (this.supAdminMode === 'manual' && this.activeLiveChat?.id === chatId) return;
       if (this.supAiProcessing.has(chatId)) return;
+
       try {
         const full = await supportChatService.adminGetChat(chatId);
         if (!full?.messages?.length) return;
         const msgs = full.messages;
         const lastMsg = msgs.at(-1);
         if (!lastMsg || lastMsg.sender_role !== 'user') return;
+
+        // Если повторное недовольство после AI-ответа → сразу оператору
         if (this.supAiHandled.has(chatId) && this.DISSATISFACTION_PATTERNS.test(lastMsg.content)) {
+          await this.sendBridgeMessage(chatId, 'Передаю ваш вопрос оператору — он свяжется с вами в ближайшее время 🙏');
           this.supNeedsAttention.add(chatId);
           this.updateAttentionBadge(chatId);
           return;
         }
-        this.runSupAiReply(chatId, msgs);
+
+        // 1. Приветствие
+        const greetingText = 'Здравствуйте! Уже разбираемся с вашим вопросом, ответим совсем скоро 👋';
+        await supportChatService.adminSendMessage(chatId, greetingText);
+        const greetedAt = Date.now();
+        this.supGreeted.set(chatId, greetedAt);
+
+        // 2. AI готовит ответ параллельно, затем ждём минимум 5 с с момента приветствия
+        this.runSupAiReply(chatId, msgs, greetedAt);
       } catch { /* ignore */ }
-    }, 30_000);
+    }, 3_000);
+
     this.supBatchTimers.set(chatId, handle);
   }
+
+  private async sendBridgeMessage(chatId: string, text: string): Promise<void> {
+    try { await supportChatService.adminSendMessage(chatId, text); } catch { /* ignore */ }
+  }
+
+  /** @deprecated use startAiFlow */
+  private startSupBatchTimer(chatId: string): void { this.startAiFlow(chatId); }
 
   private renderUserTyping(typing: boolean): void {
     const host = this.el.querySelector<HTMLElement>('#ap-live-typing');
