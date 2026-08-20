@@ -2363,7 +2363,7 @@ mark {
 /* Toast */
 .toast-wrap {
   position: fixed;
-  bottom: 20px;
+  top: 20px;
   right: 20px;
   z-index: 12000;
   display: flex;
@@ -3236,7 +3236,6 @@ img.loaded {
   }
 
   .toast-wrap {
-    bottom: auto;
     top: 12px;
     right: 12px;
     left: 12px;
