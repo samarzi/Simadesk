@@ -9,7 +9,7 @@ import { ozonDb } from '@/services/ozonDb';
 import { yandexDb } from '@/services/yandexDb';
 import { wbDb } from '@/services/wbDb';
 import { updateOzonFbsStock, fetchAllOzonProducts } from '@/services/ozonApi';
-import { fetchYandexWarehouses, updateYandexFbsStock, fetchAllYandexProducts } from '@/services/yandexApi';
+import { fetchYandexWarehouses, fetchYandexFbsWarehousesFromStocks, updateYandexFbsStock, fetchAllYandexProducts } from '@/services/yandexApi';
 import { wbApi, fetchAllWbProducts } from '@/services/wbApi';
 import type { OzonStore } from '@/types/ozon';
 import type { WbStore } from '@/types/wb';
@@ -280,6 +280,10 @@ export class StockModule {
             if (list.length === 0 && store.fbs_warehouse_id) {
               list = [{ warehouseId: store.fbs_warehouse_id, name: 'FBS склад' }];
             }
+            // Последний резерв: извлечь склады из ответа stocks API
+            if (list.length === 0) {
+              list = await fetchYandexFbsWarehousesFromStocks(store);
+            }
             this.ymWarehouses.set(item.storeId, list.map(w => ({ id: w.warehouseId, name: w.name })));
           }
         }
@@ -319,6 +323,10 @@ export class StockModule {
           let list = await fetchYandexWarehouses(store);
           if (list.length === 0 && store.fbs_warehouse_id) {
             list = [{ warehouseId: store.fbs_warehouse_id, name: 'FBS склад' }];
+          }
+          // Последний резерв: извлечь склады из ответа stocks API
+          if (list.length === 0) {
+            list = await fetchYandexFbsWarehousesFromStocks(store);
           }
           this.ymWarehouses.set(item.storeId, list.map(w => ({ id: w.warehouseId, name: w.name })));
         }

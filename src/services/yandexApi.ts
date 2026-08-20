@@ -995,8 +995,11 @@ export async function fetchAllYandexProducts(
     token = nextPageToken;
   }
 
-  // 2) Все остатки — собираем в Map offer_id → суммарные количества
+  // 2) Все остатки — собираем в Map offer_id → суммарные количества + Set складов кампании
   const stocksMap = new Map<string, { total: number; available: number }>();
+  // offerIdsInCampaign: set of offer IDs that appear in THIS campaign's stock API
+  // Used to filter out cross-campaign contamination from the business-level offer list.
+  const offerIdsInCampaign = new Set<string>();
   let stockToken = '';
   for (let i = 0; i < maxPages; i++) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -1008,6 +1011,7 @@ export async function fetchAllYandexProducts(
     }
     for (const wh of chunk.warehouses) {
       for (const offer of wh.offers ?? []) {
+        offerIdsInCampaign.add(offer.offerId);
         const cur = stocksMap.get(offer.offerId) ?? { total: 0, available: 0 };
         for (const s of offer.stocks ?? []) {
           const cnt = Number(s.count) || 0;
@@ -1026,9 +1030,16 @@ export async function fetchAllYandexProducts(
     stockToken = chunk.nextPageToken;
   }
 
+  // Если stocks API вернул данные — оставляем только офферы этой кампании.
+  // Это убирает офферы из других кампаний (напр. FBY-офферы из BOCOSA попадают
+  // в BOCOSA FBS через business-level offer-mappings, но имеют нулевой FBS-сток).
+  const filteredAll = offerIdsInCampaign.size > 0
+    ? all.filter(raw => offerIdsInCampaign.has((raw.offer ?? raw).offerId ?? raw.offerId ?? ''))
+    : all;
+
   // 3) Маппинг в YandexProduct
   const now = new Date().toISOString();
-  const products: YandexProduct[] = all.map((raw: any): YandexProduct => {
+  const products: YandexProduct[] = filteredAll.map((raw: any): YandexProduct => {
     const offer = raw.offer ?? raw;
     const offerId = offer.offerId ?? raw.offerId ?? '';
     const stocks = stocksMap.get(offerId);
@@ -1091,6 +1102,25 @@ export async function fetchYandexWarehouses(
       warehouseId: w.id ?? w.warehouseId,
       name: w.name ?? '',
     }));
+  } catch { return []; }
+}
+
+/**
+ * Получить FBS-склады из ответа stocks API (последний резерв, если /warehouses вернул пусто).
+ * Возвращает уникальные warehouseId, встреченные в ответе getStocks для данной кампании.
+ */
+export async function fetchYandexFbsWarehousesFromStocks(
+  store: YandexStore,
+): Promise<{ warehouseId: number; name: string }[]> {
+  if (!store.campaign_id || !store.api_key) return [];
+  try {
+    const chunk = await yandexApi.getStocks(store.api_key, store.campaign_id, '', undefined);
+    const seen = new Map<number, string>();
+    for (const wh of chunk.warehouses) {
+      const id = Number(wh.warehouseId);
+      if (id && !seen.has(id)) seen.set(id, wh.name ?? `Склад #${id}`);
+    }
+    return [...seen.entries()].map(([warehouseId, name]) => ({ warehouseId, name }));
   } catch { return []; }
 }
 
