@@ -1635,8 +1635,13 @@ export class AssistantModule {
     });
     const micBtn = panel.querySelector<HTMLElement>('.sd-ap-mic-btn');
     if (micBtn) {
-      micBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.voiceSendOnEnd = false; this.startVoice(); });
-      micBtn.addEventListener('pointerup',   () => { this.stopVoice(); });
+      micBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        if (this.isListening) { this.stopVoice(); return; } // toggle off if already on
+        this.voiceSendOnEnd = false;
+        this.startVoice('toggle'); // mic button = toggle mode
+      });
+      micBtn.addEventListener('pointerup',   () => { /* handled by toggle logic */ });
       micBtn.addEventListener('pointercancel', () => { this.stopVoice(); });
     }
 
@@ -3193,10 +3198,10 @@ export class AssistantModule {
 
        if (this.matchesHotkey(e, this.hotkeyConfig.quickVoice)) {
          e.preventDefault();
-         if (this.isListening) { this.recognition?.stop(); return; }
+         if (this.isListening) { this.stopVoice(); return; } // second press stops
          if (!this.isOpen) this.openPanel();
          this.voiceSendOnEnd = false;
-         setTimeout(() => { if (!this.isListening) this.startVoice(); }, 150);
+         setTimeout(() => { if (!this.isListening) this.startVoice('toggle'); }, 150);
          return;
        }
 
@@ -3206,7 +3211,7 @@ export class AssistantModule {
          this.voiceHotkeyHeld = true;
          this.voiceSendOnEnd = false;
          if (!this.isOpen) this.openPanel();
-         setTimeout(() => { if (this.voiceHotkeyHeld) this.startVoice(); }, 150);
+         setTimeout(() => { if (this.voiceHotkeyHeld) this.startVoice('hold'); }, 150);
          return;
        }
      });
@@ -6125,7 +6130,7 @@ export class AssistantModule {
   // ── Voice input ───────────────────────────────────────────────────────────────
 
 
-  private startVoice(): void {
+  private startVoice(mode: 'hold' | 'toggle' = 'toggle'): void {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) {
       showToast('Голосовой ввод не поддерживается в этом браузере', 'error');
@@ -6134,46 +6139,64 @@ export class AssistantModule {
 
     const rec = new SR();
     rec.lang = 'ru-RU';
-    rec.continuous = false;
+    rec.continuous = true;   // keep listening across pauses in both modes
     rec.interimResults = true;
     this.recognition = rec;
     this.isListening = true;
 
     // Запоминаем что уже есть в поле — чтобы дописывать, а не перезаписывать
     this.voicePrefix = this.textareaEl?.value.trim() ?? '';
+    let accumulated = ''; // text accumulated across continuous results
 
     const micBtn = this.panel?.querySelector<HTMLElement>('.sd-ap-mic-btn');
     if (micBtn) micBtn.classList.add('listening');
     this.btn?.classList.add('listening');
-    this.setStatus('Слушаю…', 'listening');
+    this.setStatus(mode === 'hold' ? 'Говорите…' : 'Слушаю… (скажи «стоп»)', 'listening');
 
     rec.onresult = (e: any) => {
       const results = Array.from(e.results) as any[];
-      const transcript = results.map(r => r[0]?.transcript ?? '').join('');
-      // Дописываем к уже существующему тексту
-      const combined = this.voicePrefix ? this.voicePrefix + ' ' + transcript : transcript;
+      let interim = '';
+      let finalChunk = '';
+      for (const r of results) {
+        if ((r as any).isFinal) finalChunk += (r as any)[0]?.transcript ?? '';
+        else interim += (r as any)[0]?.transcript ?? '';
+      }
+      accumulated = finalChunk; // browser resets result list on each final
+      const display = accumulated + interim;
+      const combined = this.voicePrefix ? this.voicePrefix + ' ' + display : display;
       if (this.textareaEl) {
         this.textareaEl.value = combined;
         this.autoResizeTextarea();
       }
-      const lastResult = results[results.length - 1];
-      if (lastResult?.isFinal) {
-        const shouldSend = this.voiceSendOnEnd && !!combined.trim();
-        this.stopVoice(); // resets voiceSendOnEnd — check after capturing above
-        if (shouldSend) {
-          setTimeout(() => this.handleSend(), 80);
-        } else {
-          this.textareaEl?.focus();
+      // Toggle mode: detect "стоп" in final text to auto-stop
+      if (mode === 'toggle' && finalChunk) {
+        const stopRe = /\bстоп\b/i;
+        if (stopRe.test(finalChunk)) {
+          const cleaned = (this.voicePrefix ? this.voicePrefix + ' ' + accumulated : accumulated)
+            .replace(/\s*\bстоп\b\s*/i, ' ').trim();
+          if (this.textareaEl) this.textareaEl.value = cleaned;
+          const shouldSend = this.voiceSendOnEnd;
+          this.stopVoice();
+          if (shouldSend && cleaned) setTimeout(() => this.handleSend(), 80);
+          else this.textareaEl?.focus();
         }
       }
     };
 
-    rec.onerror = () => {
+    rec.onerror = (e: any) => {
+      // 'no-speech' is normal in hold mode — ignore it, don't stop
+      if (e.error === 'no-speech') return;
       this.stopVoice();
       this.setStatus('Готова');
     };
 
     rec.onend = () => {
+      // In toggle mode, if still listening (no 'стоп' said), restart to keep going
+      if (mode === 'toggle' && this.isListening) {
+        // voicePrefix accumulates text so far
+        this.voicePrefix = this.textareaEl?.value.trim() ?? '';
+        try { rec.start(); return; } catch { /* fall through */ }
+      }
       this.isListening = false;
       const micBtn = this.panel?.querySelector<HTMLElement>('.sd-ap-mic-btn');
       if (micBtn) micBtn.classList.remove('listening');
