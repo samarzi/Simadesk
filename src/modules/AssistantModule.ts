@@ -1326,6 +1326,8 @@ export class AssistantModule {
   private supportMode: 'ai' | 'support' | 'notifications' | 'settings' = 'ai';
   private myNotifications: import('@/services/notificationsService').UserNotification[] = [];
   private notifUnread = 0;
+  private simaUnread = 0; // AI replies received while panel was closed
+  private lastSeenMsgCount = 0; // message count when panel was last opened
   private supportChats: Array<{ id: string; reason: string; created_at: string }> = (() => {
     try {
       const raw = localStorage.getItem('sd_sup_chats');
@@ -1427,7 +1429,7 @@ export class AssistantModule {
     setTimeout(() => this.runBackgroundCheck(), 30_000);
   }
 
-  private runBackgroundCheck(): void {
+  private async runBackgroundCheck(): Promise<void> {
     const alerts: string[] = [];
 
     try {
@@ -1479,27 +1481,45 @@ export class AssistantModule {
       }
     } catch { /* ignore */ }
 
-    if (!alerts.length) return;
-
-    const alertKey = alerts.join('|');
-    if (alertKey === this.lastAlertKey) return; // не дублируем одно и то же
-    this.lastAlertKey = alertKey;
-
-    // Показываем тост только если панель закрыта
-    if (!this.isOpen) {
-      showToast(`Сима: ${alerts[0]}`, 'warning');
+    if (alerts.length) {
+      const alertKey = alerts.join('|');
+      if (alertKey !== this.lastAlertKey) {
+        this.lastAlertKey = alertKey;
+        if (!this.isOpen) showToast(`Сима: ${alerts[0]}`, 'warning');
+      }
     }
 
-    // Добавляем кольцо-алерт вокруг иконки Симы
-    const btn = document.getElementById('nav-assistant');
-    const icon = btn?.querySelector<HTMLElement>('.dock-assistant-icon');
-    const target = icon ?? btn;
-    if (target && !target.querySelector('.sima-alert-dot')) {
-      const dot = document.createElement('span');
+    // Also refresh notification count for the ring
+    try {
+      const { countUnreadNotifications } = await import('@/services/notificationsService');
+      const count = await countUnreadNotifications();
+      if (count !== this.notifUnread) {
+        this.notifUnread = count;
+        this.updateNotifBadge();
+        this.updateRing();
+      }
+    } catch { /* ignore */ }
+  }
+
+  /** Update the icon ring color based on priority: red > yellow > blue. */
+  private updateRing(): void {
+    const icon = document.getElementById('nav-assistant')?.querySelector<HTMLElement>('.dock-assistant-icon');
+    if (!icon) return;
+    let dot = icon.querySelector<HTMLElement>('.sima-alert-dot');
+    const color = this.notifUnread > 0 ? 'ring-red'
+      : this.supportUnread > 0 ? 'ring-yellow'
+      : this.simaUnread > 0 ? 'ring-blue'
+      : null;
+    if (!color) {
+      dot?.remove();
+      return;
+    }
+    if (!dot) {
+      dot = document.createElement('span');
       dot.className = 'sima-alert-dot';
-      dot.title = alerts.join('\n');
-      target.appendChild(dot);
+      icon.appendChild(dot);
     }
+    dot.className = `sima-alert-dot ${color}`;
   }
 
   private async loadMpNews(): Promise<void> {
@@ -2217,8 +2237,21 @@ export class AssistantModule {
     if (!this.messagesEl) return;
     this.messagesEl.innerHTML = '';
     if (this.history.length === 0) return;
+    // Count only non-system messages for the divider position
+    let nonSysIdx = 0;
+    const dividerAt = this.lastSeenMsgCount; // insert divider before this non-system message index
+    let dividerInserted = false;
     for (const msg of this.history) {
       if (msg.role === 'system') continue;
+      // Insert "new messages" divider once, at the right position
+      if (!dividerInserted && dividerAt > 0 && nonSysIdx === dividerAt) {
+        const div = document.createElement('div');
+        div.className = 'sd-ap-new-divider';
+        div.textContent = 'Новые сообщения';
+        this.messagesEl.appendChild(div);
+        dividerInserted = true;
+      }
+      nonSysIdx++;
       if (msg.role === 'user') {
         const clean = msg.content.replace(/\[🤖 АВТОКОНТЕКСТ:[^\]]*\]\n?/g, '').trim();
         if (!clean) continue;
@@ -3196,9 +3229,10 @@ export class AssistantModule {
     this.scrollToBottom();
     this.renderQuotaBar();
 
-    // Убираем алерт-бейдж при открытии панели
-    document.getElementById('nav-assistant')?.querySelector('.sima-alert-dot')?.remove();
-    this.lastAlertKey = ''; // сброс — чтобы при следующей проверке снова показать если актуально
+    // При открытии панели сбрасываем синий флаг и запоминаем позицию прочтения
+    this.simaUnread = 0;
+    this.lastSeenMsgCount = this.history.filter(m => m.role !== 'system').length;
+    this.updateRing();
 
     this.renderContextHints();
     void this.refreshNotifCount();
@@ -3324,6 +3358,7 @@ export class AssistantModule {
       if (mode === 'support') {
         this.supportUnread = 0;
         this.updateSupportBadge();
+        this.updateRing();
         this.renderSupportView(supView);
       }
     }
@@ -3333,6 +3368,7 @@ export class AssistantModule {
       if (mode === 'notifications') {
         this.notifUnread = 0;
         this.updateNotifBadge();
+        this.updateRing();
         void this.loadAndRenderNotifications(notifView);
       }
     }
@@ -3921,6 +3957,7 @@ export class AssistantModule {
         if (fromAdmin > 0 && !viewing) {
           this.supportUnread += fromAdmin;
           this.updateSupportBadge();
+          this.updateRing();
           if (this.supportActiveChatId) this.supportChatHasNew.add(this.supportActiveChatId);
           if (!this.isOpen) showToast('Поддержка ответила на ваше обращение', 'success');
         }
@@ -4092,6 +4129,11 @@ export class AssistantModule {
 
     this.messagesEl.appendChild(el);
     this.scrollToBottom();
+    // If panel is closed, mark as unread and light up blue ring
+    if (!this.isOpen) {
+      this.simaUnread++;
+      this.updateRing();
+    }
     return ttsBtn;
   }
 

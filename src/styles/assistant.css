@@ -143,25 +143,56 @@
   overflow: visible;
 }
 
-/* Алерт-индикатор: кольцо вокруг иконки */
+/* Кольцо-индикатор вокруг иконки Симы — три цвета по приоритету */
 .sima-alert-dot {
   position: absolute;
   display: block;
-  top: -4px;
-  left: -4px;
-  right: -4px;
-  bottom: -4px;
+  top: -4px; left: -4px; right: -4px; bottom: -4px;
   border-radius: 50%;
   background: transparent;
-  border: 1.5px solid rgba(248, 68, 68, 0.85);
-  box-shadow: 0 0 4px 1px rgba(248, 68, 68, 0.3);
+  border: 1.5px solid var(--sima-ring-color, rgba(248,68,68,0.85));
+  box-shadow: 0 0 5px 1px var(--sima-ring-glow, rgba(248,68,68,0.3));
   animation: sima-alert-ring 2.8s ease-in-out infinite;
   pointer-events: none;
   z-index: 20;
 }
+/* red — new notifications */
+.sima-alert-dot.ring-red {
+  --sima-ring-color: rgba(248,68,68,0.9);
+  --sima-ring-glow:  rgba(248,68,68,0.35);
+}
+/* yellow — unread support messages */
+.sima-alert-dot.ring-yellow {
+  --sima-ring-color: rgba(234,179,8,0.9);
+  --sima-ring-glow:  rgba(234,179,8,0.35);
+}
+/* blue — Sima replied while panel was closed */
+.sima-alert-dot.ring-blue {
+  --sima-ring-color: rgba(99,178,255,0.9);
+  --sima-ring-glow:  rgba(99,178,255,0.35);
+}
 @keyframes sima-alert-ring {
-  0%, 100% { border-color: rgba(248, 68, 68, 0.85); box-shadow: 0 0 4px 1px rgba(248, 68, 68, 0.25); }
-  50%       { border-color: rgba(248, 68, 68, 0.4);  box-shadow: 0 0 7px 2px rgba(248, 68, 68, 0.4); }
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(1.04); }
+}
+
+/* "Новые сообщения" разделитель в AI чате */
+.sd-ap-new-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 6px;
+  font-size: 11px;
+  color: var(--ap-accent);
+  opacity: 0.8;
+}
+.sd-ap-new-divider::before,
+.sd-ap-new-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--ap-accent);
+  opacity: 0.3;
 }
 
 /* ── AI Waveform SVG animation inside the icon ── */
