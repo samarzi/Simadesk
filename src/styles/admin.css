@@ -1426,8 +1426,27 @@ html.light .ap-api-tag.ya { color: #cc2626; }
   width: 100%; resize: vertical; font-family: 'Courier New', monospace;
   font-size: 12px; line-height: 1.6; min-height: 80px;
 }
-.ap-sima-cfg-footer { display: flex; gap: 8px; }
+.ap-sima-cfg-footer { display: flex; gap: 8px; align-items: center; }
 .ap-btn-sm { padding: 4px 10px; font-size: 12px; }
+.ap-sima-ai-model-select { font-size: 12px; padding: 4px 8px; flex-shrink: 0; max-width: 200px; }
+.ap-sima-diff-stats {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 6px 10px; border-radius: 6px;
+  background: var(--bg3); border: 1px solid var(--border); font-size: 12px;
+}
+.ap-sima-diff-added { color: #22c55e; font-weight: 600; }
+.ap-sima-diff-removed { color: #ef4444; font-weight: 600; }
+.ap-sima-editor-wrap { position: relative; }
+.ap-sima-diff-view {
+  width: 100%; min-height: 480px; max-height: 640px; overflow-y: auto;
+  font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.6;
+  border: 1px solid var(--border); border-radius: 6px; padding: 8px 0;
+  background: var(--bg2);
+}
+.ap-diff-line { padding: 0 12px; white-space: pre-wrap; word-break: break-word; }
+.ap-diff-added { background: rgba(34, 197, 94, 0.12); color: #22c55e; }
+.ap-diff-removed { background: rgba(239, 68, 68, 0.10); color: #ef4444; text-decoration: line-through; opacity: .7; }
+.ap-sima-ai-status { font-size: 12px; color: var(--text-2); }
 
 /* ── Уведомления ─────────────────────────────────────────────────────────── */
 .ap-notif-wrap { display: flex; flex-direction: column; gap: 20px; padding: 0 0 32px; }

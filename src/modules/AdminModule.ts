@@ -3476,45 +3476,25 @@ ${this.SIMADESK_KNOWLEDGE}
   }
 
   private renderSimaConfigFiles(): string {
-    const SECTION_LABELS: Record<string, { emoji: string; hint: string }> = {
-      persona:               { emoji: '🧠', hint: 'Заменяет первую строку системного промта. Определяет кто такая Сима, её стиль и тон.' },
-      extra_rules:           { emoji: '📋', hint: 'Добавляется в конец промта. Ограничения, запреты, особые правила поведения.' },
-      extra_knowledge:       { emoji: '📚', hint: 'Добавляется в конец промта. Специфика вашего бизнеса, ниша, особые условия работы.' },
-      system_prompt_override:{ emoji: '⚠️', hint: 'Полностью заменяет встроенный промт. Используй только если хочешь полный контроль. Оставь пустым для дефолта.' },
-    };
+    const entry = this.simaConfigEntries.find(e => e.key === 'system_prompt_override');
+    const savedValue = entry?.value ?? '';
+    const savedDate = entry?.updated_at
+      ? new Date(entry.updated_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+      : '';
+    const isEmpty = !savedValue.trim();
 
-    const cards = this.simaConfigEntries.map(e => {
-      const meta = SECTION_LABELS[e.key] ?? { emoji: '📝', hint: '' };
-      const date = e.updated_at
-        ? new Date(e.updated_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-        : '';
-      const isEmpty = !e.value.trim();
-      return `
-        <div class="ap-section-card ap-sima-cfg-card" data-cfg-key="${this.esc(e.key)}">
-          <div class="ap-sima-cfg-hdr">
-            <div>
-              <div class="ap-sima-cfg-title">${meta.emoji} ${this.esc(e.title)}</div>
-              ${e.description ? `<div class="ap-sima-cfg-desc">${this.esc(e.description)}</div>` : ''}
-            </div>
-            <div class="ap-sima-cfg-meta">
-              ${isEmpty ? '<span class="ap-sima-cfg-empty-badge">не задано — используется дефолт</span>' : `<span class="ap-sima-cfg-date">сохранено ${date}</span>`}
-              ${e.key === 'system_prompt_override'
-                ? `<button class="ap-btn ap-btn-sm" id="sima-cfg-load-default">Загрузить дефолтный</button>`
-                : ''}
-            </div>
-          </div>
-          <textarea
-            class="ap-input ap-sima-cfg-textarea"
-            id="sima-cfg-${this.esc(e.key)}"
-            rows="${e.key === 'system_prompt_override' ? 30 : 8}"
-            placeholder="${meta.hint}"
-          >${this.esc(e.value)}</textarea>
-          <div class="ap-sima-cfg-footer">
-            <button class="ap-btn ap-btn-primary ap-sima-cfg-save" data-key="${this.esc(e.key)}">${icon('check', 14)} Сохранить</button>
-            ${!isEmpty ? `<button class="ap-btn ap-sima-cfg-clear" data-key="${this.esc(e.key)}">Сбросить к дефолту</button>` : ''}
-          </div>
-        </div>`;
-    }).join('');
+    const OPENROUTER_MODELS = [
+      { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
+      { id: 'anthropic/claude-3-haiku', label: 'Claude 3 Haiku (быстрый)' },
+      { id: 'openai/gpt-4o', label: 'GPT-4o' },
+      { id: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (быстрый)' },
+      { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
+      { id: 'google/gemini-pro-1.5', label: 'Gemini Pro 1.5' },
+    ];
+    const selectedModel = localStorage.getItem('sd_prompt_editor_model') ?? OPENROUTER_MODELS[0].id;
+    const modelOptions = OPENROUTER_MODELS.map(m =>
+      `<option value="${this.esc(m.id)}" ${selectedModel === m.id ? 'selected' : ''}>${this.esc(m.label)}</option>`
+    ).join('');
 
     return `
       <div class="ap-sima-cfg-wrap">
@@ -3522,11 +3502,68 @@ ${this.SIMADESK_KNOWLEDGE}
           <div class="ap-section-hdr">
             <div>
               <div class="ap-section-title">Файлы Симы</div>
-              <div class="ap-section-sub">Промты и правила поведения. Изменения применяются сразу — Сима учитывает их при следующем запросе.</div>
+              <div class="ap-section-sub">Промт и правила поведения Симы. Изменения применяются при следующем запросе.</div>
             </div>
           </div>
         </div>
-        ${cards || '<div class="ap-news-empty-row">Загрузка настроек…</div>'}
+
+        <div class="ap-section-card ap-sima-cfg-card" id="sima-prompt-card">
+          <div class="ap-sima-cfg-hdr">
+            <div>
+              <div class="ap-sima-cfg-title">⚠️ Полный системный промт</div>
+              <div class="ap-sima-cfg-desc">Полностью заменяет встроенный промт. Оставь пустым чтобы использовать дефолтный.</div>
+            </div>
+            <div class="ap-sima-cfg-meta">
+              ${isEmpty
+                ? '<span class="ap-sima-cfg-empty-badge">не задано — используется дефолт</span>'
+                : `<span class="ap-sima-cfg-date">сохранено ${savedDate}</span>`}
+              <button class="ap-btn ap-btn-sm" id="sima-cfg-load-default">${icon('download', 14)} Загрузить дефолт</button>
+            </div>
+          </div>
+
+          <div id="sima-diff-stats" class="ap-sima-diff-stats" style="display:none">
+            <span id="sima-diff-added" class="ap-sima-diff-added"></span>
+            <span id="sima-diff-removed" class="ap-sima-diff-removed"></span>
+            <button class="ap-btn ap-btn-sm" id="sima-diff-toggle">Показать изменения</button>
+          </div>
+
+          <div class="ap-sima-editor-wrap">
+            <textarea
+              class="ap-input ap-sima-cfg-textarea"
+              id="sima-cfg-system_prompt_override"
+              rows="30"
+              placeholder="Оставьте пустым для дефолтного промта"
+            >${this.esc(savedValue)}</textarea>
+            <div id="sima-diff-view" class="ap-sima-diff-view" style="display:none"></div>
+          </div>
+
+          <div class="ap-sima-cfg-footer">
+            <button class="ap-btn ap-btn-primary" id="sima-prompt-save">${icon('check', 14)} Сохранить</button>
+            ${!isEmpty ? `<button class="ap-btn" id="sima-prompt-reset">Сбросить к дефолту</button>` : ''}
+          </div>
+        </div>
+
+        <div class="ap-section-card ap-sima-cfg-card">
+          <div class="ap-sima-cfg-hdr">
+            <div>
+              <div class="ap-sima-cfg-title">💬 Дополнить промт через ИИ</div>
+              <div class="ap-sima-cfg-desc">Опишите что нужно изменить или добавить — ИИ профессионально встроит это в промт.</div>
+            </div>
+            <div>
+              <select class="ap-input ap-sima-ai-model-select" id="sima-ai-model">${modelOptions}</select>
+            </div>
+          </div>
+          <textarea
+            class="ap-input ap-sima-cfg-textarea"
+            id="sima-ai-input"
+            rows="5"
+            placeholder="Например: Добавь правило что Сима всегда отвечает на русском языке и не обсуждает конкурентов..."
+          ></textarea>
+          <div class="ap-sima-cfg-footer">
+            <button class="ap-btn ap-btn-primary" id="sima-ai-submit">${icon('sparkle', 14)} Отправить ИИ</button>
+            <span id="sima-ai-status" class="ap-sima-ai-status"></span>
+          </div>
+        </div>
       </div>`;
   }
 
@@ -3561,70 +3598,228 @@ ${this.SIMADESK_KNOWLEDGE}
 
     // ── Файлы Симы (sima_config) ─────────────────────────────────────────────
 
-    // Загрузить дефолтный промт в textarea
+    const ta = el.querySelector<HTMLTextAreaElement>('#sima-cfg-system_prompt_override');
+    const savedValue = this.simaConfigEntries.find(e => e.key === 'system_prompt_override')?.value ?? '';
+    let diffViewVisible = false;
+
+    function computeDiff(original: string, updated: string): Array<{ type: 'same' | 'added' | 'removed'; text: string }> {
+      const aLines = original.split('\n');
+      const bLines = updated.split('\n');
+      const m = aLines.length, n = bLines.length;
+      // LCS dp
+      const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+      for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+          dp[i][j] = aLines[i - 1] === bLines[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+        }
+      }
+      const result: Array<{ type: 'same' | 'added' | 'removed'; text: string }> = [];
+      let i = m, j = n;
+      while (i > 0 || j > 0) {
+        if (i > 0 && j > 0 && aLines[i - 1] === bLines[j - 1]) {
+          result.unshift({ type: 'same', text: aLines[i - 1] }); i--; j--;
+        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+          result.unshift({ type: 'added', text: bLines[j - 1] }); j--;
+        } else {
+          result.unshift({ type: 'removed', text: aLines[i - 1] }); i--;
+        }
+      }
+      return result;
+    }
+
+    function updateDiffStats() {
+      if (!ta) return;
+      const current = ta.value;
+      const statsEl = el.querySelector<HTMLElement>('#sima-diff-stats');
+      if (!statsEl) return;
+      if (current === savedValue) {
+        statsEl.style.display = 'none';
+        return;
+      }
+      const diff = computeDiff(savedValue, current);
+      const added = diff.filter(d => d.type === 'added').length;
+      const removed = diff.filter(d => d.type === 'removed').length;
+      const addedEl = el.querySelector<HTMLElement>('#sima-diff-added');
+      const removedEl = el.querySelector<HTMLElement>('#sima-diff-removed');
+      if (addedEl) addedEl.textContent = added > 0 ? `+${added} строк` : '';
+      if (removedEl) removedEl.textContent = removed > 0 ? `-${removed} строк` : '';
+      statsEl.style.display = 'flex';
+    }
+
+    function renderDiffView() {
+      if (!ta) return;
+      const diffView = el.querySelector<HTMLElement>('#sima-diff-view');
+      if (!diffView) return;
+      const diff = computeDiff(savedValue, ta.value);
+      diffView.innerHTML = diff.map(d => {
+        const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        if (d.type === 'added') return `<div class="ap-diff-line ap-diff-added">+ ${esc(d.text) || '&nbsp;'}</div>`;
+        if (d.type === 'removed') return `<div class="ap-diff-line ap-diff-removed">- ${esc(d.text) || '&nbsp;'}</div>`;
+        return `<div class="ap-diff-line">&nbsp;&nbsp;${esc(d.text) || '&nbsp;'}</div>`;
+      }).join('');
+    }
+
+    ta?.addEventListener('input', updateDiffStats);
+
+    // Загрузить дефолтный промт
     el.querySelector('#sima-cfg-load-default')?.addEventListener('click', async () => {
       const { getDefaultSystemPrompt } = await import('@/modules/AssistantModule').catch(() => ({ getDefaultSystemPrompt: undefined }));
-      const ta = el.querySelector<HTMLTextAreaElement>('#sima-cfg-system_prompt_override');
       if (ta && getDefaultSystemPrompt) {
         ta.value = getDefaultSystemPrompt();
+        updateDiffStats();
       } else if (ta) {
         showToast('Не удалось загрузить дефолтный промт', 'error');
       }
     });
 
-    // Сохранить секцию конфига
-    el.querySelectorAll<HTMLButtonElement>('.ap-sima-cfg-save').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const key = btn.dataset.key!;
-        const ta = el.querySelector<HTMLTextAreaElement>(`#sima-cfg-${key}`);
-        if (!ta) return;
-        const value = ta.value;
-        const entry = this.simaConfigEntries.find(e => e.key === key);
-        if (!entry) return;
-        const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
-        const res = await fetch(`${REST_URL}/sima_config?id=eq.${entry.id}`, {
-          method: 'PATCH',
-          headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-          body: JSON.stringify({ value, is_active: true }),
-        });
-        if (res.ok) {
-          const [updated] = await res.json();
-          const idx = this.simaConfigEntries.findIndex(e => e.key === key);
-          if (idx !== -1) this.simaConfigEntries[idx] = updated;
-          // Сбрасываем кэш simaConfig в AssistantModule
-          const { clearSimaConfigCache } = await import('@/services/simaConfigService');
-          clearSimaConfigCache();
-          showToast('Сохранено', 'success');
-          this.render();
-        } else {
-          showToast('Ошибка сохранения', 'error');
-        }
-      });
+    // Показать/скрыть diff view
+    el.querySelector('#sima-diff-toggle')?.addEventListener('click', () => {
+      const diffView = el.querySelector<HTMLElement>('#sima-diff-view');
+      const toggleBtn = el.querySelector<HTMLButtonElement>('#sima-diff-toggle');
+      if (!diffView) return;
+      diffViewVisible = !diffViewVisible;
+      if (diffViewVisible) {
+        renderDiffView();
+        diffView.style.display = 'block';
+        if (ta) ta.style.display = 'none';
+        if (toggleBtn) toggleBtn.textContent = 'Редактировать';
+      } else {
+        diffView.style.display = 'none';
+        if (ta) ta.style.display = '';
+        if (toggleBtn) toggleBtn.textContent = 'Показать изменения';
+      }
     });
 
-    // Сбросить к дефолту (очистить значение)
-    el.querySelectorAll<HTMLButtonElement>('.ap-sima-cfg-clear').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const key = btn.dataset.key!;
-        if (!confirm('Сбросить к встроенному дефолту?')) return;
-        const entry = this.simaConfigEntries.find(e => e.key === key);
-        if (!entry) return;
-        const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
-        const res = await fetch(`${REST_URL}/sima_config?id=eq.${entry.id}`, {
-          method: 'PATCH',
-          headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-          body: JSON.stringify({ value: '' }),
-        });
-        if (res.ok) {
-          const [updated] = await res.json();
-          const idx = this.simaConfigEntries.findIndex(e => e.key === key);
-          if (idx !== -1) this.simaConfigEntries[idx] = updated;
-          const { clearSimaConfigCache } = await import('@/services/simaConfigService');
-          clearSimaConfigCache();
-          showToast('Сброшено к дефолту', 'success');
-          this.render();
-        }
+    // Сохранить промт
+    el.querySelector('#sima-prompt-save')?.addEventListener('click', async () => {
+      if (!ta) return;
+      const value = ta.value;
+      const entry = this.simaConfigEntries.find(e => e.key === 'system_prompt_override');
+      if (!entry) return;
+      const btn = el.querySelector<HTMLButtonElement>('#sima-prompt-save');
+      if (btn) { btn.disabled = true; btn.textContent = 'Сохранение…'; }
+      const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+      const res = await fetch(`${REST_URL}/sima_config?id=eq.${entry.id}`, {
+        method: 'PATCH',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+        body: JSON.stringify({ value, is_active: true }),
       });
+      if (res.ok) {
+        const [updated] = await res.json();
+        const idx = this.simaConfigEntries.findIndex(e => e.key === 'system_prompt_override');
+        if (idx !== -1) this.simaConfigEntries[idx] = updated;
+        const { clearSimaConfigCache } = await import('@/services/simaConfigService');
+        clearSimaConfigCache();
+        showToast('Сохранено', 'success');
+        this.render();
+      } else {
+        showToast('Ошибка сохранения', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Сохранить'; }
+      }
+    });
+
+    // Сбросить к дефолту
+    el.querySelector('#sima-prompt-reset')?.addEventListener('click', async () => {
+      if (!confirm('Сбросить к встроенному дефолту? Текущий промт будет удалён.')) return;
+      const entry = this.simaConfigEntries.find(e => e.key === 'system_prompt_override');
+      if (!entry) return;
+      const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+      const res = await fetch(`${REST_URL}/sima_config?id=eq.${entry.id}`, {
+        method: 'PATCH',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+        body: JSON.stringify({ value: '' }),
+      });
+      if (res.ok) {
+        const [updated] = await res.json();
+        const idx = this.simaConfigEntries.findIndex(e => e.key === 'system_prompt_override');
+        if (idx !== -1) this.simaConfigEntries[idx] = updated;
+        const { clearSimaConfigCache } = await import('@/services/simaConfigService');
+        clearSimaConfigCache();
+        showToast('Сброшено к дефолту', 'success');
+        this.render();
+      }
+    });
+
+    // Сохранить выбор модели
+    el.querySelector('#sima-ai-model')?.addEventListener('change', (e) => {
+      const sel = e.target as HTMLSelectElement;
+      localStorage.setItem('sd_prompt_editor_model', sel.value);
+    });
+
+    // ИИ-дополнение промта
+    el.querySelector('#sima-ai-submit')?.addEventListener('click', async () => {
+      const aiInput = el.querySelector<HTMLTextAreaElement>('#sima-ai-input');
+      const statusEl = el.querySelector<HTMLElement>('#sima-ai-status');
+      const submitBtn = el.querySelector<HTMLButtonElement>('#sima-ai-submit');
+      if (!aiInput || !ta) return;
+      const instruction = aiInput.value.trim();
+      if (!instruction) { showToast('Введите что нужно добавить или изменить', 'error'); return; }
+      const currentPrompt = ta.value.trim();
+      if (!currentPrompt) { showToast('Сначала загрузите дефолтный промт или введите его вручную', 'error'); return; }
+      const aiKey = sessionStorage.getItem('sd_ai_key') || '';
+      if (!aiKey) { showToast('Нет OpenRouter ключа — настройте в разделе Настройки → AI', 'error'); return; }
+      const model = (el.querySelector<HTMLSelectElement>('#sima-ai-model'))?.value
+        ?? localStorage.getItem('sd_prompt_editor_model')
+        ?? 'anthropic/claude-3.5-sonnet';
+
+      if (submitBtn) { submitBtn.disabled = true; }
+      if (statusEl) { statusEl.textContent = '⏳ ИИ обрабатывает…'; }
+
+      try {
+        const systemMsg = `Ты редактор системных промтов для AI-ассистента.
+Твоя задача: получить текущий системный промт и инструкцию по изменению, затем вернуть ТОЛЬКО полный обновлённый промт — без объяснений, без markdown-обёрток, без комментариев.
+Встраивай изменения профессионально: соблюдай стиль, структуру и тон оригинала.`;
+        const userMsg = `ТЕКУЩИЙ СИСТЕМНЫЙ ПРОМТ:\n${currentPrompt}\n\n---\nИНСТРУКЦИЯ ПО ИЗМЕНЕНИЮ:\n${instruction}\n\n---\nВерни полный обновлённый промт:`;
+
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${aiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': location.origin,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: systemMsg },
+              { role: 'user', content: userMsg },
+            ],
+            max_tokens: 4096,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.text();
+          throw new Error(err);
+        }
+        const data = await res.json();
+        const newPrompt = data.choices?.[0]?.message?.content?.trim() ?? '';
+        if (!newPrompt) throw new Error('Пустой ответ от ИИ');
+
+        ta.value = newPrompt;
+        aiInput.value = '';
+        updateDiffStats();
+        // Показываем diff автоматически
+        const diffView = el.querySelector<HTMLElement>('#sima-diff-view');
+        const toggleBtn = el.querySelector<HTMLButtonElement>('#sima-diff-toggle');
+        if (diffView && !diffViewVisible) {
+          diffViewVisible = true;
+          renderDiffView();
+          diffView.style.display = 'block';
+          ta.style.display = 'none';
+          if (toggleBtn) toggleBtn.textContent = 'Редактировать';
+        } else if (diffView && diffViewVisible) {
+          renderDiffView();
+        }
+        if (statusEl) statusEl.textContent = '✅ Готово — проверьте изменения и сохраните';
+        showToast('ИИ обновил промт — проверьте изменения', 'success');
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (statusEl) statusEl.textContent = '';
+        showToast(`Ошибка ИИ: ${msg.slice(0, 120)}`, 'error');
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
     });
 
     // Фильтры
