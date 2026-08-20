@@ -97,17 +97,17 @@
   border-radius: 50%;
   border: none;
   pointer-events: none;
-  opacity: 0;
+  display: none;
 }
 
 .dock-assistant-btn.speaking .dock-assistant-icon::after {
-  opacity: 1;
+  display: block;
   border: 1.5px solid rgba(100,200,255,0.7);
   animation: ai-speak-pulse 0.6s ease-in-out infinite;
 }
 
 .dock-assistant-btn.listening .dock-assistant-icon::after {
-  opacity: 1;
+  display: block;
   border: 1.5px solid rgba(100,255,150,0.7);
   animation: ai-listen-pulse 1s ease-in-out infinite;
 }
@@ -127,7 +127,7 @@
   transform-origin: center;
   animation: sima-blink 6s ease-in-out infinite;
 }
-.sima-eye:nth-child(4) {
+.sima-eye-r {
   animation-delay: 0.08s;
 }
 @keyframes sima-blink {
