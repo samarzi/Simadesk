@@ -220,6 +220,14 @@ function ymDateOnly(d: Date): string {
   return `${day}-${m}-${y}`;
 }
 
+/** Сегодняшняя дата в YYYY-MM-DD по ЛОКАЛЬНОМУ времени.
+ *  toISOString() отдаёт UTC — вечером по МСК это уже вчерашний день,
+ *  из-за чего фильтр «Сегодня» переставал подсвечиваться и блокировался `max`. */
+function todayLocal(): string {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
 function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -685,8 +693,7 @@ export class AllOrdersModule {
   setDateFrom(v: string): void { this.dateFrom = v || null; this.render(); }
   setDateTo(v: string): void   { this.dateTo   = v || null; this.render(); }
   setToday(): void {
-    const t = new Date();
-    const d = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+    const d = todayLocal();
     this.dateFrom = d; this.dateTo = d; this.render();
   }
   clearDateFilter(): void { this.dateFrom = null; this.dateTo = null; this.render(); }
@@ -1361,20 +1368,20 @@ export class AllOrdersModule {
             <div class="oz-filter-pills" style="gap:4px">
               <button class="oz-fpill ${!this.dateFrom && !this.dateTo ? 'active' : ''}"
                 onclick="window.allOrdersModule.clearDateFilter()">Все</button>
-              <button class="oz-fpill ${this.dateFrom === this.dateTo && this.dateFrom === new Date().toISOString().slice(0,10) ? 'active' : ''}"
+              <button class="oz-fpill ${this.dateFrom === this.dateTo && this.dateFrom === todayLocal() ? 'active' : ''}"
                 onclick="window.allOrdersModule.setToday()">Сегодня</button>
             </div>
           </div>
           <!-- Дата: произвольный диапазон -->
           <div class="oz-filter-group">
             <span class="oz-filter-label">С</span>
-            <input type="date" value="${this.dateFrom ?? ''}" max="${new Date().toISOString().slice(0,10)}"
+            <input type="date" value="${this.dateFrom ?? ''}" max="${todayLocal()}"
               oninput="window.allOrdersModule.setDateFrom(this.value)"
               style="padding:4px 8px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:7px;font-size:12px;height:28px">
           </div>
           <div class="oz-filter-group">
             <span class="oz-filter-label">По</span>
-            <input type="date" value="${this.dateTo ?? ''}" max="${new Date().toISOString().slice(0,10)}"
+            <input type="date" value="${this.dateTo ?? ''}" max="${todayLocal()}"
               oninput="window.allOrdersModule.setDateTo(this.value)"
               style="padding:4px 8px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:7px;font-size:12px;height:28px">
           </div>

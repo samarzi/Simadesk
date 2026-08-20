@@ -902,7 +902,7 @@ export class OzonOrdersModule {
 
   async downloadLabel(postingNumber: string): Promise<void> {
     const ctx = this.findStoreForPosting(postingNumber);
-    if (!ctx) return;
+    if (!ctx) { showToast('Не найден магазин для заказа', 'error'); return; }
     try {
       const blob = await ozonOrdersApi.getFbsPackageLabelPdf(ctx.creds, [postingNumber]);
       downloadBlob(blob, `ozon-label-${postingNumber}.pdf`);
@@ -913,7 +913,7 @@ export class OzonOrdersModule {
 
   async cancelPosting(postingNumber: string): Promise<void> {
     const ctx = this.findStoreForPosting(postingNumber);
-    if (!ctx) return;
+    if (!ctx) { showToast('Не найден магазин для заказа', 'error'); return; }
     try {
       const reasons = await ozonOrdersApi.getFbsCancelReasons(ctx.creds);
       if (!reasons.length) { showToast('Не удалось получить список причин отмены', 'error'); return; }

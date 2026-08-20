@@ -117,8 +117,7 @@ export class YandexOrdersModule {
     if (this.period === '30') days = 30;
     else if (this.period === '90') days = 90;
     const from = new Date(now.getTime() - days * 86_400_000);
-    const to = new Date(now.getTime() + 86_400_000); // +1 день: Яндекс API обрабатывает toDate как исключительную границу
-    return { from: ymDateOnly(from), to: ymDateOnly(to) };
+    return { from: ymDateOnly(from), to: ymDateOnly(now) };
   }
 
   private async loadOrders(): Promise<void> {
@@ -549,9 +548,11 @@ export class YandexOrdersModule {
         <span class="ozo-modal-total-val">${totalNum.toLocaleString('ru', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}</span>
       </div>`;
 
-    // Действия для активных заказов
-    const canShip = status === 'PROCESSING';
-    const canLabel = status === 'PROCESSING' || status === 'DELIVERY';
+    // Действия для активных заказов.
+    // FBY — отгрузку и этикетки делает сам Яндекс со своего склада, эти вызовы вернут ошибку.
+    const isFby = (this.findStoreFor(id)?.placement_type ?? '').toUpperCase() === 'FBY';
+    const canShip = status === 'PROCESSING' && !isFby;
+    const canLabel = (status === 'PROCESSING' || status === 'DELIVERY') && !isFby;
     const canCancel = status !== 'CANCELLED' && status !== 'DELIVERED';
     const actionsBlock = `
       <div class="ozo-actions-block">
@@ -583,9 +584,16 @@ export class YandexOrdersModule {
     return this.stores.find(s => s.id === o.store_id) ?? null;
   }
 
+  /** Магазин заказа или toast с ошибкой — чтобы кнопка не «молчала». */
+  private requireStoreFor(orderId: number | string): YandexStore | null {
+    const store = this.findStoreFor(orderId);
+    if (!store) showToast(`Не найден магазин для заказа ${orderId}`, 'error');
+    return store;
+  }
+
   async shipOrder(orderId: string): Promise<void> {
     if (!confirm(`Перевести заказ ${orderId} в статус "Готов к отгрузке"?`)) return;
-    const store = this.findStoreFor(orderId);
+    const store = this.requireStoreFor(orderId);
     if (!store) return;
     try {
       // YM workflow: PROCESSING/STARTED → PROCESSING/READY_TO_SHIP → курьер/ПВЗ забирает → DELIVERY/* (авто)
@@ -599,7 +607,7 @@ export class YandexOrdersModule {
   }
 
   async downloadLabel(orderId: string): Promise<void> {
-    const store = this.findStoreFor(orderId);
+    const store = this.requireStoreFor(orderId);
     if (!store) return;
     try {
       const blob = await yandexApi.getOrderLabelPdf(store, orderId);
@@ -615,7 +623,7 @@ export class YandexOrdersModule {
 
   async cancelOrder(orderId: string): Promise<void> {
     if (!confirm(`Отменить заказ ${orderId}?`)) return;
-    const store = this.findStoreFor(orderId);
+    const store = this.requireStoreFor(orderId);
     if (!store) return;
     try {
       await yandexApi.setOrderStatus(store, orderId, 'CANCELLED', 'SHOP_FAILED');

@@ -401,7 +401,7 @@ export class WbOrdersModule {
   async confirmOrder(orderId: number): Promise<void> {
     if (!confirm(`Принять заказ ${orderId} в работу?`)) return;
     const store = this.findStoreFor(orderId);
-    if (!store) return;
+    if (!store) { showToast(`Не найден магазин для заказа ${orderId}`, 'error'); return; }
     try {
       await wbApi.confirmOrder(store.api_key, orderId);
       showToast('✓ Заказ принят', 'success');
@@ -414,7 +414,7 @@ export class WbOrdersModule {
   async cancelOrder(orderId: number): Promise<void> {
     if (!confirm(`Отменить заказ ${orderId}?`)) return;
     const store = this.findStoreFor(orderId);
-    if (!store) return;
+    if (!store) { showToast(`Не найден магазин для заказа ${orderId}`, 'error'); return; }
     try {
       await wbApi.cancelOrder(store.api_key, orderId);
       showToast('✓ Заказ отменён', 'success');
@@ -426,7 +426,7 @@ export class WbOrdersModule {
 
   async downloadSticker(orderId: number): Promise<void> {
     const store = this.findStoreFor(orderId);
-    if (!store) return;
+    if (!store) { showToast(`Не найден магазин для заказа ${orderId}`, 'error'); return; }
     try {
       const blob = await wbApi.getOrderStickers(store.api_key, [orderId], 'pdf');
       const url = URL.createObjectURL(blob);

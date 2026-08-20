@@ -69,9 +69,9 @@ docker build \\
   -t simadesk-frontend:latest .
 REMOTE
 
-# ── Перезапуск фронтенда ──────────────────────────────────────────────────────
-log "[3/4] Перезапуск frontend контейнера"
-$SSH "$VPS" "cd $APP_DIR && docker compose up -d --no-deps --force-recreate frontend"
+# ── Перезапуск фронтенда и edge functions ────────────────────────────────────
+log "[3/4] Перезапуск frontend и functions контейнеров"
+$SSH "$VPS" "cd $APP_DIR && docker compose up -d --no-deps --force-recreate frontend functions"
 
 # ── Применение новых миграций ─────────────────────────────────────────────────
 log "[4/4] Применение SQL-миграций"
