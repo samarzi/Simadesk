@@ -1608,9 +1608,8 @@ export class AdminModule {
    */
   private startAiFlow(chatId: string): void {
     if (this.supAiProcessing.has(chatId)) return;
-    if (this.supGreeted.has(chatId)) return;        // уже в процессе для этого чата
-    const existing = this.supBatchTimers.get(chatId);
-    if (existing) clearTimeout(existing);
+    if (this.supGreeted.has(chatId)) return;         // уже в процессе для этого чата
+    if (this.supBatchTimers.has(chatId)) return;     // таймер уже тикает — не сбрасываем
 
     const handle = setTimeout(async () => {
       this.supBatchTimers.delete(chatId);
