@@ -275,14 +275,14 @@ export class MarketplacesDashboard {
         this.render();
         for (let i = 0; i < stores.length; i++) {
           const entry = this.syncLog[i];
-          entry.status = 'syncing'; entry.stage = 'Загружаем товары...'; this.render();
+          entry.status = 'syncing'; entry.stage = 'Загружаем товары...'; this.renderSyncPanel();
           try {
             const products = await fetchAllOzonProducts(stores[i]);
             entry.stage = `Сохраняем ${products.length} товаров...`; this.renderSyncPanel();
             if (products.length > 0) await ozonDb.replaceStoreProducts(stores[i].id, products);
             entry.status = 'done'; entry.total = products.length;
           } catch (e: unknown) { entry.status = 'error'; entry.error = (e instanceof Error ? e.message : String(e)) || String(e); }
-          this.render();
+          this.renderSyncPanel();
         }
       } else if (key === 'yandex') {
         const stores = await yandexDb.getStores();
@@ -290,14 +290,14 @@ export class MarketplacesDashboard {
         this.render();
         for (let i = 0; i < stores.length; i++) {
           const entry = this.syncLog[i];
-          entry.status = 'syncing'; entry.stage = 'Загружаем товары...'; this.render();
+          entry.status = 'syncing'; entry.stage = 'Загружаем товары...'; this.renderSyncPanel();
           try {
             const products = await fetchAllYandexProducts(stores[i]);
             entry.stage = `Сохраняем ${products.length} товаров...`; this.renderSyncPanel();
             if (products.length > 0) await yandexDb.replaceStoreProducts(stores[i].id, products);
             entry.status = 'done'; entry.total = products.length;
           } catch (e: unknown) { entry.status = 'error'; entry.error = (e instanceof Error ? e.message : String(e)) || String(e); }
-          this.render();
+          this.renderSyncPanel();
         }
       } else {
         const stores = await wbDb.getStores();
@@ -305,14 +305,14 @@ export class MarketplacesDashboard {
         this.render();
         for (let i = 0; i < stores.length; i++) {
           const entry = this.syncLog[i];
-          entry.status = 'syncing'; entry.stage = 'Загружаем карточки...'; this.render();
+          entry.status = 'syncing'; entry.stage = 'Загружаем карточки...'; this.renderSyncPanel();
           try {
             const products = await fetchAllWbProducts(stores[i]);
             entry.stage = `Сохраняем ${products.length} товаров...`; this.renderSyncPanel();
             if (products.length > 0) await wbDb.replaceStoreProducts(stores[i].id, products);
             entry.status = 'done'; entry.total = products.length;
           } catch (e: unknown) { entry.status = 'error'; entry.error = (e instanceof Error ? e.message : String(e)) || String(e); }
-          this.render();
+          this.renderSyncPanel();
         }
       }
       await this.load();
@@ -321,43 +321,83 @@ export class MarketplacesDashboard {
     this.render();
   }
 
-  /** Быстрый ре-рендер только панели прогресса (не перерисовывая всё) */
+  /** Частичный ре-рендер панели синхронизации без перерисовки всей страницы */
   private renderSyncPanel(): void {
-    const panel = this.container.querySelector('#mpd-sync-panel');
-    if (panel) panel.innerHTML = this.buildSyncPanelInner();
+    const panel = this.container.querySelector<HTMLElement>('#mpd-sync-panel');
+    if (!panel) return;
+    const done  = this.syncLog.filter(l => l.status === 'done' || l.status === 'error').length;
+    const total = this.syncLog.length;
+    const pct   = total > 0 ? Math.round((done / total) * 100) : 0;
+    const fill  = panel.querySelector<HTMLElement>('#mpd-progress-fill');
+    if (fill) fill.style.width = `${pct}%`;
+    const inner = panel.querySelector('#mpd-sync-inner');
+    if (inner) inner.innerHTML = this.buildSyncPanelInner();
   }
 
   private buildSyncPanelInner(): string {
-    const done = this.syncLog.filter(l => l.status === 'done').length;
-    const errors = this.syncLog.filter(l => l.status === 'error').length;
-    const total = this.syncLog.length;
+    const done    = this.syncLog.filter(l => l.status === 'done').length;
+    const errors  = this.syncLog.filter(l => l.status === 'error').length;
+    const total   = this.syncLog.length;
     const current = this.syncLog.find(l => l.status === 'syncing');
 
+    const mpColor: Record<string, string> = { Ozon: '#005bff', WB: '#cb11ab', ЯМ: '#fc3f1d' };
+
+    const headerLine = this.syncing
+      ? `<div style="display:flex;align-items:center;gap:10px">
+           <svg class="oz-spin" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" style="width:16px;height:16px;flex-shrink:0"><path d="M21 12a9 9 0 1 1-9-9" stroke-dasharray="40 20"/></svg>
+           <span style="font-size:13px;font-weight:700;color:var(--text)">Синхронизация ${done}/${total}</span>
+           ${current ? `<span style="font-size:11px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${this.esc(current.store)}${current.stage ? ` — ${this.esc(current.stage)}` : ''}</span>` : ''}
+         </div>`
+      : `<div style="display:flex;align-items:center;gap:10px">
+           ${errors
+             ? `<svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" style="width:16px;height:16px;flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <span style="font-size:13px;font-weight:700;color:var(--text)">Готово: ${done}/${total}</span>
+                <span style="font-size:11px;color:#ef4444">${errors} ${errors === 1 ? 'ошибка' : 'ошибки'}</span>`
+             : `<svg viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" style="width:16px;height:16px;flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg>
+                <span style="font-size:13px;font-weight:700;color:var(--text)">Синхронизация завершена</span>
+                <span style="font-size:11px;color:var(--text-2)">${done} магазинов обновлено</span>`
+           }
+         </div>`;
+
+    const rows = this.syncLog.map(l => {
+      const isPending  = l.status === 'pending';
+      const isSyncing  = l.status === 'syncing';
+      const isDone     = l.status === 'done';
+      const isError    = l.status === 'error';
+      const color      = mpColor[l.mp] ?? 'var(--accent)';
+
+      const statusIcon = isDone
+        ? `<svg viewBox="0 0 16 16" fill="none" stroke="#22c55e" stroke-width="2.2" stroke-linecap="round" style="width:13px;height:13px;flex-shrink:0"><polyline points="13 4 6 11 3 8"/></svg>`
+        : isError
+        ? `<svg viewBox="0 0 16 16" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px;flex-shrink:0"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg>`
+        : isSyncing
+        ? `<svg class="oz-spin" viewBox="0 0 16 16" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" style="width:13px;height:13px;flex-shrink:0"><path d="M14 8A6 6 0 1 1 8.5 2.1" stroke-dasharray="22 11"/></svg>`
+        : `<span style="width:13px;height:13px;flex-shrink:0;display:inline-block;border-radius:50%;border:1.5px solid var(--border)"></span>`;
+
+      const detail = isDone
+        ? `<span style="font-size:10px;color:var(--text-2);margin-left:auto;white-space:nowrap">${(l.total ?? 0).toLocaleString('ru')} тов.</span>`
+        : isError
+        ? `<span style="font-size:10px;color:#ef4444;margin-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">${this.esc((l.error ?? '').slice(0, 60))}</span>`
+        : isSyncing && l.stage
+        ? `<span style="font-size:10px;color:var(--text-2);margin-left:auto;white-space:nowrap">${this.esc(l.stage)}</span>`
+        : '';
+
+      const rowOpacity = isPending ? '.4' : '1';
+      return `
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);opacity:${rowOpacity};transition:opacity .2s">
+          ${statusIcon}
+          <span style="font-size:10px;font-weight:700;color:${color};min-width:32px;text-transform:uppercase;letter-spacing:.3px">${this.esc(l.mp)}</span>
+          <span style="font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isError ? '' : 'flex:1'}">${this.esc(l.store)}</span>
+          ${detail}
+        </div>`;
+    }).join('');
+
     return `
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        ${this.syncing ? `<svg class="oz-spin" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" style="width:18px;height:18px;flex-shrink:0"><path d="M21 12a9 9 0 1 1-9-9" stroke-dasharray="40 20"/></svg>` : ''}
-        <div style="font-size:13px;font-weight:700;color:var(--text)">
-          ${this.syncing ? `Синхронизация: ${done}/${total}` : `Готово: ${done} из ${total}${errors ? `, ошибок: ${errors}` : ''}`}
-        </div>
-        ${current ? `<div style="font-size:11px;color:var(--text-2)">${this.esc(current.mp)}: ${this.esc(current.store)}${current.stage ? ` — ${current.stage}` : ''}</div>` : ''}
+      <div style="padding:12px 18px 4px">
+        ${headerLine}
       </div>
-      <div style="display:flex;flex-direction:column;gap:4px">
-        ${this.syncLog.map(l => {
-          const icon = l.status === 'done' ? I.checkCircle('', 14) : l.status === 'error' ? I.xCircle('', 14) : l.status === 'syncing' ? I.hourglass('', 14) : '';
-          const detail = l.status === 'done'
-            ? `<span style="color:var(--text-2);font-size:10px;margin-left:6px">${l.total ?? 0} товаров</span>`
-            : l.status === 'error'
-            ? `<span style="color:#ef4444;font-size:10px;margin-left:6px">${this.esc(l.error)}</span>`
-            : l.status === 'syncing' && l.stage
-            ? `<span style="color:var(--text-2);font-size:10px;margin-left:6px">${this.esc(l.stage)}</span>`
-            : '';
-          return `<div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);padding:3px 0">
-            <span>${icon}</span>
-            <span style="font-weight:600;min-width:40px">${this.esc(l.mp)}</span>
-            <span>${this.esc(l.store)}</span>
-            ${detail}
-          </div>`;
-        }).join('')}
+      <div style="padding:4px 18px 12px;display:flex;flex-direction:column">
+        ${rows}
       </div>
     `;
   }
@@ -470,19 +510,6 @@ export class MarketplacesDashboard {
               `).join('')}
             </div>
 
-            <!-- ── Панель синхронизации ── -->
-            ${this.syncLog.length > 0 ? `
-              <div id="mpd-sync-panel" style="margin-bottom:20px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;overflow:hidden">
-                <!-- Прогресс-бар -->
-                <div style="height:3px;background:var(--border)">
-                  <div style="height:100%;width:${syncPct}%;background:var(--accent);transition:width .4s ease;border-radius:3px"></div>
-                </div>
-                <div style="padding:14px 18px">
-                  ${this.buildSyncPanelInner()}
-                </div>
-              </div>
-            ` : ''}
-
             <!-- ── Карточки маркетплейсов ── -->
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px">
               ${this.stats.map(m => this.renderMpCard(m)).join('')}
@@ -507,6 +534,26 @@ export class MarketplacesDashboard {
                       <span style="color:var(--text-2)">${this.fmtN(m.productsCount)} (${pct.toFixed(1)}%)</span>
                     </div>`;
                   }).join('')}
+                </div>
+              </div>
+            ` : ''}
+
+            <!-- ── Панель синхронизации (внизу, чтобы контент выше не прыгал) ── -->
+            ${this.syncLog.length > 0 ? `
+              <style>
+                @keyframes mpdPanelSlideUp {
+                  from { opacity: 0; transform: translateY(12px); }
+                  to   { opacity: 1; transform: translateY(0); }
+                }
+              </style>
+              <div id="mpd-sync-panel"
+                style="margin-top:24px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;overflow:hidden;animation:mpdPanelSlideUp .3s cubic-bezier(.4,0,.2,1) both">
+                <!-- Прогресс-бар -->
+                <div style="height:2px;background:var(--border)">
+                  <div id="mpd-progress-fill" style="height:100%;width:${syncPct}%;background:linear-gradient(90deg,var(--accent),#60a5fa);transition:width .5s ease;border-radius:2px"></div>
+                </div>
+                <div id="mpd-sync-inner">
+                  ${this.buildSyncPanelInner()}
                 </div>
               </div>
             ` : ''}
