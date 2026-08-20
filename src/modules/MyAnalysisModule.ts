@@ -93,8 +93,35 @@ function auditCard(c: Omit<ProductCard,'issues'|'score'>): Issue[] {
   else if (photos < 5)
     iss.push({ code:'LOW_PHOTOS', severity:'info', label:`Фото: ${photos} шт. (рекомендуется ≥5)`, field:'photos' });
 
-  if (!c.name || c.name.trim().length < 20)
-    iss.push({ code:'SHORT_NAME', severity:'warning', label:`Короткое название (${c.name?.trim().length ?? 0} симв.)`, field:'name' });
+  // ── Name length — thresholds differ per marketplace ──────────────────────
+  // WB:     official minimum 40 chars; recommended 40-60
+  // Ozon:   max 200 chars, each individual word ≤ 27 chars; no hard floor but
+  //         very short names get poor placement → treat < 20 as warning
+  // Yandex: recommended 60-120 chars; < 30 considered poor
+  const name = c.name?.trim() ?? '';
+  const nameLen = name.length;
+
+  if (c.mp === 'wb') {
+    if (nameLen < 40)
+      iss.push({ code:'SHORT_NAME', severity:'warning',
+        label:`Слишком короткое название (${nameLen} симв., минимум WB — 40)`, field:'name' });
+  } else if (c.mp === 'ozon') {
+    if (nameLen < 20)
+      iss.push({ code:'SHORT_NAME', severity:'warning',
+        label:`Слишком короткое название (${nameLen} симв., рекомендуется ≥20)`, field:'name' });
+    // Single word longer than 27 chars triggers Ozon moderation
+    const longWord = name.split(/\s+/).find(w => w.length > 27);
+    if (longWord)
+      iss.push({ code:'LONG_WORD', severity:'warning',
+        label:`Слово «${longWord.slice(0,20)}…» длиннее 27 симв. — Ozon может отклонить`, field:'name' });
+  } else if (c.mp === 'yandex') {
+    if (nameLen < 30)
+      iss.push({ code:'SHORT_NAME', severity:'warning',
+        label:`Слишком короткое название (${nameLen} симв., рекомендуется ≥60)`, field:'name' });
+    else if (nameLen < 60)
+      iss.push({ code:'NAME_COULD_BE_LONGER', severity:'info',
+        label:`Название можно удлинить (${nameLen} симв., оптимально 60-120)`, field:'name' });
+  }
 
   if (!c.price || c.price === 0)
     iss.push({ code:'NO_PRICE', severity:'warning', label:'Нет цены', field:'price' });
