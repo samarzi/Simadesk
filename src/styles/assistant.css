@@ -1640,23 +1640,66 @@ html.light .sd-sup-msg.user .sd-sup-bubble {
   to   { opacity: 1; transform: none; }
 }
 
-/* ── Кнопка авто-действия от поддержки (Task 3) ─────────────────────────── */
+/* ── Кнопка авто-действия от поддержки ──────────────────────────────────── */
+.sd-sup-action-wrap {
+  display: flex;
+  align-self: flex-start;
+  margin-top: 5px;
+}
+.sd-sup-msg.user .sd-sup-action-wrap { align-self: flex-end; }
 .sd-sup-action-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  margin-top: 8px;
-  padding: 6px 12px;
-  border: 1px solid var(--ap-accent);
-  border-radius: var(--ap-radius-sm);
-  background: rgba(99, 102, 241, 0.12);
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1.5px solid var(--ap-accent);
+  border-radius: 20px;
+  background: rgba(99, 102, 241, 0.10);
   color: var(--ap-accent);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, transform 0.1s;
+  white-space: nowrap;
 }
-.sd-sup-action-btn:hover { background: rgba(99, 102, 241, 0.22); }
+.sd-sup-action-btn:hover { background: rgba(99, 102, 241, 0.22); transform: translateY(-1px); }
+.sd-sup-action-btn:active { transform: translateY(0); }
+
+/* ── Разделитель «Новые сообщения» ───────────────────────────────────────── */
+.sd-sup-new-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 6px;
+  color: var(--ap-accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.sd-sup-new-divider::before,
+.sd-sup-new-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(99, 102, 241, 0.3);
+}
+
+/* ── Индикатор новых сообщений на строке чата ───────────────────────────── */
+.sd-sup-row-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--ap-accent);
+  margin-left: 6px;
+  vertical-align: middle;
+  animation: sd-dot-pulse 1.6s ease-in-out infinite;
+}
+@keyframes sd-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.55; transform: scale(0.8); }
+}
+.sd-sup-chat-row.has-new { border-color: rgba(99, 102, 241, 0.35); }
 
 .sd-sup-error {
   display: flex;

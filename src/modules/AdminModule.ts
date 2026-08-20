@@ -1632,6 +1632,13 @@ export class AdminModule {
           return;
         }
 
+        // Серверный AI (edge function) мог уже ответить — проверяем недавние admin-сообщения
+        const cutoffMs = Date.now() - 120_000;
+        const recentAdmin = msgs.some(
+          m => m.sender_role !== 'user' && new Date(m.created_at).getTime() > cutoffMs,
+        );
+        if (recentAdmin) return; // Edge function уже обработал
+
         // 1. Приветствие
         const greetingText = 'Здравствуйте! Уже разбираемся с вашим вопросом, ответим совсем скоро 👋';
         await supportChatService.adminSendMessage(chatId, greetingText);

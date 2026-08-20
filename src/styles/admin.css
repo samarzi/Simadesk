@@ -921,6 +921,11 @@ html.light .ap-api-tag.ya { color: #cc2626; }
 }
 .ap-sup-flag { color: var(--ap-rose); display: inline-flex; flex-shrink: 0; }
 .ap-sup-ai-mark { color: var(--ap-violet); display: inline-flex; opacity: .8; flex-shrink: 0; }
+.ap-sup-row.needs-op .ap-sup-unread { background: var(--ap-rose); animation: sup-unread-pulse 1.8s ease-in-out infinite; }
+@keyframes sup-unread-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248,113,113,0.5); }
+  50%       { box-shadow: 0 0 0 5px rgba(248,113,113,0); }
+}
 
 /* ── Пустое состояние ─────────────────────────────────────────────────────── */
 .ap-sup-placeholder {

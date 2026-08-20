@@ -1045,6 +1045,172 @@ async function handleMpNewsFetch(req: Request): Promise<Response> {
   return jsonRes({ ok: true, saved, errors, ts: new Date().toISOString() });
 }
 
+// ── Support AI (server-side auto-reply) ──────────────────────────────────────
+
+const SUPPORT_AI_KNOWLEDGE = `SimaDesk — платформа управления маркетплейсами (WB, Ozon, Яндекс Маркет).
+
+РАЗДЕЛЫ И ЧТО ГДЕ НАХОДИТСЯ:
+• Главная (home) — дашборд: выручка дня, новые заказы, остатки в зоне риска, просроченные задачи
+• Аналитика (analytics) — графики выручки/прибыли/заказов, сравнение периодов, ABC-анализ товаров
+• Репрайсер (repricer) — автоправила цен: следить за конкурентами, целевая маржа, мин/макс цена
+• Заказы (orders) — все заказы со всех МП: статусы, фильтры, дедлайны FBS (красный = срочно)
+• Товары / Products Hub (products-hub) — карточки товаров, цены, описания, SEO, фото, массовое редактирование
+• Остатки / Склад (stock) — остатки FBO/FBS, метрика «Дней до OOS», настройка порогов алертов
+• Производители (producers) — база поставщиков, контакты, условия, прайсы
+• Задачи (tasks) — планировщик операционных задач
+• Витрина / SimaStore (simastore) — собственный магазин, URL /s/slug, синхронизация товаров
+• Настройки (settings) — подключение МП, API-ключи, смена пароля, тема, тарифы, команда, расширение браузера
+• Расширение браузера — ЕСТЬ в SimaDesk. Установить: Настройки → раздел «Расширение браузера».
+• Редактор (docs) — встроенный Excel и Word, импорт/экспорт .xlsx/.docx
+• Сима (AI-помощник) — открывается кнопкой «Сима» в правом нижнем углу
+
+КАК ПОДКЛЮЧИТЬ МАРКЕТПЛЕЙС:
+• WB: Настройки → Маркетплейсы → Wildberries → API-ключ из ЛК WB (Профиль → Настройки → Токены)
+• Ozon: Настройки → Маркетплейсы → Ozon → Client ID + API Key из ЛК Ozon
+• Яндекс: Настройки → Маркетплейсы → Яндекс Маркет → OAuth-токен
+
+ЧАСТО ЗАДАВАЕМЫЕ ВОПРОСЫ:
+Q: Как переключить тему? → Настройки → переключатель темы.
+Q: Данные не обновляются? → Проверь API-ключ в Настройки → Маркетплейсы. Синхронизация каждые 30 мин.
+Q: Где посмотреть остатки? → Раздел «Остатки (Склад)» → колонка «Дней до OOS»
+Q: Не работает AI Сима? → Настройки → AI → проверить OpenRouter API-ключ и баланс на openrouter.ai
+Q: Как добавить сотрудника? → Настройки → Команда → «Пригласить пользователя»
+Q: Как изменить тариф? → Настройки → Подписка
+Q: Где скачать / установить расширение для браузера? → Настройки → раздел «Расширение браузера».`;
+
+async function handleSupportAi(req: Request): Promise<Response> {
+  const ok = () => new Response('{"ok":true}', { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+  let body: { chat_id?: string };
+  try { body = await req.json(); } catch { return ok(); }
+  const chatId = body?.chat_id;
+  if (!chatId) return ok();
+
+  const supaUrl  = Deno.env.get('SUPABASE_URL')!;
+  const svcKey   = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const orKey    = Deno.env.get('OPENROUTER_KEY') ?? '';
+
+  // Use service_role — bypasses RLS, reads/writes support tables directly
+  const db = createClient(supaUrl, svcKey, { auth: { persistSession: false } });
+
+  // 1. Check chat is still open
+  const { data: chat } = await db.from('support_chats').select('status').eq('id', chatId).single();
+  if (!chat || chat.status !== 'open') return ok();
+
+  // 2. Get messages
+  const { data: msgs } = await db
+    .from('support_chat_messages')
+    .select('id, sender_role, content, created_at')
+    .eq('chat_id', chatId)
+    .order('created_at');
+
+  if (!msgs?.length) return ok();
+  const lastMsg = msgs[msgs.length - 1];
+  if (lastMsg.sender_role !== 'user') return ok();
+
+  // 3. Duplicate guard: if admin message sent in last 2 min → skip
+  const cutoff = new Date(Date.now() - 120_000).toISOString();
+  const hasRecentAdmin = msgs.some(m => m.sender_role === 'admin' && m.created_at >= cutoff);
+  if (hasRecentAdmin) return ok();
+
+  // 4. Get API key (env first, then site_content)
+  let apiKey = orKey;
+  if (!apiKey) {
+    const { data: kv } = await db.from('site_content').select('content').eq('key', 'ai_openrouter_key').single();
+    apiKey = kv?.content ?? '';
+  }
+
+  // 5. Wait 3 s then check again before greeting (race prevention)
+  await delay(3_000);
+
+  const { data: check } = await db
+    .from('support_chat_messages')
+    .select('id')
+    .eq('chat_id', chatId)
+    .eq('sender_role', 'admin')
+    .gte('created_at', cutoff)
+    .limit(1);
+  if (check?.length) return ok();
+
+  // 6. Send greeting
+  await db.from('support_chat_messages').insert({
+    chat_id: chatId, sender_role: 'admin',
+    content: 'Здравствуйте! Уже разбираемся с вашим вопросом, ответим совсем скоро 👋',
+    attachments: [],
+  });
+  const greetedAt = Date.now();
+
+  // 7. No API key — send bridge and stop
+  if (!apiKey) {
+    await delay(Math.max(0, 5_000 - (Date.now() - greetedAt)));
+    await db.from('support_chat_messages').insert({
+      chat_id: chatId, sender_role: 'admin',
+      content: 'Оператор скоро ответит на ваш вопрос 🙏',
+      attachments: [],
+    });
+    return ok();
+  }
+
+  // 8. Call OpenRouter in parallel while 5 s minimum elapses
+  const history = msgs.slice(-8).map((m: { sender_role: string; content: string }) => ({
+    role: m.sender_role === 'user' ? 'user' : 'assistant',
+    content: m.content || '',
+  }));
+
+  const systemPrompt = `Ты — сотрудник поддержки SimaDesk. Отвечай на русском, кратко и по делу.
+Приветствие уже отправлено — НЕ здоровайся, начинай сразу с ответа на вопрос.
+
+${SUPPORT_AI_KNOWLEDGE}
+
+Правила:
+1. Если вопрос про навигацию, функции SimaDesk — дай подробный ответ с указанием раздела.
+2. Если вопрос требует доступа к данным пользователя или ты не уверен — НЕ придумывай.
+3. В конце ВСЕГДА добавь: [УВЕРЕН:да] или [УВЕРЕН:нет]
+4. Без лишних извинений. Начинай сразу с ответа.`;
+
+  let aiReply = '';
+  let confident = false;
+  try {
+    const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://simadesk.ru',
+        'X-Title': 'SimaDesk Support AI',
+      },
+      body: JSON.stringify({
+        model: 'anthropic/claude-haiku-4-5',
+        messages: [{ role: 'system', content: systemPrompt }, ...history],
+        max_tokens: 600,
+        temperature: 0.3,
+      }),
+    });
+    if (aiRes.ok) {
+      const data = await aiRes.json();
+      aiReply = data?.choices?.[0]?.message?.content ?? '';
+      confident = aiReply.match(/\[УВЕРЕН:(да|нет)\]/i)?.[1]?.toLowerCase() === 'да';
+      aiReply = aiReply.replace(/\[УВЕРЕН:(да|нет)\]/gi, '').trim();
+    }
+  } catch { /* ignore, fallback below */ }
+
+  // 9. Wait minimum 5 s from greeting
+  const elapsed = Date.now() - greetedAt;
+  if (elapsed < 5_000) await delay(5_000 - elapsed);
+
+  // 10. Send reply
+  const replyText = (aiReply && confident)
+    ? aiReply
+    : 'Этот вопрос требует участия оператора. Специалист ответит в ближайшее время 🙏';
+
+  await db.from('support_chat_messages').insert({
+    chat_id: chatId, sender_role: 'admin', content: replyText, attachments: [],
+  });
+
+  return ok();
+}
+
 // ── Main handler (router) ─────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -1099,6 +1265,16 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ error: message }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+  }
+
+  // Route to support-ai handler
+  if (sub === 'support-ai' || path === 'support-ai') {
+    try { return await handleSupportAi(req); }
+    catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'error';
+      console.error('[support-ai] Error:', message);
+      return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
   }
 
