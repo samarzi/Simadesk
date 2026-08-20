@@ -1429,13 +1429,15 @@ export class AssistantModule {
       showToast(`Сима: ${alerts[0]}`, 'warning');
     }
 
-    // Добавляем бейдж на кнопку Симы
+    // Добавляем кольцо-алерт вокруг иконки Симы
     const btn = document.getElementById('nav-assistant');
-    if (btn && !btn.querySelector('.sima-alert-dot')) {
+    const icon = btn?.querySelector<HTMLElement>('.dock-assistant-icon');
+    const target = icon ?? btn;
+    if (target && !target.querySelector('.sima-alert-dot')) {
       const dot = document.createElement('span');
       dot.className = 'sima-alert-dot';
       dot.title = alerts.join('\n');
-      btn.appendChild(dot);
+      target.appendChild(dot);
     }
   }
 

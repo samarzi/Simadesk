@@ -57,20 +57,29 @@
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: linear-gradient(145deg, rgba(120,60,180,0.85), rgba(60,30,120,0.85));
+  background: linear-gradient(145deg, #7b3fbe, #4a1a8f, #6d28d9, #3b1278, #8b45d4);
+  background-size: 300% 300%;
+  animation: sima-gradient-shift 8s ease-in-out infinite;
   box-shadow:
     0 1px 3px rgba(0,0,0,0.4),
     0 4px 8px rgba(100,60,200,0.25),
     inset 0 1px 0 rgba(255,255,255,0.12),
     inset 0 -1px 0 rgba(0,0,0,0.15);
   border: 0.5px solid rgba(180,130,255,0.18);
-  transition: background 0.18s, box-shadow 0.18s;
   position: relative;
   overflow: visible;
 }
 
+@keyframes sima-gradient-shift {
+  0%   { background-position: 0% 0%; }
+  25%  { background-position: 100% 50%; }
+  50%  { background-position: 60% 100%; }
+  75%  { background-position: 0% 60%; }
+  100% { background-position: 0% 0%; }
+}
+
 .dock-assistant-btn:hover .dock-assistant-icon {
-  background: linear-gradient(145deg, rgba(150,80,220,0.9), rgba(80,40,160,0.9));
+  animation-duration: 4s;
   box-shadow:
     0 2px 6px rgba(0,0,0,0.45),
     0 6px 20px rgba(130,80,255,0.3),
@@ -79,33 +88,30 @@
 
 /* Active state when panel is open */
 .dock-assistant-btn.active .dock-assistant-icon {
-  background: linear-gradient(145deg, rgba(170,90,255,0.9), rgba(100,50,200,0.9));
+  animation-duration: 3s;
 }
 
-/* Pulsing ring around assistant icon */
+/* Pulsing ring (speaking/listening states) */
 .dock-assistant-icon::after {
   content: '';
   position: absolute;
   inset: -3px;
   border-radius: 50%;
-  border: 1.5px solid rgba(170,100,255,0.5);
-  animation: ai-pulse 2.4s ease-in-out infinite;
+  border: 1.5px solid transparent;
   pointer-events: none;
+  opacity: 0;
 }
 
 .dock-assistant-btn.speaking .dock-assistant-icon::after {
-  animation: ai-speak-pulse 0.6s ease-in-out infinite;
+  opacity: 1;
   border-color: rgba(100,200,255,0.7);
+  animation: ai-speak-pulse 0.6s ease-in-out infinite;
 }
 
 .dock-assistant-btn.listening .dock-assistant-icon::after {
-  animation: ai-listen-pulse 1s ease-in-out infinite;
+  opacity: 1;
   border-color: rgba(100,255,150,0.7);
-}
-
-@keyframes ai-pulse {
-  0%, 100% { opacity: 0.3; transform: scale(1); }
-  50%       { opacity: 0.7; transform: scale(1.06); }
+  animation: ai-listen-pulse 1s ease-in-out infinite;
 }
 
 @keyframes ai-speak-pulse {
@@ -113,27 +119,46 @@
   50%       { opacity: 1;   transform: scale(1.1); }
 }
 
-/* Алерт-бейдж фонового мониторинга */
-.sima-alert-dot {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 8px;
-  height: 8px;
-  background: #f87171;
-  border-radius: 50%;
-  border: 1.5px solid var(--dock-bg, #1a1a2e);
-  animation: sima-alert-blink 2s ease-in-out infinite;
-  pointer-events: none;
-}
-@keyframes sima-alert-blink {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(0.8); }
-}
-
 @keyframes ai-listen-pulse {
   0%, 100% { opacity: 0.4; transform: scale(1); }
   50%       { opacity: 0.9; transform: scale(1.08); }
+}
+
+/* Blinking eyes animation */
+.sima-eye {
+  transform-origin: center;
+  animation: sima-blink 6s ease-in-out infinite;
+}
+.sima-eye:nth-child(4) {
+  animation-delay: 0.08s;
+}
+@keyframes sima-blink {
+  0%, 88%, 94%, 100% { transform: scaleY(1); }
+  91%                 { transform: scaleY(0.08); }
+}
+
+/* Sima face SVG sizing */
+.sima-face-svg {
+  display: block;
+  overflow: visible;
+}
+
+/* Алерт-индикатор: кольцо вокруг иконки вместо точки */
+.sima-alert-dot {
+  position: absolute;
+  inset: -4px;
+  width: auto;
+  height: auto;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: transparent;
+  box-shadow: 0 0 0 2px rgba(248, 68, 68, 0.85), 0 0 10px 2px rgba(248, 68, 68, 0.4);
+  animation: sima-alert-ring 2.2s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes sima-alert-ring {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(248, 68, 68, 0.85), 0 0 8px 1px rgba(248, 68, 68, 0.3); }
+  50%       { box-shadow: 0 0 0 2px rgba(248, 68, 68, 0.5), 0 0 16px 4px rgba(248, 68, 68, 0.5); }
 }
 
 /* ── AI Waveform SVG animation inside the icon ── */
