@@ -1569,10 +1569,11 @@ export class AdminModule {
         if (this.supAiEnabled) {
           for (const chat of chats) {
             if (this.supAiProcessing.has(chat.id)) continue;
+            if (this.supGreeted.has(chat.id)) continue;
             if (chat.last_message_role !== 'user') continue;
             const lastAiTime = this.supAiHandled.get(chat.id);
             if (lastAiTime && chat.last_message_at && lastAiTime >= chat.last_message_at) continue;
-            this.startSupBatchTimer(chat.id);
+            this.startAiFlow(chat.id);
           }
         }
 
@@ -1580,7 +1581,6 @@ export class AdminModule {
           const res = await supportChatService.poll(this.activeLiveChat.id, this.liveChatLastMsgTime);
           const newMsgs = res?.messages ?? [];
           this.renderUserTyping(!!res?.peer_typing);
-          if (res?.peer_typing) this.startSupBatchTimer(this.activeLiveChat.id);
           if (newMsgs.length > 0) {
             this.liveChatLastMsgTime = newMsgs.at(-1)!.created_at;
             this.activeLiveChat.messages = [...(this.activeLiveChat.messages ?? []), ...newMsgs];
@@ -1651,8 +1651,6 @@ export class AdminModule {
     try { await supportChatService.adminSendMessage(chatId, text); } catch { /* ignore */ }
   }
 
-  /** @deprecated use startAiFlow */
-  private startSupBatchTimer(chatId: string): void { this.startAiFlow(chatId); }
 
   private renderUserTyping(typing: boolean): void {
     const host = this.el.querySelector<HTMLElement>('#ap-live-typing');
@@ -1732,7 +1730,11 @@ Q: Где скачать / установить расширение для бр
     return key;
   }
 
-  private async runSupAiReply(chatId: string, messages: Array<{ sender_role: string; content: string }>): Promise<void> {
+  private async runSupAiReply(
+    chatId: string,
+    messages: Array<{ sender_role: string; content: string }>,
+    greetedAt: number,
+  ): Promise<void> {
     const apiKey = await this.ensureAiKey();
     if (!apiKey) return;
 
@@ -1741,7 +1743,7 @@ Q: Где скачать / установить расширение для бр
     const detail0 = this.el.querySelector<HTMLElement>('#ap-sup-detail');
     if (detail0 && this.activeLiveChat?.id === chatId) this.applyAdminMode(detail0);
 
-    // Пока модель думает, пользователь видит «Поддержка печатает…» (отметка живёт 6 с).
+    // Показываем «печатает» пока AI думает
     void supportChatService.setTyping(chatId);
     const typingKeepAlive = setInterval(() => { void supportChatService.setTyping(chatId); }, 3000);
 
@@ -1752,6 +1754,7 @@ Q: Где скачать / установить расширение для бр
       }));
 
       const systemPrompt = `Ты — сотрудник поддержки SimaDesk. Отвечай на русском языке, кратко и по делу.
+Приветствие клиенту уже отправлено — НЕ здоровайся снова, начинай сразу с ответа на вопрос.
 
 ${this.SIMADESK_KNOWLEDGE}
 
@@ -1786,11 +1789,23 @@ ${this.SIMADESK_KNOWLEDGE}
       const confident = reply.match(/\[УВЕРЕН:(да|нет)\]/i)?.[1]?.toLowerCase() === 'да';
       reply = reply.replace(/\[УВЕРЕН:(да|нет)\]/gi, '').trim();
 
+      // Ждём минимум 5 секунд с момента отправки приветствия
+      const MIN_DELAY_MS = 5_000;
+      const elapsed = Date.now() - greetedAt;
+      if (elapsed < MIN_DELAY_MS) {
+        await new Promise(r => setTimeout(r, MIN_DELAY_MS - elapsed));
+      }
+
       if (confident) {
         await supportChatService.adminSendMessage(chatId, reply);
         this.supAiHandled.set(chatId, new Date().toISOString());
         this.supNeedsAttention.delete(chatId);
       } else {
+        // Мостовое сообщение → ручной режим
+        await this.sendBridgeMessage(
+          chatId,
+          'Этот вопрос требует участия оператора. Я передал обращение — специалист ответит в ближайшее время 🙏',
+        );
         this.supNeedsAttention.add(chatId);
         this.updateAttentionBadge(chatId);
       }
@@ -1798,6 +1813,7 @@ ${this.SIMADESK_KNOWLEDGE}
       clearInterval(typingKeepAlive);
       void supportChatService.clearTyping(chatId);
       this.supAiProcessing.delete(chatId);
+      this.supGreeted.delete(chatId);   // сбросить: при следующем сообщении флоу стартует заново
       if (this.supAiRespondingFor === chatId) {
         this.supAiRespondingFor = null;
         const detail = this.el.querySelector<HTMLElement>('#ap-sup-detail');
