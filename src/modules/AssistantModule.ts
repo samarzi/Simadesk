@@ -1626,9 +1626,10 @@ export class AssistantModule {
       panel.querySelector('#sd-ap-quick-actions')?.classList.toggle('open');
     });
 
-    // Settings accordion
-    panel.querySelector('#sd-ap-settings-header')?.addEventListener('click', () => {
-      panel.querySelector('#sd-ap-settings-section')?.classList.toggle('open');
+    // Settings button in header — toggle settings mode
+    panel.querySelector('#sd-ap-settings-btn')?.addEventListener('click', () => {
+      const current = (this.panel?.dataset.panelMode ?? 'ai') as 'ai' | 'support' | 'notifications' | 'settings';
+      this.switchSupportMode(current === 'settings' ? 'ai' : 'settings');
     });
 
     // News accordion
@@ -1847,34 +1848,42 @@ export class AssistantModule {
         </div>
         <div class="sd-ap-status" id="sd-ap-status">Готова</div>
         <div class="sd-ap-header-actions">
-          <button class="sd-ap-btn sd-ap-sessions-btn" id="sd-ap-sessions-btn" title="Сохранённые чаты">
+          <div class="sd-ap-ai-btns" id="sd-ap-ai-btns">
+            <button class="sd-ap-btn sd-ap-sessions-btn" id="sd-ap-sessions-btn" title="Сохранённые чаты">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </button>
+            <button class="sd-ap-btn sd-ap-ai-toggle" id="sd-ap-ai-toggle" title="AI-режим вкл/выкл">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M12 2a4 4 0 0 1 4 4v1h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-1v1a4 4 0 0 1-4 4 4 4 0 0 1-4-4v-1H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1V6a4 4 0 0 1 4-4z"/>
+                <circle cx="9.5" cy="10" r="1" fill="currentColor" stroke="none"/>
+                <circle cx="14.5" cy="10" r="1" fill="currentColor" stroke="none"/>
+                <path d="M9 14.5s1 1.5 3 1.5 3-1.5 3-1.5"/>
+              </svg>
+            </button>
+            <button class="sd-ap-btn sd-ap-tts-btn" title="Озвучка текста">
+              <svg class="tts-icon-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>
+              </svg>
+              <svg class="tts-icon-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <line x1="23" y1="9" x2="17" y2="15"/>
+                <line x1="17" y1="9" x2="23" y2="15"/>
+              </svg>
+            </button>
+            <button class="sd-ap-btn sd-ap-clear-btn" title="Очистить чат">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
+                <path d="M10 11v6M14 11v6M9 6V4h6v2"/>
+              </svg>
+            </button>
+          </div>
+          <button class="sd-ap-btn sd-ap-settings-btn" id="sd-ap-settings-btn" title="Настройки">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-            </svg>
-          </button>
-          <button class="sd-ap-btn sd-ap-ai-toggle" id="sd-ap-ai-toggle" title="AI-режим вкл/выкл">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <path d="M12 2a4 4 0 0 1 4 4v1h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-1v1a4 4 0 0 1-4 4 4 4 0 0 1-4-4v-1H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1V6a4 4 0 0 1 4-4z"/>
-              <circle cx="9.5" cy="10" r="1" fill="currentColor" stroke="none"/>
-              <circle cx="14.5" cy="10" r="1" fill="currentColor" stroke="none"/>
-              <path d="M9 14.5s1 1.5 3 1.5 3-1.5 3-1.5"/>
-            </svg>
-          </button>
-          <button class="sd-ap-btn sd-ap-tts-btn" title="Озвучка текста">
-            <svg class="tts-icon-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>
-            </svg>
-            <svg class="tts-icon-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-              <line x1="23" y1="9" x2="17" y2="15"/>
-              <line x1="17" y1="9" x2="23" y2="15"/>
-            </svg>
-          </button>
-          <button class="sd-ap-btn sd-ap-clear-btn" title="Очистить чат">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
-              <path d="M10 11v6M14 11v6M9 6V4h6v2"/>
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
             </svg>
           </button>
           <button class="sd-ap-close" title="Закрыть">
@@ -1892,7 +1901,6 @@ export class AssistantModule {
       <div class="sd-ap-mode-tabs" id="sd-ap-mode-tabs">
         <button class="sd-ap-mode-tab active" data-mode="ai">Сима</button>
         <button class="sd-ap-mode-tab" data-mode="support">Поддержка<span class="sd-ap-tab-dot" id="sd-ap-sup-dot" style="display:none"></span></button>
-        <button class="sd-ap-mode-tab" data-mode="settings">Настройки</button>
         <button class="sd-ap-mode-tab" data-mode="notifications">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="13" height="13" style="display:inline;vertical-align:-1px;margin-right:3px"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Уведомления<span class="sd-ap-tab-dot" id="sd-ap-notif-dot" style="display:none"></span>
         </button>
@@ -3242,6 +3250,14 @@ export class AssistantModule {
       '.sd-ap-scroll, .sd-ap-attach-chips, .sd-ap-input-area'
     );
     aiEls.forEach(el => { el.style.display = mode === 'ai' ? '' : 'none'; });
+
+    // AI-only toolbar buttons (sessions, ai-toggle, tts, clear) — hide in non-AI modes
+    const aiBtns = this.panel.querySelector<HTMLElement>('#sd-ap-ai-btns');
+    if (aiBtns) aiBtns.style.display = mode === 'ai' ? '' : 'none';
+
+    // Settings button highlight when active
+    const settingsBtn = this.panel.querySelector<HTMLElement>('#sd-ap-settings-btn');
+    if (settingsBtn) settingsBtn.classList.toggle('active', mode === 'settings');
 
     const supView      = this.panel.querySelector<HTMLElement>('#sd-ap-sup-view');
     const notifView    = this.panel.querySelector<HTMLElement>('#sd-ap-notif-view');

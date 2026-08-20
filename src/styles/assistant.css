@@ -435,6 +435,19 @@ html.light .sd-assistant-panel {
   flex-shrink: 0;
 }
 
+/* AI-only buttons group */
+.sd-ap-ai-btns {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Settings button: highlight when active */
+#sd-ap-settings-btn.active {
+  color: var(--ap-accent);
+  background: var(--ap-surface-3);
+}
+
 /* Иконочные кнопки шапки и композера — единый стиль */
 .sd-ap-btn,
 .sd-ap-close {
