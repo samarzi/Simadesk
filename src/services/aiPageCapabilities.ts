@@ -19,6 +19,10 @@ const fmtRub = (n: number) =>
   : n >= 1_000 ? `${(n / 1_000).toFixed(0)} тыс ₽`
   : `${Math.round(n)} ₽`;
 
+const MP_NAME: Record<string, string> = {
+  ozon: 'Ozon', wb: 'Wildberries', yandex: 'Яндекс Маркет',
+};
+
 const PAGE_TITLE: Record<string, string> = {
   home: 'Обзор', analytics: 'Аналитика', repricer: 'Репрайсер', orders: 'Заказы',
   'products-hub': 'Товары', stock: 'Остатки', producers: 'Производители', tasks: 'Задачи',
@@ -1952,28 +1956,41 @@ export function installGlobalAiActions(): void {
   // ── Аналитика: загрузить данные с любой страницы ─────────────────────────────
   aiPage.registerGlobal({
     name: 'fetch_analytics',
-    description: 'Перейти в раздел Аналитики, загрузить данные и вернуть полный отчёт. Используй ВСЕГДА когда пользователь спрашивает про аналитику, выручку, заказы, маржу, топ товаров, прибыль. Аргумент mp: "ozon"|"wb"|"yandex" — передавай если пользователь упоминает конкретный маркетплейс.',
+    description: 'Перейти в раздел Аналитики, загрузить данные и вернуть полный отчёт. Используй ВСЕГДА когда пользователь спрашивает про аналитику, выручку, заказы, маржу, топ товаров, прибыль. Аргумент mp: "ozon"|"wb"|"yandex" — ОБЯЗАТЕЛЬНО передавай если пользователь упоминает конкретный маркетплейс (Яндекс/ЯМ → "yandex", WB/Wildberries → "wb", Озон → "ozon"). После получения данных отвечай ТОЛЬКО текстом анализа — не запускай других действий и не переходи в другие разделы.',
     args: '{"mp":"ozon"}',
     run: async (args: { mp?: string } = {}) => {
       const am = w().analyticsModule;
       if (!am) throw new Error('Модуль аналитики недоступен');
-      // Фильтруем по маркетплейсу если указан
-      if (args.mp === 'yandex' || args.mp === 'ym' || args.mp === 'yandex_market') {
-        am.selectMp?.('yandex');
-      } else if (args.mp === 'wb' || args.mp === 'wildberries') {
-        am.selectMp?.('wb');
-      } else if (args.mp === 'ozon') {
-        am.selectMp?.('ozon');
-      }
+      const raw = String(args.mp ?? '').toLowerCase();
+      const mp = (raw === 'yandex' || raw === 'ym' || raw === 'yandex_market' || raw === 'ям') ? 'yandex'
+               : (raw === 'wb' || raw === 'wildberries') ? 'wb'
+               : (raw === 'ozon' || raw === 'озон') ? 'ozon'
+               : null;
+
       // Переходим в Аналитику и ждём загрузки данных
       await w().app?.navigateTo?.('analytics');
       if (!am.isDataLoaded) {
         await am.show();
         await waitFor(() => !!(w().analyticsModule?.isDataLoaded), 15000);
       }
+      // Переключение МП обязано ДОЖДАТЬСЯ перезагрузки, иначе вернём чужие данные
+      if (mp) {
+        if (am.selectMpAndReload) {
+          await am.selectMpAndReload(mp);
+        } else {
+          am.selectMp?.(mp);
+          await waitFor(() => !!(w().analyticsModule?.isDataLoaded), 15000);
+        }
+      }
+
+      const actualMp: string = am.selectedMp ?? '';
+      if (mp && actualMp && actualMp !== mp) {
+        return `Не удалось переключиться на ${MP_NAME[mp]} — возможно этот маркетплейс не подключён. Данные показаны по ${MP_NAME[actualMp] ?? actualMp}.`;
+      }
       const summary: string = am.getAiSummary?.() ?? '';
       if (!summary) return 'Данные аналитики загружены, но пока пусты — возможно нет подключённых маркетплейсов или данных за период.';
-      return `Вот актуальные данные аналитики вашего магазина:\n\n${summary}`;
+      const label = MP_NAME[actualMp] ?? 'вашего магазина';
+      return `Вот актуальные данные аналитики — ${label} (за выбранный период):\n\n${summary}`;
     },
   });
 }

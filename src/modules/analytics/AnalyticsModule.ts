@@ -635,6 +635,28 @@ export class AnalyticsModule {
     this.refresh();
   }
 
+  /** Переключить маркетплейс и ДОЖДАТЬСЯ перезагрузки данных.
+   *  Нужно для AI: selectMp() не ждёт refresh(), из-за чего ассистент читал
+   *  сводку по прошлому маркетплейсу. */
+  async selectMpAndReload(mp: Mp): Promise<void> {
+    if (this.selectedMp !== mp) {
+      this.selectedMp = mp;
+      try { localStorage.setItem('an2_selected_mp', mp); } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
+      this.selectedStore = null;
+      this.selectedStores.clear();
+      this._allState = 'idle';
+      this._allFrom  = null;
+      this.dataLoaded = false;
+    }
+    if (this.dataLoaded) return;
+    // Если загрузка уже идёт — дождаться её завершения, refresh() сам вернётся сразу
+    const deadline = Date.now() + 20_000;
+    while (this.loading && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 120));
+    }
+    if (!this.dataLoaded) await this.refresh();
+  }
+
   setOrdersFilter(key: keyof OrdersFilters, value: string | number): void {
     (this.ordersFilters as any)[key] = key === 'page' ? Number(value) : value;
     if (key !== 'page') this.ordersFilters.page = 0;

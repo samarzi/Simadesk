@@ -489,15 +489,28 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 → Для других данных (остатки, товары) — скажи в каком разделе их найти.
 → НЕ пытайся помочь с выдуманными примерами — это хуже, чем честный отказ.
 
-## ПРАВИЛО: НЕ ВЫПОЛНЯЙ ДЕЙСТВИЯ АВТОМАТИЧЕСКИ ПРИ СОВЕТАХ
-Когда пользователь просит совет, анализ, рекомендации — отвечай ТОЛЬКО текстом.
-НЕ добавляй JSON action в конец ответа с советами/рекомендациями — это запускает действие без согласия.
-Action JSON используй ТОЛЬКО когда пользователь явно просит что-то СДЕЛАТЬ/СОЗДАТЬ/ИЗМЕНИТЬ.
+## ПРАВИЛО: ЛИБО JSON, ЛИБО ТЕКСТ — НИКОГДА ВМЕСТЕ
+В одном ответе может быть ЛИБО один JSON-action (и больше ничего), ЛИБО обычный текст (и ни одного JSON).
+ЗАПРЕЩЕНО писать JSON и текст в одном сообщении — JSON виден пользователю в чате как мусор.
+- Нужны данные → верни ТОЛЬКО {"action":"page_action","name":"fetch_analytics","args":{"mp":"yandex"}} без единого слова вокруг.
+- Данные уже пришли в истории → отвечай ТОЛЬКО текстом, БЕЗ повторного JSON. Никогда не дублируй уже выполненный action.
+
+## ПРАВИЛО: НЕ ВЫПОЛНЯЙ ДЕЙСТВИЯ АВТОМАТИЧЕСКИ ПРИ АНАЛИЗЕ И СОВЕТАХ
+«Проанализируй», «дай совет», «что делать», «как улучшить», «оцени» — это просьба ОБЪЯСНИТЬ, а не сделать.
+На такой запрос отвечай ТОЛЬКО текстом: цифры, выводы, рекомендации. И на этом СТОП.
+ЗАПРЕЩЕНО после анализа: создавать задачи, менять цены, переходить в другие разделы, запускать chain.
+Раздел рекомендаций пиши словами («стоит поднять цены», «имеет смысл создать задачу»), а не действиями.
+Если считаешь действие полезным — предложи его словами и жди явного «да»/«сделай».
 Примеры:
+- "проанализируй мой магазин на Яндексе" → fetch_analytics(mp=yandex), затем ТОЛЬКО текст анализа. БЕЗ chain, БЕЗ create_task, БЕЗ navigate.
 - "что делать с OOS?" → только текстовые рекомендации, БЕЗ create_oos_tasks
 - "создай задачи по OOS" → {"action":"create_oos_tasks"}
 - "как улучшить маржу?" → только текст, БЕЗ bulk_price_filtered
 - "измени цены" → {"action":"bulk_price_filtered",...}
+
+## ПРАВИЛО: ДОВОДИ ОТВЕТ ДО КОНЦА
+Не обрывай ответ на заголовке списка. Если написал «Действия:» или «Рекомендации:» — под ним ОБЯЗАН быть текст.
+Лучше не начинать раздел, чем оставить его пустым.
 
 ## АБСОЛЮТНЫЙ ЗАПРЕТ НА ЛОЖНЫЕ ПОДТВЕРЖДЕНИЯ ДЕЙСТВИЙ
 Любое изменение в системе (создание, удаление, изменение, синхронизация, публикация) ДОЛЖНО выполняться через JSON action.
@@ -5044,11 +5057,12 @@ export class AssistantModule {
         streamMsgEl = el;
         streamBubble = el.querySelector('.sd-ap-stream-text');
       }
-      // Скрываем JSON-блоки действий во время стриминга — они заменятся карточкой
-      const display = partial
-        .replace(/```(?:json)?\s*\{[\s\S]*$/, '')  // code-fence json
-        .replace(/^\s*\{[\s\S]*$/, '')              // whole text is json
-        .replace(/\s*\{[^{}]*"action"[\s\S]*$/, '') // action-json in middle/end
+      // Скрываем JSON-блоки действий во время стриминга — они заменятся карточкой.
+      // Сначала убираем УЖЕ закрытые служебные объекты (в т.ч. в самом начале ответа),
+      // затем — незакрытый «хвост», который ещё дописывается.
+      const display = this.sanitizeDisplayText(partial)
+        .replace(/```(?:json)?\s*\{[\s\S]*$/, '')   // незакрытый code-fence json
+        .replace(/\{[^{}]*$/, '')                    // незакрытый объект в конце
         .trim();
       if (streamBubble) {
         if (display) {
@@ -5098,7 +5112,7 @@ export class AssistantModule {
       const pageActPlan = this.parsePageActionPlan(replyNorm);
       if (pageActPlan) {
         cleanStream();
-        const textPart = pageActPlan.raw ? replyNorm.split(pageActPlan.raw).join('').trim() : '';
+        const textPart = this.sanitizeDisplayText(replyNorm);
         if (textPart) this.addAssistantMessage(textPart);
         this.addActionPlanCard(pageActPlan.name, pageActPlan.args, pageActPlan.plan, text);
         this.setStatus('Готова');
@@ -5109,12 +5123,8 @@ export class AssistantModule {
       const chainAct = this.parseChainAction(replyNorm);
       if (chainAct) {
         cleanStream();
-        const chainJson = this.extractBalancedJson(replyNorm, '"chain"');
-        if (chainJson?.raw) {
-          const textBefore = replyNorm.slice(0, replyNorm.indexOf(chainJson.raw))
-            .replace(/```(?:json)?\s*$/, '').trim();
-          if (textBefore) this.addAssistantMessage(textBefore);
-        }
+        const textBefore = this.sanitizeDisplayText(replyNorm);
+        if (textBefore) this.addAssistantMessage(textBefore);
         await this.executeChain(chainAct, text);
         return;
       }
@@ -5123,12 +5133,7 @@ export class AssistantModule {
       const pageAct = this.parsePageAction(replyNorm);
       if (pageAct) {
         cleanStream();
-        const textPart = pageAct.raw
-          ? replyNorm.split(pageAct.raw).join('')
-            .replace(/\{"suggestions"\s*:\s*\[[^\]]*\]\s*\}/gs, '')
-            .replace(/```[\s\S]*?```/g, '')
-            .trim()
-          : '';
+        const textPart = this.sanitizeDisplayText(replyNorm);
         if (textPart) this.addAssistantMessage(textPart);
         await this.executePageAction(pageAct.name, pageAct.args, text);
         return;
@@ -5147,7 +5152,7 @@ export class AssistantModule {
       const clarifyAct = this.parseClarifyAction(replyNorm);
       if (clarifyAct) {
         cleanStream();
-        const textBefore = replyNorm.replace(/\{[\s\S]*?"action"\s*:\s*"clarify"[\s\S]*?\}/g, '').trim();
+        const textBefore = this.sanitizeDisplayText(replyNorm);
         if (textBefore) this.addAssistantMessage(textBefore);
         this.addClarifyCard(clarifyAct, text);
         this.setStatus('Готова');
@@ -5171,7 +5176,7 @@ export class AssistantModule {
         const clarifyFallback = this.parseClarifyAction(replyNorm);
         if (clarifyFallback) {
           cleanStream();
-          const textBefore = replyNorm.replace(/\{[\s\S]*?"action"\s*:\s*"clarify"[\s\S]*?\}/g, '').trim();
+          const textBefore = this.sanitizeDisplayText(replyNorm);
           if (textBefore) this.addAssistantMessage(textBefore);
           this.addClarifyCard(clarifyFallback, text);
           this.setStatus('Готова');
@@ -5181,10 +5186,7 @@ export class AssistantModule {
         const taskAction = this.parseTaskAction(reply);
         if (taskAction) {
           cleanStream();
-          const displayText = reply
-            .replace(/```(?:json)?\s*\{[\s\S]*?\}\s*```/g, '')
-            .replace(/\{[\s\S]*?\}/g, '')
-            .trim();
+          const displayText = this.sanitizeDisplayText(replyNorm);
           if (displayText) {
             this.addAssistantMessage(displayText);
           }
@@ -5192,11 +5194,8 @@ export class AssistantModule {
         } else {
           // Обычный текст — промоутим стриминговый пузырь на месте (Fix 1)
           // Strip any orphaned action JSON the AI may have appended
-          const strippedReply = reply
-            .replace(/```(?:json)?\s*\{[^`]*\}\s*```/g, '')
-            .replace(/\{[^{}]*"action"\s*:[^{}]*\}/g, '')
-            .trim();
-          const { text: displayText, suggestions: followUps } = this.parseFollowUpSuggestions(strippedReply);
+          const { suggestions: followUps } = this.parseFollowUpSuggestions(replyNorm);
+          const displayText = this.sanitizeDisplayText(replyNorm);
           let ttsBtn: HTMLElement | null = null;
           if (streamMsgEl) {
             const streamEl = streamMsgEl;
@@ -5536,6 +5535,32 @@ export class AssistantModule {
   }
 
   /** Найти сбалансированный JSON-объект, содержащий подстроку mustInclude. */
+  /** Убрать из текста ЛЮБОЙ служебный JSON (action/chain/steps/suggestions) перед показом в чате.
+   *  Работает по сбалансированным скобкам — ловит JSON в начале, середине и конце текста. */
+  private sanitizeDisplayText(text: string): string {
+    if (!text) return '';
+    // ```json { … } ``` → { … }, чтобы объект попал под удаление ниже
+    let out = text.replace(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g, '$1');
+    const before = out;
+    for (const marker of ['"action"', '"chain"', '"steps"', '"suggestions"']) {
+      for (let guard = 0; guard < 12; guard++) {
+        const found = this.extractBalancedJson(out, marker);
+        if (!found?.raw) break;
+        out = out.split(found.raw).join('');
+      }
+    }
+    out = out.replace(/```(?:json)?\s*```/g, '').replace(/\s+$/, '');
+    if (out !== before.replace(/\s+$/, '')) {
+      // Модель оборвала текст на JSON — сносим висячие заголовки вида «4. Действия:»
+      for (let guard = 0; guard < 4; guard++) {
+        const trimmed = out.replace(/\n[^\n]{0,60}:[ \t]*$/, '');
+        if (trimmed === out) break;
+        out = trimmed;
+      }
+    }
+    return out.replace(/\n{3,}/g, '\n\n').trim();
+  }
+
   private extractBalancedJson(text: string, mustInclude: string): { value: any; raw: string } | null {
     const kIdx = text.indexOf(mustInclude);
     if (kIdx < 0) return null;
