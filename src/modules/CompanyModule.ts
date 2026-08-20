@@ -11,7 +11,6 @@
 import { companyService, Company } from '@/services/companyService';
 import { authService } from '@/services/authService';
 import { showToast } from '@/utils/toast';
-import { userProfileModule } from '@/modules/UserProfileModule';
 import { I } from '@/utils/icons';
 
 const COMPANY_GRADIENTS = [
@@ -672,7 +671,7 @@ export class CompanyModule {
     document.getElementById('cs-profile')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.closeDropdown();
-      userProfileModule.open();
+      window.app?.navigateTo('profile');
     }, sig);
 
     // Logout
