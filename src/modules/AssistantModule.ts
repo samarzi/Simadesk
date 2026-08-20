@@ -12,6 +12,7 @@ import { SupportSpamGuard } from '@/services/supportSpamGuard';
 import { hasQuota, getQuotaInfo, recordDailyTokens, getDailyLimit, FREE_DAILY_TOKENS } from '@/services/aiTokenQuota';
 import { loadRecentNews, countUnread, markAllRead, formatNewsForContext, type MpNews } from '@/services/mpNewsService';
 import { loadSimaMemory, searchMemory, formatMemoryForPrompt, type SimaMemoryEntry } from '@/services/simaMemoryService';
+import { loadSimaConfig, getConfigValue, type SimaConfigEntry } from '@/services/simaConfigService';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -609,6 +610,9 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 {"suggestions":["текст кнопки 1","текст кнопки 2"]}
 Кнопки: 3–5 слов, конкретные, без emoji. НЕ добавляй ничего после JSON.
 Если ответ — это JSON навигации, создания задачи, page_action или chain — suggestions НЕ нужны.`;
+
+/** Экспорт дефолтного промта для редактора в админ-панели */
+export function getDefaultSystemPrompt(): string { return SYSTEM_PROMPT; }
 
 // ── Nav command patterns (client-side fast matching, no API needed) ────────────
 
@@ -1254,6 +1258,7 @@ export class AssistantModule {
   private mpNews: MpNews[] = [];
   private mpNewsUnread = 0;
   private simaMemory: SimaMemoryEntry[] = [];
+  private simaConfig: SimaConfigEntry[] = [];
 
   // ── Chat sessions ─────────────────────────────────────────────────────────
   private sessions: ChatSession[] = [];
@@ -1426,14 +1431,34 @@ export class AssistantModule {
 
   private async loadMpNews(): Promise<void> {
     try {
-      [this.mpNews, this.simaMemory] = await Promise.all([
+      [this.mpNews, this.simaMemory, this.simaConfig] = await Promise.all([
         loadRecentNews(7),
         loadSimaMemory(),
+        loadSimaConfig(),
       ]);
       this.mpNewsUnread = countUnread(this.mpNews);
       if (this.mpNews.length) this.renderNewsBlock();
       if (this.mpNewsUnread > 0) this.renderNewsBadge();
     } catch { /* non-critical */ }
+  }
+
+  /** Строит эффективный системный промт с учётом настроек из БД */
+  private getEffectiveSystemPrompt(): string {
+    const override = getConfigValue(this.simaConfig, 'system_prompt_override');
+    if (override) return override;
+
+    const persona = getConfigValue(this.simaConfig, 'persona');
+    const extraKnowledge = getConfigValue(this.simaConfig, 'extra_knowledge');
+    const extraRules = getConfigValue(this.simaConfig, 'extra_rules');
+
+    let prompt = SYSTEM_PROMPT;
+    // Заменяем первый абзац (персону) если задан
+    if (persona) {
+      prompt = persona + '\n' + prompt.slice(prompt.indexOf('\n'));
+    }
+    if (extraKnowledge) prompt += `\n\n## ДОПОЛНИТЕЛЬНЫЕ ЗНАНИЯ\n${extraKnowledge}`;
+    if (extraRules)    prompt += `\n\n## ДОПОЛНИТЕЛЬНЫЕ ПРАВИЛА\n${extraRules}`;
+    return prompt;
   }
 
   private renderNewsBadge(): void {
@@ -5025,7 +5050,7 @@ export class AssistantModule {
       const relevantMemory = searchMemory(text, this.simaMemory);
       const memFrag = formatMemoryForPrompt(relevantMemory);
       const messages: ChatMessage[] = [
-        { role: 'system', content: SYSTEM_PROMPT + storeCtx + pageFrag + selCtxFrag + newsFrag + memFrag },
+        { role: 'system', content: this.getEffectiveSystemPrompt() + storeCtx + pageFrag + selCtxFrag + newsFrag + memFrag },
         ...this.history.slice(-10),
       ];
 
@@ -5452,7 +5477,7 @@ export class AssistantModule {
     let follow = '';
     try {
       follow = await this.callAi([
-        { role: 'system', content: SYSTEM_PROMPT + getStoreContext() },
+        { role: 'system', content: this.getEffectiveSystemPrompt() + getStoreContext() },
         ...this.history.slice(-8),
         { role: 'system', content: `[РЕЗУЛЬТАТ ДЕЙСТВИЯ ${name}]: ${resultMsg}\nНапиши пользователю короткое подтверждение результата по-русски — только обычный текст, без JSON, без кнопок, без планов.` },
       ]);

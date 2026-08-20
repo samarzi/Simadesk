@@ -1391,6 +1391,39 @@ html.light .ap-api-tag.ya { color: #cc2626; }
   .ap-news-manual-row { flex-wrap: wrap; }
 }
 
+/* ── Brain вкладки ─────────────────────────────────────────────────────────── */
+.ap-brain-tabs {
+  display: flex; gap: 4px; padding: 4px;
+  background: var(--bg2); border-radius: 10px; border: 1px solid var(--border);
+  width: fit-content;
+}
+.ap-brain-tab {
+  padding: 7px 16px; border-radius: 7px; border: none; background: none;
+  font-size: 13px; font-weight: 500; color: var(--text-2); cursor: pointer;
+  display: flex; align-items: center; gap: 6px; transition: all .15s;
+}
+.ap-brain-tab:hover { color: var(--text); background: var(--bg3); }
+.ap-brain-tab.active { background: var(--bg); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+
+/* ── Файлы Симы ─────────────────────────────────────────────────────────── */
+.ap-sima-cfg-wrap { display: flex; flex-direction: column; gap: 16px; }
+.ap-sima-cfg-card { display: flex; flex-direction: column; gap: 10px; }
+.ap-sima-cfg-hdr { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ap-sima-cfg-title { font-size: 14px; font-weight: 600; }
+.ap-sima-cfg-desc { font-size: 12px; color: var(--text-2); margin-top: 2px; line-height: 1.5; max-width: 560px; }
+.ap-sima-cfg-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.ap-sima-cfg-empty-badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 4px;
+  background: var(--bg3); color: var(--text-2); border: 1px solid var(--border);
+}
+.ap-sima-cfg-date { font-size: 11px; color: var(--text-2); }
+.ap-sima-cfg-textarea {
+  width: 100%; resize: vertical; font-family: 'Courier New', monospace;
+  font-size: 12px; line-height: 1.6; min-height: 80px;
+}
+.ap-sima-cfg-footer { display: flex; gap: 8px; }
+.ap-btn-sm { padding: 4px 10px; font-size: 12px; }
+
 /* ── Уведомления ─────────────────────────────────────────────────────────── */
 .ap-notif-wrap { display: flex; flex-direction: column; gap: 20px; padding: 0 0 32px; }
 

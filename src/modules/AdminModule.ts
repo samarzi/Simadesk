@@ -177,6 +177,8 @@ export class AdminModule {
   private brainEntries: Array<{ id: string; mp: string; category: string; title: string; content: string; keywords: string[]; updated_at: string }> = [];
   private brainUpdating = false;
   private brainFilter = { mp: '', category: '' };
+  private simaConfigEntries: Array<{ id: string; key: string; title: string; description?: string; value: string; is_active: boolean; updated_at: string }> = [];
+  private simaConfigTab: 'memory' | 'files' = 'memory';
 
   /* уведомления */
   private adminNotifications: import('@/services/notificationsService').UserNotification[] = [];
@@ -3281,8 +3283,12 @@ ${this.SIMADESK_KNOWLEDGE}
 
   private async loadBrainData(): Promise<void> {
     const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
-    const res = await fetch(`${REST_URL}/sima_memory?select=*&order=updated_at.desc`, { headers: getAuthHeaders() });
-    this.brainEntries = res.ok ? await res.json() : [];
+    const [memRes, cfgRes] = await Promise.all([
+      fetch(`${REST_URL}/sima_memory?select=*&order=updated_at.desc`, { headers: getAuthHeaders() }),
+      fetch(`${REST_URL}/sima_config?select=*&order=key.asc`, { headers: getAuthHeaders() }),
+    ]);
+    this.brainEntries = memRes.ok ? await memRes.json() : [];
+    this.simaConfigEntries = cfgRes.ok ? await cfgRes.json() : [];
   }
 
   private renderBrain(): string {
@@ -3339,8 +3345,21 @@ ${this.SIMADESK_KNOWLEDGE}
           ${this.brainEntries.length ? 'Нет записей по выбранному фильтру' : 'Мозг пуст — нажмите «Обновить мозг» чтобы Сима изучила новости'}
         </td></tr>`;
 
+    const configHtml = this.renderSimaConfigFiles();
+
     return `
       <div class="ap-brain-wrap">
+
+        <div class="ap-brain-tabs">
+          <button class="ap-brain-tab ${this.simaConfigTab === 'memory' ? 'active' : ''}" data-brain-tab="memory">
+            ${icon('brain', 14)} Память Симы
+          </button>
+          <button class="ap-brain-tab ${this.simaConfigTab === 'files' ? 'active' : ''}" data-brain-tab="files">
+            ${icon('edit', 14)} Файлы Симы (промты и правила)
+          </button>
+        </div>
+
+        <div id="brain-tab-memory" ${this.simaConfigTab !== 'memory' ? 'style="display:none"' : ''}>
 
         <div class="ap-section-card">
           <div class="ap-section-hdr">
@@ -3418,6 +3437,67 @@ ${this.SIMADESK_KNOWLEDGE}
           </div>
         </div>
 
+        </div><!-- /brain-tab-memory -->
+
+        <div id="brain-tab-files" ${this.simaConfigTab !== 'files' ? 'style="display:none"' : ''}>
+          ${configHtml}
+        </div>
+
+      </div>`;
+  }
+
+  private renderSimaConfigFiles(): string {
+    const SECTION_LABELS: Record<string, { emoji: string; hint: string }> = {
+      persona:               { emoji: '🧠', hint: 'Заменяет первую строку системного промта. Определяет кто такая Сима, её стиль и тон.' },
+      extra_rules:           { emoji: '📋', hint: 'Добавляется в конец промта. Ограничения, запреты, особые правила поведения.' },
+      extra_knowledge:       { emoji: '📚', hint: 'Добавляется в конец промта. Специфика вашего бизнеса, ниша, особые условия работы.' },
+      system_prompt_override:{ emoji: '⚠️', hint: 'Полностью заменяет встроенный промт. Используй только если хочешь полный контроль. Оставь пустым для дефолта.' },
+    };
+
+    const cards = this.simaConfigEntries.map(e => {
+      const meta = SECTION_LABELS[e.key] ?? { emoji: '📝', hint: '' };
+      const date = e.updated_at
+        ? new Date(e.updated_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+        : '';
+      const isEmpty = !e.value.trim();
+      return `
+        <div class="ap-section-card ap-sima-cfg-card" data-cfg-key="${this.esc(e.key)}">
+          <div class="ap-sima-cfg-hdr">
+            <div>
+              <div class="ap-sima-cfg-title">${meta.emoji} ${this.esc(e.title)}</div>
+              ${e.description ? `<div class="ap-sima-cfg-desc">${this.esc(e.description)}</div>` : ''}
+            </div>
+            <div class="ap-sima-cfg-meta">
+              ${isEmpty ? '<span class="ap-sima-cfg-empty-badge">не задано — используется дефолт</span>' : `<span class="ap-sima-cfg-date">сохранено ${date}</span>`}
+              ${e.key === 'system_prompt_override'
+                ? `<button class="ap-btn ap-btn-sm" id="sima-cfg-load-default">Загрузить дефолтный</button>`
+                : ''}
+            </div>
+          </div>
+          <textarea
+            class="ap-input ap-sima-cfg-textarea"
+            id="sima-cfg-${this.esc(e.key)}"
+            rows="${e.key === 'system_prompt_override' ? 30 : 8}"
+            placeholder="${meta.hint}"
+          >${this.esc(e.value)}</textarea>
+          <div class="ap-sima-cfg-footer">
+            <button class="ap-btn ap-btn-primary ap-sima-cfg-save" data-key="${this.esc(e.key)}">${icon('check', 14)} Сохранить</button>
+            ${!isEmpty ? `<button class="ap-btn ap-sima-cfg-clear" data-key="${this.esc(e.key)}">Сбросить к дефолту</button>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="ap-sima-cfg-wrap">
+        <div class="ap-section-card" style="margin-bottom:16px">
+          <div class="ap-section-hdr">
+            <div>
+              <div class="ap-section-title">Файлы Симы</div>
+              <div class="ap-section-sub">Промты и правила поведения. Изменения применяются сразу — Сима учитывает их при следующем запросе.</div>
+            </div>
+          </div>
+        </div>
+        ${cards || '<div class="ap-news-empty-row">Загрузка настроек…</div>'}
       </div>`;
   }
 
@@ -3441,6 +3521,82 @@ ${this.SIMADESK_KNOWLEDGE}
 
   private bindBrainEvents(): void {
     const el = this.el;
+
+    // Переключатель вкладок Мозга
+    el.querySelectorAll<HTMLButtonElement>('[data-brain-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.simaConfigTab = btn.dataset.brainTab as 'memory' | 'files';
+        this.render();
+      });
+    });
+
+    // ── Файлы Симы (sima_config) ─────────────────────────────────────────────
+
+    // Загрузить дефолтный промт в textarea
+    el.querySelector('#sima-cfg-load-default')?.addEventListener('click', async () => {
+      const { getDefaultSystemPrompt } = await import('@/modules/AssistantModule').catch(() => ({ getDefaultSystemPrompt: undefined }));
+      const ta = el.querySelector<HTMLTextAreaElement>('#sima-cfg-system_prompt_override');
+      if (ta && getDefaultSystemPrompt) {
+        ta.value = getDefaultSystemPrompt();
+      } else if (ta) {
+        showToast('Не удалось загрузить дефолтный промт', 'error');
+      }
+    });
+
+    // Сохранить секцию конфига
+    el.querySelectorAll<HTMLButtonElement>('.ap-sima-cfg-save').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const key = btn.dataset.key!;
+        const ta = el.querySelector<HTMLTextAreaElement>(`#sima-cfg-${key}`);
+        if (!ta) return;
+        const value = ta.value;
+        const entry = this.simaConfigEntries.find(e => e.key === key);
+        if (!entry) return;
+        const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+        const res = await fetch(`${REST_URL}/sima_config?id=eq.${entry.id}`, {
+          method: 'PATCH',
+          headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify({ value, is_active: true }),
+        });
+        if (res.ok) {
+          const [updated] = await res.json();
+          const idx = this.simaConfigEntries.findIndex(e => e.key === key);
+          if (idx !== -1) this.simaConfigEntries[idx] = updated;
+          // Сбрасываем кэш simaConfig в AssistantModule
+          const { clearSimaConfigCache } = await import('@/services/simaConfigService');
+          clearSimaConfigCache();
+          showToast('Сохранено', 'success');
+          this.render();
+        } else {
+          showToast('Ошибка сохранения', 'error');
+        }
+      });
+    });
+
+    // Сбросить к дефолту (очистить значение)
+    el.querySelectorAll<HTMLButtonElement>('.ap-sima-cfg-clear').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const key = btn.dataset.key!;
+        if (!confirm('Сбросить к встроенному дефолту?')) return;
+        const entry = this.simaConfigEntries.find(e => e.key === key);
+        if (!entry) return;
+        const { REST_URL, getAuthHeaders } = await import('@/services/dbClient');
+        const res = await fetch(`${REST_URL}/sima_config?id=eq.${entry.id}`, {
+          method: 'PATCH',
+          headers: { ...getAuthHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify({ value: '' }),
+        });
+        if (res.ok) {
+          const [updated] = await res.json();
+          const idx = this.simaConfigEntries.findIndex(e => e.key === key);
+          if (idx !== -1) this.simaConfigEntries[idx] = updated;
+          const { clearSimaConfigCache } = await import('@/services/simaConfigService');
+          clearSimaConfigCache();
+          showToast('Сброшено к дефолту', 'success');
+          this.render();
+        }
+      });
+    });
 
     // Фильтры
     el.querySelector('#brain-filter-mp')?.addEventListener('change', (e) => {
