@@ -1958,15 +1958,11 @@ ${this.SIMADESK_KNOWLEDGE}
 
         <div class="ap-card">
           <div class="ap-card-title">AI-ассистент «Сима»</div>
-          <div class="ap-card-desc">Подключается через OpenRouter. Модель применяется ко всем пользователям, ключ хранится в базе.</div>
+          <div class="ap-card-desc">Подключается через OpenRouter. Ключ хранится в базе. Модель каждый пользователь выбирает сам в настройках Симы.</div>
           <div class="ap-form">
             <div class="ap-field">
               <label class="ap-label">OpenRouter API Key</label>
               <input class="ap-input" id="ai-key-input" type="password" placeholder="sk-or-v1-…" autocomplete="off" value="${this.esc(this.getCurrentAiKey())}">
-            </div>
-            <div class="ap-field">
-              <label class="ap-label">Модель</label>
-              <select class="ap-select" id="ai-model-select">${this.renderModelOptions()}</select>
             </div>
             <div style="display:flex;gap:10px;align-items:center">
               <button class="ap-btn ap-btn-primary" id="save-ai-config-btn">Сохранить</button>
@@ -2589,40 +2585,21 @@ ${this.SIMADESK_KNOWLEDGE}
     return (window as any).sdAssistantModule?.aiKey || sessionStorage.getItem('sd_ai_key') || '';
   }
 
-  private renderModelOptions(): string {
-    const current = localStorage.getItem('sd_ai_model') || 'anthropic/claude-haiku-4-5';
-    const models = [
-      { id: 'anthropic/claude-haiku-4-5', label: 'Claude Haiku 4.5 — быстрый / дешёвый' },
-      { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5 — умный / точный' },
-      { id: 'anthropic/claude-opus-4-8', label: 'Claude Opus 4.8 — максимальный' },
-      { id: 'deepseek/deepseek-chat', label: 'DeepSeek Chat — экономичный' },
-      { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash — быстрый' },
-      { id: 'openai/gpt-4o-mini', label: 'GPT-4o Mini — дешёвый' },
-      { id: 'openai/gpt-4o', label: 'GPT-4o — мощный' },
-      { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B — бесплатный' },
-    ];
-    return models.map(m => `<option value="${m.id}"${m.id === current ? ' selected' : ''}>${m.label}</option>`).join('');
-  }
-
   private async handleSaveAiConfig(): Promise<void> {
     const key = this.val('#ai-key-input').trim();
-    const model = this.val('#ai-model-select');
     const status = this.el.querySelector<HTMLElement>('#ai-config-status');
     const setStatus = (text: string, color: string) => { if (status) { status.textContent = text; status.style.color = color; } };
 
     if (!key) { setStatus('Введите API-ключ', C.amber); return; }
-    if (!model) { setStatus('Выберите модель', C.amber); return; }
     setStatus('Сохраняю…', 'var(--text3)');
 
     try {
       await adminService.saveSiteContent('ai_openrouter_key', 'AI OpenRouter Key', key);
-      await adminService.saveSiteContent('ai_model', 'AI Model', model);
 
       sessionStorage.setItem('sd_ai_key', key);
-      localStorage.setItem('sd_ai_model', model);
 
       window.dispatchEvent(new CustomEvent('sd_ai_config_updated'));
-      (window as any).sdAssistantModule?.updateConfig(key, model);
+      (window as any).sdAssistantModule?.updateConfig(key);
 
       setStatus('Сохранено', C.emerald);
       setTimeout(() => setStatus('', 'var(--text3)'), 3000);

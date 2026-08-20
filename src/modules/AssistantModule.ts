@@ -1991,12 +1991,29 @@ export class AssistantModule {
           <div class="sd-ap-setting-row">
             <label class="sd-ap-setting-label">Модель</label>
             <select class="sd-ap-model-select" id="sd-ap-model-select">
-              <option value="anthropic/claude-haiku-4-5" ${(this.aiModel||'anthropic/claude-haiku-4-5')==='anthropic/claude-haiku-4-5'?'selected':''}>Claude Haiku 4.5 — быстрая</option>
-              <option value="anthropic/claude-sonnet-4-5" ${this.aiModel==='anthropic/claude-sonnet-4-5'?'selected':''}>Claude Sonnet 4.5 — умная</option>
-              <option value="anthropic/claude-opus-4-5" ${this.aiModel==='anthropic/claude-opus-4-5'?'selected':''}>Claude Opus 4.5 — мощная</option>
-              <option value="google/gemini-flash-1.5" ${this.aiModel==='google/gemini-flash-1.5'?'selected':''}>Gemini Flash 1.5</option>
-              <option value="openai/gpt-4o-mini" ${this.aiModel==='openai/gpt-4o-mini'?'selected':''}>GPT-4o mini</option>
-              <option value="openai/gpt-4o" ${this.aiModel==='openai/gpt-4o'?'selected':''}>GPT-4o</option>
+              <optgroup label="— Anthropic Claude —">
+                <option value="anthropic/claude-haiku-4-5" ${(this.aiModel||'anthropic/claude-haiku-4-5')==='anthropic/claude-haiku-4-5'?'selected':''}>Claude Haiku 4.5 — быстрая</option>
+                <option value="anthropic/claude-sonnet-4-5" ${this.aiModel==='anthropic/claude-sonnet-4-5'?'selected':''}>Claude Sonnet 4.5 — умная</option>
+                <option value="anthropic/claude-sonnet-5" ${this.aiModel==='anthropic/claude-sonnet-5'?'selected':''}>Claude Sonnet 5 — новая умная</option>
+                <option value="anthropic/claude-opus-4-8" ${this.aiModel==='anthropic/claude-opus-4-8'?'selected':''}>Claude Opus 4.8 — мощная</option>
+              </optgroup>
+              <optgroup label="— DeepSeek —">
+                <option value="deepseek/deepseek-chat" ${this.aiModel==='deepseek/deepseek-chat'?'selected':''}>DeepSeek V3 — экономичная</option>
+                <option value="deepseek/deepseek-r1" ${this.aiModel==='deepseek/deepseek-r1'?'selected':''}>DeepSeek R1 — с рассуждениями</option>
+              </optgroup>
+              <optgroup label="— OpenAI —">
+                <option value="openai/gpt-4o-mini" ${this.aiModel==='openai/gpt-4o-mini'?'selected':''}>GPT-4o mini — быстрая</option>
+                <option value="openai/gpt-4o" ${this.aiModel==='openai/gpt-4o'?'selected':''}>GPT-4o — мощная</option>
+                <option value="openai/o4-mini" ${this.aiModel==='openai/o4-mini'?'selected':''}>o4-mini — с рассуждениями</option>
+              </optgroup>
+              <optgroup label="— Google —">
+                <option value="google/gemini-2.5-flash" ${this.aiModel==='google/gemini-2.5-flash'?'selected':''}>Gemini 2.5 Flash — быстрая</option>
+                <option value="google/gemini-2.5-pro" ${this.aiModel==='google/gemini-2.5-pro'?'selected':''}>Gemini 2.5 Pro — мощная</option>
+              </optgroup>
+              <optgroup label="— Meta / Open Source —">
+                <option value="meta-llama/llama-3.3-70b-instruct" ${this.aiModel==='meta-llama/llama-3.3-70b-instruct'?'selected':''}>Llama 3.3 70B — бесплатная</option>
+                <option value="qwen/qwen-2.5-72b-instruct" ${this.aiModel==='qwen/qwen-2.5-72b-instruct'?'selected':''}>Qwen 2.5 72B — экономичная</option>
+              </optgroup>
             </select>
           </div>
           <div class="sd-ap-setting-divider">Голос и озвучка</div>
