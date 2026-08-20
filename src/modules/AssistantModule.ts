@@ -1178,9 +1178,11 @@ async function loadAiConfig(): Promise<{ key: string; model: string }> {
       const remoteModel = arr.find(r => r.key === 'ai_model')?.content;
       if (remoteKey)   sessionStorage.setItem('sd_ai_key', remoteKey);
       if (remoteModel) localStorage.setItem('sd_ai_model', remoteModel);
+      // User's own choice takes priority over admin/remote default
+      const userModel = localStorage.getItem('sd_user_ai_model');
       return {
         key:   remoteKey   || key,
-        model: remoteModel || model,
+        model: userModel || remoteModel || model,
       };
     } catch { /* unauthenticated or Supabase unavailable — use session-cached values */ }
   }
@@ -1406,7 +1408,7 @@ export class AssistantModule {
     // the event fires for other potential listeners — read from session cache as fallback)
     window.addEventListener('sd_ai_config_updated', () => {
       this.aiKey   = sessionStorage.getItem('sd_ai_key') || this.aiKey;
-      this.aiModel = localStorage.getItem('sd_ai_model') || this.aiModel;
+      this.aiModel = localStorage.getItem('sd_user_ai_model') || localStorage.getItem('sd_ai_model') || this.aiModel;
     });
 
     // Запуск фонового мониторинга
@@ -1688,6 +1690,11 @@ export class AssistantModule {
       this.switchSupportMode(current === 'settings' ? 'ai' : 'settings');
     });
 
+    // Commands panel toggle
+    panel.querySelector('#sd-ap-commands-btn')?.addEventListener('click', () => {
+      this.toggleCommandsPanel();
+    });
+
     // News accordion
     panel.querySelector('#sd-ap-news-hdr')?.addEventListener('click', () => {
       const list = panel.querySelector<HTMLElement>('#sd-ap-news-list');
@@ -1708,9 +1715,12 @@ export class AssistantModule {
     // Model selector
     const modelSelect = panel.querySelector<HTMLSelectElement>('#sd-ap-model-select');
     if (modelSelect) {
+      // Init select with user's saved choice (takes priority over admin default)
+      const savedUserModel = localStorage.getItem('sd_user_ai_model') || localStorage.getItem('sd_ai_model');
+      if (savedUserModel) modelSelect.value = savedUserModel;
       modelSelect.addEventListener('change', () => {
         this.aiModel = modelSelect.value;
-        localStorage.setItem('sd_ai_model', this.aiModel);
+        localStorage.setItem('sd_user_ai_model', this.aiModel);
       });
     }
 
@@ -2013,7 +2023,13 @@ export class AssistantModule {
         <button class="sd-ap-ctx-close" id="sd-ap-ctx-close" title="Убрать контекст">×</button>
       </div>
       <div class="sd-ap-attach-chips" id="sd-ap-attach-chips"></div>
+      <div class="sd-ap-commands-panel" id="sd-ap-commands-panel" style="display:none"></div>
       <div class="sd-ap-input-area">
+        <button class="sd-ap-btn sd-ap-commands-btn" id="sd-ap-commands-btn" title="Команды — быстрые действия без AI">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M8 6l4-4 4 4M8 18l4 4 4-4M4 12h16"/>
+          </svg>
+        </button>
         <button class="sd-ap-btn sd-ap-attach-btn" title="Прикрепить файл (Excel, Word, PDF, фото)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
@@ -4345,6 +4361,60 @@ export class AssistantModule {
       `\`синхронизируй\` · \`аудит\` · \`дневной чеклист\` · \`статус\`\n` +
       `\`юнит-экономика\` · \`отмени\` · \`новый чат\`\n\n` +
       `Для сложных задач — включи AI (кнопка 🤖 вверху).`;
+  }
+
+  private toggleCommandsPanel(): void {
+    const el = this.panel?.querySelector<HTMLElement>('#sd-ap-commands-panel');
+    const btn = this.panel?.querySelector<HTMLElement>('#sd-ap-commands-btn');
+    if (!el) return;
+    const isOpen = el.style.display !== 'none';
+    if (isOpen) {
+      el.style.display = 'none';
+      btn?.classList.remove('active');
+      return;
+    }
+    // Group PALETTE_COMMANDS by category
+    const groups: Record<string, typeof PALETTE_COMMANDS> = {};
+    for (const cmd of PALETTE_COMMANDS) {
+      if (!groups[cmd.category]) groups[cmd.category] = [];
+      groups[cmd.category].push(cmd);
+    }
+    const categoryIcons: Record<string, string> = {
+      'Навигация': '🗂', 'Аналитика': '📊', 'Задачи': '✅', 'Цены': '💰',
+      'Отзывы': '💬', 'Реклама': '📣', 'Заказы': '📦', 'Система': '⚙️',
+    };
+    el.innerHTML = `
+      <div class="sd-ap-cmd-panel-header">
+        <span>Быстрые команды</span>
+        <button class="sd-ap-cmd-close" title="Закрыть">×</button>
+      </div>
+      <div class="sd-ap-cmd-list">
+        ${Object.entries(groups).map(([cat, cmds]) => `
+          <div class="sd-ap-cmd-group">
+            <div class="sd-ap-cmd-group-title">${categoryIcons[cat] ?? ''} ${cat}</div>
+            ${cmds.map(c => `
+              <button class="sd-ap-cmd-item" data-cmd="${c.cmd.replace(/"/g, '&quot;')}">
+                <span class="sd-ap-cmd-icon">${c.icon}</span>
+                <span class="sd-ap-cmd-label">${c.label.replace(/</g, '&lt;')}</span>
+              </button>
+            `).join('')}
+          </div>
+        `).join('')}
+      </div>`;
+    el.querySelector('.sd-ap-cmd-close')?.addEventListener('click', () => {
+      el.style.display = 'none';
+      btn?.classList.remove('active');
+    });
+    el.querySelectorAll<HTMLElement>('.sd-ap-cmd-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const cmd = item.dataset.cmd ?? '';
+        el.style.display = 'none';
+        btn?.classList.remove('active');
+        if (cmd) this.sendMessage(cmd);
+      });
+    });
+    el.style.display = 'flex';
+    btn?.classList.add('active');
   }
 
   // ── Command Palette ───────────────────────────────────────────────────────────

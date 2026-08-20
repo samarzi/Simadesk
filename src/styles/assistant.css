@@ -1379,7 +1379,74 @@ html.light .sd-ap-msg-bubble pre { background: rgba(20, 10, 40, 0.05); }
 .sd-ap-textarea:disabled { opacity: 0.5; }
 
 .sd-ap-input-area .sd-ap-btn { width: 30px; height: 30px; border-radius: 10px; }
-.sd-ap-attach-btn:hover, .sd-ap-cursor-btn:hover, .sd-ap-mic-btn:hover { color: var(--ap-accent); }
+.sd-ap-attach-btn:hover, .sd-ap-cursor-btn:hover, .sd-ap-mic-btn:hover,
+.sd-ap-commands-btn:hover { color: var(--ap-accent); }
+.sd-ap-commands-btn.active { color: var(--ap-accent); background: var(--ap-surface-3); }
+
+/* Commands panel */
+.sd-ap-commands-panel {
+  flex-direction: column;
+  border-top: 1px solid var(--ap-border);
+  background: var(--ap-surface-1);
+  max-height: 260px;
+  overflow: hidden;
+}
+.sd-ap-cmd-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ap-txt-2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.sd-ap-cmd-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ap-txt-3);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.sd-ap-cmd-list {
+  overflow-y: auto;
+  padding: 0 6px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sd-ap-cmd-group-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ap-txt-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 6px 6px 2px;
+}
+.sd-ap-cmd-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  color: var(--ap-txt-1);
+  font-size: 12.5px;
+  transition: background 0.12s;
+}
+.sd-ap-cmd-item:hover {
+  background: var(--ap-surface-3);
+  color: var(--ap-accent);
+}
+.sd-ap-cmd-icon { font-size: 14px; flex-shrink: 0; width: 20px; text-align: center; }
 
 .sd-ap-mic-btn.listening {
   color: #fff;
