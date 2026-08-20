@@ -220,6 +220,8 @@ export const yandexApi = {
 
   /**
    * POST /v2/campaigns/{campaignId}/offers/stocks — остатки по складам.
+   * ВАЖНО: page_token и limit передаются в QUERY-строке, а не в теле запроса
+   * (в теле Яндекс их игнорирует и всегда возвращает первую страницу).
    */
   async getStocks(
     apiKey: string,
@@ -227,11 +229,11 @@ export const yandexApi = {
     pageToken: string,
     signal?: AbortSignal,
   ): Promise<{ warehouses: any[]; nextPageToken: string }> {
-    const body: any = { withTurnover: false };
-    if (pageToken) body.pageToken = pageToken;
+    const qs = new URLSearchParams({ limit: '200' });
+    if (pageToken) qs.set('page_token', pageToken);
     const resp = await yandexFetch<any>(
-      `/v2/campaigns/${campaignId}/offers/stocks`,
-      'POST', apiKey, body, signal,
+      `/v2/campaigns/${campaignId}/offers/stocks?${qs.toString()}`,
+      'POST', apiKey, { withTurnover: false }, signal,
     );
     return {
       warehouses: resp.result?.warehouses ?? [],
@@ -942,7 +944,10 @@ export async function fetchAllYandexOrders(
     `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
 
   const start = parseDate(fromDate);
-  const end   = parseDate(toDate);
+  // ЯМ трактует toDate как ИСКЛЮЧИТЕЛЬНУЮ границу: заказы, созданные в сам этот день,
+  // в выборку не попадают. Сдвигаем на +1 день, чтобы диапазон [fromDate, toDate]
+  // был инклюзивным — иначе заказы «за сегодня» видны только на следующие сутки.
+  const end   = new Date(parseDate(toDate).getTime() + 86400_000);
   const CHUNK_DAYS = 29; // ЯМ лимит ~30 дней
 
   const all: YandexOrder[] = [];
@@ -997,32 +1002,41 @@ export async function fetchAllYandexProducts(
     token = nextPageToken;
   }
 
-  // 2) Все остатки — собираем в Map offer_id → суммарные количества + Set складов кампании
-  const stocksMap = new Map<string, { total: number; available: number }>();
-  // offerIdsInCampaign: set of offer IDs that appear in THIS campaign's stock API
-  // Used to filter out cross-campaign contamination from the business-level offer list.
-  const offerIdsInCampaign = new Set<string>();
+  // 2) Все остатки — собираем в Map offer_id → количества.
+  //
+  // Типы остатков Яндекса:
+  //   FIT       — годный товар на складе (и для FBS, и для FBY)
+  //   FREEZE    — заморожен под уже оформленные заказы
+  //   AVAILABLE — доступно к заказу (= FIT − FREEZE), приходит для FBY
+  //   QUARANTINE / DEFECT / EXPIRED / UTILIZATION — не продаётся
+  //
+  // total     = FIT (весь годный товар на складе)
+  // available = AVAILABLE, если API его вернул, иначе FIT
+  // Складывать FIT и AVAILABLE нельзя — это задваивает один и тот же товар.
+  const stocksMap = new Map<string, { total: number; available: number; hasAvailable: boolean }>();
   let stockToken = '';
+  let stocksFailed: unknown = null;
   for (let i = 0; i < maxPages; i++) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     let chunk: { warehouses: any[]; nextPageToken: string };
     try {
       chunk = await yandexApi.getStocks(store.api_key, store.campaign_id!, stockToken, signal);
-    } catch {
-      break; // если у тарифа нет доступа — просто без остатков
+    } catch (e) {
+      // Не проглатываем ошибку молча: без неё все остатки станут нулевыми,
+      // и это выглядит как «API работает, но товара нет».
+      stocksFailed = e;
+      break;
     }
     for (const wh of chunk.warehouses) {
       for (const offer of wh.offers ?? []) {
-        offerIdsInCampaign.add(offer.offerId);
-        const cur = stocksMap.get(offer.offerId) ?? { total: 0, available: 0 };
+        const cur = stocksMap.get(offer.offerId) ?? { total: 0, available: 0, hasAvailable: false };
         for (const s of offer.stocks ?? []) {
           const cnt = Number(s.count) || 0;
-          // FIT = «готов к продаже» (FBS/DBS). Именно это значение показывает Яндекс.Маркет
-          // в личном кабинете. AVAILABLE не используется в FBS-ответе, поэтому не суммируем
-          // его — иначе при появлении в ответе API остатки задвоятся.
           if (s.type === 'FIT') {
             cur.total += cnt;
+          } else if (s.type === 'AVAILABLE') {
             cur.available += cnt;
+            cur.hasAvailable = true;
           }
         }
         stocksMap.set(offer.offerId, cur);
@@ -1031,17 +1045,14 @@ export async function fetchAllYandexProducts(
     if (!chunk.nextPageToken || chunk.nextPageToken === stockToken) break;
     stockToken = chunk.nextPageToken;
   }
-
-  // Если stocks API вернул данные — оставляем только офферы этой кампании.
-  // Это убирает офферы из других кампаний (напр. FBY-офферы из BOCOSA попадают
-  // в BOCOSA FBS через business-level offer-mappings, но имеют нулевой FBS-сток).
-  const filteredAll = offerIdsInCampaign.size > 0
-    ? all.filter(raw => offerIdsInCampaign.has((raw.offer ?? raw).offerId ?? raw.offerId ?? ''))
-    : all;
+  if (stocksFailed && stocksMap.size === 0) {
+    const m = stocksFailed instanceof Error ? stocksFailed.message : String(stocksFailed);
+    throw new Error(`Не удалось загрузить остатки: ${m}`);
+  }
 
   // 3) Маппинг в YandexProduct
   const now = new Date().toISOString();
-  const products: YandexProduct[] = filteredAll.map((raw: any): YandexProduct => {
+  const products: YandexProduct[] = all.map((raw: any): YandexProduct => {
     const offer = raw.offer ?? raw;
     const offerId = offer.offerId ?? raw.offerId ?? '';
     const stocks = stocksMap.get(offerId);
@@ -1062,7 +1073,8 @@ export async function fetchAllYandexProducts(
       category_name: offer.category ?? '',
       archived: !!offer.archived,
       stock_total: stocks?.total ?? 0,
-      stock_available: stocks?.available ?? 0,
+      // AVAILABLE приходит только для FBY; для FBS доступное к продаже = FIT
+      stock_available: stocks ? (stocks.hasAvailable ? stocks.available : stocks.total) : 0,
       synced_at: now,
       description: offer.description ?? '',
       vat: offer.tax?.vatType ?? offer.vatType ?? '',

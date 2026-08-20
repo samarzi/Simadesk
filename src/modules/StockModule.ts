@@ -127,15 +127,24 @@ export class StockModule {
         stockFbs: fbs, stockFbo: fbo, stockTotal: fbs + fbo, imageUrl: p.images?.[0] ?? null, stockLabel: 'FBS' });
     }
     for (const p of wbProducts) {
+      // FBW (склад WB) — только для чтения; FBS (свой склад) — редактируемый.
+      // Раньше в FBS-поле попадала статистика по складам WB, из-за чего показанное
+      // значение не совпадало с тем пулом, в который пишется правка.
+      const hasSplit = p.stock_fbw != null || p.stock_fbs != null;
       const tot = p.stock_total ?? 0;
-      // Only treat as FBW (marketplace warehouse, read-only) when explicitly set; default to FBS (seller-managed)
-      const isFbw = wbFulfillment.get(p.store_id) === 'FBW';
-      const wbLabel: StockItem['stockLabel'] = isFbw ? 'FBW' : 'FBS';
+      const isFbwStore = wbFulfillment.get(p.store_id) === 'FBW';
+      const fbw = hasSplit ? (p.stock_fbw ?? 0) : (isFbwStore ? tot : 0);
+      const fbs = hasSplit ? (p.stock_fbs ?? 0) : (isFbwStore ? 0 : tot);
+      // FBW-магазин — редактирование недоступно. В остальных случаях оставляем FBS
+      // редактируемым, даже если сейчас товар лежит на складе WB: продавец должен
+      // иметь возможность выставить остаток на своём складе. Количество FBW при
+      // этом всё равно видно в колонке «Склад МП».
+      const wbLabel: StockItem['stockLabel'] = isFbwStore ? 'FBW' : 'FBS';
       items.push({ id: `wb:${p.store_id}:${p.vendor_code}`, mp: 'wb', storeId: p.store_id,
         storeName: storeNames.get(p.store_id) ?? '', offerId: p.vendor_code || String(p.nm_id),
         name: p.title || p.vendor_code || String(p.nm_id), price: p.price ?? null,
-        stockFbs: isFbw ? 0 : tot, stockFbo: isFbw ? tot : 0,
-        stockTotal: tot, imageUrl: null, nmId: p.nm_id, stockLabel: wbLabel });
+        stockFbs: fbs, stockFbo: fbw,
+        stockTotal: fbw + fbs, imageUrl: null, nmId: p.nm_id, stockLabel: wbLabel });
     }
     for (const p of ymProducts) {
       const tot = p.stock_total ?? 0;
@@ -807,7 +816,7 @@ export class StockModule {
                             <td style="padding:8px 12px;text-align:center;font-size:11px;color:var(--text-2)">
                               ${item.stockFbo > 0 ? `
                                 <span style="display:inline-flex;align-items:center;gap:4px">
-                                  <span style="font-size:9px;font-weight:700;color:var(--text-3)">${item.stockLabel === 'FBW' ? 'FBW' : item.stockLabel === 'FBY' ? 'FBY' : 'FBO'}</span>
+                                  <span style="font-size:9px;font-weight:700;color:var(--text-3)">${item.mp === 'wb' ? 'FBW' : item.mp === 'yandex' ? 'FBY' : 'FBO'}</span>
                                   <span>${this.fmtN(item.stockFbo)}</span>
                                 </span>
                               ` : '—'}

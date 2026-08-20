@@ -265,6 +265,38 @@ export const wbApi = {
     return Array.isArray(resp) ? resp : [];
   },
 
+  /**
+   * POST /api/v3/stocks/{warehouseId} — ТЕКУЩИЕ остатки на своём складе (FBS).
+   *
+   * Это не то же самое, что /api/v1/supplier/stocks (статистика) — та отдаёт
+   * только остатки на складах WB (FBW). Здесь читается тот же пул, в который
+   * пишет updateFbsStocks, поэтому показанное и сохраняемое значение совпадают.
+   *
+   * Принимает не более 1000 баркодов за запрос.
+   */
+  async getFbsStocks(
+    apiKey: string,
+    warehouseId: number,
+    skus: string[],
+    signal?: AbortSignal,
+  ): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    for (let i = 0; i < skus.length; i += 1000) {
+      const chunk = skus.slice(i, i + 1000);
+      if (!chunk.length) continue;
+      const resp = await wbFetch<any>(
+        `/wb-marketplace/api/v3/stocks/${warehouseId}`,
+        'POST', apiKey, { skus: chunk }, signal, 3,
+      );
+      for (const s of (resp?.stocks ?? [])) {
+        const sku = String(s.sku ?? '');
+        if (!sku) continue;
+        out.set(sku, (out.get(sku) ?? 0) + (Number(s.amount) || 0));
+      }
+    }
+    return out;
+  },
+
   /** GET /api/v3/warehouses — список FBS-складов продавца. */
   async getWarehouses(apiKey: string, signal?: AbortSignal): Promise<{ id: number; name: string }[]> {
     const resp = await wbFetch<any>('/wb-marketplace/api/v3/warehouses', 'GET', apiKey, undefined, signal, 3);
@@ -1466,7 +1498,7 @@ export async function fetchAllWbProducts(
   // Если карточки недоступны (rate-limit) — не трогаем БД, UI подгрузит из БД через load()
   if (!cardsOk) return [];
 
-  // Остатки в Map по nmId
+  // Остатки FBW (склады WB) в Map по nmId — из statistics API
   const stocksMap = new Map<number, number>();
   try {
     const stocks = await wbApi.getStocks(store.api_key, '2019-01-01', signal);
@@ -1477,6 +1509,38 @@ export async function fetchAllWbProducts(
     }
   } catch (err: unknown) { console.error('[WB Stocks] fetch failed:', errMsg(err)); /* остатки опциональны */ }
 
+  // Остатки FBS (свои склады) в Map по nmId — из marketplace API v3.
+  // Читаем тот же пул, в который пишет updateFbsStocks, иначе показанное
+  // значение не совпадает с сохраняемым.
+  const fbsMap = new Map<number, number>();
+  let fbsOk = false;
+  try {
+    // Баркод → nmID (у карточки может быть несколько размеров/баркодов)
+    const skuToNm = new Map<string, number>();
+    for (const c of cards) {
+      const nm = Number(c.nmID);
+      if (!isFinite(nm)) continue;
+      for (const size of (c.sizes ?? []) as any[]) {
+        for (const sku of (size.skus ?? []) as any[]) {
+          if (sku) skuToNm.set(String(sku), nm);
+        }
+      }
+    }
+    const allSkus = [...skuToNm.keys()];
+    if (allSkus.length) {
+      const warehouses = await wbApi.getWarehouses(store.api_key, signal);
+      for (const wh of warehouses) {
+        const whStocks = await wbApi.getFbsStocks(store.api_key, wh.id, allSkus, signal);
+        for (const [sku, amount] of whStocks) {
+          const nm = skuToNm.get(sku);
+          if (nm == null) continue;
+          fbsMap.set(nm, (fbsMap.get(nm) ?? 0) + amount);
+        }
+      }
+      fbsOk = warehouses.length > 0;
+    }
+  } catch (err: unknown) { console.error('[WB FBS Stocks] fetch failed:', errMsg(err)); /* опционально */ }
+
   // Цены и скидки — отдельный API (discounts-prices), в cards/list их нет
   let pricesMap = new Map<number, { price: number; discount: number; priceWithDisc: number }>();
   try {
@@ -1486,11 +1550,15 @@ export async function fetchAllWbProducts(
   // Если discounts-prices или stocks API недоступны (rate-limit/ошибка) — берём
   // ранее сохранённые price/discount/stock_total из БД, чтобы синк не затирал
   // их нулями/устаревшими данными из cards/list.
-  let existingMap = new Map<number, { price: number | null; discount: number | null; stock_total: number | null }>();
-  if (pricesMap.size === 0 || stocksMap.size === 0) {
+  let existingMap = new Map<number, { price: number | null; discount: number | null; stock_total: number | null; stock_fbw: number | null; stock_fbs: number | null }>();
+  if (pricesMap.size === 0 || stocksMap.size === 0 || !fbsOk) {
     try {
       const existing = await wbDb.getStoreProducts(store.id);
-      for (const p of existing) existingMap.set(p.nm_id, { price: p.price ?? null, discount: p.discount ?? null, stock_total: p.stock_total ?? null });
+      for (const p of existing) existingMap.set(p.nm_id, {
+        price: p.price ?? null, discount: p.discount ?? null,
+        stock_total: p.stock_total ?? null,
+        stock_fbw: p.stock_fbw ?? null, stock_fbs: p.stock_fbs ?? null,
+      });
     } catch { /* нет сохранённых данных — ок */ }
   }
 
@@ -1504,7 +1572,10 @@ export async function fetchAllWbProducts(
     const existing = existingMap.get(Number(c.nmID));
     const price = priceInfo?.price ?? existing?.price ?? (firstSize?.price != null ? Number(firstSize.price) : null);
     const discount = priceInfo?.discount ?? existing?.discount ?? c.discount ?? null;
-    const stockTotal = stocksMap.size > 0 ? (stocksMap.get(c.nmID) ?? 0) : (existing?.stock_total ?? 0);
+    // FBW — склады WB; FBS — свой склад. Если API недоступен, не затираем БД нулями.
+    const stockFbw = stocksMap.size > 0 ? (stocksMap.get(c.nmID) ?? 0) : (existing?.stock_fbw ?? existing?.stock_total ?? 0);
+    const stockFbs = fbsOk ? (fbsMap.get(c.nmID) ?? 0) : (existing?.stock_fbs ?? 0);
+    const stockTotal = stockFbw + stockFbs;
 
     // Габариты упаковки: WB отдаёт dimensions.{length,width,height} в см
     const dims = c.dimensions ?? {};
@@ -1553,6 +1624,8 @@ export async function fetchAllWbProducts(
       price,
       discount,
       stock_total: stockTotal,
+      stock_fbw: stockFbw,
+      stock_fbs: stockFbs,
       weight_kg,
       length_cm,
       width_cm,

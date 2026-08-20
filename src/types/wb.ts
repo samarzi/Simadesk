@@ -30,7 +30,9 @@ export interface WbProduct {
   price?: number | null;
   discount?: number | null;
   buyer_price?: number | null;  // реальная цена покупателя с СПП (из публичного WB API)
-  stock_total?: number;
+  stock_total?: number;      // stock_fbw + stock_fbs
+  stock_fbw?: number;        // склад WB (statistics API) — readonly
+  stock_fbs?: number;        // свой склад продавца (marketplace API v3) — редактируемый
   weight_kg?: number | null;
   length_cm?: number | null;
   width_cm?: number | null;
