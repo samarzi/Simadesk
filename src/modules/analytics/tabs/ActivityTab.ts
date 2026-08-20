@@ -24,6 +24,9 @@ function computeActivity(orders: Order[]): Activity {
   let totalRevenue = 0, totalOrders = 0;
 
   for (const o of orders) {
+    // Осиротевшие строки расходов и отменённые заказы — не события продажи,
+    // в счётчике «Заказов» и в тепловой карте им не место.
+    if (o.is_orphan || o.status === 'cancelled') continue;
     const d = new Date(o.date);
     if (isNaN(d.getTime())) continue;
     const day  = d.getDay();

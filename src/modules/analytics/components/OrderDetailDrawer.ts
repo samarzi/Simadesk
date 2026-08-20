@@ -5,9 +5,14 @@ import { copyButton } from '@/utils/copyButton';
 export function renderOrderDrawer(o: Order, onClose = 'window.analyticsModule?.closeOrderDrawer()'): string {
   const sourceLabel = o.source === 'real'
     ? 'Финотчёт МП'
+    : o.fees_estimated
+    ? 'Оценка по средним ставкам периода — финотчёт ещё не пришёл'
     : o.source === 'estimated'
     ? 'Расчёт по формуле (финотчёт ожидается)'
     : 'Нет данных';
+  // У возврата/отмены выручка заказа обнулена, но позиции сохраняют исходную цену —
+  // помечаем её зачёркиванием, чтобы сумма позиций не спорила с итогом.
+  const revenueVoid = o.status === 'returned' || o.status === 'cancelled';
 
   const mpUrl = o.mp === 'ozon'
     ? `https://seller.ozon.ru/app/postings/${o.order_id}`
@@ -90,7 +95,7 @@ export function renderOrderDrawer(o: Order, onClose = 'window.analyticsModule?.c
                 </div>
               </div>
               <div class="an2-drawer-item-num">
-                <div class="price">${fmtMoney(it.revenue)}</div>
+                <div class="price"${revenueVoid ? ' style="text-decoration:line-through;color:var(--text3)" title="выручка не засчитана: заказ вернулся или отменён"' : ''}>${fmtMoney(it.revenue)}</div>
                 <div class="profit ${it.net_profit >= 0 ? 'pos' : 'neg'}">${fmtMoney(it.net_profit)}</div>
               </div>
             </div>

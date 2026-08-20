@@ -23,6 +23,7 @@ import { renderOrdersTab, OrdersFilters, clearOrdersCache } from './tabs/OrdersT
 import { renderProductsTab, ProductsFilters, clearProductsCache } from './tabs/ProductsTab';
 import { renderActivityTab, ActivitySubTab } from './tabs/ActivityTab';
 import { renderBalanceTab, StoreBalance } from './tabs/BalanceTab';
+import { renderDetail, DetailKey, isDetailKey } from './tabs/details';
 import { renderOrderDrawer } from './components/OrderDetailDrawer';
 import { renderSettingsDrawer } from './components/SettingsDrawer';
 import { fmtNum } from './components/format';
@@ -38,6 +39,8 @@ type Tab = 'summary' | 'orders' | 'products' | 'activity' | 'balance';
 export class AnalyticsModule {
   private container: HTMLElement;
   private tab: Tab = 'summary';
+  /** Открытая страница детализации KPI. null = обычная вкладка. */
+  private detail: DetailKey | null = null;
 
   private period: PeriodPreset = '30';
   private customFrom = '';
@@ -173,7 +176,10 @@ export class AnalyticsModule {
   }
 
   private _periodLabel(): string {
-    const labels: Record<string, string> = { '7d': '7 дней', '14d': '14 дней', '30d': '30 дней', '60d': '60 дней', '90d': '90 дней', 'all': 'всё время' };
+    const labels: Record<string, string> = {
+      '7': '7 дней', '30': '30 дней', '90': '90 дней',
+      '180': '6 месяцев', '365': '12 месяцев', 'all': 'всё время',
+    };
     if (this.period === 'custom' && this.customFrom && this.customTo) return `${this.customFrom} — ${this.customTo}`;
     return labels[this.period] ?? this.period;
   }
@@ -408,7 +414,8 @@ export class AnalyticsModule {
   // ── Публичные методы (биндятся к window.analyticsModule) ─────────────
 
   setTab(t: Tab): void {
-    if (this.tab === t) return;
+    if (this.tab === t && !this.detail) return;
+    this.detail = null;
     this.tab = t;
     // Тап-active класс в шапке — обновляем точечно, body перерисовываем
     const tabs = this.container.querySelectorAll<HTMLElement>('.an2-tab');
@@ -682,6 +689,25 @@ export class AnalyticsModule {
     this._scheduleBodyOnly();
   }
 
+  /** Открыть подробный разбор KPI-карточки (выручка, маржа, расходы и т.д.). */
+  openDetail(key: string): void {
+    if (!isDetailKey(key)) return;
+    this.detail = key;
+    this.tab = 'summary';
+    this._scheduleBodyOnly();
+    // Прокручиваем наверх — страница детализации начинается со своей шапки
+    Promise.resolve().then(() => {
+      this.container.querySelector<HTMLElement>('.an2-body')?.scrollTo({ top: 0 });
+    });
+  }
+
+  /** Вернуться из детализации в «Сводку». */
+  closeDetail(): void {
+    if (!this.detail) return;
+    this.detail = null;
+    this._scheduleBodyOnly();
+  }
+
   openOrder(id: string): void {
     this.openedOrderId = id;
     this._mountOrderDrawer();
@@ -768,6 +794,7 @@ export class AnalyticsModule {
   }
 
   openOrdersFiltered(filter: string): void {
+    this.detail = null;
     this.tab = 'orders';
     if (filter === 'delivered' || filter === 'returned' || filter === 'cancelled' || filter === 'processing') {
       this.ordersFilters = { ...this.ordersFilters, status: filter as any, page: 0 };
@@ -1140,6 +1167,18 @@ export class AnalyticsModule {
   private renderTab(): string {
     if (this.tab === 'balance') return renderBalanceTab(this._balances);
     if (!this.kpi) return this.renderEmpty();
+    if (this.detail) {
+      const store = this.stores.find(s => s.id === this.selectedStore);
+      return renderDetail(this.detail, {
+        kpi: this.kpi,
+        prevKpi: this.prevKpi,
+        orders: this.orders,
+        ts: this.ts,
+        periodLabel: this._periodLabel(),
+        mp: this.selectedMp,
+        storeName: store?.name ?? MP_LABEL[this.selectedMp],
+      });
+    }
     switch (this.tab) {
       case 'summary':  return renderSummaryTab(this.kpi, this.orders, this.ts, this.prevKpi, this.missingCogs);
       case 'orders':   return renderOrdersTab(this.orders, this.ordersFilters);
@@ -1211,8 +1250,8 @@ export class AnalyticsModule {
   }
 
   private renderNoStoresForMp(): string {
-    const mpNames: Record<string, string> = { ozon: 'Ozon', wb: 'Wildberries', ym: 'Яндекс.Маркет' };
-    const available = (['ozon', 'wb', 'ym'] as const).filter(mp =>
+    const mpNames: Record<string, string> = { ozon: 'Ozon', wb: 'Wildberries', yandex: 'Яндекс.Маркет' };
+    const available = (['ozon', 'wb', 'yandex'] as const).filter(mp =>
       this.stores.some(s => s.mp === mp)
     );
     const buttons = available

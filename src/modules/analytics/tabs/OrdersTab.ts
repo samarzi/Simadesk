@@ -104,7 +104,7 @@ function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
     const safeId = escapeHtml(o.order_id);
     const pending = o.pending_settlement;
     const pendingCls = pending ? ' an2-pending' : '';
-    const pendingTitle = pending ? ' title="Финотчёт МП ещё не пришёл — комиссия/логистика неизвестны, цифры предварительные"' : '';
+    const pendingTitle = pending ? ' title="Финотчёт МП ещё не пришёл — комиссия и логистика посчитаны по средним ставкам периода, цифры уточнятся"' : '';
     rowsArr.push(`
       <tr onclick="window.analyticsModule?.openOrder('${safeId}')">
         <td class="an2-col-date">${fmtDate(o.date)}</td>
