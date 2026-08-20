@@ -27,7 +27,8 @@ interface StockItem {
   mp: Mp;
   storeId: string;
   storeName: string;
-  offerId: string;
+  offerId: string;      // для отображения (vendor_code || offer_id)
+  ymOfferId?: string;   // реальный offer_id из ЯМ (только для mp==='yandex'), нужен для stocks API
   name: string;
   price: number | null;
   stockFbs: number;
@@ -145,6 +146,7 @@ export class StockModule {
       const sellable = isFby ? tot : (p.stock_available ?? tot);
       items.push({ id: `yandex:${p.store_id}:${p.offer_id}`, mp: 'yandex', storeId: p.store_id,
         storeName: storeNames.get(p.store_id) ?? '', offerId: p.vendor_code || p.offer_id,
+        ymOfferId: p.offer_id,
         name: p.name || p.offer_id, price: p.basic_price ?? null,
         stockFbs: isFby ? 0 : sellable,
         stockFbo: isFby ? sellable : 0,
@@ -225,6 +227,16 @@ export class StockModule {
             this.syncStatus = `ЯМ: ${store.name} — сохраняем ${products.length}…`;
             this.render();
             await yandexDb.replaceStoreProducts(store.id, products);
+          }
+          // Если fbs_warehouse_id ещё не задан — попробуем определить из API складов
+          if (!store.fbs_warehouse_id) {
+            const whs = await fetchYandexWarehouses(store);
+            if (whs.length > 0) {
+              const whId = whs[0].warehouseId;
+              await yandexDb.updateStore(store.id, { fbs_warehouse_id: whId } as any);
+              store.fbs_warehouse_id = whId;
+              debug.log(`[Stock] YM auto-detected fbs_warehouse_id=${whId} for store ${store.id}`);
+            }
           }
         } catch (e: unknown) {
           const msg = `ЯМ «${store.name}»: ${(e instanceof Error ? e.message : String(e)) || 'ошибка'}`;
@@ -378,10 +390,8 @@ export class StockModule {
         item.stockFbs = this.editValue; item.stockTotal = item.stockFbs + item.stockFbo;
       } else if (item.mp === 'yandex') {
         const store = this.ymStores.find(s => s.id === item.storeId)!;
-        const { yandexDb: ymDb } = await import('@/services/yandexDb');
-        const prods = await ymDb.getProducts().catch(() => []);
-        const prod = prods.find(p => p.store_id === item.storeId && (p.vendor_code || p.offer_id) === item.offerId);
-        await updateYandexFbsStock(store, [{ offerId: prod?.offer_id ?? item.offerId, warehouseId: this.editWarehouseId, count: this.editValue }]);
+        // ymOfferId — реальный offer_id из ЯМ каталога, нужен для stocks API
+        await updateYandexFbsStock(store, [{ offerId: item.ymOfferId ?? item.offerId, warehouseId: this.editWarehouseId, count: this.editValue }]);
         item.stockFbs = this.editValue; item.stockTotal = this.editValue;
       } else {
         const store = this.wbStores.find(s => s.id === item.storeId)!;
@@ -493,8 +503,10 @@ export class StockModule {
             ` : wh.length === 1 ? `
               <div style="margin-bottom:14px;font-size:12px;color:var(--text-2)">Склад: <b style="color:var(--text)">${this.esc(wh[0].name)}</b></div>
             ` : !this.editError ? `
-              <div style="margin-bottom:14px;font-size:12px;color:var(--text-2);padding:8px 12px;background:rgba(245,158,11,.08);border-radius:8px">
-                Нет доступных складов ${item.stockLabel} для этого магазина
+              <div style="margin-bottom:14px;font-size:12px;color:var(--text-2);padding:10px 12px;background:rgba(245,158,11,.08);border-radius:8px;line-height:1.5">
+                Склад не найден.<br>
+                Нажмите <b>«Синкр. из API»</b> — ID склада определится автоматически.<br>
+                Или укажите <b>FBS Склад ID</b> вручную в настройках ЯМ-магазина.
               </div>
             ` : ''}
 
