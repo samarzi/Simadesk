@@ -151,6 +151,7 @@ export class AdminModule {
 
   private supAiEnabled: boolean = localStorage.getItem('sd_sup_ai_enabled') === '1';
   private supAiModel: string = localStorage.getItem('sd_sup_ai_model') || 'anthropic/claude-haiku-4-5';
+  private supGreetingText = 'Здравствуйте! Уже разбираемся с вашим вопросом, ответим совсем скоро 👋';
   private supNeedsAttention: Set<string> = new Set();
   private supAiProcessing: Set<string> = new Set();
   private supAiHandled: Map<string, string> = new Map();
@@ -1183,6 +1184,15 @@ export class AdminModule {
           ${this.supAiEnabled ? 'Включено' : 'Выключено'} · нужен оператор: <b style="color:var(--text)">${this.supNeedsAttention.size}</b>
         </span>
         <span class="ap-sup-balance" data-or-balance title="Баланс OpenRouter">${icon('zap', 13)} …</span>
+        <button class="ap-icon-btn ap-sup-greeting-toggle" id="ap-sup-greeting-toggle" title="Текст приветствия">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+      </div>
+      <div class="ap-sup-greeting-row" id="ap-sup-greeting-row" style="display:none">
+        <label class="ap-sup-greeting-label">Текст приветствия:</label>
+        <input class="ap-input ap-sup-greeting-input" id="ap-sup-greeting-input"
+          value="${this.esc(this.supGreetingText)}" placeholder="Приветственное сообщение…" maxlength="300">
+        <button class="ap-btn ap-btn-sm ap-sup-greeting-save" id="ap-sup-greeting-save">Сохранить</button>
       </div>
 
       <div class="ap-sup">
@@ -1349,6 +1359,34 @@ export class AdminModule {
     modelSel?.addEventListener('change', () => {
       this.supAiModel = modelSel.value;
       localStorage.setItem('sd_sup_ai_model', this.supAiModel);
+    });
+
+    // Greeting text toggle + save
+    const greetingToggle = this.el.querySelector<HTMLElement>('#ap-sup-greeting-toggle');
+    const greetingRow = this.el.querySelector<HTMLElement>('#ap-sup-greeting-row');
+    const greetingInput = this.el.querySelector<HTMLInputElement>('#ap-sup-greeting-input');
+    const greetingSave = this.el.querySelector<HTMLElement>('#ap-sup-greeting-save');
+    greetingToggle?.addEventListener('click', () => {
+      if (!greetingRow) return;
+      const visible = greetingRow.style.display !== 'none';
+      greetingRow.style.display = visible ? 'none' : 'flex';
+      greetingToggle.classList.toggle('active', !visible);
+    });
+    greetingSave?.addEventListener('click', async () => {
+      if (!greetingInput) return;
+      const text = greetingInput.value.trim();
+      if (!text) return;
+      try {
+        await adminService.saveSiteContent('support_greeting_text', 'Приветствие поддержки', text);
+        this.supGreetingText = text;
+        showToast('Приветствие сохранено', 'success');
+        greetingRow!.style.display = 'none';
+        greetingToggle?.classList.remove('active');
+      } catch { showToast('Ошибка сохранения', 'error'); }
+    });
+    greetingInput?.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter') greetingSave?.click();
+      if (e.key === 'Escape') { greetingRow!.style.display = 'none'; greetingToggle?.classList.remove('active'); }
     });
 
     this.el.querySelectorAll<HTMLElement>('[data-live-filter]').forEach(btn => {
@@ -1639,9 +1677,8 @@ export class AdminModule {
         );
         if (recentAdmin) return; // Edge function уже обработал
 
-        // 1. Приветствие
-        const greetingText = 'Здравствуйте! Уже разбираемся с вашим вопросом, ответим совсем скоро 👋';
-        await supportChatService.adminSendMessage(chatId, greetingText);
+        // 1. Приветствие (текст настраивается в разделе поддержки)
+        await supportChatService.adminSendMessage(chatId, this.supGreetingText);
         const greetedAt = Date.now();
         this.supGreeted.set(chatId, greetedAt);
 
@@ -1731,9 +1768,20 @@ Q: Где скачать / установить расширение для бр
         const content = await adminService.getSiteContent();
         const entry = content.find(c => c.key === 'ai_openrouter_key');
         if (entry?.content) { key = entry.content; sessionStorage.setItem('sd_ai_key', key); }
+        // Load greeting text while we have content
+        const greeting = content.find(c => c.key === 'support_greeting_text');
+        if (greeting?.content) this.supGreetingText = greeting.content;
       } catch { /* ignore */ }
     }
     return key;
+  }
+
+  async loadSupportGreeting(): Promise<void> {
+    try {
+      const content = await adminService.getSiteContent();
+      const greeting = content.find(c => c.key === 'support_greeting_text');
+      if (greeting?.content) this.supGreetingText = greeting.content;
+    } catch { /* ignore */ }
   }
 
   private async runSupAiReply(

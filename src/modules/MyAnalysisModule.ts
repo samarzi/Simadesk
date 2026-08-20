@@ -55,11 +55,20 @@ interface FixedItem {
   storeId: string;
   oldName: string;
   newName: string;
-  fixedIssues: Array<{ code: string; label: string; severity: Severity }>;
+  oldPhotoCount: number;
+  newPhotoCount: number;
+  /** Only the issues this edit actually resolved locally (oldIssues − newIssues). */
+  targetIssues: Array<{ code: string; label: string; severity: Severity }>;
+  /** Codes from targetIssues that were still present at the last live verification. */
+  remaining: string[];
   fixedAt: number;
-  status: 'pending' | 'confirmed' | 'unchanged';
+  status: 'pending' | 'confirmed' | 'partial' | 'unchanged' | 'gone' | 'error';
   verifiedAt?: number;
+  verifyNote?: string;
 }
+
+/** Live snapshot of a card read straight from the marketplace API. */
+interface LiveSnapshot { name: string; photoUrls: string[]; price: number; rawStatus: string; }
 
 // ─── Issue detection ──────────────────────────────────────────────────────────
 
@@ -152,7 +161,18 @@ export class MyAnalysisModule {
     this.el = el;
     this.el.style.cssText = 'display:none;flex-direction:column;flex:1;overflow:hidden;';
     (window as any).myAnalysisModule = this;
-    try { this.fixedItems = JSON.parse(localStorage.getItem('sd_ca_fixed') || '[]'); } catch { this.fixedItems = []; }
+    try {
+      const raw = JSON.parse(localStorage.getItem('sd_ca_fixed') || '[]') as any[];
+      // Entries written before targetIssues/remaining existed carry `fixedIssues` instead.
+      this.fixedItems = (Array.isArray(raw) ? raw : []).map((f: any): FixedItem => ({
+        ...f,
+        targetIssues:  f.targetIssues  ?? f.fixedIssues ?? [],
+        remaining:     f.remaining     ?? [],
+        oldPhotoCount: f.oldPhotoCount ?? 0,
+        newPhotoCount: f.newPhotoCount ?? 0,
+        status: ['pending','confirmed','partial','unchanged','gone','error'].includes(f.status) ? f.status : 'pending',
+      }));
+    } catch { this.fixedItems = []; }
   }
 
   async show() {
@@ -179,15 +199,7 @@ export class MyAnalysisModule {
     if (!fixed || this.fixedVerifying) return;
     this.fixedVerifying = true;
     this._paint();
-    await this._load();
-    const current = this.cards.find(c => c.uid === uid);
-    if (current) {
-      const stillHasIssues = fixed.fixedIssues.some(fi => current.issues.some(ci => ci.code === fi.code));
-      fixed.status = stillHasIssues ? 'unchanged' : 'confirmed';
-    } else {
-      fixed.status = 'confirmed';
-    }
-    fixed.verifiedAt = Date.now();
+    await this._verifyOne(fixed);
     this.fixedVerifying = false;
     this._saveFixed();
     this._paint();
@@ -197,21 +209,110 @@ export class MyAnalysisModule {
     if (this.fixedVerifying) return;
     this.fixedVerifying = true;
     this._paint();
-    await this._load();
     for (const fixed of this.fixedItems) {
       if (fixed.status === 'confirmed') continue;
-      const current = this.cards.find(c => c.uid === fixed.uid);
-      if (current) {
-        const stillHasIssues = fixed.fixedIssues.some(fi => current.issues.some(ci => ci.code === fi.code));
-        fixed.status = stillHasIssues ? 'unchanged' : 'confirmed';
-      } else {
-        fixed.status = 'confirmed';
-      }
-      fixed.verifiedAt = Date.now();
+      await this._verifyOne(fixed);
     }
     this.fixedVerifying = false;
     this._saveFixed();
     this._paint();
+  }
+
+  /**
+   * Re-reads the card straight from the marketplace and re-audits it. Verifying against
+   * the local DB cache would only confirm our own optimistic write, not that the
+   * marketplace actually accepted the edit.
+   */
+  private async _verifyOne(fixed: FixedItem) {
+    fixed.verifiedAt = Date.now();
+    fixed.verifyNote = undefined;
+
+    let live: LiveSnapshot | null;
+    try {
+      live = await this._fetchLive(fixed);
+    } catch (e: unknown) {
+      fixed.status = 'error';
+      fixed.verifyNote = (e instanceof Error ? e.message : String(e)).slice(0, 160);
+      return;
+    }
+
+    if (!live) {
+      fixed.status = 'gone';
+      fixed.verifyNote = 'Товар не найден на маркетплейсе';
+      return;
+    }
+
+    const liveIssues = auditCard({
+      uid: fixed.uid, mp: fixed.mp, storeId: fixed.storeId, storeName: fixed.storeName,
+      vendorCode: fixed.vendorCode, name: live.name, photoUrls: live.photoUrls,
+      price: live.price, rawStatus: live.rawStatus,
+    });
+
+    fixed.remaining = fixed.targetIssues
+      .filter(t => liveIssues.some(li => li.code === t.code))
+      .map(t => t.code);
+
+    fixed.status = fixed.remaining.length === 0            ? 'confirmed'
+                 : fixed.remaining.length < fixed.targetIssues.length ? 'partial'
+                 : 'unchanged';
+
+    // Live data wins over our optimistic write — keeps the Issues tab honest whether or
+    // not the marketplace accepted the edit.
+    const idx = this.cards.findIndex(c => c.uid === fixed.uid);
+    if (idx >= 0) {
+      this.cards[idx].name      = live.name;
+      this.cards[idx].photoUrls = live.photoUrls;
+      this.cards[idx].price     = live.price;
+      this.cards[idx].rawStatus = live.rawStatus;
+      this.cards[idx].issues    = liveIssues;
+      this.cards[idx].score     = scoreCard(liveIssues);
+    }
+  }
+
+  /** Reads one card live from its marketplace. Returns null when the card no longer exists. */
+  private async _fetchLive(f: FixedItem): Promise<LiveSnapshot | null> {
+    const cached = this.cards.find(c => c.uid === f.uid);
+
+    if (f.mp === 'ozon') {
+      const store = this.ozStores.find(s => s.id === f.storeId);
+      if (!store) throw new Error('Магазин Ozon не найден');
+      const item = await ozonApi.getFullProductInfo(
+        f.vendorCode, cached?.productId ?? null,
+        { client_id: store.client_id, api_key: store.api_key },
+      ) as any;
+      if (!item) return null;
+      // images come back either as plain URLs or as objects with file_name/url
+      const photoUrls: string[] = (item.images ?? [])
+        .map((im: any) => typeof im === 'string' ? im : (im?.file_name ?? im?.url ?? ''))
+        .filter(Boolean);
+      // status is either a plain string or an object describing the moderation state
+      const st = item.status;
+      const rawStatus = typeof st === 'string' ? st
+                      : (st?.state ?? st?.status ?? item.state ?? '');
+      return { name: item.name ?? '', photoUrls, price: Number(item.price) || 0, rawStatus: String(rawStatus) };
+    }
+
+    if (f.mp === 'wb') {
+      const store = this.wbStores.find(s => s.id === f.storeId);
+      if (!store) throw new Error('Магазин WB не найден');
+      const nmId = cached?.nmId;
+      if (!nmId) throw new Error('Не найден nm_id товара');
+      const card = await wbApi.getCardFull(store.api_key, nmId);
+      if (!card) return null;
+      // WB's card endpoint carries no price — keep the synced one, the editor never changes it
+      return { name: card.title, photoUrls: card.photoUrls, price: cached?.price ?? 0, rawStatus: 'active' };
+    }
+
+    const store = this.yaStores.find(s => s.id === f.storeId);
+    if (!store?.business_id) throw new Error('Магазин Яндекса не найден');
+    const offer = await yandexApi.getOfferMapping(store.api_key, store.business_id, f.vendorCode) as any;
+    if (!offer) return null;
+    return {
+      name: offer.name ?? '',
+      photoUrls: offer.pictures ?? [],
+      price: Number(offer.basicPrice?.value ?? offer.basic_price ?? cached?.price ?? 0) || 0,
+      rawStatus: offer.archived ? 'archived' : 'active',
+    };
   }
 
   removeFixed(uid: string) {
@@ -220,26 +321,35 @@ export class MyAnalysisModule {
     this._paint();
   }
 
+  /** Re-sends the same edit to the marketplace, then re-opens the editor pre-filled with it. */
   async retryFixed(uid: string) {
+    if (this.drawerSaving) return;
     if (!this.loaded) await this._load();
     const fixed = this.fixedItems.find(f => f.uid === uid);
     if (!fixed) return;
     const card = this.cards.find(c => c.uid === uid);
     if (!card) {
-      (window as any).app?.toast?.('Карточка не найдена — попробуйте обновить список', 'error');
+      (window as any).app?.toast?.('Карточка не найдена на маркетплейсе', 'error');
       return;
     }
     this.openDrawer(uid);
-    this.drawerName = fixed.newName;
+    this.drawerName   = fixed.newName;
+    this.drawerPhotos = fixed.newPhotoCount > 0 ? [...card.photoUrls] : [];
     this._paint();
+    await this.drawerSave();
   }
 
-  copyVendorCode(vc: string) {
-    navigator.clipboard.writeText(vc).then(() => {
+  /** Takes an index, not the code itself — vendor codes may contain quotes that would
+   *  break the inline onclick string. */
+  async copyVendorCode(idx: number) {
+    const vc = this.fixedItems[idx]?.vendorCode;
+    if (!vc) return;
+    try {
+      await navigator.clipboard.writeText(vc);
       (window as any).app?.toast?.('Артикул скопирован', 'success');
-    }).catch(() => {
+    } catch {
       (window as any).app?.toast?.('Не удалось скопировать', 'error');
-    });
+    }
   }
 
   private _saveFixed() {
@@ -384,9 +494,14 @@ export class MyAnalysisModule {
         });
       }
 
+      // Snapshot the "before" state BEFORE mutating — `card` is the same object as
+      // this.cards[idx], so reading card.name after the mutation returns the new name.
+      const oldIssues     = card.issues.slice();
+      const oldName       = card.name;
+      const oldPhotoCount = card.photoUrls.length;
+
       // Update in-memory card
       const idx = this.cards.findIndex(c => c.uid === card.uid);
-      const oldIssues = card.issues.slice();
       if (idx >= 0) {
         this.cards[idx].name      = this.drawerName;
         this.cards[idx].photoUrls = [...this.drawerPhotos];
@@ -394,19 +509,36 @@ export class MyAnalysisModule {
         this.cards[idx].score     = scoreCard(this.cards[idx].issues);
         this.drawerCard           = this.cards[idx];
       }
-      // Track as fixed item for deferred verification
-      if (oldIssues.length > 0) {
+
+      // Only the issues this edit actually resolved are worth verifying. Tracking every
+      // pre-existing issue made verification report "не изменилось" whenever an unrelated
+      // issue (few photos, no price…) was still open.
+      const newIssues = idx >= 0 ? this.cards[idx].issues : oldIssues;
+      const resolved  = oldIssues.filter(oi => !newIssues.some(ni => ni.code === oi.code));
+
+      if (resolved.length > 0) {
         const fixed: FixedItem = {
           uid: card.uid, mp: card.mp, vendorCode: card.vendorCode,
           storeName: card.storeName, storeId: card.storeId,
-          oldName: card.name, newName: this.drawerName,
-          fixedIssues: oldIssues.map(i => ({ code: i.code, label: i.label, severity: i.severity })),
+          oldName, newName: this.drawerName,
+          oldPhotoCount, newPhotoCount: this.drawerPhotos.length,
+          targetIssues: resolved.map(i => ({ code: i.code, label: i.label, severity: i.severity })),
+          remaining: [],
           fixedAt: Date.now(), status: 'pending',
         };
         this.fixedItems = [fixed, ...this.fixedItems.filter(f => f.uid !== card.uid)];
         this._saveFixed();
+        (window as any).app?.toast?.(
+          card.mp === 'ozon'
+            ? 'Отправлено в Ozon. Изменения применяются в течение нескольких минут'
+            : 'Карточка обновлена', 'success');
+      } else if (newIssues.length > 0) {
+        // Saved fine, but nothing got resolved — say why instead of silently doing nothing.
+        (window as any).app?.toast?.(
+          `Сохранено, но проблемы остались: ${newIssues.map(i => i.label).join(', ')}`, 'info');
+      } else {
+        (window as any).app?.toast?.('Карточка обновлена', 'success');
       }
-      (window as any).app?.toast?.('Карточка обновлена', 'success');
     } catch (e: unknown) {
       (window as any).app?.toast?.('Ошибка сохранения: ' + ((e instanceof Error ? e.message : String(e)) || e), 'error');
     }
@@ -511,8 +643,9 @@ export class MyAnalysisModule {
       } else if (card.mp === 'yandex') {
         const store = this.yaStores.find(s => s.id === card.storeId);
         if (store?.business_id) {
+          // getOfferMapping already returns the unwrapped offer
           const o = await yandexApi.getOfferMapping(store.api_key, store.business_id, card.vendorCode) as any;
-          desc = o?.offer?.description || '';
+          desc = o?.description || '';
         }
       }
 
@@ -683,10 +816,19 @@ export class MyAnalysisModule {
         <div class="ca-hint">Здесь появятся товары после того, как вы сохраните изменения в карточке.<br>Мы отследим, приняли ли маркетплейсы ваши правки.</div></div>`;
 
     const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
-    const statusIcon = (s: FixedItem['status']) => s==='confirmed' ? '✅' : s==='unchanged' ? '⚠️' : '🔄';
-    const statusLabel = (s: FixedItem['status']) => s==='confirmed' ? 'Подтверждено' : s==='unchanged' ? 'Не изменилось' : 'Ожидает проверки';
+    const ICON: Record<FixedItem['status'], string> = {
+      confirmed:'✅', partial:'◐', unchanged:'⚠️', gone:'🗑', error:'🚫', pending:'🔄',
+    };
+    const LABEL: Record<FixedItem['status'], string> = {
+      confirmed:'Применено на маркетплейсе',
+      partial:  'Применено частично',
+      unchanged:'Маркетплейс ещё не применил',
+      gone:     'Товар не найден',
+      error:    'Ошибка проверки',
+      pending:  'Ожидает проверки',
+    };
 
-    const rows = this.fixedItems.map(f => `
+    const rows = this.fixedItems.map((f, fi) => `
       <div class="ca-fx-row">
         <div class="ca-fx-top">
           <span class="ca-mp-b" style="color:${MP_COLOR[f.mp]};border-color:${MP_COLOR[f.mp]}22;background:${MP_COLOR[f.mp]}14">${MP_NAME[f.mp]}</span>
@@ -696,7 +838,7 @@ export class MyAnalysisModule {
         <div class="ca-fx-vc-row">
           <span class="ca-fx-vc-label">Артикул:</span>
           <span class="ca-fx-vc">${this._e(f.vendorCode)}</span>
-          <button class="ca-fx-copy" title="Скопировать артикул" onclick="window.myAnalysisModule?.copyVendorCode('${this._e(f.vendorCode)}')">
+          <button class="ca-fx-copy" title="Скопировать артикул" onclick="window.myAnalysisModule?.copyVendorCode(${fi})">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
             Скопировать
           </button>
@@ -707,16 +849,23 @@ export class MyAnalysisModule {
           <div class="ca-fx-rename-old">До: «${this._e(f.oldName)}»</div>
           <div class="ca-fx-rename-new">После: «${this._e(f.newName)}»</div>
         </div>` : `<div class="ca-fx-curname">${this._e(f.newName || f.oldName)}</div>`}
+        ${f.oldPhotoCount !== f.newPhotoCount ? `
+        <div class="ca-fx-photos">Фото: ${f.oldPhotoCount} → <b>${f.newPhotoCount}</b></div>` : ''}
         <div class="ca-fx-issues">
-          Исправлено: ${f.fixedIssues.slice(0,4).map(i=>`<span class="ca-ic sev-${i.severity}">${SEV_ICON[i.severity]} ${i.label}</span>`).join('')}
-          ${f.fixedIssues.length > 4 ? `<span class="ca-ic-more">+${f.fixedIssues.length-4}</span>` : ''}
+          Исправлено: ${f.targetIssues.map(i => {
+            const still = f.remaining.includes(i.code);
+            return `<span class="ca-ic sev-${i.severity}${still?' still':''}">${still?'⏳':'✔'} ${this._e(i.label)}</span>`;
+          }).join('')}
         </div>
-        <div class="ca-fx-status ${f.status}">${statusIcon(f.status)} ${statusLabel(f.status)}${f.verifiedAt ? ` · ${fmtDate(f.verifiedAt)}` : ''}</div>
+        <div class="ca-fx-status ${f.status}">${ICON[f.status]} ${LABEL[f.status]}${f.verifiedAt ? ` · ${fmtDate(f.verifiedAt)}` : ''}</div>
+        ${f.verifyNote ? `<div class="ca-fx-note">${this._e(f.verifyNote)}</div>` : ''}
+        ${f.status === 'unchanged' && f.mp === 'ozon' ? `<div class="ca-fx-note">Ozon применяет правки не мгновенно — проверьте ещё раз через несколько минут.</div>` : ''}
         <div class="ca-fx-actions">
           <button class="ca-fx-btn${this.fixedVerifying?' busy':''}" onclick="window.myAnalysisModule?.verifyFixed('${this._e(f.uid)}')">
             ${this.fixedVerifying?'<div class="ca-spin-sm"></div>':''} Проверить
           </button>
-          <button class="ca-fx-retry" onclick="window.myAnalysisModule?.retryFixed('${this._e(f.uid)}')">↩ Повторить</button>
+          ${f.status === 'unchanged' || f.status === 'partial' || f.status === 'error'
+            ? `<button class="ca-fx-retry" onclick="window.myAnalysisModule?.retryFixed('${this._e(f.uid)}')">↩ Отправить повторно</button>` : ''}
           <button class="ca-fx-del" onclick="window.myAnalysisModule?.removeFixed('${this._e(f.uid)}')">Удалить</button>
         </div>
       </div>`).join('');
@@ -1041,8 +1190,14 @@ export class MyAnalysisModule {
 .ca-fx-issues{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:11px;color:var(--text3);}
 .ca-fx-status{font-size:12px;font-weight:700;padding:5px 10px;border-radius:20px;align-self:flex-start;}
 .ca-fx-status.confirmed{background:rgba(68,221,136,.1);color:var(--green);}
+.ca-fx-status.partial{background:rgba(96,165,250,.12);color:#60a5fa;}
 .ca-fx-status.unchanged{background:rgba(251,191,36,.1);color:#fbbf24;}
+.ca-fx-status.gone{background:rgba(148,163,184,.12);color:var(--text3);}
+.ca-fx-status.error{background:rgba(248,113,113,.12);color:#f87171;}
 .ca-fx-status.pending{background:var(--bg3);color:var(--text3);}
+.ca-fx-photos{font-size:12px;color:var(--text2);}
+.ca-fx-note{font-size:11px;color:var(--text3);line-height:1.45;}
+.ca-ic.still{opacity:.75;}
 .ca-fx-actions{display:flex;gap:8px;flex-wrap:wrap;}
 .ca-fx-btn{background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:700;padding:6px 13px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:5px;}
 .ca-fx-btn:hover:not(.busy){color:var(--text);}

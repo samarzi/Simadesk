@@ -826,13 +826,45 @@ html.light .ap-api-tag.ya { color: #cc2626; }
 .ap-switch-label { font-size: 12.5px; font-weight: 650; color: var(--text); white-space: nowrap; }
 .ap-sup-hint { font-size: 11.5px; color: var(--text3); display: flex; align-items: center; gap: 6px; }
 .ap-sup-balance {
-  margin-left: auto;
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 12px; font-weight: 700;
   padding: 4px 10px; border-radius: 20px;
   background: var(--ap-raised); border: 1px solid var(--ap-line);
   color: var(--text2);
 }
+.ap-sup-greeting-toggle {
+  margin-left: auto;
+  width: 28px; height: 28px;
+  border: 1px solid var(--ap-line); border-radius: 7px;
+  background: var(--ap-raised);
+  color: var(--text3);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color .14s, border-color .14s, background .14s;
+}
+.ap-sup-greeting-toggle:hover,
+.ap-sup-greeting-toggle.active { color: var(--accent); border-color: var(--accent); background: rgba(99,102,241,.09); }
+.ap-sup-greeting-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 20px;
+  background: var(--ap-raised);
+  border-bottom: 1px solid var(--ap-line);
+  flex-shrink: 0;
+}
+.ap-sup-greeting-label { font-size: 12px; color: var(--text3); white-space: nowrap; flex-shrink: 0; }
+.ap-sup-greeting-input {
+  flex: 1; min-width: 200px;
+  padding: 5px 10px; font-size: 12.5px;
+  border: 1px solid var(--ap-line-strong); border-radius: 7px;
+  background: var(--ap-panel); color: var(--text);
+}
+.ap-sup-greeting-input:focus { outline: none; border-color: var(--accent); }
+.ap-btn-sm {
+  padding: 5px 14px; font-size: 12px; font-weight: 600;
+  border-radius: 7px; border: none;
+  background: var(--accent); color: #fff; cursor: pointer;
+  transition: opacity .14s;
+}
+.ap-btn-sm:hover { opacity: .85; }
 
 /* ── Список чатов ─────────────────────────────────────────────────────────── */
 .ap-sup {

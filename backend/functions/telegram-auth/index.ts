@@ -1114,11 +1114,15 @@ async function handleSupportAi(req: Request): Promise<Response> {
   const hasRecentAdmin = msgs.some(m => m.sender_role === 'admin' && m.created_at >= cutoff);
   if (hasRecentAdmin) return ok();
 
-  // 4. Get API key (env first, then site_content)
+  // 4. Get API key + greeting from site_content
   let apiKey = orKey;
-  if (!apiKey) {
-    const { data: kv } = await db.from('site_content').select('content').eq('key', 'ai_openrouter_key').single();
-    apiKey = kv?.content ?? '';
+  let greetingText = 'Здравствуйте! Уже разбираемся с вашим вопросом, ответим совсем скоро 👋';
+  {
+    const { data: siteContent } = await db.from('site_content').select('key, content');
+    for (const row of (siteContent ?? [])) {
+      if (row.key === 'ai_openrouter_key' && !apiKey) apiKey = row.content ?? '';
+      if (row.key === 'support_greeting_text' && row.content) greetingText = row.content;
+    }
   }
 
   // 5. Wait 3 s then check again before greeting (race prevention)
@@ -1136,7 +1140,7 @@ async function handleSupportAi(req: Request): Promise<Response> {
   // 6. Send greeting
   await db.from('support_chat_messages').insert({
     chat_id: chatId, sender_role: 'admin',
-    content: 'Здравствуйте! Уже разбираемся с вашим вопросом, ответим совсем скоро 👋',
+    content: greetingText,
     attachments: [],
   });
   const greetedAt = Date.now();

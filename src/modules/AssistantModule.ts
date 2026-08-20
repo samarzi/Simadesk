@@ -3229,9 +3229,18 @@ export class AssistantModule {
     this.scrollToBottom();
     this.renderQuotaBar();
 
-    // При открытии панели сбрасываем синий флаг и запоминаем позицию прочтения
+    // При открытии панели сбрасываем все флаги непрочитанного
     this.simaUnread = 0;
     this.lastSeenMsgCount = this.history.filter(m => m.role !== 'system').length;
+
+    // Сброс индикаторов «новые сообщения» в поддержке — как в мессенджере
+    if (this.supportActiveChatId && this.supportMessages.length) {
+      this.supportNewMsgFrom = this.supportMessages.at(-1)!.created_at;
+      this.supportChatHasNew.delete(this.supportActiveChatId);
+      this.supportUnread = 0;
+      this.renderSupportMessages(); // убрать дивайдер сразу при открытии
+    }
+
     this.updateRing();
 
     this.renderContextHints();

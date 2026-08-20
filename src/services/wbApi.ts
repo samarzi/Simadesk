@@ -363,6 +363,19 @@ export const wbApi = {
     if (result?.error) throw new Error(`WB: ${result.errorText ?? 'Ошибка обновления карточки'}`);
   },
 
+  /** Получить полную карточку по nm_id (title + photos) — для проверки применённых правок. */
+  async getCardFull(apiKey: string, nmID: number, signal?: AbortSignal): Promise<{ title: string; photoUrls: string[] } | null> {
+    const resp = await wbFetch<any>('/wb-content/content/v2/get/cards/list', 'POST', apiKey, {
+      settings: { cursor: { limit: 1, nmID }, filter: { withPhoto: -1 } },
+    }, signal, 3);
+    const card: any = (resp.cards ?? [])[0];
+    if (!card) return null;
+    const photoUrls: string[] = (card.photos ?? [])
+      .map((p: any) => p.big ?? p.c516x688 ?? p.url ?? '')
+      .filter(Boolean);
+    return { title: card.title ?? '', photoUrls };
+  },
+
   /** Получить title/brand/description карточки по nm_id (для ленивой загрузки в редакторе). */
   async getCardDetails(apiKey: string, nmID: number, signal?: AbortSignal): Promise<{ title: string; brand: string; description: string } | null> {
     const resp = await wbFetch<any>('/wb-content/content/v2/get/cards/list', 'POST', apiKey, {
