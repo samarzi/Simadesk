@@ -484,10 +484,20 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 - НЕ ФАБРИКУЙ отзывы, оценки, тексты отзывов, имена покупателей
 - НЕ СОЧИНЯЙ примеры "для наглядности" с цифрами — это дезинформация
 Если [ТЕКУЩИЕ ДАННЫЕ МАГАЗИНА] отсутствуют или не содержат нужных данных:
-→ Если пользователь спрашивает об аналитике, выручке, заказах, маржe, топ-товарах — используй действие fetch_analytics. Оно само откроет раздел и загрузит актуальные данные.
+→ Если пользователь спрашивает об аналитике, выручке, заказах, маржe, топ-товарах — используй действие fetch_analytics. Передавай mp="yandex" если упомянут Яндекс/ЯМ, mp="wb" для WB/Wildberries, mp="ozon" для Ozon (по умолчанию). Пример: {"action":"fetch_analytics","mp":"yandex"}.
 → Если пользователь спрашивает про отзывы (в т.ч. "за сегодня", "на Яндексе", "без ответа") — используй fetch_reviews с нужными mp и date. Передавай mp="yandex"/"wb"/"ozon" если указан МП, date="today"/"week" если указан период.
 → Для других данных (остатки, товары) — скажи в каком разделе их найти.
 → НЕ пытайся помочь с выдуманными примерами — это хуже, чем честный отказ.
+
+## ПРАВИЛО: НЕ ВЫПОЛНЯЙ ДЕЙСТВИЯ АВТОМАТИЧЕСКИ ПРИ СОВЕТАХ
+Когда пользователь просит совет, анализ, рекомендации — отвечай ТОЛЬКО текстом.
+НЕ добавляй JSON action в конец ответа с советами/рекомендациями — это запускает действие без согласия.
+Action JSON используй ТОЛЬКО когда пользователь явно просит что-то СДЕЛАТЬ/СОЗДАТЬ/ИЗМЕНИТЬ.
+Примеры:
+- "что делать с OOS?" → только текстовые рекомендации, БЕЗ create_oos_tasks
+- "создай задачи по OOS" → {"action":"create_oos_tasks"}
+- "как улучшить маржу?" → только текст, БЕЗ bulk_price_filtered
+- "измени цены" → {"action":"bulk_price_filtered",...}
 
 ## АБСОЛЮТНЫЙ ЗАПРЕТ НА ЛОЖНЫЕ ПОДТВЕРЖДЕНИЯ ДЕЙСТВИЙ
 Любое изменение в системе (создание, удаление, изменение, синхронизация, публикация) ДОЛЖНО выполняться через JSON action.
@@ -5002,7 +5012,6 @@ export class AssistantModule {
     }
 
     this.isLoading = true;
-    aiGlow(true);
     this.setStatus('Думаю…', 'thinking');
     const typing = this.addTypingIndicator();
     this.setInputEnabled(false);
@@ -5023,8 +5032,9 @@ export class AssistantModule {
       }
       // Скрываем JSON-блоки действий во время стриминга — они заменятся карточкой
       const display = partial
-        .replace(/```(?:json)?\s*\{[\s\S]*$/, '')
-        .replace(/^\s*\{[\s\S]*$/, '')
+        .replace(/```(?:json)?\s*\{[\s\S]*$/, '')  // code-fence json
+        .replace(/^\s*\{[\s\S]*$/, '')              // whole text is json
+        .replace(/\s*\{[^{}]*"action"[\s\S]*$/, '') // action-json in middle/end
         .trim();
       if (streamBubble) {
         if (display) {
@@ -5474,29 +5484,40 @@ export class AssistantModule {
       this.scrollToBottom();
     }
 
+    // Data-fetch actions already show their result in the report card —
+    // skip the follow-up AI call to avoid duplicating the same data.
+    const dataFetchActions = new Set([
+      'fetch_analytics', 'fetch_reviews', 'get_ad_stats',
+      'get_supply_stats', 'list_repricer_rules', 'get_subscription_info', 'check_api_keys',
+    ]);
+
     let follow = '';
-    try {
-      follow = await this.callAi([
-        { role: 'system', content: this.getEffectiveSystemPrompt() + getStoreContext() },
-        ...this.history.slice(-8),
-        { role: 'system', content: `[РЕЗУЛЬТАТ ДЕЙСТВИЯ ${name}]: ${resultMsg}\nНапиши пользователю короткое подтверждение результата по-русски — только обычный текст, без JSON, без кнопок, без планов.` },
-      ]);
-    } catch { follow = resultMsg; }
+    if (!dataFetchActions.has(name)) {
+      try {
+        follow = await this.callAi([
+          { role: 'system', content: this.getEffectiveSystemPrompt() + getStoreContext() },
+          ...this.history.slice(-8),
+          { role: 'system', content: `[РЕЗУЛЬТАТ ДЕЙСТВИЯ ${name}]: ${resultMsg}\nНапиши пользователю ОЧЕНЬ КОРОТКОЕ подтверждение (1–2 предложения) что сделано. НЕ повторяй данные из результата. Только обычный текст, без JSON, без кнопок, без планов.` },
+        ]);
+      } catch { follow = ''; }
 
-    // Strip any JSON artifacts and code blocks from follow-up
-    follow = follow
-      .replace(/```[\s\S]*?```/g, '')
-      .replace(/`[^`]*`/g, '')
-      .replace(/\{[\s\S]*?"action"[\s\S]*?\}/g, '')
-      .replace(/\{"suggestions"\s*:\s*\[[^\]]*\]\s*\}/gs, '')
-      .trim() || resultMsg;
+      // Strip any JSON artifacts and code blocks from follow-up
+      follow = follow
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/`[^`]*`/g, '')
+        .replace(/\{[\s\S]*?"action"[\s\S]*?\}/g, '')
+        .replace(/\{"suggestions"\s*:\s*\[[^\]]*\]\s*\}/gs, '')
+        .trim();
+    }
 
-    const { text: followText, suggestions: followSuggs } = this.parseFollowUpSuggestions(follow);
+    const { text: followText, suggestions: followSuggs } = this.parseFollowUpSuggestions(follow || resultMsg);
     this.history.push({ role: 'assistant', content: followText });
     this.saveSession();
-    const ttsBtn = this.addAssistantMessage(followText);
-    if (this.ttsEnabled && ttsBtn) this.startMsgTts(followText, ttsBtn);
-    if (followSuggs.length) this.addFollowUpSuggestions(followSuggs);
+    if (!dataFetchActions.has(name)) {
+      const ttsBtn = this.addAssistantMessage(followText);
+      if (this.ttsEnabled && ttsBtn) this.startMsgTts(followText, ttsBtn);
+      if (followSuggs.length) this.addFollowUpSuggestions(followSuggs);
+    }
     this.setStatus('Готова');
   }
 

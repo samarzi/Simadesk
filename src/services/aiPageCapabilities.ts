@@ -1952,11 +1952,19 @@ export function installGlobalAiActions(): void {
   // ── Аналитика: загрузить данные с любой страницы ─────────────────────────────
   aiPage.registerGlobal({
     name: 'fetch_analytics',
-    description: 'Перейти в раздел Аналитики, загрузить данные и вернуть полный отчёт. Используй ВСЕГДА когда пользователь спрашивает про аналитику, выручку, заказы, маржу, топ товаров, прибыль — и данных нет в [ТЕКУЩИЕ ДАННЫЕ МАГАЗИНА]. Сам перейдёт в нужный раздел.',
-    args: '{}',
-    run: async () => {
+    description: 'Перейти в раздел Аналитики, загрузить данные и вернуть полный отчёт. Используй ВСЕГДА когда пользователь спрашивает про аналитику, выручку, заказы, маржу, топ товаров, прибыль. Аргумент mp: "ozon"|"wb"|"yandex" — передавай если пользователь упоминает конкретный маркетплейс.',
+    args: '{"mp":"ozon"}',
+    run: async (args: { mp?: string } = {}) => {
       const am = w().analyticsModule;
       if (!am) throw new Error('Модуль аналитики недоступен');
+      // Фильтруем по маркетплейсу если указан
+      if (args.mp === 'yandex' || args.mp === 'ym' || args.mp === 'yandex_market') {
+        am.selectMp?.('yandex');
+      } else if (args.mp === 'wb' || args.mp === 'wildberries') {
+        am.selectMp?.('wb');
+      } else if (args.mp === 'ozon') {
+        am.selectMp?.('ozon');
+      }
       // Переходим в Аналитику и ждём загрузки данных
       await w().app?.navigateTo?.('analytics');
       if (!am.isDataLoaded) {
