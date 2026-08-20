@@ -3228,8 +3228,17 @@ export class AssistantModule {
    }
 
   togglePanel(): void {
-    if (this.isOpen) this.closePanel();
-    else this.openPanel();
+    if (this.isOpen) {
+      // If not in AI mode, switch to AI instead of closing
+      if (this.supportMode !== 'ai') {
+        this.switchSupportMode('ai');
+        this.textareaEl?.focus();
+      } else {
+        this.closePanel();
+      }
+    } else {
+      this.openPanel();
+    }
   }
 
   openPanel(): void {
@@ -3241,6 +3250,8 @@ export class AssistantModule {
     this.isOpen = true;
     this.panel.classList.add('open');
     this.btn?.classList.add('active');
+    // Always open in AI chat mode
+    if (this.supportMode !== 'ai') this.switchSupportMode('ai');
     this.textareaEl?.focus();
     this.scrollToBottom();
     this.renderQuotaBar();
