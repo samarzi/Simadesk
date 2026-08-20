@@ -1382,39 +1382,51 @@ export class AssistantModule {
     const alerts: string[] = [];
 
     try {
-      const items: any[] = (window as any).stockModule?.items ?? [];
-      const newOos = items.filter((i: any) => (i.stockTotal ?? 0) === 0);
-      if (newOos.length > 0) {
-        alerts.push(`🔴 OOS: ${newOos.length} товаров без остатков`);
+      const sm = (window as any).stockModule;
+      const items: any[] = sm?.items ?? [];
+      if (items.length > 0 && sm?.isDataLoaded !== false) {
+        const newOos = items.filter((i: any) => (i.stockTotal ?? 0) === 0);
+        if (newOos.length > 0) {
+          alerts.push(`🔴 OOS: ${newOos.length} товаров без остатков`);
+        }
       }
     } catch { /* ignore */ }
 
     try {
-      const tasks: any[] = (window as any).taskManagerModule?.tasks ?? [];
-      const overdue = tasks.filter((t: any) =>
-        t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()
-      );
-      if (overdue.length > 0) {
-        alerts.push(`🟡 Просрочено задач: ${overdue.length}`);
+      const tm = (window as any).taskManagerModule;
+      const tasks: any[] = tm?.tasks ?? [];
+      if (tasks.length > 0) {
+        const overdue = tasks.filter((t: any) =>
+          t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()
+        );
+        if (overdue.length > 0) {
+          alerts.push(`🟡 Просрочено задач: ${overdue.length}`);
+        }
       }
     } catch { /* ignore */ }
 
     try {
-      const reviews: any[] = (window as any).reviewsModule?.allReviews ?? [];
-      const unanswered = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= 2);
-      if (unanswered.length > 0) {
-        alerts.push(`⭐ Негативных отзывов без ответа: ${unanswered.length}`);
+      const rm = (window as any).reviewsModule;
+      const reviews: any[] = rm?.allReviews ?? [];
+      if (reviews.length > 0) {
+        const unanswered = reviews.filter((r: any) => !r.answered && !r.answer && !r.reply && (r.stars ?? 5) <= 2);
+        if (unanswered.length > 0) {
+          alerts.push(`⭐ Негативных отзывов без ответа: ${unanswered.length}`);
+        }
       }
     } catch { /* ignore */ }
 
     try {
-      const orders: any[] = (window as any).allOrdersModule?.orders ?? [];
-      const urgentFbs = orders.filter((o: any) =>
-        o.status === 'awaiting_packaging' && o.shipment_date &&
-        new Date(o.shipment_date).getTime() - Date.now() < 4 * 3600 * 1000
-      );
-      if (urgentFbs.length > 0) {
-        alerts.push(`📦 FBS заказов с дедлайном <4ч: ${urgentFbs.length}`);
+      const om = (window as any).allOrdersModule;
+      const orders: any[] = om?.orders ?? [];
+      if (orders.length > 0) {
+        const urgentFbs = orders.filter((o: any) =>
+          o.status === 'awaiting_packaging' && o.shipment_date &&
+          new Date(o.shipment_date).getTime() - Date.now() < 4 * 3600 * 1000
+        );
+        if (urgentFbs.length > 0) {
+          alerts.push(`📦 FBS заказов с дедлайном <4ч: ${urgentFbs.length}`);
+        }
       }
     } catch { /* ignore */ }
 
