@@ -115,7 +115,9 @@ export class SupplyManagementModule {
   private detailReturns: Array<{ name: string; qty: number; reason?: string; date?: string }> = [];
   private detailItemsLoading = false;
   private detailItemsUnavailable = false;
+  private detailItemsError = '';
   private detailReturnsLoading = false;
+  private detailReturnsError = '';
   private recoItems: RecoItem[] = [];
   private recoLoading = false;
   private showReco = false;
@@ -539,11 +541,25 @@ export class SupplyManagementModule {
     if (this.detailItemsLoading) {
       return `<div class="sp-loading-inline">${I.loader()} Загружаем состав поставки...</div>`;
     }
+    if (this.detailItemsError) {
+      return `<div class="sp-error-block" style="margin:0">
+        <div class="sp-error-icon">⚠️</div>
+        <div class="sp-error-text">Не удалось загрузить состав</div>
+        <p style="font-size:12px;color:var(--text2);margin-top:6px">${esc(this.detailItemsError)}</p>
+        <div class="sp-error-actions">
+          <button class="sp-btn sp-btn-ghost" id="sp-retry-items">Попробовать снова</button>
+        </div>
+      </div>`;
+    }
     if (!this.detailItems.length) {
+      const hint = this.tab === 'ozon'
+        ? 'У заявки нет грузомест — Ozon наполняет их после подтверждения поставки.'
+        : this.tab === 'wb'
+          ? 'В поставке пока нет сборочных заданий. Добавьте их кнопкой «Из заказов» или в кабинете WB.'
+          : 'Маркет ещё не вернул состав по этой заявке — обычно он появляется после подтверждения.';
       return `<div class="sp-empty" style="height:140px">
-        <p style="font-size:13px">Состав пуст или данные недоступны</p>
-        ${this.tab === 'ozon' ? `<button class="sp-btn sp-btn-primary" id="sp-add-items" style="margin-top:8px">${I.plus()} Добавить товары</button>` : ''}
-        ${this.tab === 'wb' ? `<p style="font-size:11px;color:var(--text2);margin-top:6px">Состав добавляется через ЛК WB или кнопку «Из заказов»</p>` : ''}
+        <p style="font-size:13px">Состав пуст</p>
+        <p style="font-size:11px;color:var(--text2);margin-top:6px;max-width:420px">${hint}</p>
       </div>`;
     }
     const total = this.detailItems.reduce((s, i) => s + i.qty, 0);
@@ -573,12 +589,23 @@ export class SupplyManagementModule {
     if (this.detailReturnsLoading) {
       return `<div class="sp-loading-inline">${I.loader()} Загружаем возвраты...</div>`;
     }
+    if (this.detailReturnsError) {
+      return `<div class="sp-error-block" style="margin:0">
+        <div class="sp-error-icon">⚠️</div>
+        <div class="sp-error-text">Не удалось загрузить возвраты</div>
+        <p style="font-size:12px;color:var(--text2);margin-top:6px">${esc(this.detailReturnsError)}</p>
+        <div class="sp-error-actions">
+          <button class="sp-btn sp-btn-ghost" id="sp-retry-returns">Попробовать снова</button>
+        </div>
+      </div>`;
+    }
     if (!this.detailReturns.length) {
-      const msg = this.tab === 'yandex'
-        ? 'Данные о возвратах FBY недоступны через API.'
-        : 'Возвратов не найдено за последние 90 дней.';
       return `<div class="sp-empty" style="height:120px">
-        <p style="font-size:13px;color:#10b981">${msg}</p>
+        <p style="font-size:13px;color:#10b981">Возвратов за последние 90 дней нет</p>
+        <p style="font-size:11px;color:var(--text2);margin-top:6px;max-width:420px">
+          Возвраты приходят по магазину целиком, а не по конкретной поставке —
+          здесь показаны те, что относятся к её товарам.
+        </p>
       </div>`;
     }
     const total = this.detailReturns.reduce((s, r) => s + r.qty, 0);
@@ -618,6 +645,7 @@ export class SupplyManagementModule {
         if (tabVal && !btn.disabled) {
           this.tab = tabVal; this.storeId = ''; this.supplies = []; this.detail = null;
           this.detailItems = []; this.detailReturns = []; this.recoItems = []; this.error = '';
+          this.detailItemsError = ''; this.detailReturnsError = ''; this.detailItemsUnavailable = false;
           this.supplyStats = { draft:0, sending:0, delivered:0, cancelled:0 };
           this.searchQuery = ''; this.statusFilter = '';
           this.rebuildTabs(); this.rebuildHeaderActions(); this.flush(); this.loadStores();
@@ -634,10 +662,15 @@ export class SupplyManagementModule {
           case 'sp-create': case 'sp-create-empty': this.openCreateDialog(); break;
           case 'sp-wizard': case 'sp-wizard-empty': this.openWbWizard(); break;
           case 'sp-refresh': this.error = ''; this.loadSupplies(); break;
-          case 'sp-back': this.detail = null; this.detailItems = []; this.detailReturns = []; this.flush(); break;
+          case 'sp-back':
+            this.detail = null; this.detailItems = []; this.detailReturns = [];
+            this.detailItemsError = ''; this.detailReturnsError = ''; this.detailItemsUnavailable = false;
+            this.flush(); break;
           case 'sp-send': this.sendSupply(); break;
           case 'sp-barcodes': this.downloadBarcodes(); break;
           case 'sp-ym-docs': this.openYmDocuments(); break;
+          case 'sp-retry-items': this.detailItemsError = ''; this.detailItemsUnavailable = false; this.loadDetailItems(); break;
+          case 'sp-retry-returns': this.detailReturnsError = ''; this.loadDetailReturns(); break;
           case 'sp-cancel': this.cancelSupply(); break;
           case 'sp-reco': this.showReco = !this.showReco; this.flush(); if (this.showReco && !this.recoItems.length) this.loadReco(); break;
           case 'sp-reco-load': this.loadReco(); break;
@@ -665,7 +698,12 @@ export class SupplyManagementModule {
         }
         if (action === 'open' && id) {
           const found = this.supplies.find(s => s.id === id);
-          if (found) { this.detail = found; this.detailTab = 'overview'; this.detailItems = []; this.detailReturns = []; this.detailItemsUnavailable = false; this.flush(); }
+          if (found) {
+            this.detail = found; this.detailTab = 'overview';
+            this.detailItems = []; this.detailReturns = [];
+            this.detailItemsError = ''; this.detailReturnsError = ''; this.detailItemsUnavailable = false;
+            this.flush();
+          }
         }
       }
     });
@@ -944,7 +982,7 @@ export class SupplyManagementModule {
       }
     } catch (err: any) {
       this.detailItems = [];
-      showToast(`Состав: ${err.message}`, 'warning');
+      this.detailItemsError = String(err.message ?? err);
     } finally {
       this.detailItemsLoading = false; this.flush();
     }
@@ -1008,22 +1046,32 @@ export class SupplyManagementModule {
         }));
 
       } else {
-        // Yandex: use getYandexReturns (global for this campaign)
+        // ЯМ отдаёт возвраты по кампании целиком (не по заявке), товары — массивом
         try {
           const dateFrom = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
-          const returns = await getYandexReturns(store as any, { dateFrom });
-          this.detailReturns = returns.slice(0, 50).map((r: any) => ({
-            name: r.item?.offerName ?? r.item?.offerId ?? `Заказ ${r.orderId}`,
-            qty: r.item?.count ?? 1,
-            reason: r.returnDecision ?? r.status ?? '—',
-            date: r.creationDate ?? r.returnDate,
-          }));
+          const dateTo = new Date().toISOString().slice(0, 10);
+          const returns = await getYandexReturns(store as any, { dateFrom, dateTo });
+          this.detailReturns = returns.slice(0, 50).flatMap((r: any) => {
+            const items: any[] = Array.isArray(r.items) ? r.items : r.item ? [r.item] : [];
+            const reason = r.refundStatus ?? r.returnType ?? r.returnDecision ?? '—';
+            const date = r.creationDate ?? r.returnDate;
+            if (!items.length) {
+              return [{ name: `Заказ ${r.orderId ?? r.id}`, qty: 1, reason, date }];
+            }
+            return items.map((i: any) => ({
+              name: i.offerName ?? i.name ?? i.offerId ?? i.shopSku ?? `Заказ ${r.orderId ?? r.id}`,
+              qty: Number(i.count ?? i.quantity ?? 1),
+              reason,
+              date,
+            }));
+          });
         } catch {
           this.detailReturns = [];
         }
       }
-    } catch {
+    } catch (err: any) {
       this.detailReturns = [];
+      this.detailReturnsError = String(err.message ?? err);
     } finally {
       this.detailReturnsLoading = false; this.flush();
     }

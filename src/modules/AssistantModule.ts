@@ -92,6 +92,18 @@ const SESSIONS_KEY = 'sd_sima_sessions_v2';
 const ACTIVE_SID_KEY = 'sd_sima_active_v2';
 
 // ── Человеческие названия действий для журнала ──────────────────────────────────
+/**
+ * Действия, которые только ЧИТАЮТ данные: их результат уже показан карточкой
+ * отчёта, поэтому follow-up вызов модели не нужен (он бы просто дублировал
+ * те же цифры и жёг токены).
+ */
+const DATA_FETCH_ACTIONS = new Set([
+  'fetch_analytics', 'fetch_reviews', 'get_ad_stats',
+  'get_supply_stats', 'list_repricer_rules', 'get_subscription_info', 'check_api_keys',
+  'mp_get_stores', 'mp_find_product', 'mp_compare_prices', 'mp_stock_health',
+  'business_snapshot', 'get_ym_fby_slots',
+]);
+
 const ACTION_LABELS: Record<string, string> = {
   // Редактор
   excel_replace: 'Замена в таблице',
@@ -152,9 +164,22 @@ const ACTION_LABELS: Record<string, string> = {
   create_reorder_tasks: 'Задачи по дозаказу',
   // Поставки / Реклама
   create_repricer_rule: 'Правило репрайсера',
-  get_ym_slots: 'Слоты Яндекс Маркет',
-  create_ym_shipment: 'Отгрузка Яндекс Маркет',
-  create_wb_supply_from_orders: 'Поставка WB из заказов',
+  get_ym_fby_slots: 'Слоты Яндекс Маркет',
+  create_ym_supply: 'Отгрузка Яндекс Маркет',
+  create_supply_wb: 'Поставка WB из заказов',
+  get_supply_stats: 'Статистика поставок',
+  // Прямые операции на маркетплейсах
+  mp_get_stores: 'Список магазинов',
+  mp_find_product: 'Поиск товара по маркетплейсам',
+  mp_update_stock: 'Изменение остатка на МП',
+  mp_update_price: 'Изменение цены на МП',
+  mp_bulk_update_stock: 'Массовое изменение остатков',
+  mp_compare_prices: 'Сравнение цен по маркетплейсам',
+  mp_stock_health: 'Аудит остатков по магазинам',
+  // Сводка
+  business_snapshot: 'Сводка по бизнесу',
+  fetch_analytics: 'Загрузка аналитики',
+  fetch_reviews: 'Загрузка отзывов',
   // Система
   run_risk_audit: 'Аудит рисков',
   daily_checklist: 'Дневной чеклист',
@@ -5757,10 +5782,11 @@ export class AssistantModule {
 
     // Data-fetch actions already show their result in the report card —
     // skip the follow-up AI call to avoid duplicating the same data.
-    const dataFetchActions = new Set([
-      'fetch_analytics', 'fetch_reviews', 'get_ad_stats',
-      'get_supply_stats', 'list_repricer_rules', 'get_subscription_info', 'check_api_keys',
-    ]);
+    const dataFetchActions = DATA_FETCH_ACTIONS;
+
+    // Результат действия ОБЯЗАН попасть в историю, иначе следующий ход модели
+    // его не увидит («найди товар» → «уменьши остаток» ломается).
+    this.recordActionInHistory(name, args, resultMsg);
 
     let follow = '';
     if (!dataFetchActions.has(name)) {
@@ -5768,7 +5794,7 @@ export class AssistantModule {
         follow = await this.callAi([
           { role: 'system', content: this.getEffectiveSystemPrompt() + getStoreContext() },
           ...this.history.slice(-8),
-          { role: 'system', content: `[РЕЗУЛЬТАТ ДЕЙСТВИЯ ${name}]: ${resultMsg}\nНапиши пользователю ОЧЕНЬ КОРОТКОЕ подтверждение (1–2 предложения) что сделано. НЕ повторяй данные из результата. Только обычный текст, без JSON, без кнопок, без планов.` },
+          { role: 'system', content: `Напиши пользователю ОЧЕНЬ КОРОТКОЕ подтверждение (1–2 предложения) что сделано по результату действия ${name}. НЕ повторяй данные из результата. Только обычный текст, без JSON, без кнопок, без планов.` },
         ]);
       } catch { follow = ''; }
 
@@ -5782,14 +5808,43 @@ export class AssistantModule {
     }
 
     const { text: followText, suggestions: followSuggs } = this.parseFollowUpSuggestions(follow || resultMsg);
-    this.history.push({ role: 'assistant', content: followText });
-    this.saveSession();
     if (!dataFetchActions.has(name)) {
+      this.history.push({ role: 'assistant', content: followText });
       const ttsBtn = this.addAssistantMessage(followText);
       if (this.ttsEnabled && ttsBtn) this.startMsgTts(followText, ttsBtn);
       if (followSuggs.length) this.addFollowUpSuggestions(followSuggs);
     }
+    this.saveSession();
     this.setStatus('Готова');
+  }
+
+  /**
+   * Заменяет «сырой» JSON-ответ модели в истории на компактную запись о вызове
+   * и добавляет РЕЗУЛЬТАТ действия отдельным system-сообщением.
+   *
+   * Без этого модель на следующем ходу видела только свой JSON и короткое
+   * «Готово!», но не сами данные — из-за чего не могла продолжить работу
+   * (найденный артикул, магазин, цену) и начинала выдумывать.
+   */
+  private recordActionInHistory(name: string, args: any, resultMsg: string): void {
+    // Последняя assistant-запись — это сырой JSON вызова. Делаем её читаемой.
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      if (this.history[i].role !== 'assistant') continue;
+      if (/"action"\s*:/.test(this.history[i].content)) {
+        let argsStr = '';
+        try {
+          const keys = Object.keys(args ?? {});
+          if (keys.length) argsStr = ' ' + JSON.stringify(args);
+        } catch { /* ignore */ }
+        this.history[i] = { role: 'assistant', content: `[вызвала действие ${name}${argsStr}]` };
+      }
+      break;
+    }
+    const trimmed = resultMsg.length > 2500 ? resultMsg.slice(0, 2500) + '\n…(результат обрезан)' : resultMsg;
+    this.history.push({
+      role: 'system',
+      content: `[РЕЗУЛЬТАТ ДЕЙСТВИЯ ${name}]\n${trimmed}\n\nЭто фактические данные из системы. Опирайся на них в следующих ответах и НЕ вызывай это же действие повторно.`,
+    });
   }
 
   /** Найти сбалансированный JSON-объект, содержащий подстроку mustInclude. */
@@ -5964,6 +6019,7 @@ export class AssistantModule {
 
     const stepsEl = planEl.querySelector<HTMLElement>('[id^="chain-steps-"]');
     const results: string[] = [];
+    const stepOk: boolean[] = [];
 
     for (let i = 0; i < chain.steps.length; i++) {
       const step = chain.steps[i];
