@@ -1909,7 +1909,7 @@ export class TaskManagerModule {
     // Remove from local state immediately for instant UI feedback
     this.tasks = this.tasks.filter(x => !ids.has(x.id));
     this.reminders = this.reminders.filter(r => !ids.has(r.task_id || ''));
-    this.editingTask = null; this.resetModalFlags(); this.render();
+    this.confirmDeleteId = null; this.editingTask = null; this.resetModalFlags(); this.render();
     try {
       // Delete each subtask individually first (same request pattern as deleteTask — known to work)
       for (const sub of subs) {
