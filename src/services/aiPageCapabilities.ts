@@ -1508,6 +1508,51 @@ function mpPatchCachedProduct(
   }
 }
 
+interface OosRow { mp: string; article: string; name: string }
+
+/**
+ * Позиции с нулевым остатком: сначала из открытого раздела «Склад», иначе —
+ * напрямую из каталогов МП. null означает «данных нет», и это НЕ то же самое,
+ * что «всё в наличии»: пустой список нельзя выдавать за отсутствие проблем.
+ */
+async function collectOosRows(): Promise<OosRow[] | null> {
+  const items: any[] = w().stockModule?.items ?? [];
+  if (items.length) {
+    return items
+      .filter((i: any) => (i.stockTotal ?? 0) === 0)
+      .map((i: any) => ({
+        mp: i.mp ?? '—',
+        article: String(i.offerId ?? i.article ?? '—'),
+        name: String(i.name ?? i.offerId ?? '—'),
+      }));
+  }
+  try {
+    const [oz, wb, ym] = await Promise.all([
+      mpProducts('ozon'), mpProducts('wb'), mpProducts('yandex'),
+    ]);
+    if (!oz.length && !wb.length && !ym.length) return null;
+    const rows: OosRow[] = [];
+    for (const p of oz) {
+      if (((p.stock_fbs ?? 0) + (p.stock_fbo ?? 0)) === 0) {
+        rows.push({ mp: 'ozon', article: String(p.offer_id ?? '—'), name: String(p.name ?? '—') });
+      }
+    }
+    for (const p of wb) {
+      if ((p.stock_total ?? 0) === 0) {
+        rows.push({ mp: 'wb', article: String(p.vendor_code ?? '—'), name: String(p.title ?? '—') });
+      }
+    }
+    for (const p of ym) {
+      if (!p.archived && (p.stock_total ?? 0) === 0) {
+        rows.push({ mp: 'yandex', article: String(p.offer_id ?? '—'), name: String(p.name ?? '—') });
+      }
+    }
+    return rows;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Остатки напрямую из каталогов МП — работает даже если пользователь ни разу
  * не открывал раздел «Остатки» (модуль тогда пуст).
@@ -1649,26 +1694,45 @@ export function installGlobalAiActions(): void {
   // ── OOS — создать задачи по всем закончившимся товарам ──────────────────────
   aiPage.registerGlobal({
     name: 'create_oos_tasks',
-    description: 'Создать задачи для ВСЕХ товаров с нулевым остатком (OOS). Используй когда говорят «создай задачи по OOS», «все закончившиеся товары в задачи».',
+    description: 'Создать задачи по товарам с нулевым остатком (OOS) — по одной сводной задаче на маркетплейс. Используй когда говорят «создай задачи по OOS», «поставь задачу пополнить то, что кончилось».',
     args: '{}',
     run: async () => {
-      const items: any[] = w().stockModule?.items ?? [];
-      const oos = items.filter((i: any) => (i.stockTotal ?? 0) === 0);
-      if (!oos.length) return 'OOS товаров не обнаружено — все в наличии!';
+      // Раньше создавалась отдельная задача на КАЖДЫЙ товар, обрезанная по 20 штук:
+      // при 816 позициях это засоряло планировщик двумя десятками почти одинаковых
+      // задач и молча теряло остальные 796. Группируем по маркетплейсу — одна
+      // задача со списком внутри и полным количеством.
+      const rows = await collectOosRows();
+      if (!rows) return 'Остатки не загружены — не могу определить, что закончилось. Открой раздел [Склад](/stock) или синхронизируй маркетплейсы.';
+      if (!rows.length) return 'Товаров с нулевым остатком нет — всё в наличии.';
+
+      const byMp = new Map<string, typeof rows>();
+      for (const r of rows) {
+        const key = r.mp || '—';
+        if (!byMp.has(key)) byMp.set(key, []);
+        byMp.get(key)!.push(r);
+      }
+
       const { taskDb } = await import('@/services/taskDb');
-      let n = 0;
-      for (const item of oos.slice(0, 20)) {
+      const created: string[] = [];
+      const today = new Date().toLocaleDateString('ru-RU');
+
+      for (const [mp, list] of byMp) {
+        const label = MP_LABEL[mp as MpKind] ?? mp;
+        const shown = list.slice(0, 50);
+        const lines = shown.map(r => `• [${r.article}] ${String(r.name).slice(0, 60)}`).join('\n');
+        const more = list.length > shown.length ? `\n…и ещё ${list.length - shown.length} позиций.` : '';
         await taskDb.createTask({
-          title: `OOS: пополнить «${String(item.name || item.offerId).slice(0, 50)}»`,
-          description: `Товар закончился на складе. МП: ${item.mp ?? '—'}. Срочно заказать у поставщика.`,
+          title: `Пополнить ${list.length} товаров без остатка — ${label}`,
+          description: `Проверка Симы от ${today}. Нулевой остаток на ${label}: ${list.length} позиций.\n\n${lines}${more}`,
           status: 'todo', priority: 'red', scheduled_date: null,
           due_date: null, due_time: null, end_time: null, all_day: true,
           tags: 'Сима,OOS', sort_order: 9999, parent_id: null, assignee_id: null,
         });
-        n++;
+        created.push(`${label} — ${list.length} позиций`);
       }
+
       w().taskManagerModule?.load?.();
-      return `Создано ${n} задач по OOS-товарам. ${oos.length > 20 ? `(Показаны первые 20 из ${oos.length})` : ''}`;
+      return `Создано ${created.length} ${created.length === 1 ? 'задача' : 'задачи'} (по одной на маркетплейс), всего ${rows.length} позиций:\n${created.map(c => `• ${c}`).join('\n')}`;
     },
   });
 

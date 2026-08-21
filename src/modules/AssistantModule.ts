@@ -2,6 +2,7 @@ import '@/styles/assistant.css';
 import { showToast } from '@/utils/toast';
 import { edgeTtsSpeak, edgeTtsStop, edgeTtsUnlock } from '@/services/edgeTts';
 import { TtsStreamSession } from '@/services/ttsStream';
+import { CONFIRM_REQUIRED_ACTIONS, describePendingAction } from '@/services/aiActionPolicy';
 import { aiPage, aiGlow } from '@/services/aiPageContext';
 import { installGlobalAiActions } from '@/services/aiPageCapabilities';
 import { changeLog } from '@/modules/LogsModule';
@@ -111,6 +112,17 @@ const DATA_FETCH_ACTIONS = new Set([
  * токенов, если модель начнёт ходить по кругу.
  */
 const MAX_AGENT_STEPS = 4;
+
+/** Предел на один запрос к модели и на паузу между чанками стрима. */
+const AI_REQUEST_TIMEOUT_MS = 90_000;
+const AI_STALL_TIMEOUT_MS = 30_000;
+
+/**
+ * Служебная пометка о вызове действия в истории. Нужна модели как контекст
+ * («что я уже сделала»), но пользователю показывать её нельзя — при перезагрузке
+ * страницы она отрисовывалась как обычная реплика Симы.
+ */
+const ACTION_CALL_MARK = '[вызвала действие ';
 
 const ACTION_LABELS: Record<string, string> = {
   // Редактор
@@ -599,6 +611,28 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 - Связывай разделы: OOS + активная реклама на этот товар = слив бюджета. Заметил — скажи.
 - Давай ОДНО следующее действие, а не список из десяти. Конкретное и выполнимое.
 - Не пересказывай цифры, которые пользователь и так видит на экране. Добавляй вывод.
+
+## ВОПРОС — ЭТО НЕ КОМАНДА
+Отличай «расскажи» от «сделай». Это разные вещи, и путать их нельзя.
+
+ВОПРОС (только читай данные и отвечай текстом):
+«какие товары закончились», «что срочно пополнить», «что делать», «покажи», «сколько»,
+«есть ли», «проверь», «посмотри», «как дела», «что важного».
+→ Читающие действия можно. Создавать задачи, менять цены и остатки — НЕЛЬЗЯ.
+
+КОМАНДА (можно менять данные):
+«создай», «поставь задачу», «измени», «обнови», «удали», «опубликуй», «отправь».
+→ Только тогда вызывай действия, которые что-то записывают.
+
+Пример ошибки, которую нельзя повторять:
+Пользователь: «Какие товары закончились (OOS) и что срочно пополнить?»
+НЕПРАВИЛЬНО: вызвать create_oos_tasks и создать задачи.
+ПРАВИЛЬНО: mp_stock_health → текстом сказать, что закончилось и что важно пополнить,
+в конце предложить: «Поставить задачу на пополнение?»
+
+Если сомневаешься, вопрос это или команда — считай, что вопрос, и спроси.
+Массовые изменения всё равно потребуют подтверждения от пользователя кнопкой,
+поэтому не пытайся «проскочить» — просто предложи словами.
 
 ## ТЫ РАБОТАЕШЬ В НЕСКОЛЬКО ШАГОВ
 После каждого действия ты снова получаешь ход и решаешь: продолжить или ответить.
@@ -2407,6 +2441,8 @@ export class AssistantModule {
     let dividerInserted = false;
     for (const msg of this.history) {
       if (msg.role === 'system') continue;
+      // Служебная пометка о вызове действия — контекст для модели, не реплика.
+      if (msg.role === 'assistant' && msg.content.startsWith(ACTION_CALL_MARK)) continue;
       // Insert "new messages" divider once, at the right position
       if (!dividerInserted && dividerAt > 0 && nonSysIdx === dividerAt) {
         const div = document.createElement('div');
@@ -4462,6 +4498,12 @@ export class AssistantModule {
 
   /** Выполнить page-action напрямую (без LLM): показать индикатор, запустить, вывести результат. */
   private async runFastAction(name: string, args: any, status: string, fallbackStatus: string): Promise<void> {
+    // Быстрые команды не должны быть лазейкой в обход подтверждения.
+    if (CONFIRM_REQUIRED_ACTIONS.has(name)) {
+      this.addActionPlanCard(name, args, describePendingAction(name, args, ACTION_LABELS[name]), name);
+      this.setStatus('Готова');
+      return;
+    }
     this.isLoading = true;
     this.setInputEnabled(false);
     this.setStatus(status || fallbackStatus, 'thinking');
@@ -4860,7 +4902,7 @@ export class AssistantModule {
       this.setInputEnabled(false);
       const typing = this.addTypingIndicator();
       try {
-        const result = await aiPage.run('run_risk_audit', { create_tasks: true });
+        const result = await aiPage.run('run_risk_audit', { create_tasks: false });
         this.removeTypingIndicator(typing);
         this.history.push({ role: 'assistant', content: result.summary });
         this.saveSession();
@@ -5715,7 +5757,26 @@ export class AssistantModule {
     this.abortController = new AbortController();
     const { signal } = this.abortController;
 
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    // Без таймаутов подвисший ответ модели вешал ассистента навсегда: ввод
+    // оставался заблокированным, а статус — «Думаю…». Ограничиваем и весь
+    // запрос целиком, и паузу между чанками стрима.
+    let timedOut = false;
+    const abortSlow = () => { timedOut = true; try { this.abortController?.abort(); } catch { /* ignore */ } };
+    const overallTimer = setTimeout(abortSlow, AI_REQUEST_TIMEOUT_MS);
+    let stallTimer = setTimeout(abortSlow, AI_STALL_TIMEOUT_MS);
+    const bumpStall = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(abortSlow, AI_STALL_TIMEOUT_MS);
+    };
+    const clearTimers = () => { clearTimeout(overallTimer); clearTimeout(stallTimer); };
+    const asTimeout = (e: unknown) => {
+      if (!timedOut) return e;
+      return new Error('Модель не ответила вовремя. Попробуй ещё раз или задай вопрос короче.');
+    };
+
+    let res: Response;
+    try {
+      res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       signal,
       headers: {
@@ -5732,50 +5793,66 @@ export class AssistantModule {
         stream: useStream,
         ...(useStream ? { stream_options: { include_usage: true } } : {}),
       }),
-    });
+      });
+    } catch (e) {
+      clearTimers();
+      throw asTimeout(e);
+    }
+
     if (!res.ok) {
+      clearTimers();
       const errText = await res.text().catch(() => '');
       throw new Error(`API ${res.status}: ${errText}`);
     }
 
-    // ── Streaming path ──────────────────────────────────────────────────────────
-    if (useStream && res.body) {
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let full = '';
-      let lastChunkWithUsage: any = null;
+    try {
+      // ── Streaming path ────────────────────────────────────────────────────────
+      if (useStream && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let full = '';
+        let lastChunkWithUsage: any = null;
+        let streamDone = false;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        for (const line of chunk.split('\n')) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data: ')) continue;
-          const payload = trimmed.slice(6);
-          if (payload === '[DONE]') break;
-          try {
-            const parsed = JSON.parse(payload);
-            const delta = parsed?.choices?.[0]?.delta?.content;
-            if (delta) {
-              full += delta;
-              onChunk!(full);
-            }
-            if (parsed?.usage) lastChunkWithUsage = parsed;
-          } catch { /* ignore malformed SSE line */ }
+        while (!streamDone) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          // Данные пошли — сдвигаем окно ожидания.
+          bumpStall();
+          const chunk = decoder.decode(value, { stream: true });
+          for (const line of chunk.split('\n')) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            const payload = trimmed.slice(6);
+            // [DONE] завершает весь поток, а не только разбор текущего блока.
+            if (payload === '[DONE]') { streamDone = true; break; }
+            try {
+              const parsed = JSON.parse(payload);
+              const delta = parsed?.choices?.[0]?.delta?.content;
+              if (delta) {
+                full += delta;
+                onChunk!(full);
+              }
+              if (parsed?.usage) lastChunkWithUsage = parsed;
+            } catch { /* ignore malformed SSE line */ }
+          }
         }
+
+        const streamUsage = reportAiUsage('Сима', lastChunkWithUsage);
+        if (streamUsage && !this.isAdminUser) recordDailyTokens(streamUsage.total);
+        return full;
       }
 
-      const streamUsage = reportAiUsage('Сима', lastChunkWithUsage);
-      if (streamUsage && !this.isAdminUser) recordDailyTokens(streamUsage.total);
-      return full;
+      // ── Non-streaming fallback ────────────────────────────────────────────────
+      const data = await res.json();
+      const usage2 = reportAiUsage('Сима', data);
+      if (usage2 && !this.isAdminUser) recordDailyTokens(usage2.total);
+      return data?.choices?.[0]?.message?.content ?? '';
+    } catch (e) {
+      throw asTimeout(e);
+    } finally {
+      clearTimers();
     }
-
-    // ── Non-streaming fallback ──────────────────────────────────────────────────
-    const data = await res.json();
-    const usage2 = reportAiUsage('Сима', data);
-    if (usage2 && !this.isAdminUser) recordDailyTokens(usage2.total);
-    return data?.choices?.[0]?.message?.content ?? '';
   }
 
   /** Извлечь из ответа действие страницы {"action":"page_action",...} (с вложенными args). */
@@ -5896,7 +5973,7 @@ export class AssistantModule {
       // запроса: бюджет шагов и защита от повторов считаются заново.
       this.agentSteps = 0;
       this.agentCalls.clear();
-      await this.executePageAction(name, args, requestText, el);
+      await this.executePageAction(name, args, requestText, el, true);
     });
 
     el.querySelector<HTMLElement>('.sd-ap-plan-cancel')?.addEventListener('click', () => {
@@ -5914,8 +5991,23 @@ export class AssistantModule {
     args: any,
     requestText: string,
     planCardEl?: HTMLElement,
+    confirmed = false,
   ): Promise<void> {
-    this.setStatus('Выполняю…', 'thinking');
+    // Массовые изменения не выполняем молча — сначала карточка подтверждения.
+    // Проверка стоит здесь, в единственной точке запуска, поэтому её нельзя
+    // обойти ни через формат ответа модели, ни через цепочку шагов.
+    if (!confirmed && CONFIRM_REQUIRED_ACTIONS.has(name)) {
+      planCardEl?.remove();
+      this.addActionPlanCard(name, args, describePendingAction(name, args, ACTION_LABELS[name]), requestText);
+      this.setStatus('Готова');
+      this.saveSession();
+      return;
+    }
+    // Показываем номер шага: многошаговая работа иначе неотличима от зависания.
+    const stepLabel = this.agentSteps > 0
+      ? `Выполняю… (шаг ${this.agentSteps + 1} из ${MAX_AGENT_STEPS + 1})`
+      : 'Выполняю…';
+    this.setStatus(stepLabel, 'thinking');
     aiGlow(true);
     let resultMsg: string;
     try {
@@ -5994,6 +6086,7 @@ export class AssistantModule {
       : `Действие ${name} выполнено. Лимит шагов исчерпан — ответь пользователю ТОЛЬКО обычным текстом, без JSON. Скажи, что сделано и что осталось.`;
 
     let reply = '';
+    this.setStatus(canAct ? 'Думаю над следующим шагом…' : 'Формулирую ответ…', 'thinking');
     try {
       reply = await this.callAi([
         { role: 'system', content: this.getEffectiveSystemPrompt() + getStoreContext() + aiPage.promptFragment() },
@@ -6063,7 +6156,7 @@ export class AssistantModule {
           const keys = Object.keys(args ?? {});
           if (keys.length) argsStr = ' ' + JSON.stringify(args);
         } catch { /* ignore */ }
-        this.history[i] = { role: 'assistant', content: `[вызвала действие ${name}${argsStr}]` };
+        this.history[i] = { role: 'assistant', content: `${ACTION_CALL_MARK}${name}${argsStr}]` };
       }
       break;
     }
@@ -6287,6 +6380,14 @@ export class AssistantModule {
           stepOk.push(true);
 
         } else if (step.action === 'page_action' && step.name) {
+          if (CONFIRM_REQUIRED_ACTIONS.has(step.name)) {
+            // Массовое изменение внутри цепочки — выносим на отдельное
+            // подтверждение, а не выполняем заодно с остальными шагами.
+            this.addActionPlanCard(step.name, step.args ?? {}, describePendingAction(step.name, step.args ?? {}, ACTION_LABELS[step.name]), requestText);
+            results.push(`⏸ ${stepName}: нужно подтверждение — карточка ниже`);
+            stepOk.push(false);
+            continue;
+          }
           const res = await aiPage.run(step.name, step.args ?? {});
           changeLog.logAction({
             category: 'ai',
