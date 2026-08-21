@@ -6,7 +6,9 @@ import {
 } from '@/services/wbApi';
 import {
   getYandexPromos, getYandexPromoOffers, removeYandexPromoOffers,
-  getYandexCampaignBids, updateYandexCampaignBids, getYandexRecommendedBids,
+  getYandexBusinessBids, getYandexBidsRecommendations, updateYandexBusinessBids,
+  YM_BID_MIN, YM_BID_MAX,
+  type YandexBid, type YandexBidRecommendation,
 } from '@/services/yandexApi';
 import { ozonDb } from '@/services/ozonDb';
 import { wbDb } from '@/services/wbDb';
@@ -307,12 +309,14 @@ export class AdvertisingModule {
   // Bulk selection
   private selected = new Set<string>();
 
-  // YM boost
-  private ymBids: any[] = [];
-  private ymRec:  any[] = [];
+  // YM boost (уровень бизнеса: FBS+FBY одного бизнеса = один рекламный кабинет)
+  private ymBids: YandexBid[] = [];
+  private ymRec:  YandexBidRecommendation[] = [];
   private ymBidsLoading = false;
-  private ymBidEdits = new Map<string, string>();
+  private ymBidEdits = new Map<string, string>();   // sku → введённый процент, строкой
   private ymBidsSearch = '';
+  private ymBoostBusiness: { businessId: number; apiKey: string; label: string } | null = null;
+  private ymBoostLoaded = false;
 
   // AI
   private aiHints: AiHint[] = [];
@@ -1196,9 +1200,9 @@ export class AdvertisingModule {
         seen.add(key); return true;
       });
     }
-    // ЯМ Акции: бизнес-уровень — один business_id = одни промо (не дублируем)
-    // ЯМ Буст: кампания-уровень — campaign_id разные у FBS/FBY, не дедуплицируем
-    if (this.tab === 'yandex' && this.ymSub === 'promo') {
+    // ЯМ: и Акции, и Буст работают на уровне БИЗНЕСА. FBS и FBY одного бизнеса —
+    // это один рекламный кабинет, поэтому грузим один раз на business_id.
+    if (this.tab === 'yandex') {
       const seen = new Set<number>();
       return stores.filter(s => {
         const bid = Number(s.business_id);
@@ -1207,6 +1211,25 @@ export class AdvertisingModule {
       });
     }
     return stores;
+  }
+
+  /** Уникальные бизнесы ЯМ (FBS+FBY одного бизнеса = один рекламный кабинет). */
+  private ymBusinesses(): Array<{ businessId: number; apiKey: string; label: string }> {
+    const map = new Map<number, { businessId: number; apiKey: string; label: string }>();
+    for (const s of this.stores) {
+      const bid = Number(s.business_id);
+      if (!bid) continue;
+      const existing = map.get(bid);
+      if (existing) {
+        // Тот же бизнес под другой схемой — показываем оба размещения в подписи
+        const pt = (s as any).placement_type as string | undefined;
+        if (pt && !existing.label.includes(pt)) existing.label += ` + ${pt}`;
+      } else {
+        const pt = (s as any).placement_type as string | undefined;
+        map.set(bid, { businessId: bid, apiKey: s.api_key, label: s.name + (pt ? ` [${pt}]` : '') });
+      }
+    }
+    return [...map.values()];
   }
 
   private async loadCampaigns() {
@@ -1863,23 +1886,37 @@ export class AdvertisingModule {
   }
 
   private async loadYmBids() {
-    // Если "Все" — пробуем найти любой магазин с campaign_id
-    let store = this.stores.find(s => s.id === this.storeId);
-    if (!store && !this.storeId) {
-      store = this.stores.find(s => s.campaign_id);
-      if (store) showToast(`Ставки загружаются для «${store.name}» (первый магазин с Campaign ID)`, 'warning');
+    // Буст в ЯМ — на уровне бизнеса. Если выбран конкретный магазин, берём его бизнес,
+    // иначе (режим «Все») — первый бизнес из списка.
+    const businesses = this.ymBusinesses();
+    if (!businesses.length) {
+      showToast('У магазина не заполнен Business ID — добавьте его в Настройках магазина', 'warning');
+      return;
     }
-    if (!store) { showToast('Выберите конкретный магазин', 'warning'); return; }
-    if (!store.campaign_id) { showToast('Нет Campaign ID. Добавьте его в настройки магазина', 'warning'); return; }
-    this.ymBidsLoading = true; this.ymBidsSearch = ''; this.flushBody();
+    const selected = this.stores.find(s => s.id === this.storeId);
+    const target = selected && Number(selected.business_id)
+      ? businesses.find(b => b.businessId === Number(selected.business_id)) ?? businesses[0]
+      : businesses[0];
+
+    this.ymBoostBusiness = target;
+    this.ymBidsLoading = true; this.ymBidsSearch = ''; this.ymBidEdits.clear();
+    this.ymBids = []; this.ymRec = []; this.ymBoostLoaded = false;
+    this.flushBody();
     try {
       const sig = this.eventsAC.signal;
-      const [bids, rec] = await Promise.all([
-        getYandexCampaignBids(store.api_key, Number(store.campaign_id), sig),
-        getYandexRecommendedBids(store.api_key, Number(store.campaign_id), sig),
-      ]);
-      this.ymBids = bids; this.ymRec = rec;
+      const bids = await getYandexBusinessBids(target.apiKey, target.businessId, sig);
+      this.ymBids = bids;
+      this.ymBoostLoaded = true;
+      this.flushBody();   // показываем ставки сразу, рекомендации догружаем следом
+
+      if (bids.length) {
+        // Рекомендации требуют явный список SKU — запрашиваем по уже известным ставкам.
+        this.ymRec = await getYandexBidsRecommendations(
+          target.apiKey, target.businessId, bids.map(b => b.sku), sig,
+        );
+      }
     } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       showToast(`Ошибка загрузки ставок: ${err.message}`, 'error');
     } finally {
       this.ymBidsLoading = false; this.flushBody();
@@ -2020,17 +2057,39 @@ export class AdvertisingModule {
   }
 
   private async saveYmBids() {
-    const store = this.stores.find(s => s.id === this.storeId);
-    if (!store?.campaign_id) return;
-    const bids: Array<{ offerId: string; bid: number }> = [];
-    this.ymBidEdits.forEach((val, oid) => {
-      const n = Number(val); if (!isNaN(n) && n > 0) bids.push({ offerId: oid, bid: n });
+    const target = this.ymBoostBusiness;
+    if (!target) { showToast('Сначала загрузите ставки', 'warning'); return; }
+
+    const bids: YandexBid[] = [];
+    const invalid: string[] = [];
+    this.ymBidEdits.forEach((val, sku) => {
+      const raw = val.trim().replace(',', '.');
+      if (!raw) return;
+      const pct = Number(raw);
+      if (isNaN(pct) || pct < 0) { invalid.push(sku); return; }
+      // Ставка 0 = снять товар с продвижения (разрешено API).
+      if (pct === 0) { bids.push({ sku, bid: 0 }); return; }
+      const bid = Math.round(pct * 100);
+      if (bid < YM_BID_MIN || bid > YM_BID_MAX) { invalid.push(sku); return; }
+      bids.push({ sku, bid });
     });
+
+    if (invalid.length) {
+      showToast(`Ставка должна быть 0 или ${YM_BID_MIN / 100}–${YM_BID_MAX / 100}% (${invalid.length} с ошибкой)`, 'error');
+      return;
+    }
     if (!bids.length) { showToast('Нет изменений', 'warning'); return; }
+
     try {
-      await updateYandexCampaignBids(store.api_key, Number(store.campaign_id), bids);
+      await updateYandexBusinessBids(target.apiKey, target.businessId, bids, this.eventsAC.signal);
       this.ymBidEdits.clear();
-      showToast(`Ставки сохранены: ${bids.length}`, 'success');
+      const removed = bids.filter(b => b.bid === 0).length;
+      showToast(
+        removed
+          ? `Сохранено: ${bids.length - removed} ставок, снято с продвижения ${removed}`
+          : `Ставки сохранены: ${bids.length}`,
+        'success',
+      );
       await this.loadYmBids();
     } catch (err: any) {
       showToast(`Ошибка: ${err.message}`, 'error');

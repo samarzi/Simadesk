@@ -1501,53 +1501,93 @@ export async function removeYandexPromoOffers(
 // ── Advertising: буст-ставки ───────────────────────────────────────────────
 
 /**
- * POST /v2/campaigns/{campaignId}/bids — текущие ставки буст-продвижения.
- * ЯМ API использует POST для получения списка ставок (GET возвращает 405).
+ * Ставка буста в ЯМ — это процент от цены товара, умноженный на 100.
+ * Пример: ставка 570 = 5.7% от цены. Допустимый диапазон: 50–9999 (0.5%–99.99%).
+ * Ставка 0 — снять товар с продвижения.
  */
-export async function getYandexCampaignBids(
-  apiKey: string,
-  campaignId: number,
-  signal?: AbortSignal,
-): Promise<any[]> {
-  try {
-    const resp = await yandexFetch<any>(
-      `/v2/campaigns/${campaignId}/bids`,
-      'POST', apiKey, {}, signal,
-    );
-    return resp?.result?.items ?? resp?.items ?? resp?.bids ?? [];
-  } catch { return []; }
+export const YM_BID_MIN = 50;
+export const YM_BID_MAX = 9999;
+
+export interface YandexBid {
+  sku: string;
+  bid: number;               // процент × 100
+}
+
+export interface YandexBidRecommendation {
+  sku: string;
+  bid: number;               // рекомендованная ставка, процент × 100
+  /** Варианты ставок с прогнозом доли показов. */
+  bidRecommendations?: Array<{ bid: number; showPercent?: number; benefits?: string[] }>;
 }
 
 /**
- * PUT /v2/campaigns/{campaignId}/bids — установить ставки буст-продвижения.
+ * POST /v2/businesses/{businessId}/bids/info — текущие ставки буста.
+ * Буст в ЯМ работает на уровне БИЗНЕСА: одна кампания на все магазины (FBS+FBY),
+ * поэтому endpoint принимает businessId, а не campaignId.
  */
-export async function updateYandexCampaignBids(
+export async function getYandexBusinessBids(
   apiKey: string,
-  campaignId: number,
-  bids: Array<{ offerId: string; bid: number }>,
+  businessId: number,
+  signal?: AbortSignal,
+): Promise<YandexBid[]> {
+  const all: YandexBid[] = [];
+  let pageToken: string | undefined;
+  // Ограничиваем число страниц, чтобы не зациклиться при аномальном ответе API.
+  for (let page = 0; page < 40; page++) {
+    const body: Record<string, unknown> = { limit: 500 };
+    if (pageToken) body.pageToken = pageToken;
+    const resp = await yandexFetch<any>(
+      `/v2/businesses/${businessId}/bids/info`,
+      'POST', apiKey, body, signal,
+    );
+    const items: YandexBid[] = resp?.result?.bids ?? [];
+    all.push(...items);
+    pageToken = resp?.result?.paging?.nextPageToken;
+    if (!pageToken || !items.length) break;
+  }
+  return all;
+}
+
+/**
+ * POST /v2/businesses/{businessId}/bids/recommendations — рекомендованные ставки.
+ * Список SKU обязателен, максимум 1500 за запрос — режем на чанки.
+ */
+export async function getYandexBidsRecommendations(
+  apiKey: string,
+  businessId: number,
+  skus: string[],
+  signal?: AbortSignal,
+): Promise<YandexBidRecommendation[]> {
+  if (!skus.length) return [];
+  const out: YandexBidRecommendation[] = [];
+  const CHUNK = 1500;
+  for (let i = 0; i < skus.length; i += CHUNK) {
+    const resp = await yandexFetch<any>(
+      `/v2/businesses/${businessId}/bids/recommendations`,
+      'POST', apiKey, { skus: skus.slice(i, i + CHUNK) }, signal,
+    );
+    out.push(...(resp?.result?.recommendations ?? []));
+  }
+  return out;
+}
+
+/**
+ * PUT /v2/businesses/{businessId}/bids — установить ставки буста.
+ * Максимум 1500 позиций за запрос. Ставка 0 снимает товар с продвижения.
+ */
+export async function updateYandexBusinessBids(
+  apiKey: string,
+  businessId: number,
+  bids: YandexBid[],
+  signal?: AbortSignal,
 ): Promise<void> {
-  await yandexFetch(
-    `/v2/campaigns/${campaignId}/bids`,
-    'PUT', apiKey, { bids },
-  );
-}
-
-/**
- * GET /v2/campaigns/{campaignId}/bids/recommended — рекомендованные ставки.
- * Endpoint может вернуть 404 если у кампании нет товаров для буста — возвращаем [].
- */
-export async function getYandexRecommendedBids(
-  apiKey: string,
-  campaignId: number,
-  signal?: AbortSignal,
-): Promise<any[]> {
-  try {
-    const resp = await yandexFetch<any>(
-      `/v2/campaigns/${campaignId}/bids/recommendations`,
-      'POST', apiKey, {}, signal,
+  const CHUNK = 1500;
+  for (let i = 0; i < bids.length; i += CHUNK) {
+    await yandexFetch(
+      `/v2/businesses/${businessId}/bids`,
+      'PUT', apiKey, { bids: bids.slice(i, i + CHUNK) }, signal,
     );
-    return resp?.result?.items ?? resp?.items ?? [];
-  } catch { return []; }
+  }
 }
 
 /**
