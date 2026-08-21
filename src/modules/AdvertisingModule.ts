@@ -670,35 +670,28 @@ export class AdvertisingModule {
         </div>
       </div>`;
     } else {
-      // ЯМ: строим подсказку для акций (business_id-дедупликация)
-      const ymPromoHint = this.ymSub === 'promo' && !this.storeId && this.stores.length > 1
-        ? (() => {
-            const uniqueBusinesses = new Set(this.stores.map(s => Number(s.business_id)).filter(Boolean));
-            return uniqueBusinesses.size < this.stores.length
-              ? `<span style="font-size:11px;color:var(--text3)">Акции — уровень бизнеса · загружается 1 раз на ${uniqueBusinesses.size} бизнес${uniqueBusinesses.size > 1 ? 'а' : ''}</span>`
-              : '';
-          })()
+      // И акции, и буст в ЯМ живут на уровне бизнеса: FBS и FBY одного бизнеса —
+      // это один рекламный кабинет, поэтому объясняем это прямо в интерфейсе.
+      const businesses = this.ymBusinesses();
+      const merged = businesses.length > 0 && businesses.length < this.stores.length;
+      const ymScope = merged
+        ? `<span class="ad-scope" title="FBS и FBY одного бизнеса используют общую рекламу — данные загружаются один раз">
+             ${I.info('', 12)} ${this.stores.length} магазина → ${businesses.length} рекл. кабинет${businesses.length > 1 ? 'а' : ''}
+           </span>`
         : '';
 
-      // ЯМ Буст: для FBS/FBY разные campaign_id — показываем какой именно
-      const ymBoostNote = this.ymSub === 'boost'
-        ? (() => {
-            const storesWithCampaign = this.stores.filter(s => s.campaign_id);
-            if (storesWithCampaign.length > 1) {
-              return `<span style="font-size:11px;color:var(--text3)">Выберите магазин для загрузки ставок (FBS и FBY — разные кампании)</span>`;
-            }
-            return '';
-          })()
+      const boostTarget = this.ymSub === 'boost' && this.ymBoostBusiness
+        ? `<span class="ad-scope">кабинет: <b>${esc(this.ymBoostBusiness.label)}</b></span>`
         : '';
 
       el.innerHTML = `<div class="ads">
         <div class="ads-l">
           <div class="ad-stabs">
             <button class="ad-stab ${this.ymSub==='promo'?'on':''}" data-ymsub="promo">Акции</button>
-            <button class="ad-stab ${this.ymSub==='boost'?'on':''}" data-ymsub="boost">Буст-продвижение</button>
+            <button class="ad-stab ${this.ymSub==='boost'?'on':''}" data-ymsub="boost">Буст продаж</button>
           </div>
-          ${ymPromoHint}
-          ${ymBoostNote}
+          ${ymScope}
+          ${boostTarget}
         </div>
         ${this.ymSub==='boost'?`<div class="ads-r">
           <button class="rpr-btn rpr-btn-ghost" id="ym-load-bids" style="display:flex;align-items:center;gap:5px;height:28px;padding:0 10px;font-size:12px">
@@ -930,11 +923,23 @@ export class AdvertisingModule {
     this.el.addEventListener('input', (e) => {
       const t = e.target as HTMLInputElement;
       if (t.id === 'adf-search')   { this.searchQ = t.value; this.applyFilter(); }
-      if (t.id === 'boost-search') { this.ymBidsSearch = t.value; this.flushBody(); }
+      if (t.id === 'boost-search') {
+        this.ymBidsSearch = t.value;
+        // Полный ре-рендер сбросил бы фокус и каретку прямо во время набора —
+        // восстанавливаем их после перерисовки.
+        const pos = t.selectionStart;
+        this.flushBody();
+        const next = this.el.querySelector<HTMLInputElement>('#boost-search');
+        if (next) { next.focus(); if (pos != null) next.setSelectionRange(pos, pos); }
+      }
       if (t.dataset.boostid) {
-        const cur = this.ymBids.find(b => (b.offerId ?? b.offer_id) === t.dataset.boostid);
-        t.classList.toggle('ch', t.value !== '' && Number(t.value) !== (cur?.bid ?? 0));
-        this.ymBidEdits.set(t.dataset.boostid, t.value);
+        const sku = t.dataset.boostid;
+        const cur = this.ymBids.find(b => b.sku === sku);
+        const pct = t.value.trim() ? Number(t.value.replace(',', '.')) : null;
+        const changed = pct !== null && !isNaN(pct) && Math.round(pct * 100) !== (cur?.bid ?? 0);
+        t.classList.toggle('ch', changed);
+        if (t.value.trim()) this.ymBidEdits.set(sku, t.value);
+        else this.ymBidEdits.delete(sku);
       }
     }, { signal });
 
@@ -1753,72 +1758,129 @@ export class AdvertisingModule {
 
   // ─── YM Boost table ───────────────────────────────────────────────────────────
 
+  /** Ставка ЯМ хранится как процент × 100 → показываем человеку как проценты. */
+  private static bidPct(bid: number): string {
+    return (bid / 100).toFixed(2).replace(/\.?0+$/, '') + '%';
+  }
+
   private renderBoostTable(): string {
-    if (this.ymBidsLoading) return skeleton(6);
-    if (!this.ymBids.length) {
-      const store = this.stores.find(s => s.id === this.storeId);
-      if (store && !store.campaign_id) {
-        return `<div style="padding:20px">
-          <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:18px;max-width:480px">
-            <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:8px">⚠️ Нужен Campaign ID</div>
-            <p style="font-size:12px;color:var(--text2);line-height:1.7;margin:0 0 8px">
-              Для управления ставками Буста нужен <b>Campaign ID</b> магазина.
-              Добавьте его в разделе <b>Магазины → Яндекс.Маркет</b> в поле «ID кампании».
-            </p>
-            <p style="font-size:11px;color:var(--text3);margin:0">
-              Campaign ID находится в URL кабинета: partner.market.yandex.ru/campaigns/<b>12345678</b>/...
-            </p>
-          </div>
-        </div>`;
-      }
-      return empty('Нет данных по ставкам', 'Нажмите «Загрузить ставки» выше');
+    if (this.ymBidsLoading && !this.ymBoostLoaded) return skeleton(6);
+
+    if (!this.ymBusinesses().length) {
+      return `<div style="padding:20px">
+        <div class="ad-note ad-note-warn">
+          <div class="ad-note-t">Нужен Business ID</div>
+          <p class="ad-note-p">
+            Буст продаж в Яндекс.Маркете работает на уровне <b>бизнеса</b> — одна рекламная
+            кампания на все магазины (и FBS, и FBY). Чтобы управлять ставками, укажите
+            <b>Business ID</b> в разделе <b>Магазины → Яндекс.Маркет</b>.
+          </p>
+          <p class="ad-note-s">
+            Business ID есть в кабинете ЯМ: Настройки → О компании, либо в URL
+            <code>partner.market.yandex.ru/business/<b>12345678</b></code>
+          </p>
+        </div>
+      </div>`;
     }
 
-    const recMap = new Map<string, any>();
-    for (const r of this.ymRec) recMap.set(r.offerId ?? r.offer_id ?? '', r);
+    if (!this.ymBoostLoaded) {
+      return empty('Ставки буста не загружены', 'Нажмите «Загрузить ставки» — данные придут по всему бизнесу сразу');
+    }
+
+    if (!this.ymBids.length) {
+      return `<div style="padding:20px">
+        <div class="ad-note">
+          <div class="ad-note-t">В бусте пока нет товаров</div>
+          <p class="ad-note-p">
+            По бизнесу <b>${esc(this.ymBoostBusiness?.label ?? '')}</b> не найдено ни одной ставки.
+            Это значит, что буст продаж ещё не запускался через API или все товары сняты с продвижения.
+          </p>
+          <p class="ad-note-s">
+            Ставка в ЯМ — это <b>процент от цены товара</b> (от 0,5% до 99,99%), который вы платите
+            за продажу через продвижение. Запустить буст на новые товары можно в кабинете ЯМ,
+            после чего ставки появятся здесь.
+          </p>
+        </div>
+      </div>`;
+    }
+
+    const recMap = new Map<string, YandexBidRecommendation>();
+    for (const r of this.ymRec) recMap.set(r.sku, r);
 
     const q = this.ymBidsSearch.toLowerCase().trim();
-    const visibleBids = q ? this.ymBids.filter(b => (b.offerId ?? b.offer_id ?? '').toLowerCase().includes(q)) : this.ymBids;
+    const visibleBids = q ? this.ymBids.filter(b => b.sku.toLowerCase().includes(q)) : this.ymBids;
 
     const rows = visibleBids.map(b => {
-      const oid = b.offerId ?? b.offer_id ?? '';
-      const rec = recMap.get(oid);
-      const cur = b.bid ?? 0;
-      const recV = rec?.bid ?? rec?.recommendedBid ?? null;
-      const edited = this.ymBidEdits.get(oid) ?? '';
+      const rec = recMap.get(b.sku);
+      const recV = rec?.bid ?? null;
+      const edited = this.ymBidEdits.get(b.sku) ?? '';
+      const editedNum = edited.trim() ? Number(edited.replace(',', '.')) : null;
+      const changed = editedNum !== null && !isNaN(editedNum) && Math.round(editedNum * 100) !== b.bid;
+
+      // Прогноз доли показов для рекомендованной ставки
+      const showPct = rec?.bidRecommendations?.find(r => r.bid === recV)?.showPercent;
+
+      // Сравнение текущей ставки с рекомендацией
+      let verdict = '<span class="ad-bv ad-bv-none">—</span>';
+      if (recV && b.bid) {
+        const delta = (b.bid - recV) / recV * 100;
+        if (delta < -20)      verdict = `<span class="ad-bv ad-bv-low">ниже реком. на ${Math.abs(delta).toFixed(0)}%</span>`;
+        else if (delta > 20)  verdict = `<span class="ad-bv ad-bv-high">выше реком. на ${delta.toFixed(0)}%</span>`;
+        else                  verdict = `<span class="ad-bv ad-bv-ok">в норме</span>`;
+      } else if (!b.bid) {
+        verdict = `<span class="ad-bv ad-bv-off">не продвигается</span>`;
+      }
+
       return `<tr>
-        <td><code style="font-size:11px;color:var(--accent)">${esc(oid)}</code></td>
-        <td class="r">${cur ? fmt(cur) + ' ₽' : '—'}</td>
-        <td class="r dim">${recV ? fmt(recV) + ' ₽' : '—'}</td>
-        <td><input type="number" min="0" class="ad-bi ${edited&&Number(edited)!==cur?'ch':''}"
-          value="${edited}" placeholder="${cur||''}" data-boostid="${esc(oid)}"></td>
+        <td><code class="ad-sku">${esc(b.sku)}</code></td>
+        <td class="r"><b style="color:var(--text)">${b.bid ? AdvertisingModule.bidPct(b.bid) : '—'}</b></td>
+        <td class="r dim">
+          ${recV ? AdvertisingModule.bidPct(recV) : '—'}
+          ${showPct != null ? `<span class="ad-shp" title="Прогноз доли показов при рекомендованной ставке">${showPct}% показов</span>` : ''}
+        </td>
+        <td>${verdict}</td>
+        <td>
+          <div class="ad-bi-wrap">
+            <input type="number" min="0" max="99.99" step="0.1" class="ad-bi ${changed ? 'ch' : ''}"
+              value="${esc(edited)}" placeholder="${b.bid ? (b.bid / 100).toString() : '0'}" data-boostid="${esc(b.sku)}">
+            <span class="ad-bi-suf">%</span>
+          </div>
+        </td>
       </tr>`;
     }).join('');
 
     const emptyRow = !visibleBids.length
-      ? `<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text3);font-size:12px">Ничего не найдено</td></tr>`
+      ? `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text3);font-size:12px">Ничего не найдено</td></tr>`
       : '';
 
+    const pending = this.ymBidEdits.size;
+    const activeCount = this.ymBids.filter(b => b.bid > 0).length;
+
     return `<div>
-      <div style="display:flex;align-items:center;gap:8px;padding:8px 18px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2)">
-        <input id="boost-search" value="${esc(this.ymBidsSearch)}" placeholder="Поиск по Offer ID…"
-          style="flex:1;max-width:300px;padding:5px 10px;background:var(--bg);border:1px solid var(--border);
-            border-radius:8px;color:var(--text);font-size:12px;font-family:inherit;outline:none">
-        <span style="font-size:11px;color:var(--text3)">${visibleBids.length} / ${this.ymBids.length}</span>
+      <div class="ad-boost-bar">
+        <input id="boost-search" value="${esc(this.ymBidsSearch)}" placeholder="Поиск по SKU…" class="ad-boost-search">
+        <span class="ad-boost-stat">${visibleBids.length} из ${this.ymBids.length}</span>
+        <span class="ad-boost-stat">·</span>
+        <span class="ad-boost-stat">продвигается ${activeCount}</span>
+        ${this.ymBidsLoading ? `<span class="ad-boost-stat" style="color:var(--accent)">рекомендации загружаются…</span>` : ''}
       </div>
       <div style="overflow-x:auto"><table class="adt">
         <thead><tr>
-          <th>Offer ID</th>
-          <th class="r">Текущая ставка</th>
-          <th class="r">Рекомендованная</th>
-          <th style="min-width:120px">Новая ставка, ₽</th>
+          <th>SKU</th>
+          <th class="r">Ставка</th>
+          <th class="r">Рекомендация ЯМ</th>
+          <th>Оценка</th>
+          <th style="min-width:130px">Новая ставка</th>
         </tr></thead>
         <tbody>${rows}${emptyRow}</tbody>
       </table></div>
-      <div style="padding:12px 18px;border-top:1px solid var(--border)">
+      <div class="ad-boost-foot">
         <button class="rpr-btn rpr-btn-green" id="ym-save-bids" style="display:flex;align-items:center;gap:5px;height:28px;padding:0 14px;font-size:12px">
-          ${I.check()} Сохранить ставки
+          ${I.check()} Сохранить${pending ? ` (${pending})` : ''}
         </button>
+        <span class="ad-boost-hint">
+          Ставка — процент от цены товара за продажу через продвижение (0,5–99,99%). Ставка <b>0</b> снимает товар с буста.
+        </span>
       </div>
     </div>`;
   }
