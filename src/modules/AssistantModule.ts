@@ -6047,6 +6047,7 @@ export class AssistantModule {
         if (step.action === 'navigate' && step.page) {
           this.navigateTo(step.page);
           results.push(`✓ Перешёл в «${step.label ?? step.page}»`);
+          stepOk.push(true);
 
         } else if (step.action === 'create_task' && step.title) {
           await this.createTaskFromAI({
@@ -6056,6 +6057,7 @@ export class AssistantModule {
             priority: step.priority as any,
           });
           results.push(`✓ Задача: ${step.title}`);
+          stepOk.push(true);
 
         } else if (step.action === 'page_action' && step.name) {
           const res = await aiPage.run(step.name, step.args ?? {});
@@ -6067,31 +6069,42 @@ export class AssistantModule {
             undo: res.undo,
           });
           results.push(`✓ ${res.summary}`);
+          stepOk.push(true);
+
+        } else {
+          results.push(`✗ ${stepName}: шаг пропущен — не хватает обязательных полей`);
+          stepOk.push(false);
         }
       } catch (e: unknown) {
         results.push(`✗ ${stepName}: ${e instanceof Error ? e.message : String(e)}`);
+        stepOk.push(false);
       }
 
       // Пауза между шагами
       await new Promise(r => setTimeout(r, 300));
     }
 
-    // Финальное состояние шагов — все done
+    // Финальное состояние — честно показываем какие шаги упали
     if (stepsEl) {
-      stepsEl.innerHTML = chain.steps.map((s) => {
+      stepsEl.innerHTML = chain.steps.map((s, idx) => {
         const sName = s.action === 'navigate'
           ? `Перейти: ${s.label ?? s.page}`
           : s.action === 'create_task'
           ? `Создать задачу: ${s.title}`
           : s.name ?? s.action;
-        return `<div class="sd-ap-chain-step chain-done">✓ ${sName}</div>`;
+        const ok = stepOk[idx] ?? false;
+        return `<div class="sd-ap-chain-step ${ok ? 'chain-done' : 'chain-failed'}">${ok ? '✓' : '✗'} ${sName}</div>`;
       }).join('');
     }
 
     aiGlow(false);
     this.setStatus('Готова');
 
-    const summary = `Выполнено ${results.length} шагов:\n${results.join('\n')}`;
+    const okCount = stepOk.filter(Boolean).length;
+    const head = okCount === chain.steps.length
+      ? `Выполнено ${okCount} шагов:`
+      : `Выполнено ${okCount} из ${chain.steps.length} шагов (${chain.steps.length - okCount} с ошибкой):`;
+    const summary = `${head}\n${results.join('\n')}`;
     this.history.push({ role: 'assistant', content: summary });
     this.saveSession();
 

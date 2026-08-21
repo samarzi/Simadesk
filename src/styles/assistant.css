@@ -1239,6 +1239,10 @@ html.light .sd-ap-msg-bubble pre { background: rgba(20, 10, 40, 0.05); }
   color: var(--ap-txt-3);
   opacity: 0.6;
 }
+.sd-ap-chain-step.chain-failed {
+  color: #fca5a5;
+  background: rgba(248, 68, 68, 0.10);
+}
 @keyframes chain-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }

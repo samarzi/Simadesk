@@ -85,6 +85,34 @@ function chip(s: string): string {
   return `<span class="sp-chip" style="--c:${st.color}">${st.text}</span>`;
 }
 
+/** Коды причин/статусов возвратов — в интерфейсе они должны быть по-русски. */
+const RETURN_REASON: Record<string, string> = {
+  STARTED_BY_USER:    'Инициирован покупателем',
+  REFUND_IN_PROGRESS: 'Возврат денег в процессе',
+  REFUNDED:           'Деньги возвращены',
+  FAILED:             'Возврат не удался',
+  REJECTED:           'Отклонён',
+  DECISION_MADE:      'Решение принято',
+  WAITING_FOR_DECISION: 'Ждёт решения',
+  RETURN:             'Возврат',
+  UNREDEEMED:         'Невыкуп',
+};
+function returnReason(code: string): string {
+  if (!code || code === '—') return '—';
+  return RETURN_REASON[code] ?? code;
+}
+
+/** Типы документов Яндекса приходят кодами — показываем человеческие названия. */
+const YM_DOC_TYPE: Record<string, string> = {
+  SUPPLY:            'Акт приёма-передачи',
+  ADDITIONAL_SUPPLY: 'Дополнительная поставка',
+  TRANSFER:          'Транспортная накладная',
+  WITHDRAW:          'Заявка на вывоз',
+  ACT_OF_WITHDRAW:   'Акт вывоза',
+  VALIDATION_ERRORS: 'Ошибки проверки',
+  UTILIZATION:       'Акт утилизации',
+};
+
 function urgencyBadge(daysLeft: number): string {
   if (daysLeft <= 0)  return `<span class="sp-badge sp-badge-red">OOS</span>`;
   if (daysLeft <= 7)  return `<span class="sp-badge sp-badge-red">${daysLeft}д</span>`;

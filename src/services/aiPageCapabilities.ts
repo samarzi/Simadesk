@@ -1417,6 +1417,24 @@ export function installGlobalAiActions(): void {
     w().docsModule?.aiUndoRestoreMulti?.(p);
   });
 
+  // Откат статуса задачи (mark_task_done возвращал undo, но обработчика не было —
+  // «отмени» после закрытия задачи падало с «Нет обработчика отката»).
+  registerUndoHandler('task_status', async (p: { id: string; status: string }) => {
+    const { taskDb } = await import('@/services/taskDb');
+    await taskDb.updateTask(p.id, { status: p.status as any });
+    w().taskManagerModule?.load?.();
+  });
+
+  // Откат остатка на маркетплейсе — возвращает прежнее значение через тот же API.
+  registerUndoHandler('mp_stock', async (p: { mp: string; article: string; stock: number; store?: string }) => {
+    await aiPage.run('mp_update_stock', { mp: p.mp, article: p.article, stock: p.stock, store: p.store });
+  });
+
+  // Откат цены на маркетплейсе.
+  registerUndoHandler('mp_price', async (p: { mp: string; article: string; price: number; store?: string }) => {
+    await aiPage.run('mp_update_price', { mp: p.mp, article: p.article, price: p.price, store: p.store });
+  });
+
   const createDoc: AiAction = {
     name: 'create_doc',
     description: 'Создать новый документ в Редакторе (Excel или Word). Работает из любого раздела — сам откроет Редактор.',
