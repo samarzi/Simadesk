@@ -1601,15 +1601,6 @@ export class AssistantModule {
     return prompt;
   }
 
-  private renderNewsBadge(): void {
-    if (!this.btn) return;
-    if (this.btn.querySelector('.sima-news-dot')) return;
-    const dot = document.createElement('span');
-    dot.className = 'sima-news-dot';
-    dot.title = `${this.mpNewsUnread} новых новостей МП`;
-    this.btn.appendChild(dot);
-  }
-
   private removeNewsBadge(): void {
     this.btn?.querySelector('.sima-news-dot')?.remove();
   }
