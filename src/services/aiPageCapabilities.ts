@@ -1953,6 +1953,281 @@ export function installGlobalAiActions(): void {
     },
   });
 
+  // ── Маркетплейсы: живые операции — найти товар, обновить остаток, цену ────────
+
+  async function mpLoadAllStores() {
+    const [{ ozonDb }, { wbDb }, { yandexDb }] = await Promise.all([
+      import('@/services/ozonDb'),
+      import('@/services/wbDb'),
+      import('@/services/yandexDb'),
+    ]);
+    const [ozon, wb, yandex] = await Promise.all([
+      ozonDb.getStores(), wbDb.getStores(), yandexDb.getStores(),
+    ]);
+    return { ozon, wb, yandex };
+  }
+
+  function mpResolveStore<T extends { id: string; name: string }>(stores: T[], hint?: string): T | null {
+    if (!stores.length) return null;
+    if (!hint) return stores.length === 1 ? stores[0] : null;
+    const h = hint.toLowerCase();
+    return stores.find(s => s.name.toLowerCase().includes(h)) ?? null;
+  }
+
+  aiPage.registerGlobal({
+    name: 'mp_get_stores',
+    description: 'Получить список всех подключённых магазинов по маркетплейсам. Используй когда нужно узнать, какие магазины есть у пользователя, или для выбора магазина перед операцией обновления остатков/цен.',
+    args: '{}',
+    run: async () => {
+      const { ozon, wb, yandex } = await mpLoadAllStores();
+      const lines: string[] = [];
+      if (ozon.length) lines.push(`Ozon (${ozon.length}): ${ozon.map(s => `«${s.name}»`).join(', ')}`);
+      if (wb.length) lines.push(`Wildberries (${wb.length}): ${wb.map(s => `«${s.name}»`).join(', ')}`);
+      if (yandex.length) lines.push(`Яндекс Маркет (${yandex.length}): ${yandex.map(s => `«${s.name}»`).join(', ')}`);
+      if (!lines.length) return 'Подключённых магазинов не найдено. Добавь магазины в разделе [Маркетплейсы](/marketplaces).';
+      return `Подключённые магазины:\n${lines.join('\n')}`;
+    },
+  });
+
+  aiPage.registerGlobal({
+    name: 'mp_find_product',
+    description: 'Найти товар по артикулу (offer_id / vendor_code / nm_id) или части названия во всех подключённых магазинах всех маркетплейсов. Используй перед обновлением остатков или цен, чтобы найти нужный магазин и ID товара. mp — опционально для фильтрации по маркетплейсу, store — часть названия магазина.',
+    args: '{ query: string, mp?: "wb"|"ozon"|"yandex", store?: string }',
+    run: async (a: { query: string; mp?: string; store?: string }) => {
+      const q = (a.query ?? '').trim().toLowerCase();
+      if (!q) throw new Error('Укажи артикул или название товара');
+      const { ozonDb } = await import('@/services/ozonDb');
+      const { wbDb } = await import('@/services/wbDb');
+      const { yandexDb } = await import('@/services/yandexDb');
+      const { ozon: ozonStores, wb: wbStores, yandex: ymStores } = await mpLoadAllStores();
+
+      const found: string[] = [];
+      const isNumeric = /^\d+$/.test(q);
+
+      if (!a.mp || a.mp === 'ozon') {
+        const stores = a.store ? ozonStores.filter(s => s.name.toLowerCase().includes(a.store!.toLowerCase())) : ozonStores;
+        for (const store of stores) {
+          try {
+            const products = await ozonDb.getProducts();
+            const storeProducts = products.filter(p => p.store_id === store.id);
+            const match = storeProducts.find(p =>
+              p.offer_id.toLowerCase().includes(q) ||
+              p.name.toLowerCase().includes(q) ||
+              (isNumeric && String(p.product_id) === q)
+            );
+            if (match) found.push(`Ozon «${store.name}»: [${match.offer_id}] «${match.name}» | цена ${match.price}₽ | FBS ${match.stock_fbs} / FBO ${match.stock_fbo} шт`);
+          } catch { /* skip */ }
+        }
+      }
+
+      if (!a.mp || a.mp === 'wb') {
+        const stores = a.store ? wbStores.filter(s => s.name.toLowerCase().includes(a.store!.toLowerCase())) : wbStores;
+        for (const store of stores) {
+          try {
+            const products = await wbDb.getProducts();
+            const storeProducts = products.filter(p => p.store_id === store.id);
+            const match = storeProducts.find(p =>
+              p.vendor_code.toLowerCase().includes(q) ||
+              p.title.toLowerCase().includes(q) ||
+              (isNumeric && String(p.nm_id) === q)
+            );
+            if (match) found.push(`WB «${store.name}»: [${match.vendor_code}] (nm_id: ${match.nm_id}) «${match.title}» | цена ${match.price ?? '—'}₽ | остаток FBS ${match.stock_fbs ?? '—'} шт`);
+          } catch { /* skip */ }
+        }
+      }
+
+      if (!a.mp || a.mp === 'yandex') {
+        const stores = a.store ? ymStores.filter(s => s.name.toLowerCase().includes(a.store!.toLowerCase())) : ymStores;
+        for (const store of stores) {
+          try {
+            const products = await yandexDb.getProducts();
+            const storeProducts = products.filter(p => p.store_id === store.id);
+            const match = storeProducts.find(p =>
+              p.offer_id.toLowerCase().includes(q) ||
+              p.name.toLowerCase().includes(q) ||
+              (p.vendor_code ?? '').toLowerCase().includes(q) ||
+              (isNumeric && String(p.market_sku) === q)
+            );
+            if (match) found.push(`ЯМ «${store.name}»: [${match.offer_id}] «${match.name}» | цена ${match.basic_price ?? '—'}₽ | остаток ${match.stock_total ?? '—'} шт`);
+          } catch { /* skip */ }
+        }
+      }
+
+      if (!found.length) return `Товар «${a.query}» не найден ни в одном магазине.${a.mp ? ` Проверь артикул или убери фильтр mp.` : ''}`;
+      return `Найдено:\n${found.join('\n')}`;
+    },
+  });
+
+  aiPage.registerGlobal({
+    name: 'mp_update_stock',
+    description: 'Обновить FBS-остаток товара на маркетплейсе через живой API. Используй когда пользователь говорит «уменьши остаток», «поставь остаток 5 для артикула X», «обнови склад». Обязательно: article (артикул), stock (новое количество), mp (маркетплейс). Параметр store — часть названия магазина, если магазинов несколько.',
+    args: '{ article: string, stock: number, mp: "wb"|"ozon"|"yandex", store?: string }',
+    run: async (a: { article: string; stock: number; mp: string; store?: string }) => {
+      if (!a.article) throw new Error('Укажи артикул товара');
+      if (typeof a.stock !== 'number') throw new Error('Укажи новое количество остатка (число)');
+      if (!['wb', 'ozon', 'yandex'].includes(a.mp)) throw new Error('Укажи маркетплейс: wb, ozon или yandex');
+
+      const q = a.article.toLowerCase().trim();
+      const isNumeric = /^\d+$/.test(q);
+
+      if (a.mp === 'ozon') {
+        const { ozonDb } = await import('@/services/ozonDb');
+        const { updateOzonFbsStock } = await import('@/services/ozonApi');
+        const { ozon: stores } = await mpLoadAllStores();
+        const store = mpResolveStore(stores, a.store);
+        if (!store) {
+          if (!stores.length) throw new Error('Нет подключённых магазинов Ozon. Добавь в [Маркетплейсы](/marketplaces).');
+          throw new Error(`Магазинов Ozon несколько: ${stores.map(s => `«${s.name}»`).join(', ')}. Уточни название магазина.`);
+        }
+        const fullStore = (await ozonDb.getStores()).find(s => s.id === store.id)!;
+        const products = await ozonDb.getProducts();
+        const product = products.filter(p => p.store_id === store.id).find(p =>
+          p.offer_id.toLowerCase().includes(q) || (isNumeric && String(p.product_id) === q)
+        );
+        if (!product) throw new Error(`Товар «${a.article}» не найден в Ozon «${store.name}»`);
+        const { ozonApi } = await import('@/services/ozonApi');
+        const warehouses = await ozonApi.getWarehouses({ client_id: fullStore.client_id, api_key: fullStore.api_key });
+        if (!warehouses.length) throw new Error('Склады Ozon не найдены. Убедись что подключён FBS-склад.');
+        const wh = warehouses[0];
+        await updateOzonFbsStock(fullStore, [{ offer_id: product.offer_id, stock: a.stock, warehouse_id: wh.warehouse_id }]);
+        return `✅ Ozon «${store.name}» | [${product.offer_id}] «${product.name.slice(0, 50)}» | FBS-остаток обновлён → ${a.stock} шт (склад: ${wh.name})`;
+      }
+
+      if (a.mp === 'wb') {
+        const { wbDb } = await import('@/services/wbDb');
+        const { wbApi: wbApiMod } = await import('@/services/wbApi');
+        const { wb: stores } = await mpLoadAllStores();
+        const store = mpResolveStore(stores, a.store);
+        if (!store) {
+          if (!stores.length) throw new Error('Нет подключённых магазинов WB. Добавь в [Маркетплейсы](/marketplaces).');
+          throw new Error(`Магазинов WB несколько: ${stores.map(s => `«${s.name}»`).join(', ')}. Уточни название магазина.`);
+        }
+        const fullStore = (await wbDb.getStores()).find(s => s.id === store.id)!;
+        const products = await wbDb.getProducts();
+        const product = products.filter(p => p.store_id === store.id).find(p =>
+          p.vendor_code.toLowerCase().includes(q) ||
+          p.title.toLowerCase().includes(q) ||
+          (isNumeric && String(p.nm_id) === q)
+        );
+        if (!product) throw new Error(`Товар «${a.article}» не найден в WB «${store.name}»`);
+        const warehouses = await wbApiMod.getWarehouses(fullStore.api_key);
+        if (!warehouses.length) throw new Error('FBS-склады WB не найдены. Убедись что настроен FBS-склад в личном кабинете WB.');
+        const wh = warehouses[0];
+        const barcodes = await wbApiMod.getCardBarcodes(fullStore.api_key, product.nm_id);
+        if (!barcodes.length) throw new Error(`Баркод для nm_id ${product.nm_id} не найден`);
+        await wbApiMod.updateFbsStocks(fullStore.api_key, wh.id, [{ sku: barcodes[0], amount: a.stock }]);
+        return `✅ WB «${store.name}» | [${product.vendor_code}] «${product.title.slice(0, 50)}» | FBS-остаток обновлён → ${a.stock} шт (склад: ${wh.name})`;
+      }
+
+      if (a.mp === 'yandex') {
+        const { yandexDb } = await import('@/services/yandexDb');
+        const { updateYandexFbsStock } = await import('@/services/yandexApi');
+        const { yandex: stores } = await mpLoadAllStores();
+        const store = mpResolveStore(stores, a.store);
+        if (!store) {
+          if (!stores.length) throw new Error('Нет подключённых магазинов Яндекс Маркет. Добавь в [Маркетплейсы](/marketplaces).');
+          throw new Error(`Магазинов ЯМ несколько: ${stores.map(s => `«${s.name}»`).join(', ')}. Уточни название магазина.`);
+        }
+        const fullStore = (await yandexDb.getStores()).find(s => s.id === store.id)!;
+        if (!fullStore.campaign_id) throw new Error(`Магазин ЯМ «${store.name}» не настроен (нет campaign_id)`);
+        const products = await yandexDb.getProducts();
+        const product = products.filter(p => p.store_id === store.id).find(p =>
+          p.offer_id.toLowerCase().includes(q) ||
+          p.name.toLowerCase().includes(q) ||
+          (p.vendor_code ?? '').toLowerCase().includes(q)
+        );
+        if (!product) throw new Error(`Товар «${a.article}» не найден в ЯМ «${store.name}»`);
+        const { fetchYandexFbsWarehousesFromStocks } = await import('@/services/yandexApi');
+        const warehouses = await fetchYandexFbsWarehousesFromStocks(fullStore);
+        if (!warehouses.length) throw new Error('FBS-склады ЯМ не найдены. Убедись что настроен FBS-склад в личном кабинете ЯМ.');
+        const wh = warehouses[0];
+        await updateYandexFbsStock(fullStore, [{ offerId: product.offer_id, warehouseId: wh.warehouseId, count: a.stock }]);
+        return `✅ ЯМ «${store.name}» | [${product.offer_id}] «${product.name.slice(0, 50)}» | FBS-остаток обновлён → ${a.stock} шт (склад: ${wh.name})`;
+      }
+
+      throw new Error('Неизвестный маркетплейс');
+    },
+  });
+
+  aiPage.registerGlobal({
+    name: 'mp_update_price',
+    description: 'Обновить цену товара на маркетплейсе через живой API. Используй когда пользователь говорит «поставь цену X для артикула Y», «измени цену на Ozon», «обнови прайс». Обязательно: article (артикул), price (новая цена в рублях), mp (маркетплейс). Параметр store — часть названия магазина если магазинов несколько.',
+    args: '{ article: string, price: number, mp: "wb"|"ozon"|"yandex", store?: string }',
+    run: async (a: { article: string; price: number; mp: string; store?: string }) => {
+      if (!a.article) throw new Error('Укажи артикул товара');
+      if (typeof a.price !== 'number' || a.price <= 0) throw new Error('Укажи корректную цену (положительное число)');
+      if (!['wb', 'ozon', 'yandex'].includes(a.mp)) throw new Error('Укажи маркетплейс: wb, ozon или yandex');
+
+      const q = a.article.toLowerCase().trim();
+      const isNumeric = /^\d+$/.test(q);
+
+      if (a.mp === 'ozon') {
+        const { ozonDb } = await import('@/services/ozonDb');
+        const { ozonApi: ozonApiMod } = await import('@/services/ozonApi');
+        const { ozon: stores } = await mpLoadAllStores();
+        const store = mpResolveStore(stores, a.store);
+        if (!store) {
+          if (!stores.length) throw new Error('Нет подключённых магазинов Ozon.');
+          throw new Error(`Магазинов Ozon несколько: ${stores.map(s => `«${s.name}»`).join(', ')}. Уточни название магазина.`);
+        }
+        const fullStore = (await ozonDb.getStores()).find(s => s.id === store.id)!;
+        const products = await ozonDb.getProducts();
+        const product = products.filter(p => p.store_id === store.id).find(p =>
+          p.offer_id.toLowerCase().includes(q) || (isNumeric && String(p.product_id) === q)
+        );
+        if (!product) throw new Error(`Товар «${a.article}» не найден в Ozon «${store.name}»`);
+        const creds = { client_id: fullStore.client_id, api_key: fullStore.api_key };
+        await ozonApiMod.updatePrices(creds, [{ offer_id: product.offer_id, price: String(a.price) }]);
+        return `✅ Ozon «${store.name}» | [${product.offer_id}] «${product.name.slice(0, 50)}» | цена обновлена: ${product.price}₽ → ${a.price}₽`;
+      }
+
+      if (a.mp === 'wb') {
+        const { wbDb } = await import('@/services/wbDb');
+        const { updateWbPrices } = await import('@/services/wbApi');
+        const { wb: stores } = await mpLoadAllStores();
+        const store = mpResolveStore(stores, a.store);
+        if (!store) {
+          if (!stores.length) throw new Error('Нет подключённых магазинов WB.');
+          throw new Error(`Магазинов WB несколько: ${stores.map(s => `«${s.name}»`).join(', ')}. Уточни название магазина.`);
+        }
+        const fullStore = (await wbDb.getStores()).find(s => s.id === store.id)!;
+        const products = await wbDb.getProducts();
+        const product = products.filter(p => p.store_id === store.id).find(p =>
+          p.vendor_code.toLowerCase().includes(q) ||
+          p.title.toLowerCase().includes(q) ||
+          (isNumeric && String(p.nm_id) === q)
+        );
+        if (!product) throw new Error(`Товар «${a.article}» не найден в WB «${store.name}»`);
+        await updateWbPrices(fullStore.api_key, [{ nmID: product.nm_id, price: a.price }]);
+        return `✅ WB «${store.name}» | [${product.vendor_code}] «${product.title.slice(0, 50)}» | цена обновлена: ${product.price ?? '—'}₽ → ${a.price}₽`;
+      }
+
+      if (a.mp === 'yandex') {
+        const { yandexDb } = await import('@/services/yandexDb');
+        const { yandexApi: ymApiMod } = await import('@/services/yandexApi');
+        const { yandex: stores } = await mpLoadAllStores();
+        const store = mpResolveStore(stores, a.store);
+        if (!store) {
+          if (!stores.length) throw new Error('Нет подключённых магазинов Яндекс Маркет.');
+          throw new Error(`Магазинов ЯМ несколько: ${stores.map(s => `«${s.name}»`).join(', ')}. Уточни название магазина.`);
+        }
+        const fullStore = (await yandexDb.getStores()).find(s => s.id === store.id)!;
+        if (!fullStore.campaign_id) throw new Error(`Магазин ЯМ «${store.name}» не настроен (нет campaign_id)`);
+        const products = await yandexDb.getProducts();
+        const product = products.filter(p => p.store_id === store.id).find(p =>
+          p.offer_id.toLowerCase().includes(q) ||
+          p.name.toLowerCase().includes(q) ||
+          (p.vendor_code ?? '').toLowerCase().includes(q)
+        );
+        if (!product) throw new Error(`Товар «${a.article}» не найден в ЯМ «${store.name}»`);
+        await ymApiMod.updateOfferPrices(fullStore.api_key, String(fullStore.campaign_id), [{ offerId: product.offer_id, price: a.price }]);
+        return `✅ ЯМ «${store.name}» | [${product.offer_id}] «${product.name.slice(0, 50)}» | цена обновлена: ${product.basic_price ?? '—'}₽ → ${a.price}₽`;
+      }
+
+      throw new Error('Неизвестный маркетплейс');
+    },
+  });
+
   // ── Аналитика: загрузить данные с любой страницы ─────────────────────────────
   aiPage.registerGlobal({
     name: 'fetch_analytics',

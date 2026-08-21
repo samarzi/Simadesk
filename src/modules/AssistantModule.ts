@@ -555,8 +555,26 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 - «синхронизация выполнена» — если не вызван sync_marketplace
 - «товар скрыт/активирован» — если не вызван hide_product/show_product
 - «ответ опубликован» — если не вызван reply_review/ai_generate_review_reply
+- «остаток обновлён», «цена изменена на МП» — если не вызван mp_update_stock / mp_update_price
 ПРАВИЛО: если action не вызван — действие не выполнено. Описать словами ≠ сделать.
 Пользователь проверит систему — и не найдёт результата. Это ложь, хуже бездействия.
+
+## ПРЯМЫЕ ОПЕРАЦИИ НА МАРКЕТПЛЕЙСАХ (живой API)
+Сима умеет напрямую искать товары, обновлять остатки и цены через API маркетплейсов.
+Пользователь может иметь НЕСКОЛЬКО магазинов на каждом маркетплейсе — всегда учитывай это.
+
+Когда пользователь говорит «уменьши остаток артикула 12345» или «поставь цену 2500 для SKU ABC на Ozon»:
+1. Если магазин не указан → сначала вызови mp_find_product чтобы найти товар и понять в каком магазине он есть
+2. Если магазинов несколько — спроси какой именно (action clarify с options по именам магазинов)
+3. Если магазин один — выполняй сразу без уточнений
+4. После обновления — сообщи что сделано: название товара, магазин, старое и новое значение
+
+Когда пользователь уточняет конкретный магазин («в моём магазине Электроника на ЯМ», «в WB-магазине Главный»):
+→ Передавай часть названия в параметр store
+
+Если [СПИСОК МАГАЗИНОВ] есть в [ТЕКУЩИЕ ДАННЫЕ МАГАЗИНА] — используй его чтобы понимать что есть у пользователя без лишнего mp_get_stores.
+
+ЗАПРЕЩЕНО: писать «обновил остаток» без вызова mp_update_stock; писать «изменил цену» без mp_update_price.
 
 ## ГЛОБАЛЬНЫЕ КОМАНДЫ (доступны всегда, с любой страницы)
 Следующие действия можно вызвать через {"action":"page_action","name":"...","args":{}} или как шаг в chain:
@@ -608,6 +626,10 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 | create_ym_supply | date | Создать отгрузку ЯМ FBY на конкретную дату |
 | create_supply_wb | — | Создать поставку WB из текущих заказов |
 | get_supply_stats | — | Статистика и список поставок |
+| mp_get_stores | — | Список всех подключённых магазинов по маркетплейсам |
+| mp_find_product | query | Найти товар по артикулу/названию во всех МП и магазинах (mp?, store?) |
+| mp_update_stock | article, stock, mp | Обновить FBS-остаток товара через живой API (store?) |
+| mp_update_price | article, price, mp | Обновить цену товара через живой API (store?) |
 
 ## УТОЧНЯЮЩИЙ ВОПРОС (CLARIFY)
 Если пользователь просит выполнить action, но не указал нужный параметр — НИКОГДА не угадывай и не придумывай из контекста. Спроси ровно один параметр через JSON:
@@ -618,7 +640,7 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 - Задавай максимум ОДИН вопрос за раз
 - После ответа пользователя — выполни action с полученным параметром
 - НЕ уточняй параметры для: navigate, reload_page, toggle_theme, daily_checklist, run_risk_audit, create_doc, fetch_reviews, fetch_analytics, get_supply_stats, list_repricer_rules, get_subscription_info, check_api_keys, simastore_get_link, get_ad_stats, sync_marketplace (они не требуют обязательных аргументов или имеют разумные дефолты)
-- ОБЯЗАТЕЛЬНО спрашивай для: set_price (mp, article, price), bulk_price_change (mp), bulk_price_filtered (mp), export_orders (mp если нужен), toggle_campaign (campaign_id), hide_product (article), show_product (article)
+- ОБЯЗАТЕЛЬНО спрашивай для: set_price (mp, article, price), bulk_price_change (mp), bulk_price_filtered (mp), export_orders (mp если нужен), toggle_campaign (campaign_id), hide_product (article), show_product (article), mp_update_stock (article, stock, mp), mp_update_price (article, price, mp), mp_find_product (query)
 - Примеры когда спрашивать: «снизь цены на 10%» → спроси «На каком маркетплейсе снижать цены?»; «удали задачу» → спроси «Какую задачу удалить? Напиши название»; «скрой товар» → спроси «Укажи артикул товара который нужно скрыть»
 
 ГЛАВНОЕ ПРАВИЛО: для простых операций без обязательных параметров — выполняй сразу, не переспрашивай. Уточняй только когда без параметра действие бессмысленно (нет маркетплейса для изменения цен, нет артикула для скрытия и т.п.).
@@ -912,6 +934,25 @@ function buildContextSuggestions(): string[] {
 
 // ── Store context collector ───────────────────────────────────────────────────
 
+let _cachedStoresList: string | null = null;
+async function warmStoresCache(): Promise<void> {
+  try {
+    const [{ ozonDb }, { wbDb }, { yandexDb }] = await Promise.all([
+      import('@/services/ozonDb'),
+      import('@/services/wbDb'),
+      import('@/services/yandexDb'),
+    ]);
+    const [ozon, wb, yandex] = await Promise.all([
+      ozonDb.getStores(), wbDb.getStores(), yandexDb.getStores(),
+    ]);
+    const lines: string[] = [];
+    if (ozon.length) lines.push(`Ozon: ${ozon.map(s => `«${s.name}»(id:${s.id})`).join(', ')}`);
+    if (wb.length) lines.push(`WB: ${wb.map(s => `«${s.name}»(id:${s.id})`).join(', ')}`);
+    if (yandex.length) lines.push(`ЯМ: ${yandex.map(s => `«${s.name}»(id:${s.id})`).join(', ')}`);
+    _cachedStoresList = lines.length ? lines.join(' | ') : null;
+  } catch { /* ignore */ }
+}
+
 function getStoreContext(): string {
   const sections: string[] = [];
   try {
@@ -1063,6 +1104,10 @@ function getStoreContext(): string {
       sections.push(`OZON: подключён${oz.shopName ? ` (${oz.shopName})` : ''}`);
     }
   } catch { /* ignore */ }
+
+  if (_cachedStoresList) {
+    sections.push(`СПИСОК МАГАЗИНОВ (для mp_find_product / mp_update_stock / mp_update_price): ${_cachedStoresList}`);
+  }
 
   // Текущая страница и время
   const currentPage = (window as any).__sdCurrentPage ?? '';
@@ -1374,6 +1419,7 @@ export class AssistantModule {
 
     // Register global AI actions once (create_doc, etc.)
     installGlobalAiActions();
+    warmStoresCache();
 
     // Only create panel and wire click once
     if (!this.panel) {
