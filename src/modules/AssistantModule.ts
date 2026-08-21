@@ -1,6 +1,7 @@
 import '@/styles/assistant.css';
 import { showToast } from '@/utils/toast';
 import { edgeTtsSpeak, edgeTtsStop, edgeTtsUnlock } from '@/services/edgeTts';
+import { TtsStreamSession } from '@/services/ttsStream';
 import { aiPage, aiGlow } from '@/services/aiPageContext';
 import { installGlobalAiActions } from '@/services/aiPageCapabilities';
 import { changeLog } from '@/modules/LogsModule';
@@ -103,6 +104,13 @@ const DATA_FETCH_ACTIONS = new Set([
   'mp_get_stores', 'mp_find_product', 'mp_compare_prices', 'mp_stock_health',
   'business_snapshot', 'get_ym_fby_slots',
 ]);
+
+/**
+ * Сколько действий подряд Сима может выполнить по одному запросу пользователя,
+ * прежде чем обязана ответить текстом. Защита от зацикливания и от расхода
+ * токенов, если модель начнёт ходить по кругу.
+ */
+const MAX_AGENT_STEPS = 4;
 
 const ACTION_LABELS: Record<string, string> = {
   // Редактор
@@ -591,6 +599,29 @@ const SYSTEM_PROMPT = `Ты — Сима, универсальный AI-асси
 - Связывай разделы: OOS + активная реклама на этот товар = слив бюджета. Заметил — скажи.
 - Давай ОДНО следующее действие, а не список из десяти. Конкретное и выполнимое.
 - Не пересказывай цифры, которые пользователь и так видит на экране. Добавляй вывод.
+
+## ТЫ РАБОТАЕШЬ В НЕСКОЛЬКО ШАГОВ
+После каждого действия ты снова получаешь ход и решаешь: продолжить или ответить.
+Тебе НЕ нужно просить пользователя повторить запрос, чтобы сделать второй шаг.
+
+Если задача требует нескольких действий — делай их подряд сама:
+- «уменьши остаток товара 12345 до нуля» → mp_find_product (узнать магазин и текущий остаток) → mp_update_stock
+- «что там с ценами на чехлы» → mp_find_product → mp_compare_prices → вывод текстом
+- «разберись с остатками» → mp_stock_health → вывод текстом с приоритетами
+
+Лимит — ${MAX_AGENT_STEPS} действия на один запрос. Как задача выполнена, отвечай текстом.
+Одно и то же действие с теми же аргументами дважды не вызывай: если результат
+не устроил, поменяй аргументы или ответь текстом, что не получилось.
+
+## ПОСЛЕ ЗАГРУЗКИ ДАННЫХ — ВЫВОД, А НЕ ПЕРЕСКАЗ
+Результат действия пользователь уже видит карточкой. Не дублируй таблицу словами.
+Твой текст после данных — это вывод менеджера:
+- что здесь главное и почему это важно
+- во что это обходится или что принесёт в деньгах
+- ОДНО конкретное следующее действие
+Плохо: «Выручка 450 тыс, маржа 18%, заказов 120».
+Хорошо: «Маржа просела до 18% — это на 7 пунктов ниже прошлого месяца, около 30 тыс потерь.
+Основная причина — рост логистики на WB. Стоит пересчитать цены по WB-товарам, показать какие?»
 
 ## ПРАВИЛО: РЕЗУЛЬТАТЫ ДЕЙСТВИЙ УЖЕ В КОНТЕКСТЕ
 После выполнения действия его результат приходит сообщением [РЕЗУЛЬТАТ ДЕЙСТВИЯ ...].
@@ -1415,6 +1446,12 @@ export class AssistantModule {
   })();
   private voiceOnboarded = !!localStorage.getItem('sd_voice_onboarded');
   private speakingBtn: HTMLElement | null = null;
+  /** Активная сессия пофразовой озвучки текущего ответа. */
+  private streamTts: TtsStreamSession | null = null;
+  /** Сколько действий уже выполнено в рамках текущего запроса пользователя. */
+  private agentSteps = 0;
+  /** Уже выполненные вызовы (name+args) — чтобы не зациклиться на одном шаге. */
+  private agentCalls = new Set<string>();
   private voiceSendOnEnd = false;  // when true: auto-send after voice stops
   private voiceHotkeyHeld = false; // Alt+Space hotkey currently held
   private hotkeyConfig = {
@@ -3140,6 +3177,55 @@ export class AssistantModule {
 
   // ── Per-message TTS ──────────────────────────────────────────────────────────
 
+  /**
+   * Подать очередную порцию видимого текста в потоковую озвучку.
+   * Сессия создаётся лениво — на первом же куске прозы.
+   *
+   * Служебный JSON сюда не попадает: `display` уже очищен, и пока модель
+   * пишет действие, он пустой — значит, действия не озвучиваются.
+   */
+  private feedStreamTts(display: string): void {
+    if (!this.ttsEnabled) return;
+    if (!this.streamTts) {
+      this.btn?.classList.add('speaking');
+      this.streamTts = new TtsStreamSession({
+        rate: this.ttsRate,
+        voice: this.ttsVoiceName,
+        clean: cleanForTTS,
+        onStart: () => this.setStatus('Озвучиваю…', 'speaking'),
+        onEnd: () => this.onStreamTtsEnd(),
+      });
+    }
+    this.streamTts.feed(display);
+  }
+
+  /** Дочитать остаток и закрыть сессию; вернуть true, если озвучка уже идёт. */
+  private finishStreamTts(finalText: string): boolean {
+    const s = this.streamTts;
+    if (!s) return false;
+    s.finish(finalText);
+    return true;
+  }
+
+  /** Оборвать потоковую озвучку — ответ оказался действием, а не текстом. */
+  private cancelStreamTts(): void {
+    if (!this.streamTts) return;
+    this.streamTts.cancel();
+    this.streamTts = null;
+    ttsStop();
+    this.btn?.classList.remove('speaking');
+  }
+
+  private onStreamTtsEnd(): void {
+    this.streamTts = null;
+    if (this.speakingBtn) {
+      this.speakingBtn.classList.remove('speaking');
+      this.speakingBtn = null;
+    }
+    this.btn?.classList.remove('speaking');
+    if (!this.isLoading) this.setStatus('Готова');
+  }
+
   private startMsgTts(text: string, btn: HTMLElement): void {
     ttsStop();
     if (this.speakingBtn && this.speakingBtn !== btn) {
@@ -3160,6 +3246,8 @@ export class AssistantModule {
   }
 
   private stopMsgTts(): void {
+    this.streamTts?.cancel();
+    this.streamTts = null;
     ttsStop();
     if (this.speakingBtn) {
       this.speakingBtn.classList.remove('speaking');
@@ -3174,7 +3262,7 @@ export class AssistantModule {
   private toggleTts(): void {
     this.ttsEnabled = !this.ttsEnabled;
     localStorage.setItem('sd_tts_enabled', this.ttsEnabled ? 'true' : 'false');
-    if (!this.ttsEnabled) ttsStop();
+    if (!this.ttsEnabled) { this.streamTts?.cancel(); this.streamTts = null; ttsStop(); }
     this.updateTtsBtn();
   }
 
@@ -4656,6 +4744,13 @@ export class AssistantModule {
   async sendMessage(text: string): Promise<void> {
     if (!text.trim() || this.isLoading) return;
     ttsStop();
+    // Новый запрос — новый бюджет шагов агента.
+    this.agentSteps = 0;
+    this.agentCalls.clear();
+    // Разблокируем аудио СИНХРОННО, пока мы ещё внутри пользовательского жеста
+    // (клик/Enter). Позже, из колбэка стриминга, Chrome создать AudioContext
+    // уже не даст — и потоковая озвучка молча не запустилась бы.
+    if (this.ttsEnabled) edgeTtsUnlock();
 
     // Build message content — include attachments if any
     const files = [...this.attachedFiles];
@@ -5374,6 +5469,13 @@ export class AssistantModule {
     // Streaming bubble — появится как только придёт первый чанк
     let streamMsgEl: HTMLElement | null = null;
     let streamBubble: HTMLElement | null = null;
+    let lastDisplay = '';
+
+    // Озвучка идёт параллельно печати: первая же законченная фраза уходит на
+    // синтез, поэтому Сима начинает говорить примерно тогда же, когда
+    // пользователь видит первую строку, а не после всего ответа.
+    this.streamTts?.cancel();
+    this.streamTts = null;
 
     const onChunk = (partial: string) => {
       if (!streamBubble) {
@@ -5401,6 +5503,8 @@ export class AssistantModule {
           streamBubble.classList.add('sd-ap-stream-action');
         }
       }
+      lastDisplay = display;
+      if (display) this.feedStreamTts(display);
       this.scrollToBottom();
     };
 
@@ -5434,7 +5538,12 @@ export class AssistantModule {
 
       // Для action-веток стриминговый пузырь содержит сырой JSON — убираем его.
       // Для обычного текста пузырь будет промоутнут на месте (без мигания).
-      const cleanStream = () => { streamMsgEl?.remove(); streamMsgEl = null; streamBubble = null; };
+      // Ответ оказался действием, а не репликой: убираем пузырь и обрываем
+      // озвучку — читать вслух служебный JSON нечего.
+      const cleanStream = () => {
+        streamMsgEl?.remove(); streamMsgEl = null; streamBubble = null;
+        this.cancelStreamTts();
+      };
 
       // Новый формат: plan — показываем карточку подтверждения
       const pageActPlan = this.parsePageActionPlan(replyNorm);
@@ -5536,7 +5645,22 @@ export class AssistantModule {
           } else if (displayText) {
             ttsBtn = this.addAssistantMessage(displayText);
           }
-          if (displayText && this.ttsEnabled && ttsBtn) this.startMsgTts(displayText, ttsBtn);
+          if (displayText && this.ttsEnabled) {
+            // Озвучка уже идёт с середины стриминга — дочитываем хвост,
+            // а не начинаем сообщение заново.
+            if (this.streamTts) {
+              if (ttsBtn) {
+                ttsBtn.classList.add('speaking');
+                this.speakingBtn = ttsBtn;
+              }
+              // Хвост берём от того же текста, что озвучивался по ходу печати:
+              // финальный displayText может отличаться пробелами, и тогда
+              // последняя фраза прозвучала бы дважды.
+              this.finishStreamTts(lastDisplay && displayText.startsWith(lastDisplay) ? displayText : lastDisplay || displayText);
+            } else if (ttsBtn) {
+              this.startMsgTts(displayText, ttsBtn);
+            }
+          }
           if (followUps.length) this.addFollowUpSuggestions(followUps);
         }
       }
@@ -5544,6 +5668,7 @@ export class AssistantModule {
       this.setStatus('Готова');
     } catch (err: unknown) {
       this.removeTypingIndicator(typing);
+      this.cancelStreamTts();
       if (err instanceof Error && err.name === 'AbortError') {
         this.setStatus('Остановлено');
         return;
@@ -5767,6 +5892,10 @@ export class AssistantModule {
       btn.disabled = true;
       btn.textContent = 'Выполняю…';
       (el.querySelector<HTMLButtonElement>('.sd-ap-plan-cancel'))!.disabled = true;
+      // Подтверждение плана — самостоятельный запуск, а не продолжение прошлого
+      // запроса: бюджет шагов и защита от повторов считаются заново.
+      this.agentSteps = 0;
+      this.agentCalls.clear();
       await this.executePageAction(name, args, requestText, el);
     });
 
@@ -5828,35 +5957,85 @@ export class AssistantModule {
       this.scrollToBottom();
     }
 
-    // Data-fetch actions already show their result in the report card —
-    // skip the follow-up AI call to avoid duplicating the same data.
-    const dataFetchActions = DATA_FETCH_ACTIONS;
-
     // Результат действия ОБЯЗАН попасть в историю, иначе следующий ход модели
     // его не увидит («найди товар» → «уменьши остаток» ломается).
     this.recordActionInHistory(name, args, resultMsg);
 
-    let follow = '';
-    if (!dataFetchActions.has(name)) {
-      try {
-        follow = await this.callAi([
-          { role: 'system', content: this.getEffectiveSystemPrompt() + getStoreContext() },
-          ...this.history.slice(-8),
-          { role: 'system', content: `Напиши пользователю ОЧЕНЬ КОРОТКОЕ подтверждение (1–2 предложения) что сделано по результату действия ${name}. НЕ повторяй данные из результата. Только обычный текст, без JSON, без кнопок, без планов.` },
-        ]);
-      } catch { follow = ''; }
+    await this.continueAfterAction(name, resultMsg, requestText);
+  }
 
-      // Strip any JSON artifacts and code blocks from follow-up
-      follow = follow
-        .replace(/```[\s\S]*?```/g, '')
-        .replace(/`[^`]*`/g, '')
-        .replace(/\{[\s\S]*?"action"[\s\S]*?\}/g, '')
-        .replace(/\{"suggestions"\s*:\s*\[[^\]]*\]\s*\}/gs, '')
-        .trim();
+  /**
+   * Что делать после выполненного действия.
+   *
+   * Раньше здесь всегда запрашивалось «короткое подтверждение», из-за чего
+   * Сима физически не могла сделать второй шаг: чтобы найти товар и тут же
+   * изменить его остаток, пользователю приходилось писать дважды. А для
+   * действий, которые только читают данные, вызов модели вообще пропускался —
+   * пользователь получал сырую выгрузку без единого вывода.
+   *
+   * Теперь модель сама решает: продолжить работу следующим действием или
+   * ответить текстом. Число шагов ограничено, повтор того же вызова с теми же
+   * аргументами блокируется — иначе цикл мог бы крутиться бесконечно.
+   */
+  private async continueAfterAction(name: string, resultMsg: string, requestText: string): Promise<void> {
+    const isFetch = DATA_FETCH_ACTIONS.has(name);
+    const canAct = this.agentSteps < MAX_AGENT_STEPS;
+
+    const guidance = canAct
+      ? `Действие ${name} выполнено, его результат выше.
+Реши, что делать дальше — одно из двух:
+1) Задача пользователя ВЫПОЛНЕНА → ответь обычным текстом, без JSON.
+   ${isFetch
+      ? 'Данные пользователь уже видит карточкой. Не пересказывай их. Дай вывод менеджера: что здесь главное, что это значит для денег и какое ОДНО действие имеет смысл сделать дальше. 2–4 предложения.'
+      : 'Коротко подтверди, что сделано (1–2 предложения). Не повторяй цифры из результата.'}
+2) Для исходной задачи нужен ЕЩЁ ОДИН шаг → верни ТОЛЬКО JSON следующего действия, без единого слова вокруг.
+   Не вызывай то же действие с теми же аргументами повторно.
+   Не хватает данных от пользователя → верни JSON clarify.`
+      : `Действие ${name} выполнено. Лимит шагов исчерпан — ответь пользователю ТОЛЬКО обычным текстом, без JSON. Скажи, что сделано и что осталось.`;
+
+    let reply = '';
+    try {
+      reply = await this.callAi([
+        { role: 'system', content: this.getEffectiveSystemPrompt() + getStoreContext() + aiPage.promptFragment() },
+        ...this.history.slice(-10),
+        { role: 'system', content: guidance },
+      ]);
+    } catch { reply = ''; }
+
+    const replyNorm = reply.replace(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g, '$1');
+
+    if (canAct && replyNorm) {
+      // Сима решила продолжить работу — выполняем следующий шаг.
+      const next = this.parsePageAction(replyNorm);
+      if (next && aiPage.hasAction(next.name)) {
+        const key = `${next.name}:${JSON.stringify(next.args ?? {})}`;
+        if (!this.agentCalls.has(key)) {
+          this.agentCalls.add(key);
+          this.agentSteps++;
+          this.history.push({ role: 'assistant', content: replyNorm });
+          await this.executePageAction(next.name, next.args, requestText);
+          return;
+        }
+      }
+      // Ей не хватает данных от пользователя — показываем уточнение.
+      const clarify = this.parseClarifyAction(replyNorm);
+      if (clarify) {
+        this.addClarifyCard(clarify, requestText);
+        this.saveSession();
+        this.setStatus('Готова');
+        return;
+      }
     }
 
-    const { text: followText, suggestions: followSuggs } = this.parseFollowUpSuggestions(follow || resultMsg);
-    if (!dataFetchActions.has(name)) {
+    // Финальный текстовый ответ.
+    const cleaned = this.sanitizeDisplayText(replyNorm)
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/`[^`]*`/g, '')
+      .trim();
+    const { text: followText, suggestions: followSuggs } =
+      this.parseFollowUpSuggestions(cleaned || (isFetch ? '' : resultMsg));
+
+    if (followText) {
       this.history.push({ role: 'assistant', content: followText });
       const ttsBtn = this.addAssistantMessage(followText);
       if (this.ttsEnabled && ttsBtn) this.startMsgTts(followText, ttsBtn);
