@@ -49,13 +49,19 @@ function card(b: StoreBalance): string {
   }
 
   if (b.error) {
+    const isApiUnavailable = b.error.includes('не предоставляет API') || b.error.includes('404');
+    const friendlyMsg = isApiUnavailable
+      ? 'Баланс недоступен через API — откройте кабинет продавца'
+      : b.error;
+    const ozonCabinetUrl = b.mp === 'ozon' ? 'https://seller.ozon.ru/app/finance/wallet' : null;
     return `
-      <div class="bl-card bl-card--error">
+      <div class="bl-card bl-card--warn">
         <div class="bl-card-head">
           <span class="bl-badge" style="background:${color}20;color:${color}">${label}</span>
           <span class="bl-store-name">${esc(b.storeName)}</span>
         </div>
-        <div class="bl-error-msg">${esc(b.error)}</div>
+        <div class="bl-error-msg">${esc(friendlyMsg)}</div>
+        ${ozonCabinetUrl && isApiUnavailable ? `<a class="bl-cabinet-link" href="${ozonCabinetUrl}" target="_blank" rel="noopener">Открыть кошелёк Ozon →</a>` : ''}
       </div>`;
   }
 

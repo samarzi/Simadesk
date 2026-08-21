@@ -58,24 +58,38 @@ export interface OzonTreasuryTotals {
 
 export const ozonFinanceApi = {
   /**
-   * POST /v1/finance/treasury/totals — текущий баланс кошелька продавца.
-   * Не зависит от периода, возвращает актуальные данные.
+   * Баланс кошелька продавца.
+   * Пробуем v2 (новый путь), затем v1 (старый).
+   * Если оба вернули 404 — эндпоинт недоступен для данного типа API-ключа.
    */
   async fetchTreasuryTotals(creds: Creds, signal?: AbortSignal): Promise<OzonTreasuryTotals> {
-    const res = await fetch('/ozon-api/v1/finance/treasury/totals', {
-      method: 'POST',
-      headers: {
-        'Client-Id': creds.client_id,
-        'Api-Key': creds.api_key,
-        'Content-Type': 'application/json',
-      },
-      body: '{}',
-      signal,
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Ozon Treasury ${res.status}: ${text.slice(0, 200)}`);
+    const tryEndpoint = async (path: string): Promise<Response> => {
+      return fetch(`/ozon-api${path}`, {
+        method: 'POST',
+        headers: {
+          'Client-Id': creds.client_id,
+          'Api-Key': creds.api_key,
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+        signal,
+      });
+    };
+
+    let res = await tryEndpoint('/v2/finance/treasury/totals');
+    if (res.status === 404) {
+      res = await tryEndpoint('/v1/finance/treasury/totals');
     }
+
+    if (!res.ok) {
+      if (res.status === 404) {
+        throw new Error('Ozon не предоставляет API для баланса кошелька — проверьте кабинет продавца');
+      }
+      const text = await res.text();
+      const msg = (text.slice(0, 200) || String(res.status));
+      throw new Error(`Ошибка Ozon (${res.status}): ${msg}`);
+    }
+
     const data = await res.json();
     const r = data?.result ?? data;
     return {

@@ -102,6 +102,27 @@ function returnReason(code: string): string {
   return RETURN_REASON[code] ?? code;
 }
 
+/**
+ * Ошибки МП прилетают как «Yandex ... 403: {"errors":[...]}» — нечитаемо.
+ * Переводим код в понятную причину и оставляем техничную часть отдельно.
+ */
+function humanApiError(raw: string): { title: string; detail: string } {
+  const code = raw.match(/\b(400|401|403|404|405|409|429|5\d\d)\b/)?.[1] ?? '';
+  const byCode: Record<string, string> = {
+    '400': 'Маркетплейс не принял запрос — вероятно, изменился формат его API.',
+    '401': 'Ключ доступа не принят. Проверьте API-ключ магазина в настройках.',
+    '403': 'У API-ключа нет прав на этот раздел. Выдайте ключу доступ к поставкам в кабинете маркетплейса.',
+    '404': 'Метод или объект не найден — данных по этой поставке у маркетплейса нет.',
+    '405': 'Метод вызван неверно — это ошибка интеграции, а не ваших настроек.',
+    '409': 'Маркетплейс отклонил операцию из-за текущего статуса поставки.',
+    '429': 'Слишком много запросов к API. Подождите минуту и повторите.',
+  };
+  const title = byCode[code] ?? (code.startsWith('5')
+    ? 'Маркетплейс временно недоступен. Попробуйте через несколько минут.'
+    : 'Не удалось получить данные от маркетплейса.');
+  return { title, detail: raw };
+}
+
 /** Типы документов Яндекса приходят кодами — показываем человеческие названия. */
 const YM_DOC_TYPE: Record<string, string> = {
   SUPPLY:            'Акт приёма-передачи',
@@ -570,10 +591,11 @@ export class SupplyManagementModule {
       return `<div class="sp-loading-inline">${I.loader()} Загружаем состав поставки...</div>`;
     }
     if (this.detailItemsError) {
+      const e = humanApiError(this.detailItemsError);
       return `<div class="sp-error-block" style="margin:0">
         <div class="sp-error-icon">⚠️</div>
-        <div class="sp-error-text">Не удалось загрузить состав</div>
-        <p style="font-size:12px;color:var(--text2);margin-top:6px">${esc(this.detailItemsError)}</p>
+        <div class="sp-error-text">${esc(e.title)}</div>
+        <details class="sp-error-details"><summary>Технические детали</summary><code>${esc(e.detail)}</code></details>
         <div class="sp-error-actions">
           <button class="sp-btn sp-btn-ghost" id="sp-retry-items">Попробовать снова</button>
         </div>
@@ -618,10 +640,11 @@ export class SupplyManagementModule {
       return `<div class="sp-loading-inline">${I.loader()} Загружаем возвраты...</div>`;
     }
     if (this.detailReturnsError) {
+      const e = humanApiError(this.detailReturnsError);
       return `<div class="sp-error-block" style="margin:0">
         <div class="sp-error-icon">⚠️</div>
-        <div class="sp-error-text">Не удалось загрузить возвраты</div>
-        <p style="font-size:12px;color:var(--text2);margin-top:6px">${esc(this.detailReturnsError)}</p>
+        <div class="sp-error-text">${esc(e.title)}</div>
+        <details class="sp-error-details"><summary>Технические детали</summary><code>${esc(e.detail)}</code></details>
         <div class="sp-error-actions">
           <button class="sp-btn sp-btn-ghost" id="sp-retry-returns">Попробовать снова</button>
         </div>
@@ -651,7 +674,7 @@ export class SupplyManagementModule {
         <tbody>
           ${this.detailReturns.map(r => `<tr>
             <td>${esc(r.name)}</td>
-            <td style="color:var(--text2);font-size:12px">${esc(r.reason ?? '—')}</td>
+            <td style="color:var(--text2);font-size:12px">${esc(returnReason(r.reason ?? '—'))}</td>
             <td style="color:var(--text2);font-size:12px">${r.date ? new Date(r.date).toLocaleDateString('ru-RU') : '—'}</td>
             <td style="text-align:right;font-weight:700;color:#ef4444">${r.qty}</td>
           </tr>`).join('')}
@@ -1833,7 +1856,7 @@ export class SupplyManagementModule {
       ov.body.innerHTML = docs.length
         ? `<div class="sp-form"><div class="sp-doc-list">
             ${docs.map(d => `<a class="sp-doc" href="${esc(d.url)}" target="_blank" rel="noopener">
-              ${I.download()} <span>${esc(d.type || 'Документ')}</span></a>`).join('')}
+              ${I.download()} <span>${esc(YM_DOC_TYPE[d.type] ?? d.type ?? 'Документ')}</span></a>`).join('')}
           </div></div>`
         : `<div class="sp-empty" style="height:120px"><p>По этой заявке документов пока нет</p></div>`;
     } catch (err: any) {
@@ -2049,6 +2072,15 @@ export class SupplyManagementModule {
       .sp-tab:hover:not(.active):not(:disabled) { color:var(--text);background:rgba(0,0,0,.04) }
       .sp-tab.disabled, .sp-tab:disabled {
         opacity:.38;cursor:not-allowed;pointer-events:none
+      }
+
+      /* Технические детали ошибки — по клику, чтобы не пугать кодами */
+      .sp-error-details { margin-top:8px;font-size:11px;color:var(--text3);max-width:520px }
+      .sp-error-details summary { cursor:pointer;user-select:none }
+      .sp-error-details summary:hover { color:var(--text2) }
+      .sp-error-details code {
+        display:block;margin-top:6px;padding:8px 10px;border-radius:7px;background:var(--bg3);
+        font-size:11px;line-height:1.5;word-break:break-word;text-align:left;color:var(--text2)
       }
 
       /* ── Мастер создания поставки ─────────────────────────────────────── */
