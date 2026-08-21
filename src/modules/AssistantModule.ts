@@ -1579,7 +1579,6 @@ export class AssistantModule {
       ]);
       this.mpNewsUnread = countUnread(this.mpNews);
       if (this.mpNews.length) this.renderNewsBlock();
-      if (this.mpNewsUnread > 0) this.renderNewsBadge();
     } catch { /* non-critical */ }
   }
 
