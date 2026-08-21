@@ -1439,7 +1439,8 @@ export const ozonApi = {
   },
 
   /**
-   * POST /v2/supply-order/list — список ID заявок (v2 отдаёт только идентификаторы).
+   * POST /v3/supply-order/list — список ID заявок (отдаёт только идентификаторы).
+   * v2 отключён Ozon 11.12.2025 и отвечает 404.
    */
   async getSupplyOrderIds(
     creds: Creds,
@@ -1450,7 +1451,7 @@ export const ozonApi = {
     for (let page = 0; page < 50; page++) {
       const body: Record<string, unknown> = { paging: { from_supply_order_id: fromId, limit: 100 } };
       if (states?.length) body.filter = { states };
-      const resp = await ozonPost<any>('/v2/supply-order/list', body, creds);
+      const resp = await ozonPost<any>('/v3/supply-order/list', body, creds);
       const raw = resp?.result ?? resp ?? {};
       const ids: number[] = (raw.supply_order_id ?? raw.supply_order_ids ?? []).map(Number);
       all.push(...ids);
@@ -1462,7 +1463,8 @@ export const ozonApi = {
   },
 
   /**
-   * POST /v2/supply-order/get — детали заявок по списку ID (до 50 за раз).
+   * POST /v3/supply-order/get — детали заявок по списку ID (до 50 за раз).
+   * v2 отключён Ozon 11.12.2025 и отвечает 404.
    */
   async getSupplyOrders(
     creds: Creds,
@@ -1473,7 +1475,7 @@ export const ozonApi = {
     const warehouses: any[] = [];
     for (let i = 0; i < orderIds.length; i += 50) {
       const chunk = orderIds.slice(i, i + 50);
-      const resp = await ozonPost<any>('/v2/supply-order/get', { order_ids: chunk }, creds);
+      const resp = await ozonPost<any>('/v3/supply-order/get', { order_ids: chunk }, creds);
       const raw = resp?.result ?? resp ?? {};
       orders.push(...(raw.orders ?? []));
       warehouses.push(...(raw.warehouses ?? []));

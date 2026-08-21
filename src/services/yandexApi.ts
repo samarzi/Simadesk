@@ -1301,19 +1301,26 @@ export async function getYandexSupplyRequestItems(
   requestId: string,
 ): Promise<Array<{ name: string; offerId: string; qty: number }>> {
   if (!store.campaign_id) throw new Error('campaign_id не задан');
+  // requestId Маркет принимает ТОЛЬКО числом, а пагинация идёт в query —
+  // строка в теле или pageToken в body дают 400 Bad Request.
+  const numericId = Number(requestId);
+  if (!Number.isFinite(numericId) || numericId < 1) {
+    throw new Error(`Некорректный идентификатор заявки: ${requestId}`);
+  }
   const items: any[] = [];
   let pageToken: string | undefined;
   for (let page = 0; page < 50; page++) {
-    const body: Record<string, unknown> = { requestId };
-    if (pageToken) body.pageToken = pageToken;
-    const res = await fetch(`/yandex-api/v2/campaigns/${store.campaign_id}/supply-requests/items`, {
+    const q = new URLSearchParams({ limit: '250' });
+    if (pageToken) q.set('pageToken', pageToken);
+    const res = await fetch(
+      `/yandex-api/v2/campaigns/${store.campaign_id}/supply-requests/items?${q}`, {
       method: 'POST',
       headers: {
         'Api-Key': store.api_key,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ requestId: numericId }),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -1328,7 +1335,11 @@ export async function getYandexSupplyRequestItems(
   return items.map((i: any) => ({
     name: String(i.name ?? i.offerName ?? i.offerId ?? ''),
     offerId: String(i.offerId ?? i.shopSku ?? ''),
-    qty: Number(i.count ?? i.planCount ?? i.quantity ?? 0),
+    // Фактическое количество приоритетнее планового: после приёмки оно и есть правда
+    qty: Number(
+      i.counters?.factCount ?? i.counters?.planCount ??
+      i.count ?? i.planCount ?? i.quantity ?? 0,
+    ),
   }));
 }
 
@@ -1341,6 +1352,11 @@ export async function getYandexSupplyRequestDocuments(
   requestId: string,
 ): Promise<Array<{ type: string; url: string }>> {
   if (!store.campaign_id) throw new Error('campaign_id не задан');
+  // requestId обязан быть числом — строка даёт 400
+  const numericId = Number(requestId);
+  if (!Number.isFinite(numericId) || numericId < 1) {
+    throw new Error(`Некорректный идентификатор заявки: ${requestId}`);
+  }
   const res = await fetch(`/yandex-api/v2/campaigns/${store.campaign_id}/supply-requests/documents`, {
     method: 'POST',
     headers: {
@@ -1348,7 +1364,7 @@ export async function getYandexSupplyRequestDocuments(
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     },
-    body: JSON.stringify({ requestId }),
+    body: JSON.stringify({ requestId: numericId }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -1362,8 +1378,9 @@ export async function getYandexSupplyRequestDocuments(
 // ── Returns (Возвраты) ─────────────────────────────────────────────────────
 
 /**
- * Получить возвраты Яндекс.Маркет.
- * POST /v2/campaigns/{campaignId}/orders/returns
+ * Получить возвраты и невыкупы Яндекс.Маркет.
+ * GET /v2/campaigns/{campaignId}/returns — все параметры идут в query.
+ * Ранее здесь стоял POST на /orders/returns: неверный и метод, и путь (405).
  */
 export async function getYandexReturns(
   store: YandexStore,
@@ -1371,28 +1388,36 @@ export async function getYandexReturns(
     dateFrom?: string;
     dateTo?: string;
     status?: string[];
+    type?: 'RETURN' | 'UNREDEEMED';
   } = {},
 ): Promise<any[]> {
   if (!store.campaign_id) throw new Error('campaign_id не задан');
-  const res = await fetch(`/yandex-api/v2/campaigns/${store.campaign_id}/orders/returns`, {
-    method: 'POST',
-    headers: {
-      'Api-Key': store.api_key,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    },
-    body: JSON.stringify({
-      dateFrom: params.dateFrom,
-      dateTo: params.dateTo,
-      statuses: params.status,
-    }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Yandex returns ${res.status}: ${text.slice(0, 200)}`);
+  const all: any[] = [];
+  let pageToken: string | undefined;
+
+  for (let page = 0; page < 50; page++) {
+    const q = new URLSearchParams({ limit: '100' });
+    if (params.dateFrom)      q.set('fromDate', params.dateFrom.slice(0, 10));
+    if (params.dateTo)        q.set('toDate',   params.dateTo.slice(0, 10));
+    if (params.status?.length) q.set('statuses', params.status.join(','));
+    if (params.type)          q.set('type', params.type);
+    if (pageToken)            q.set('pageToken', pageToken);
+
+    const res = await fetch(`/yandex-api/v2/campaigns/${store.campaign_id}/returns?${q}`, {
+      method: 'GET',
+      headers: { 'Api-Key': store.api_key, 'Accept': 'application/json' },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Yandex returns ${res.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    const chunk: any[] = data?.result?.returns ?? data?.returns ?? [];
+    all.push(...chunk);
+    pageToken = data?.result?.paging?.nextPageToken;
+    if (!pageToken || !chunk.length) break;
   }
-  const data = await res.json();
-  return data?.result?.returns ?? data?.returns ?? [];
+  return all;
 }
 
 /**
