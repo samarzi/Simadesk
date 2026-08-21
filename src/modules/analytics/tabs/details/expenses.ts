@@ -1,6 +1,6 @@
 import {
   DetailCtx, detailFrame, deltaOf, card, statGrid, barList, adviceBlock, Advice,
-  estimateNote, sparkline, fmtMoney, fmtNum, plural, emptyBlock, escapeHtml,
+  awaitingNote, sparkline, fmtMoney, fmtNum, plural, emptyBlock, escapeHtml,
 } from './shared';
 import { computeSkuPerformance } from '../../services/kpiAggregator';
 
@@ -11,18 +11,20 @@ interface Part { label: string; value: number; color: string; what: string }
 export function renderExpensesDetail(c: DetailCtx): string {
   const k = c.kpi;
   const rev = Math.max(1, k.revenue);
-  const mpFees = k.commission + k.logistics + k.services;
+  const mpFees = k.commission + k.logistics + k.services + k.period_costs;
 
   const parts: Part[] = [
     { label: 'Комиссия маркетплейса', value: k.commission, color: '#fb923c', what: 'процент площадки с каждой продажи' },
     { label: 'Логистика',             value: k.logistics,  color: '#60a5fa', what: 'доставка до покупателя и обратная логистика возвратов' },
-    { label: 'Услуги, штрафы, реклама', value: k.services, color: '#a78bfa', what: 'хранение, продвижение, эквайринг, удержания' },
+    { label: 'Услуги по заказам',     value: k.services,   color: '#a78bfa', what: 'удержания, привязанные к конкретным заказам' },
+    { label: 'Реклама, хранение, штрафы', value: k.period_costs, color: '#f59e0b', what: 'списания площадки без привязки к заказу' },
+    { label: 'Свои расходы',          value: k.manual_costs, color: '#94a3b8', what: 'записи, добавленные вручную в настройках' },
     { label: 'Себестоимость товара',  value: k.cogs,       color: '#22d3ee', what: 'закупка проданных единиц' },
     { label: 'Налог',                 value: k.tax,        color: '#f472b6', what: 'по налоговому режиму магазина' },
   ];
   const shown = parts.filter(p => p.value > 0).sort((a, b) => b.value - a.value);
 
-  const perOrder = k.orders_delivered > 0 ? k.total_expenses / k.orders_delivered : 0;
+  const perOrder = k.orders_settled > 0 ? k.total_expenses / k.orders_settled : 0;
   const expDaily = c.ts.map(p => p.expenses);
 
   const skus = computeSkuPerformance(c.orders)
@@ -33,7 +35,8 @@ export function renderExpensesDetail(c: DetailCtx): string {
 
   const commissionPct = (k.commission / rev) * 100;
   const logisticsPct  = (k.logistics / rev) * 100;
-  const servicesPct   = (k.services / rev) * 100;
+  const servicesPct   = ((k.services + k.period_costs) / rev) * 100;
+  const adPct         = ((k.period_costs_breakdown.find(b => b.kind === 'advertising')?.amount ?? 0) / rev) * 100;
   const cogsPct       = (k.cogs / rev) * 100;
   const totalPct      = (k.total_expenses / rev) * 100;
 
@@ -60,11 +63,24 @@ export function renderExpensesDetail(c: DetailCtx): string {
       text: `${fmtMoney(k.commission)}. Проверь категории товаров: ставка комиссии зависит от категории, и часть товаров могла оказаться не в той. Также сюда попадает участие в акциях с повышенной ставкой.`,
     });
   }
-  if (servicesPct >= 10) {
+  if (adPct >= 10) {
     advice.push({
       level: 'warn',
-      title: `Услуги и штрафы — ${servicesPct.toFixed(0)}% выручки`,
-      text: `${fmtMoney(k.services)} на хранение, продвижение и удержания. Разбери карточки крупных заказов: если это хранение — стоит вывезти неликвид, если штрафы — исправить причину, они повторятся.`,
+      title: `Доля расходов на рекламу — ${adPct.toFixed(0)}% выручки`,
+      text: 'Для маркетплейса комфортный уровень — до 10%. Выше имеет смысл держать только на выводе нового товара в топ. Сверь, растёт ли выручка быстрее рекламного бюджета: если нет — ставки задраны.',
+    });
+  } else if (servicesPct >= 10) {
+    advice.push({
+      level: 'warn',
+      title: `Услуги, реклама и штрафы — ${servicesPct.toFixed(0)}% выручки`,
+      text: `${fmtMoney(k.services + k.period_costs)} суммарно. Разбери разбивку ниже: если это хранение — стоит вывезти неликвид, если штрафы — исправить причину, они повторятся.`,
+    });
+  }
+  if (k.period_costs === 0 && k.services === 0) {
+    advice.push({
+      level: 'info',
+      title: 'Реклама и хранение в отчёте не найдены',
+      text: 'Либо магазин их действительно не платил, либо финотчёт за период ещё не подтянут. Нажми «Обновить» — эти списания приходят вместе с отчётом маркетплейса.',
     });
   }
   if (k.cogs === 0) {
@@ -89,13 +105,13 @@ export function renderExpensesDetail(c: DetailCtx): string {
   }
 
   const body = `
-    ${estimateNote(k)}
+    ${awaitingNote(k)}
 
     ${statGrid([
       { label: 'Доля от выручки', value: `${totalPct.toFixed(1)}%`, hint: 'сколько уходит с каждого рубля', color: totalPct >= 100 ? 'var(--red)' : undefined },
-      { label: 'Удержания МП', value: fmtMoney(mpFees), hint: `${((mpFees / rev) * 100).toFixed(1)}% выручки` },
+      { label: 'Удержания МП', value: fmtMoney(mpFees), hint: `${((mpFees / rev) * 100).toFixed(1)}% выручки, включая рекламу` },
       { label: 'Себестоимость', value: fmtMoney(k.cogs), hint: `${cogsPct.toFixed(1)}% выручки` },
-      { label: 'Расход на заказ', value: fmtMoney(perOrder), hint: `по ${fmtNum(k.orders_delivered)} доставленным` },
+      { label: 'Расход на заказ', value: fmtMoney(perOrder), hint: `по ${fmtNum(k.orders_settled)} рассчитанным заказам` },
       { label: 'Налог', value: fmtMoney(k.tax), hint: `${((k.tax / rev) * 100).toFixed(1)}% выручки` },
       { label: 'Осталось прибыли', value: fmtMoney(k.net_profit), hint: `маржа ${k.margin_pct.toFixed(1)}%`, color: k.net_profit >= 0 ? 'var(--green)' : 'var(--red)' },
     ])}
@@ -107,6 +123,13 @@ export function renderExpensesDetail(c: DetailCtx): string {
       share: `${((p.value / rev) * 100).toFixed(1)}% выручки`,
       hint: p.what,
     }))) : emptyBlock('расходов за период нет'), 'доля указана от выручки')}
+
+    ${k.period_costs_breakdown.length ? card('Расходы без привязки к заказам', barList(k.period_costs_breakdown.map(b => ({
+      label: b.label,
+      value: b.amount,
+      color: b.kind === 'advertising' ? '#f59e0b' : b.kind === 'storage' ? '#38bdf8' : b.kind === 'penalty' ? '#f87171' : '#94a3b8',
+      share: `${((b.amount / rev) * 100).toFixed(1)}% выручки`,
+    }))), 'реклама, хранение, штрафы, подписки') : ''}
 
     ${card('Расходы по дням', sparkline(expDaily, ACCENT, 120), `${c.ts.length} дн.`)}
 
@@ -124,7 +147,7 @@ export function renderExpensesDetail(c: DetailCtx): string {
   return detailFrame({
     title: 'Расходы',
     value: fmtMoney(k.total_expenses),
-    subtitle: `${c.periodLabel} · ${c.storeName}`,
+    subtitle: `${c.periodLabel} · ${c.storeName} · база: выкупленные заказы`,
     accent: ACCENT,
     delta: deltaOf(k.total_expenses, c.prevKpi?.total_expenses, true),
     body,

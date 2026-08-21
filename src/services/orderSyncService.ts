@@ -24,6 +24,7 @@ import {
   analyticsOrderCache,
   monthStart, monthEnd, isMonthSettled, monthCacheKey, monthsInRange,
 } from '@/services/analyticsOrderCache';
+import { normalizeMpDate } from '@/utils/mpDate';
 import { OzonPosting }  from '@/types/ozon';
 import { YandexOrder }  from '@/types/yandex';
 import { WbOrder }      from '@/types/wb';
@@ -36,6 +37,25 @@ const FALLBACK_EARLIEST = '2023-01-01';
 const WB_SYNC_DELAY_MS = 30_000;
 
 function toStr(d: Date): string { return d.toISOString().slice(0, 10); }
+
+/**
+ * Попадает ли заказ в запрошенный период.
+ *
+ * Нужна отдельная проверка, потому что кэш хранится помесячно: при попадании в
+ * кэш возвращался ВЕСЬ месяц, а при промахе — только запрошенный отрезок.
+ * Из-за этого «30 дней» с 20 июля прихватывали ещё и 1–19 июля, если июль лежал
+ * в кэше, и одна и та же выборка давала разные суммы в зависимости от того,
+ * прогрет кэш или нет. WB вдобавок грузился без верхней границы — до «сегодня».
+ *
+ * Заказ без разбираемой даты не выбрасываем: решение о нём принимает аналитика.
+ */
+export function isWithinRange(raw: string | null | undefined, start: Date, end: Date): boolean {
+  const iso = normalizeMpDate(raw);
+  if (!iso) return true;
+  const t = Date.parse(iso);
+  if (isNaN(t)) return true;
+  return t >= start.getTime() && t <= end.getTime();
+}
 
 function ymDateStr(d: Date): string {
   return `${String(d.getUTCDate()).padStart(2,'0')}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${d.getUTCFullYear()}`;
@@ -499,7 +519,13 @@ class OrderSyncService {
       }),
     ]);
 
-    return { ozonPostings, yandexOrders, wbOrders };
+    // Единая отсечка по периоду для всех источников — кэш, in-flight и API
+    // приходят с разной гранулярностью, и без неё выборка зависит от состояния кэша.
+    return {
+      ozonPostings: ozonPostings.filter(p => isWithinRange(p.created_at || p.in_process_at, start, end)),
+      yandexOrders: yandexOrders.filter(o => isWithinRange(o.creation_date, start, end)),
+      wbOrders:     wbOrders.filter(o => isWithinRange(o.created_at, start, end)),
+    };
   }
 
   // ── Background sync helpers ─────────────────────────────────────────────────

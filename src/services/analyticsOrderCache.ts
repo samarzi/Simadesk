@@ -10,12 +10,35 @@
 
 import { dbFetch } from '@/services/dbClient';
 
-export const SETTLED_DAYS = 7;
+/**
+ * Сколько дней после конца месяца заказы ещё могут менять статус.
+ * Пока срок не вышел, месяц не считается закрытым: доставка идёт до двух недель,
+ * и заказ, закэшированный сразу 1-го числа как «в пути», иначе навсегда таким
+ * и остался бы — кэш прошедшего месяца больше никогда не перечитывается.
+ */
+export const SETTLED_DAYS = 14;
+
+const SETTLED_MS = SETTLED_DAYS * 86400_000;
 
 interface CacheRow {
   chunk_from: string; // YYYY-MM-DD (1-е число месяца)
   chunk_to:   string; // YYYY-MM-DD (последнее число месяца)
   data: any[];
+  cached_at?: string | null;
+}
+
+/**
+ * Запись кэша заслуживает доверия только если её сняли уже после того,
+ * как статусы месяца устоялись. Лечит записи, сохранённые старой версией
+ * сразу по наступлении следующего месяца — с незавершёнными заказами внутри.
+ */
+function isCacheRowFresh(row: CacheRow): boolean {
+  if (!row.cached_at) return false;
+  const cachedAt = Date.parse(row.cached_at);
+  if (isNaN(cachedAt)) return false;
+  const monthEndMs = Date.parse(`${row.chunk_to}T23:59:59.999Z`);
+  if (isNaN(monthEndMs)) return true;
+  return cachedAt >= monthEndMs + SETTLED_MS;
 }
 
 function toStr(d: Date): string { return d.toISOString().slice(0, 10); }
@@ -30,11 +53,15 @@ export function monthEnd(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0, 23, 59, 59, 999));
 }
 
-/** Прошедший ли месяц (не текущий) — такой можно кэшировать. */
+/**
+ * Закрыт ли месяц — то есть можно ли считать его данные окончательными и кэшировать.
+ *
+ * Раньше здесь стояла проверка «месяц не текущий», и август становился неизменяемым
+ * ровно 1 сентября. Заказы конца августа, ещё ехавшие к покупателю, замораживались
+ * в статусе «в пути» навсегда. Теперь ждём SETTLED_DAYS после конца месяца.
+ */
 export function isMonthSettled(d: Date): boolean {
-  const now = new Date();
-  const curMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  return monthStart(d) < curMonthStart;
+  return Date.now() >= monthEnd(d).getTime() + SETTLED_MS;
 }
 
 /** Ключ кэша для месяца по дате. */
@@ -68,9 +95,10 @@ export const analyticsOrderCache = {
         `analytics_orders_cache` +
         `?store_id=eq.${encodeURIComponent(storeId)}` +
         `&chunk_from=gte.${from}&chunk_to=lte.${to}` +
-        `&select=chunk_from,chunk_to,data`,
+        `&select=chunk_from,chunk_to,data,cached_at`,
       );
       for (const row of rows) {
+        if (!isCacheRowFresh(row)) continue; // снято слишком рано — перечитаем из API
         result.set(`${row.chunk_from}|${row.chunk_to}`, row.data);
       }
     } catch (e) {
@@ -85,13 +113,14 @@ export const analyticsOrderCache = {
     try {
       const from = toStr(monthStart(start));
       const to   = toStr(monthEnd(end));
-      const rows = await dbFetch<{ chunk_from: string; chunk_to: string }[]>(
+      const rows = await dbFetch<CacheRow[]>(
         `analytics_orders_cache` +
         `?store_id=eq.${encodeURIComponent(storeId)}` +
         `&chunk_from=gte.${from}&chunk_to=lte.${to}` +
-        `&select=chunk_from,chunk_to`,
+        `&select=chunk_from,chunk_to,cached_at`,
       );
       for (const row of rows) {
+        if (!isCacheRowFresh(row)) continue;
         keys.add(`${row.chunk_from}|${row.chunk_to}`);
       }
     } catch (e) {

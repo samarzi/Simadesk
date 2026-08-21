@@ -16,7 +16,9 @@ import { YandexOrder } from '@/types/yandex';
 import { WbOrder } from '@/types/wb';
 import {
   Order, OrderItem, OrderStatus, FeeBreakdown, Mp, SourceQuality, StoreInfo,
+  PeriodCost, PeriodCostKind, PERIOD_COST_LABEL,
 } from '../types';
+import { normalizeMpDate } from '@/utils/mpDate';
 import { CogsResolver } from './cogsResolver';
 import { calcTax } from './taxCalculator';
 import { settingsDb } from './settingsDb';
@@ -30,6 +32,12 @@ export interface ProductInfo {
 
 /** Карта артикул→инфа товара. Ключи: `${mp}|${vendor_code}` и `${mp}|sku:${mp_sku}`. */
 export type ProductMap = Map<string, ProductInfo>;
+
+export interface AggregateResult {
+  orders: Order[];
+  /** Расходы МП, не привязанные к заказу: реклама, хранение, штрафы, подписки. */
+  periodCosts: PeriodCost[];
+}
 
 export interface AggregateInput {
   ozonPostings: OzonPosting[];
@@ -199,7 +207,7 @@ function buildItems(
 
 // ── Главная сборка ──────────────────────────────────────────────────────────
 
-export function aggregateOrders(input: AggregateInput): Order[] {
+export function aggregateOrders(input: AggregateInput): AggregateResult {
   const { ozonPostings, yandexOrders, wbOrders, transactions, stores, products, cogs } = input;
 
   const storeMap = new Map(stores.map(s => [s.id, s]));
@@ -221,7 +229,7 @@ export function aggregateOrders(input: AggregateInput): Order[] {
       })), products, cogs);
     const status = mapOzonStatus(p.status);
     orders.push(makeOrder({
-      orderId, mp: 'ozon', store, date: p.created_at || p.in_process_at || '',
+      orderId, mp: 'ozon', store, date: normalizeMpDate(p.created_at || p.in_process_at),
       status, status_raw: p.status, items,
       txs: txByOrder.get(orderId) ?? [],
     }));
@@ -240,7 +248,9 @@ export function aggregateOrders(input: AggregateInput): Order[] {
         price: it.price,
       })), products, cogs);
     orders.push(makeOrder({
-      orderId, mp: 'yandex', store, date: o.creation_date,
+      // Яндекс отдаёт «DD-MM-YYYY HH:mm:ss» по Москве — без нормализации такие
+      // заказы выпадали из графика, тепловой карты и сортировались по числу месяца.
+      orderId, mp: 'yandex', store, date: normalizeMpDate(o.creation_date),
       status: mapYandexStatus(o.status), status_raw: o.status, items,
       txs: txByOrder.get(orderId) ?? [],
     }));
@@ -260,7 +270,7 @@ export function aggregateOrders(input: AggregateInput): Order[] {
         price: it.price,
       })), products, cogs);
     orders.push(makeOrder({
-      orderId, mp: 'wb', store, date: o.created_at,
+      orderId, mp: 'wb', store, date: normalizeMpDate(o.created_at),
       status: mapWbStatus(o.status), status_raw: o.status, items,
       txs: txByOrder.get(orderId) ?? [],
     }));
@@ -305,89 +315,80 @@ export function aggregateOrders(input: AggregateInput): Order[] {
     const isReturn = txs.some(isReturnTx);
     const isCancel = txs.some(isCancelTx);
     orders.push(makeOrder({
-      orderId, mp: store.mp, store, date: tx0.operation_date,
+      orderId, mp: store.mp, store, date: normalizeMpDate(tx0.operation_date),
       status: isCancel ? 'cancelled' : isReturn ? 'returned' : 'delivered',
       status_raw: tx0.operation_type_name ?? tx0.operation_type ?? '',
       items, txs, is_orphan: true,
     }));
   }
 
-  estimatePendingFinancials(orders, storeMap);
-
-  return orders.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return {
+    orders: orders.sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+    periodCosts: collectPeriodCosts(transactions, storeMap),
+  };
 }
 
-/** Типовые ставки МП — fallback, когда в срезе вообще нет заказов с финотчётом. */
-const FALLBACK_RATES: Record<Mp, { commission: number; logistics: number; services: number }> = {
-  ozon:   { commission: 0.16, logistics: 0.07, services: 0.01 },
-  wb:     { commission: 0.19, logistics: 0.08, services: 0.01 },
-  yandex: { commission: 0.13, logistics: 0.06, services: 0.01 },
-};
+/** Категория расхода периода по типу транзакции и названию операции. */
+function classifyPeriodCost(tx: MpTransaction): PeriodCostKind {
+  switch (tx.tx_kind) {
+    case 'advertising': return 'advertising';
+    case 'storage':     return 'storage';
+    case 'penalty':     return 'penalty';
+    default: break;
+  }
+  const n = `${tx.operation_type ?? ''} ${tx.operation_type_name ?? ''}`.toLowerCase();
+  if (n.includes('рекл') || n.includes('продвиж') || n.includes('advert') || n.includes('promot') || n.includes('marketing')) return 'advertising';
+  if (n.includes('хранен') || n.includes('storage')) return 'storage';
+  if (n.includes('штраф') || n.includes('penalty') || n.includes('fine')) return 'penalty';
+  if (n.includes('эквайр') || n.includes('acquir')) return 'acquiring';
+  return 'service';
+}
 
 /**
- * Дозаполняет удержания у заказов без финотчёта (pending_settlement).
- *
- * Зачем: раньше такие заказы просто выбрасывались из всех денежных расчётов
- * (`if (o.pending_settlement) continue`), при этом продолжая считаться в
- * «Заказов доставлено». Получалась картина вида «94 доставлено, выручка 121 тыс»,
- * где выручка покрывала лишь 40% этих заказов, график был из одного пика,
- * а Топ-товаров пустовал. Теперь по ним считаются оценочные удержания
- * по фактическим ставкам этого же среза, а флаг fees_estimated позволяет
- * честно показать долю оценки в интерфейсе.
+ * Нетто-расход по транзакции без заказа.
+ * Берём сумму удержаний; если МП их не расшифровал — падаем на итог по счёту
+ * (amount < 0 = деньги ушли у продавца). Компенсации дают отрицательный расход.
  */
-function estimatePendingFinancials(orders: Order[], storeMap: Map<string, StoreInfo>): void {
-  // Фактические ставки по каждому МП — из заказов, где финотчёт уже есть.
-  const acc = new Map<Mp, { revenue: number; commission: number; logistics: number; services: number }>();
-  for (const o of orders) {
-    if (o.pending_settlement || o.revenue <= 0) continue;
-    const cur = acc.get(o.mp) ?? { revenue: 0, commission: 0, logistics: 0, services: 0 };
-    cur.revenue    += o.revenue;
-    cur.commission += o.commission;
-    cur.logistics  += o.logistics + o.logistics_return;
-    cur.services   += o.services;
-    acc.set(o.mp, cur);
-  }
-
-  const rateFor = (mp: Mp) => {
-    const a = acc.get(mp);
-    const fb = FALLBACK_RATES[mp];
-    // Требуем осмысленную базу — на паре заказов ставка шумит сильнее, чем типовая.
-    if (!a || a.revenue < 1000) return fb;
-    const clamp = (v: number, max: number) => (isFinite(v) && v > 0 ? Math.min(v, max) : 0);
-    return {
-      commission: clamp(a.commission / a.revenue, 0.5) || fb.commission,
-      logistics:  clamp(a.logistics  / a.revenue, 0.5),
-      services:   clamp(a.services   / a.revenue, 0.3),
-    };
-  };
-
-  for (const o of orders) {
-    if (!o.pending_settlement) continue;
-    if (o.status === 'cancelled' || o.status === 'returned') continue;
-    if (o.revenue <= 0) continue;
-
-    const r = rateFor(o.mp);
-    o.commission = o.revenue * r.commission;
-    o.logistics  = o.revenue * r.logistics;
-    o.services   = o.revenue * r.services;
-    o.fees_estimated = true;
-    o.source = 'estimated';
-
-    const store = storeMap.get(o.store_id);
-    const taxOv = store ? settingsDb.taxFor(store.id) : { model: 'none' as const, rate: 0 };
-    o.tax = calcTax(o.revenue, o.commission + o.logistics + o.logistics_return + o.services + o.cogs, taxOv.model, taxOv.rate);
-
-    const totalExpenses = o.commission + o.logistics + o.logistics_return + o.services + o.cogs + o.tax;
-    o.net_profit = o.revenue - totalExpenses;
-
-    const denom = o.items.reduce((s, it) => s + Math.max(0, it.revenue), 0);
-    for (const it of o.items) {
-      const share = denom > 0 ? it.revenue / denom : 1 / Math.max(1, o.items.length);
-      it.net_profit = it.revenue - ((totalExpenses - o.cogs) * share + it.cogs);
-    }
-  }
+function periodCostAmountOf(tx: MpTransaction): number {
+  const fees = -(tx.sale_commission || 0)
+             - (tx.delivery_charge || 0)
+             - (tx.return_delivery_charge || 0)
+             + servicesExpenseOf(tx);
+  if (Math.abs(fees) > 0.01) return fees - (tx.accruals_for_sale || 0);
+  const amount = tx.amount || 0;
+  return amount !== 0 ? -amount : 0;
 }
 
+/**
+ * Собирает расходы, не привязанные к заказу.
+ *
+ * Раньше цикл orphan-заказов начинался с `if (!tx.posting_number) continue`, и
+ * все такие транзакции пропадали бесследно: реклама, хранение, штрафы, подписки,
+ * эквайринг. Для продавца это реальные списанные деньги, поэтому «Расходы» были
+ * систематически занижены, а прибыль и маржа — завышены.
+ */
+function collectPeriodCosts(transactions: MpTransaction[], storeMap: Map<string, StoreInfo>): PeriodCost[] {
+  const out: PeriodCost[] = [];
+  for (const tx of transactions) {
+    if (tx.posting_number) continue;
+    const store = storeMap.get(tx.store_id);
+    if (!store) continue;
+    const amount = periodCostAmountOf(tx);
+    if (Math.abs(amount) < 0.01) continue;
+    const kind = classifyPeriodCost(tx);
+    out.push({
+      date: tx.operation_date,
+      kind,
+      label: tx.operation_type_name || tx.operation_type || PERIOD_COST_LABEL[kind],
+      amount,
+      store_id: tx.store_id,
+      mp: store.mp,
+    });
+  }
+  return out;
+}
+
+/** Категория расхода периода по типу транзакции и названию операции. */
 function groupTxByOrder(transactions: MpTransaction[]): Map<string, MpTransaction[]> {
   const map = new Map<string, MpTransaction[]>();
   for (const tx of transactions) {

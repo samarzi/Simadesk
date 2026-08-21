@@ -77,6 +77,7 @@ function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
   filtered.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   const total = filtered.length;
+  const awaiting = filtered.filter(o => o.status === 'delivered' && o.source !== 'real').length;
 
   const statusOpts: Array<[OrderStatus | 'all', string]> = [
     ['all', 'Все статусы'],
@@ -102,9 +103,12 @@ function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
     const expensesMp = o.commission + o.logistics + o.logistics_return + o.services;
     const goods = o.items.map(it => `<span style="display:inline-flex;align-items:center;gap:2px">${escapeHtml(it.vendor_code)}×${it.quantity}${copyButton(it.vendor_code, 'Копировать артикул')}</span>`).join(', ');
     const safeId = escapeHtml(o.order_id);
-    const pending = o.pending_settlement;
+    // Пока финотчёт не пришёл, удержания по заказу неизвестны. Показывать
+    // «прибыль» как выручку минус себестоимость нельзя — это завышенное число,
+    // из которого не вычтены комиссия и логистика.
+    const pending = o.pending_settlement || (o.status === 'delivered' && o.source !== 'real');
     const pendingCls = pending ? ' an2-pending' : '';
-    const pendingTitle = pending ? ' title="Финотчёт МП ещё не пришёл — комиссия и логистика посчитаны по средним ставкам периода, цифры уточнятся"' : '';
+    const pendingTitle = pending ? ' title="Финотчёт МП ещё не пришёл — комиссия и логистика по заказу неизвестны, поэтому он не участвует в выручке и прибыли"' : '';
     rowsArr.push(`
       <tr onclick="window.analyticsModule?.openOrder('${safeId}')">
         <td class="an2-col-date">${fmtDate(o.date)}</td>
@@ -126,12 +130,12 @@ function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
           </span>
         </td>
         <td class="an2-col-goods">
-          <span class="an2-src ${o.source}" title="${o.source === 'real' ? 'финотчёт' : o.source === 'estimated' ? 'расчёт' : 'нет данных'}"></span>${goods}
+          <span class="an2-src ${o.source}" title="${o.source === 'real' ? 'финотчёт МП получен' : 'финотчёт МП ещё не пришёл'}"></span>${goods}
         </td>
-        <td class="num${pendingCls}"${pendingTitle}>${o.revenue > 0 ? fmtMoney(o.revenue) : '—'}${pending ? ' <span class="an2-pending-badge">пока не финал</span>' : ''}</td>
-        <td class="num neg${pendingCls}">${expensesMp > 0 ? fmtMoney(expensesMp) : '—'}</td>
+        <td class="num${pendingCls}"${pendingTitle}>${o.revenue > 0 ? fmtMoney(o.revenue) : '—'}${pending ? ' <span class="an2-pending-badge">ждём отчёт</span>' : ''}</td>
+        <td class="num neg${pendingCls}">${pending ? '—' : expensesMp > 0 ? fmtMoney(expensesMp) : '—'}</td>
         <td class="num${pendingCls}">${o.cogs > 0 ? fmtMoney(o.cogs) : '—'}</td>
-        <td class="num${pendingCls} ${!pending && o.net_profit >= 0 ? 'pos' : !pending ? 'neg' : ''}">${o.net_profit !== 0 ? fmtMoney(o.net_profit) : '—'}</td>
+        <td class="num${pendingCls} ${!pending && o.net_profit >= 0 ? 'pos' : !pending ? 'neg' : ''}"${pendingTitle}>${pending ? '—' : o.net_profit !== 0 ? fmtMoney(o.net_profit) : '—'}</td>
       </tr>`);
   }
 
@@ -169,7 +173,9 @@ function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
           <option value="yandex" ${f.mp === 'yandex' ? 'selected' : ''}>Яндекс.Маркет</option>
         </select>
 
-        <div style="font-size:11px;color:var(--text3);margin-left:auto">${fmtNum(total)} заказов</div>
+        <div style="font-size:11px;color:var(--text3);margin-left:auto">
+          ${fmtNum(total)} заказов${awaiting > 0 ? ` · <span title="Выкуплено, но финотчёт МП ещё не пришёл — в выручку и прибыль эти заказы пока не входят">${fmtNum(awaiting)} ждут отчёта</span>` : ''}
+        </div>
       </div>
     </div>
 

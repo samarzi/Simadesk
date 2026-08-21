@@ -688,14 +688,27 @@ export const wbApi = {
   },
 
   /**
-   * PUT /api/v3/supplies/{supplyId}/orders — добавить заказы в поставку.
+   * PATCH /api/v3/supplies/{supplyId}/orders — добавить сборочные задания в поставку.
+   * WB принимает именно PATCH; PUT возвращает 405.
    */
   async addOrdersToSupply(
     apiKey: string,
     supplyId: string,
     orderIds: number[],
   ): Promise<void> {
-    await wbFetch(`/wb-marketplace/api/v3/supplies/${supplyId}/orders`, 'PUT', apiKey, { orders: orderIds });
+    const res = await fetch(`${WB_PROXY}/wb-marketplace/api/v3/supplies/${supplyId}/orders`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': apiKey,
+        'Content-Type': 'application/json',
+        'apikey': API_KEY,
+      },
+      body: JSON.stringify({ orders: orderIds }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`WB ${res.status}: ${text.slice(0, 200)}`);
+    }
   },
 
   /**
@@ -765,11 +778,27 @@ export const wbApi = {
   },
 
   /**
-   * GET /api/v3/supplies/{supplyId}/orders — заказы конкретной поставки.
+   * GET /api/v3/supplies/{supplyId}/orders — сборочные задания поставки.
+   * Если WB отвечает 404 (метод заменён на /order-ids), добираем состав по ID
+   * через /api/v3/orders — так состав виден и на новых аккаунтах.
    */
   async getSupplyOrders(apiKey: string, supplyId: string): Promise<any[]> {
-    const resp = await wbFetch<any>(`/wb-marketplace/api/v3/supplies/${supplyId}/orders`, 'GET', apiKey);
-    return resp?.orders ?? [];
+    try {
+      const resp = await wbFetch<any>(`/wb-marketplace/api/v3/supplies/${supplyId}/orders`, 'GET', apiKey);
+      const orders = resp?.orders ?? [];
+      if (orders.length) return orders;
+    } catch { /* падаем в вариант с order-ids */ }
+
+    const idsResp = await wbFetch<any>(`/wb-marketplace/api/v3/supplies/${supplyId}/order-ids`, 'GET', apiKey)
+      .catch(() => null);
+    const ids: number[] = idsResp?.orders?.map((o: any) => o.id ?? o) ?? idsResp?.orderIds ?? [];
+    if (!ids.length) return [];
+    // WB не умеет отдавать заказы по списку ID — фильтруем общий список.
+    const all = await wbFetch<any>('/wb-marketplace/api/v3/orders?limit=1000', 'GET', apiKey).catch(() => null);
+    const allOrders: any[] = all?.orders ?? [];
+    const idSet = new Set(ids.map(Number));
+    const matched = allOrders.filter(o => idSet.has(Number(o.id)));
+    return matched.length ? matched : ids.map(id => ({ id, article: `Задание ${id}` }));
   },
 
   // ── Analytics & Reports ────────────────────────────────────────────────────

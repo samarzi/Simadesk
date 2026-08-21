@@ -131,6 +131,10 @@ export function renderBalanceTab(balances: StoreBalance[]): string {
     <div class="bl-wrap">
       <div class="bl-toolbar">
         <span style="font-size:13px;font-weight:700;color:var(--text)">Баланс магазинов</span>
+        <span style="font-size:10.5px;color:var(--text3);margin-left:10px">
+          Текущее состояние счёта из API площадки — не зависит от выбранного периода,
+          маркетплейса и магазина в шапке. Яндекс.Маркет баланс кошелька не отдаёт.
+        </span>
         <button onclick="window.analyticsModule?.refreshBalances()" ${anyLoading ? 'disabled' : ''}
           style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border:1px solid var(--border);background:var(--bg2);color:var(--text2);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;opacity:${anyLoading ? '.5' : '1'}">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="width:12px;height:12px${anyLoading ? ';animation:an2-spin .8s linear infinite' : ''}"><path d="M14 8A6 6 0 1 1 8.5 2.1M14 2v4h-4"/></svg>

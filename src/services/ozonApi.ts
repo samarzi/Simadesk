@@ -172,6 +172,26 @@ async function ozonPost<T>(
   throw lastErr;
 }
 
+// ── FBO supply draft (черновик поставки) ────────────────────────────────────
+export interface OzonSupplyDraftWarehouse {
+  warehouse_id: number;
+  name: string;
+  address: string;
+  travel_time_days: number | null;
+  bundle_ids: unknown[];
+}
+export interface OzonSupplyDraftCluster {
+  cluster_id: number;
+  cluster_name: string;
+  warehouses: OzonSupplyDraftWarehouse[];
+}
+export interface OzonSupplyDraftInfo {
+  status: string;
+  draftId: string;
+  clusters: OzonSupplyDraftCluster[];
+  errors: unknown[];
+}
+
 // ── Return type from getProductInfo ─────────────────────────────────────────
 export interface OzonProductInfo {
   product_id: number;
@@ -1241,110 +1261,324 @@ export const ozonApi = {
   },
 
   // ── Supply Management (FBO поставки) ───────────────────────────────────────
+  //
+  // ВАЖНО: Ozon не умеет «создать пустую поставку и потом добавить товары».
+  // Реальный флоу — асинхронный, через черновик:
+  //   1. /v1/draft/create              — черновик со СПИСКОМ ТОВАРОВ  → operation_id
+  //   2. /v1/draft/create/info         — статус черновика             → draft_id + кластеры/склады
+  //   3. /v1/draft/timeslot/info       — доступные интервалы приёмки
+  //   4. /v1/draft/supply/create       — заявка по черновику          → operation_id
+  //   5. /v1/draft/supply/create/status— статус создания              → supply_order_id
+  // Состав и таймслот фиксируются на этапе черновика — «дослать» товары нельзя.
 
   /**
-   * POST /v1/supply-order/create — создать поставку FBO.
+   * POST /v1/cluster/list — список кластеров Ozon (нужен для выбора региона поставки).
    */
-  async createSupply(
-    creds: Creds,
-    warehouseId: number,
-    name?: string,
-  ): Promise<{ supplyId: string }> {
-    const body: any = { warehouse_id: warehouseId };
-    if (name) body.name = name;
-    const resp = await ozonPost<any>('/v1/supply-order/create', body, creds);
-    return { supplyId: resp?.result?.supply_order_id ?? resp?.supply_order_id ?? '' };
+  async getClusters(creds: Creds): Promise<Array<{ cluster_id: number; name: string }>> {
+    const resp = await ozonPost<any>('/v1/cluster/list', { cluster_type: 'CLUSTER_TYPE_OZON' }, creds);
+    const clusters: any[] = resp?.clusters ?? resp?.result?.clusters ?? [];
+    return clusters.map(c => ({
+      cluster_id: Number(c.id ?? c.cluster_id ?? 0),
+      name: String(c.name ?? c.cluster_name ?? ''),
+    })).filter(c => c.cluster_id > 0);
   },
 
   /**
-   * POST /v1/supply-order/items/add — добавить товары в поставку.
+   * Шаг 1. POST /v1/draft/create — создать черновик поставки.
+   * Возвращает operation_id (метод асинхронный).
    */
-  async addProductsToSupply(
+  async createSupplyDraft(
     creds: Creds,
-    supplyId: string,
-    items: Array<{ sku: number; quantity: number }>,
-  ): Promise<void> {
-    await ozonPost('/v1/supply-order/items/add', {
-      supply_order_id: supplyId,
-      items: items.map(i => ({ sku: i.sku, quantity: i.quantity })),
+    params: {
+      items: Array<{ sku: number; quantity: number }>;
+      clusterIds?: number[];
+      dropOffPointWarehouseId?: number;
+      type?: 'CREATE_TYPE_DIRECT' | 'CREATE_TYPE_CROSSDOCK';
+    },
+  ): Promise<{ operationId: string }> {
+    const body: Record<string, unknown> = {
+      items: params.items.map(i => ({ sku: i.sku, quantity: i.quantity })),
+      type: params.type ?? 'CREATE_TYPE_DIRECT',
+    };
+    if (params.clusterIds?.length) body.cluster_ids = params.clusterIds.map(String);
+    if (params.dropOffPointWarehouseId) body.drop_off_point_warehouse_id = params.dropOffPointWarehouseId;
+    const resp = await ozonPost<any>('/v1/draft/create', body, creds);
+    return { operationId: String(resp?.operation_id ?? resp?.result?.operation_id ?? '') };
+  },
+
+  /**
+   * Шаг 2. POST /v1/draft/create/info — статус черновика + доступные склады.
+   */
+  async getSupplyDraftInfo(
+    creds: Creds,
+    operationId: string,
+  ): Promise<OzonSupplyDraftInfo> {
+    const resp = await ozonPost<any>('/v1/draft/create/info', { operation_id: operationId }, creds);
+    const raw = resp?.result ?? resp ?? {};
+    const clusters: any[] = raw.clusters ?? [];
+    return {
+      status: String(raw.status ?? ''),
+      draftId: String(raw.draft_id ?? ''),
+      errors: raw.errors ?? [],
+      clusters: clusters.map((c: any) => ({
+        cluster_id: Number(c.cluster_id ?? c.id ?? 0),
+        cluster_name: String(c.cluster_name ?? c.name ?? ''),
+        warehouses: (c.warehouses ?? []).map((w: any) => ({
+          warehouse_id: Number(w.supply_warehouse?.warehouse_id ?? w.warehouse_id ?? 0),
+          name: String(w.supply_warehouse?.name ?? w.name ?? ''),
+          address: String(w.supply_warehouse?.address ?? w.address ?? ''),
+          travel_time_days: w.travel_time_days ?? null,
+          bundle_ids: w.bundle_ids ?? [],
+        })).filter((w: any) => w.warehouse_id > 0),
+      })),
+    };
+  },
+
+  /**
+   * Шаг 3. POST /v1/draft/timeslot/info — доступные интервалы приёмки.
+   */
+  async getDraftTimeslots(
+    creds: Creds,
+    params: { draftId: string; warehouseIds: number[]; dateFrom: string; dateTo: string },
+  ): Promise<Array<{
+    warehouse_id: number;
+    timezone: string;
+    days: Array<{ date: string; slots: Array<{ from: string; to: string }> }>;
+  }>> {
+    const resp = await ozonPost<any>('/v1/draft/timeslot/info', {
+      draft_id: params.draftId,
+      warehouse_ids: params.warehouseIds.map(String),
+      date_from: params.dateFrom,
+      date_to: params.dateTo,
     }, creds);
+    const raw = resp?.result ?? resp ?? {};
+    const list: any[] = raw.drop_off_warehouse_timeslots ?? [];
+    return list.map((w: any) => ({
+      warehouse_id: Number(w.drop_off_warehouse_id ?? 0),
+      timezone: String(w.warehouse_timezone ?? ''),
+      days: (w.days ?? []).map((d: any) => ({
+        date: String(d.date_in_timezone ?? ''),
+        slots: (d.timeslots ?? []).map((t: any) => ({
+          from: String(t.from_in_timezone ?? ''),
+          to: String(t.to_in_timezone ?? ''),
+        })),
+      })),
+    }));
   },
 
   /**
-   * POST /v1/supply-order/barcode — получить штрихкоды поставки (PDF).
+   * Шаг 4. POST /v1/draft/supply/create — создать заявку по черновику.
    */
-  async getSupplyBarcodes(
+  async createSupplyFromDraft(
     creds: Creds,
-    supplyId: string,
-  ): Promise<Blob> {
-    const res = await fetch(`${PROXY}/v1/supply-order/barcode`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Client-Id': creds.client_id,
-        'Api-Key': creds.api_key,
-        'Accept': 'application/pdf',
+    params: { draftId: string; warehouseId: number; timeslot: { from: string; to: string } },
+  ): Promise<{ operationId: string }> {
+    const resp = await ozonPost<any>('/v1/draft/supply/create', {
+      draft_id: params.draftId,
+      warehouse_id: params.warehouseId,
+      timeslot: {
+        from_in_timezone: params.timeslot.from,
+        to_in_timezone: params.timeslot.to,
       },
-      body: JSON.stringify({ supply_order_id: supplyId }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Ozon ${res.status}: ${text.slice(0, 200)}`);
-    }
-    return res.blob();
+    }, creds);
+    return { operationId: String(resp?.operation_id ?? resp?.result?.operation_id ?? '') };
   },
 
   /**
-   * POST /v1/supply-order/submit — отправить поставку (перевести в статус "отправлено").
+   * Шаг 5. POST /v1/draft/supply/create/status — статус создания заявки.
    */
-  async sendSupply(
+  async getSupplyCreateStatus(
     creds: Creds,
-    supplyId: string,
-  ): Promise<void> {
-    await ozonPost('/v1/supply-order/submit', { supply_order_id: supplyId }, creds);
+    operationId: string,
+  ): Promise<{ status: string; supplyOrderId: string; error: string }> {
+    const resp = await ozonPost<any>('/v1/draft/supply/create/status', { operation_id: operationId }, creds);
+    // Ozon отдаёт этот ответ в нескольких формах: result может быть объектом,
+    // массивом записей или сразу списком id. Ищем первый непустой id рекурсивно.
+    const findOrderId = (node: unknown, depth = 0): string => {
+      if (node == null || depth > 4) return '';
+      if (Array.isArray(node)) {
+        for (const el of node) {
+          const found = findOrderId(el, depth + 1);
+          if (found) return found;
+        }
+        return '';
+      }
+      if (typeof node === 'object') {
+        const o = node as Record<string, unknown>;
+        for (const key of ['supply_order_id', 'order_id', 'supply_order_ids', 'order_ids']) {
+          const v = o[key];
+          if (Array.isArray(v) && v.length) return String(v[0]);
+          if (typeof v === 'number' || (typeof v === 'string' && v)) return String(v);
+        }
+        const nested = o.result ?? o.results ?? o.orders;
+        return nested ? findOrderId(nested, depth + 1) : '';
+      }
+      return '';
+    };
+    const collectError = (node: unknown): string => {
+      if (!node || typeof node !== 'object') return '';
+      const o = node as Record<string, any>;
+      const direct = o.error_message ?? o.errorMessage ?? o.error;
+      if (typeof direct === 'string' && direct) return direct;
+      if (Array.isArray(o.errors) && o.errors.length) {
+        return o.errors.map((e: any) => e?.error_message ?? e?.message ?? String(e)).join('; ');
+      }
+      if (Array.isArray(o.result)) {
+        for (const el of o.result) { const e = collectError(el); if (e) return e; }
+      }
+      return '';
+    };
+    const statusOf = (node: any): string =>
+      String(node?.status ?? (Array.isArray(node?.result) ? node.result[0]?.status : node?.result?.status) ?? '');
+
+    return {
+      status: statusOf(resp),
+      supplyOrderId: findOrderId(resp),
+      error: collectError(resp),
+    };
   },
 
   /**
-   * POST /v1/supply-order/list — список поставок.
+   * POST /v2/supply-order/list — список ID заявок (v2 отдаёт только идентификаторы).
    */
-  async getSupplies(
+  async getSupplyOrderIds(
     creds: Creds,
-    status?: 'draft' | 'awaiting_deliver' | 'delivering' | 'delivered' | 'cancelled',
-  ): Promise<any[]> {
-    const all: any[] = [];
-    const limit = 100;
-    let offset = 0;
-    for (let page = 0; page < 200; page++) {
-      const body: any = { limit, offset };
-      if (status) body.status = status;
-      const resp = await ozonPost<any>('/v1/supply-order/list', body, creds);
-      const chunk: any[] = resp?.result?.supply_orders ?? resp?.supply_orders ?? [];
-      all.push(...chunk);
-      if (chunk.length < limit) break;
-      offset += limit;
+    states?: string[],
+  ): Promise<number[]> {
+    const all: number[] = [];
+    let fromId = 0;
+    for (let page = 0; page < 50; page++) {
+      const body: Record<string, unknown> = { paging: { from_supply_order_id: fromId, limit: 100 } };
+      if (states?.length) body.filter = { states };
+      const resp = await ozonPost<any>('/v2/supply-order/list', body, creds);
+      const raw = resp?.result ?? resp ?? {};
+      const ids: number[] = (raw.supply_order_id ?? raw.supply_order_ids ?? []).map(Number);
+      all.push(...ids);
+      const last = Number(raw.last_supply_order_id ?? 0);
+      if (!ids.length || !last || ids.length < 100) break;
+      fromId = last;
     }
     return all;
   },
 
   /**
-   * POST /v1/supply-order/get — детали поставки.
+   * POST /v2/supply-order/get — детали заявок по списку ID (до 50 за раз).
    */
-  async getSupplyDetails(
+  async getSupplyOrders(
     creds: Creds,
-    supplyId: string,
-  ): Promise<any> {
-    const resp = await ozonPost<any>('/v1/supply-order/get', { supply_order_id: supplyId }, creds);
-    return resp?.result ?? resp;
+    orderIds: number[],
+  ): Promise<{ orders: any[]; warehouses: any[] }> {
+    if (!orderIds.length) return { orders: [], warehouses: [] };
+    const orders: any[] = [];
+    const warehouses: any[] = [];
+    for (let i = 0; i < orderIds.length; i += 50) {
+      const chunk = orderIds.slice(i, i + 50);
+      const resp = await ozonPost<any>('/v2/supply-order/get', { order_ids: chunk }, creds);
+      const raw = resp?.result ?? resp ?? {};
+      orders.push(...(raw.orders ?? []));
+      warehouses.push(...(raw.warehouses ?? []));
+    }
+    return { orders, warehouses };
   },
 
   /**
-   * POST /v1/supply-order/cancel — отменить поставку.
+   * Список заявок с деталями — list(ID) + get(детали) одним вызовом.
+   */
+  async getSupplies(creds: Creds, states?: string[]): Promise<any[]> {
+    const ids = await this.getSupplyOrderIds(creds, states);
+    if (!ids.length) return [];
+    const { orders, warehouses } = await this.getSupplyOrders(creds, ids);
+    const whById = new Map<number, any>(warehouses.map((w: any) => [Number(w.warehouse_id ?? w.id), w]));
+    return orders.map((o: any) => ({
+      ...o,
+      _warehouse: whById.get(Number(o.supplies?.[0]?.storage_warehouse_id ?? o.dropoff_warehouse_id)) ?? null,
+    }));
+  },
+
+  /**
+   * POST /v1/supply-order/bundle — состав поставки (товары в грузоместе).
+   */
+  async getSupplyBundle(
+    creds: Creds,
+    bundleIds: string[],
+  ): Promise<Array<{ sku: number; offer_id: string; name: string; quantity: number; barcode: string }>> {
+    if (!bundleIds.length) return [];
+    const items: any[] = [];
+    let lastId = '';
+    for (let page = 0; page < 50; page++) {
+      const resp = await ozonPost<any>('/v1/supply-order/bundle', {
+        bundle_ids: bundleIds,
+        limit: 100,
+        last_id: lastId,
+        is_asc: true,
+        sort_field: 'UNSPECIFIED',
+      }, creds);
+      const raw = resp?.result ?? resp ?? {};
+      const chunk: any[] = raw.items ?? [];
+      items.push(...chunk);
+      if (!raw.has_next || !chunk.length) break;
+      lastId = String(raw.last_id ?? '');
+    }
+    return items.map((i: any) => ({
+      sku: Number(i.sku ?? 0),
+      offer_id: String(i.contractor_item_code ?? i.offer_id ?? ''),
+      name: String(i.name ?? ''),
+      quantity: Number(i.quantity ?? i.quant ?? 0),
+      barcode: String(i.barcode ?? ''),
+    }));
+  },
+
+  /**
+   * POST /v1/supply-order/cancel — отменить заявку (асинхронно).
    */
   async cancelSupply(
     creds: Creds,
     supplyId: string,
-  ): Promise<void> {
-    await ozonPost('/v1/supply-order/cancel', { supply_order_id: supplyId }, creds);
+  ): Promise<{ operationId: string }> {
+    const resp = await ozonPost<any>('/v1/supply-order/cancel', { order_id: Number(supplyId) }, creds);
+    return { operationId: String(resp?.operation_id ?? resp?.result?.operation_id ?? '') };
+  },
+
+  /**
+   * Дождаться готовности черновика (шаг 1 → 2). Ozon считает ~3–15 секунд.
+   */
+  async waitForSupplyDraft(
+    creds: Creds,
+    operationId: string,
+    onTick?: (attempt: number) => void,
+  ): Promise<OzonSupplyDraftInfo> {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      onTick?.(attempt);
+      const info = await this.getSupplyDraftInfo(creds, operationId);
+      const st = info.status.toUpperCase();
+      if (st.includes('SUCCESS') || st.includes('CALCULATION_STATUS_SUCCESS') || (info.draftId && info.clusters.length)) {
+        return info;
+      }
+      if (st.includes('FAILED') || st.includes('ERROR')) {
+        const msg = info.errors?.map((e: any) => e.error_message ?? e.message ?? JSON.stringify(e)).join('; ');
+        throw new Error(msg || 'Ozon не смог рассчитать черновик поставки');
+      }
+      await sleep(2000);
+    }
+    throw new Error('Черновик поставки не рассчитался за 60 секунд — попробуйте позже');
+  },
+
+  /**
+   * Дождаться создания заявки (шаг 4 → 5).
+   */
+  async waitForSupplyCreate(
+    creds: Creds,
+    operationId: string,
+  ): Promise<string> {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const st = await this.getSupplyCreateStatus(creds, operationId);
+      if (st.supplyOrderId) return st.supplyOrderId;
+      if (st.error) throw new Error(st.error);
+      const s = st.status.toUpperCase();
+      if (s.includes('FAILED') || s.includes('ERROR')) throw new Error('Ozon отклонил создание заявки');
+      await sleep(2000);
+    }
+    throw new Error('Заявка не создалась за 60 секунд — проверьте статус в личном кабинете Ozon');
   },
 
   // ── Analytics (Аналитика) ──────────────────────────────────────────────────

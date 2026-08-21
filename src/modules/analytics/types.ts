@@ -103,8 +103,7 @@ export interface Order {
   pending_settlement?: boolean;
   /** Выручка, потерянная из-за возврата/отмены (до зануления revenue). */
   revenue_lost: number;
-  /** Комиссия/логистика/услуги посчитаны оценочно (финотчёта нет). */
-  fees_estimated?: boolean;
+
   /** Техническая строка расходов без найденного заказа. */
   is_orphan?: boolean;
 
@@ -116,41 +115,111 @@ export interface Order {
   tx_ids: string[];
 }
 
-/** Свёрнутая аналитика по периоду. */
+/** Категория расхода, не привязанного к конкретному заказу. */
+export type PeriodCostKind =
+  | 'advertising'   // реклама и продвижение
+  | 'storage'       // хранение на складе МП
+  | 'penalty'       // штрафы и удержания
+  | 'acquiring'     // эквайринг
+  | 'service'       // прочие услуги МП
+  | 'manual';       // ручная запись пользователя
+
+export const PERIOD_COST_LABEL: Record<PeriodCostKind, string> = {
+  advertising: 'Реклама и продвижение',
+  storage:     'Хранение на складе',
+  penalty:     'Штрафы и удержания',
+  acquiring:   'Эквайринг',
+  service:     'Прочие услуги МП',
+  manual:      'Свои расходы',
+};
+
+/**
+ * Расход маркетплейса без привязки к заказу: реклама, хранение, штрафы, подписки.
+ * Раньше такие транзакции молча выбрасывались (у них нет posting_number),
+ * из-за чего «Расходы» были занижены, а прибыль — завышена.
+ */
+export interface PeriodCost {
+  date: string;        // ISO, operation_date
+  kind: PeriodCostKind;
+  label: string;       // человекочитаемое название операции от МП
+  /** Положительное = расход, отрицательное = компенсация продавцу. */
+  amount: number;
+  store_id: string;
+  mp: Mp;
+}
+
+/**
+ * Свёрнутая аналитика по периоду.
+ *
+ * ВАЖНО про базу расчёта. Раньше «выручка» смешивала выкупленные заказы и заказы
+ * в пути, поэтому прибыль и маржа считались от денег, которых ещё нет.
+ * Теперь база разделена явно:
+ *   • объём (заказано, в пути) — по дате заказа;
+ *   • деньги (выручка, расходы, прибыль) — только по выкупленным заказам,
+ *     плюс расходы по возвратам/отменам и расходы периода.
+ */
 export interface KPI {
-  // Доходы
-  revenue: number;          // выручка нетто (revenue − returnsRevenue)
-  revenue_gross: number;    // gross — без вычета возвратов
-  returns_revenue: number;  // сумма возвратов
-  // Расходы
+  // ── Деньги: база «выкуплено» ──
+  /** Выручка выкупленных заказов. Единственная цифра, от которой считается прибыль. */
+  revenue: number;
+  /** @deprecated синоним revenue — оставлен, чтобы не ломать внешние места. */
+  revenue_gross: number;
+  /** Упущенная выручка возвратов. */
+  returns_revenue: number;
+  /** Упущенная выручка отмен. */
+  cancelled_revenue: number;
+
+  // ── Объём: база «заказано» ──
+  /** Сумма всех заказов периода по дате заказа, включая ещё не доставленные. */
+  ordered_revenue: number;
+  /** Сумма заказов, которые ещё едут к покупателю. Прогноз, в прибыль не входит. */
+  in_transit_revenue: number;
+
+  // ── Расходы ──
   commission: number;
   logistics: number;
   services: number;
   cogs: number;
   tax: number;
+  /** Расходы МП без привязки к заказу: реклама, хранение, штрафы. */
+  period_costs: number;
+  /** Ручные расходы пользователя за период. */
+  manual_costs: number;
+  /** Разбивка period_costs + manual_costs по категориям. */
+  period_costs_breakdown: Array<{ kind: PeriodCostKind; label: string; amount: number }>;
   total_expenses: number;
-  // Прибыль
+
+  // ── Прибыль ──
   net_profit: number;
-  margin_pct: number;        // net_profit / revenue × 100
-  // Объёмы
+  margin_pct: number;
+
+  // ── Объёмы ──
   orders_delivered: number;
   orders_processing: number;
   orders_returned: number;
   orders_cancelled: number;
-  orders_total: number;       // всего заказов в срезе (без orphan-строк расходов)
+  orders_total: number;
   units_sold: number;
   avg_check: number;
-  // Качество данных
-  source_real_pct: number;     // % заказов с реальным финотчётом МП
-  missing_cogs_orders: number; // заказов с хотя бы одним SKU без себестоимости
-  /** Заказов, по которым финотчёт ещё не пришёл — их удержания оценены. */
-  orders_estimated: number;
-  /** Доля выручки, посчитанной по оценке (0-100). */
-  estimated_revenue_pct: number;
-  /** Выручка отменённых заказов (не попала ни в gross, ни в returns). */
-  cancelled_revenue: number;
-  /** % выкупа = delivered / (delivered + returned + cancelled). */
   buyout_pct: number;
+
+  // ── Качество данных ──
+  /** % выкупленных заказов, по которым пришёл финотчёт МП. */
+  source_real_pct: number;
+  missing_cogs_orders: number;
+  /**
+   * Выкупленные заказы, по которым финотчёт МП ещё не пришёл.
+   * Они НЕ входят в выручку и прибыль — их сумма показывается отдельно,
+   * чтобы продавец видел, сколько денег ещё «в расчёте», и не путал это с заработком.
+   */
+  awaiting_orders: number;
+  awaiting_revenue: number;
+  /**
+   * Выкупленные заказы с финотчётом — те самые, из которых сложились выручка и
+   * прибыль. Делить деньги нужно на них, а не на orders_delivered: иначе
+   * «прибыль с заказа» размазывается по заказам, которых нет в расчёте.
+   */
+  orders_settled: number;
 }
 
 export interface TimeseriesPoint {

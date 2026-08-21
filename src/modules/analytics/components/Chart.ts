@@ -60,7 +60,9 @@ const DEFAULT_STATE: ChartState = {
   series: { revenue: true, profit: true, expenses: true },
   cumulative: false,
   showAvg: false,
-  showMA: true,
+  // По умолчанию выключено: со сглаживанием тултип показывает 7-дневное среднее,
+  // а не цифру этого дня. График должен по умолчанию показывать факт.
+  showMA: false,
   autoGran: true,
 };
 
@@ -315,7 +317,10 @@ function ensureHandlers() {
             <span style="color:${deltaCol};font-size:10px;margin-left:6px;font-weight:600">${deltaSign}${delta.toFixed(0)}%</span>
           </div>`;
       }).join('')}
-      ${cfg.cumulative ? `<div style="font-size:9px;color:var(--text3);margin-top:4px;padding-top:4px;border-top:1px solid var(--border)">накопительный итог</div>` : ''}
+      ${cfg.cumulative || cfg.showMA ? `<div style="font-size:9px;color:var(--text3);margin-top:4px;padding-top:4px;border-top:1px solid var(--border)">${
+        [cfg.cumulative ? 'накопительный итог' : '', cfg.showMA ? 'сглажено: среднее за 7 точек, не факт дня' : '']
+          .filter(Boolean).join(' · ')
+      }</div>` : ''}
     `;
     tip.style.opacity = '1';
     tip.style.pointerEvents = 'none';

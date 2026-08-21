@@ -178,14 +178,15 @@ export function emptyBlock(text: string): string {
   return `<div style="padding:24px;text-align:center;color:var(--text3);font-size:11px">${text}</div>`;
 }
 
-/** Плашка «часть цифр — оценка», если финотчёт пришёл не по всем заказам. */
-export function estimateNote(k: KPI): string {
-  if (k.orders_estimated <= 0) return '';
+/** Плашка «часть денег ещё в расчёте» — выкуплено, но финотчёт МП не пришёл. */
+export function awaitingNote(k: KPI): string {
+  if (k.awaiting_orders <= 0) return '';
   return `
     <div class="an2-dt-note">
-      <strong>${fmtNum(k.orders_estimated)}</strong> ${plural(k.orders_estimated, 'заказ', 'заказа', 'заказов')}
-      ещё без финотчёта маркетплейса — удержания по ним посчитаны по средним ставкам этого же периода
-      (${k.estimated_revenue_pct.toFixed(0)}% выручки). Когда отчёт придёт, цифры уточнятся автоматически.
+      Ещё <strong>${fmtMoney(k.awaiting_revenue)}</strong> по
+      <strong>${fmtNum(k.awaiting_orders)}</strong> ${plural(k.awaiting_orders, 'выкупленному заказу', 'выкупленным заказам', 'выкупленным заказам')}
+      ждут расчёта маркетплейса. Пока отчёт не пришёл, комиссия и логистика по ним неизвестны,
+      поэтому в выручку и прибыль они не включены — цифры ниже занижены на эту сумму, но не выдуманы.
     </div>
   `;
 }

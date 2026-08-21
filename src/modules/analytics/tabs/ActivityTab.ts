@@ -29,13 +29,18 @@ function computeActivity(orders: Order[]): Activity {
     if (o.is_orphan || o.status === 'cancelled') continue;
     const d = new Date(o.date);
     if (isNaN(d.getTime())) continue;
+    // Эта вкладка отвечает на вопрос «когда покупают», поэтому база здесь —
+    // ЗАКАЗАННОЕ по дате оформления, а не выкупленное. Возврат тоже был спросом,
+    // поэтому берём его исходную сумму. Из-за другой базы итог намеренно не
+    // совпадает с «Выручкой» в Сводке — метрика подписана как «Заказано».
+    const amount = o.revenue + (o.revenue_lost || 0);
     const day  = d.getDay();
     const hour = d.getHours();
-    heatmap[day][hour].revenue += o.revenue;
+    heatmap[day][hour].revenue += amount;
     heatmap[day][hour].count  += 1;
-    byDay[day]   += o.revenue;
-    byHour[hour] += o.revenue;
-    totalRevenue += o.revenue;
+    byDay[day]   += amount;
+    byHour[hour] += amount;
+    totalRevenue += amount;
     totalOrders  += 1;
   }
   return { heatmap, totalRevenue, totalOrders, byDay, byHour };
@@ -47,11 +52,15 @@ export function renderActivityTab(orders: Order[], subTab: ActivitySubTab): stri
 
   return `
     <div style="padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
-      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:12px">Активность продаж по времени</div>
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px">Активность продаж по времени</div>
+      <div style="font-size:10.5px;color:var(--text3);margin-bottom:12px">
+        Считается по <strong style="color:var(--text2)">дате оформления заказа</strong> и по заказанной сумме —
+        поэтому итог отличается от «Выручки» в Сводке, где деньги считаются по выкупленным заказам.
+      </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px">
         ${[
           { label: 'Заказов', val: a.totalOrders > 0 ? a.totalOrders.toLocaleString('ru') : '—', color: '#005bff' },
-          { label: 'Выручка', val: a.totalRevenue > 0 ? fmtFull(a.totalRevenue) : '—', color: '#059669' },
+          { label: 'Заказано', val: a.totalRevenue > 0 ? fmtFull(a.totalRevenue) : '—', color: '#059669' },
           { label: 'Лучший день', val: noData ? '—' : DAYS_RU[a.byDay.indexOf(Math.max(...a.byDay))], color: '#7c3aed' },
           { label: 'Пик (час)', val: noData ? '—' : a.byHour.indexOf(Math.max(...a.byHour)) + ':00', color: '#f59e0b' },
         ].map(k => `
@@ -207,7 +216,7 @@ function renderByDay(a: Activity): string {
 function renderByHour(a: Activity): string {
   const maxRev = Math.max(...a.byHour, 1);
   return `
-    <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px">Выручка по часам суток</div>
+    <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px">Заказано по часам суток</div>
     <div style="display:flex;gap:2px;align-items:flex-end;height:140px;padding:0 0 24px">
       ${a.byHour.map((rev, h) => {
         const pct = rev / maxRev;
@@ -227,9 +236,11 @@ function renderByHour(a: Activity): string {
 
 function renderTips(a: Activity): string {
   const peakDay = a.byDay.indexOf(Math.max(...a.byDay));
-  const lowDay = a.byDay.indexOf(Math.min(...a.byDay.filter(v => v > 0)));
+  const positiveDays = a.byDay.filter(v => v > 0);
+  const lowDay = positiveDays.length ? a.byDay.indexOf(Math.min(...positiveDays)) : -1;
   const peakHour = a.byHour.indexOf(Math.max(...a.byHour));
-  const lowHour = a.byHour.indexOf(Math.min(...a.byHour.filter(v => v > 0)));
+  const positiveHours = a.byHour.filter(v => v > 0);
+  const lowHour = positiveHours.length ? a.byHour.indexOf(Math.min(...positiveHours)) : -1;
 
   const tips = [
     {
@@ -240,7 +251,7 @@ function renderTips(a: Activity): string {
     },
     {
       title: 'Скидки в медленные дни',
-      body: `Самый слабый день — <b>${DAYS_RU[lowDay] ?? '—'}</b>. Небольшое снижение цены в этот день может стимулировать продажи без потери маржи.`,
+      body: `Самый слабый день — <b>${lowDay >= 0 ? DAYS_RU[lowDay] : '—'}</b>. Небольшое снижение цены в этот день может стимулировать продажи без потери маржи.`,
       icon: I.tag(),
       color: '#059669',
     },
@@ -252,7 +263,7 @@ function renderTips(a: Activity): string {
     },
     {
       title: 'Ночные часы',
-      body: `Минимум в <b>${lowHour ?? 0}:00</b>. Ночью покупатели ищут выгодные предложения — автоматическая скидка поможет выделиться среди конкурентов.`,
+      body: `Минимум в <b>${lowHour >= 0 ? `${lowHour}:00` : '—'}</b>. Ночью покупатели ищут выгодные предложения — автоматическая скидка поможет выделиться среди конкурентов.`,
       icon: I.moon(),
       color: '#005bff',
     },

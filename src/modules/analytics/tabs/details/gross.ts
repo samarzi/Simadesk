@@ -1,7 +1,7 @@
 import { computeSkuPerformance } from '../../services/kpiAggregator';
 import {
   DetailCtx, detailFrame, deltaOf, card, statGrid, barList, adviceBlock, Advice,
-  estimateNote, sparkline, dailySeries, fmtMoney, fmtNum, plural, emptyBlock, escapeHtml,
+  awaitingNote, sparkline, dailySeries, fmtMoney, fmtNum, plural, emptyBlock, escapeHtml,
 } from './shared';
 
 const ACCENT = '#10b981';
@@ -17,15 +17,16 @@ export function renderGrossDetail(c: DetailCtx): string {
   const gross = k.net_profit + k.cogs;
   const prevGross = c.prevKpi ? c.prevKpi.net_profit + c.prevKpi.cogs : null;
   const grossPct = (gross / rev) * 100;
-  const mpFees = k.commission + k.logistics + k.services;
+  const mpFees = k.commission + k.logistics + k.services + k.period_costs;
   const mpFeesPct = (mpFees / rev) * 100;
 
   // Ряд по дням строим сам: в ts.profit лежит ЧИСТАЯ прибыль (с себестоимостью),
   // а этот показатель — до неё. Иначе график спорил бы с числом в шапке.
   const grossByDay = dailySeries(c.orders, o =>
-    o.revenue - o.commission - o.logistics - o.logistics_return - o.services - o.tax);
+    (o.status === 'delivered' ? o.revenue - o.tax : 0)
+    - o.commission - o.logistics - o.logistics_return - o.services);
   const grossSeries = c.ts.map(p => grossByDay.get(p.date) ?? 0);
-  const perOrder = k.orders_delivered > 0 ? gross / k.orders_delivered : 0;
+  const perOrder = k.orders_settled > 0 ? gross / k.orders_settled : 0;
 
   const skus = computeSkuPerformance(c.orders)
     .filter(s => s.units_sold > 0)
@@ -69,21 +70,21 @@ export function renderGrossDetail(c: DetailCtx): string {
     });
   }
 
-  if (k.services > k.commission && k.services > 0) {
+  if (k.services + k.period_costs > k.commission && k.services + k.period_costs > 0) {
     advice.push({
       level: 'warn',
       title: 'Услуги и штрафы стоят дороже самой комиссии',
-      text: `${fmtMoney(k.services)} против ${fmtMoney(k.commission)} комиссии. Это ненормальная пропорция: обычно так выглядит счёт за хранение неликвида или серия штрафов. Загляни в карточки крупных заказов — там видна расшифровка удержаний.`,
+      text: `${fmtMoney(k.services + k.period_costs)} против ${fmtMoney(k.commission)} комиссии. Это ненормальная пропорция: обычно так выглядит счёт за хранение неликвида или серия штрафов. Загляни в карточки крупных заказов — там видна расшифровка удержаний.`,
     });
   }
 
   const body = `
-    ${estimateNote(k)}
+    ${awaitingNote(k)}
 
     ${statGrid([
       { label: 'Доля от выручки', value: `${grossPct.toFixed(1)}%`, hint: 'остаётся после расчётов с МП', color: grossPct >= 60 ? 'var(--green)' : grossPct >= 40 ? '#fbbf24' : 'var(--red)' },
       { label: 'Забрал маркетплейс', value: fmtMoney(mpFees), hint: `${mpFeesPct.toFixed(1)}% выручки`, color: 'var(--red)' },
-      { label: 'С одного заказа', value: fmtMoney(perOrder), hint: `по ${fmtNum(k.orders_delivered)} доставленным` },
+      { label: 'С одного заказа', value: fmtMoney(perOrder), hint: `по ${fmtNum(k.orders_settled)} рассчитанным заказам` },
       { label: 'Минус себестоимость', value: fmtMoney(k.cogs), hint: k.cogs > 0 ? `${((k.cogs / rev) * 100).toFixed(1)}% выручки` : 'не заполнена' },
       { label: 'Чистая прибыль', value: fmtMoney(k.net_profit), hint: `маржа ${k.margin_pct.toFixed(1)}%`, color: k.net_profit >= 0 ? 'var(--green)' : 'var(--red)' },
       { label: 'Налог', value: fmtMoney(k.tax), hint: `${((k.tax / rev) * 100).toFixed(1)}% выручки` },
@@ -93,7 +94,9 @@ export function renderGrossDetail(c: DetailCtx): string {
       { label: 'Выручка', value: k.revenue, color: '#d4f000', share: '100%' },
       { label: 'минус комиссия МП', value: k.commission, color: '#fb923c', share: `${((k.commission / rev) * 100).toFixed(1)}%` },
       { label: 'минус логистика', value: k.logistics, color: '#60a5fa', share: `${((k.logistics / rev) * 100).toFixed(1)}%` },
-      { label: 'минус услуги и штрафы', value: k.services, color: '#a78bfa', share: `${((k.services / rev) * 100).toFixed(1)}%` },
+      { label: 'минус услуги по заказам', value: k.services, color: '#a78bfa', share: `${((k.services / rev) * 100).toFixed(1)}%` },
+      { label: 'минус реклама и хранение', value: k.period_costs, color: '#f59e0b', share: `${((k.period_costs / rev) * 100).toFixed(1)}%` },
+      { label: 'минус свои расходы', value: k.manual_costs, color: '#94a3b8', share: `${((k.manual_costs / rev) * 100).toFixed(1)}%` },
       { label: 'минус налог', value: k.tax, color: '#f472b6', share: `${((k.tax / rev) * 100).toFixed(1)}%` },
       { label: '= прибыль без себестоимости', value: Math.max(0, gross), color: ACCENT, share: `${grossPct.toFixed(1)}%` },
     ].filter(r => r.value > 0)))}
@@ -114,7 +117,7 @@ export function renderGrossDetail(c: DetailCtx): string {
   return detailFrame({
     title: 'Прибыль без себестоимости',
     value: fmtMoney(gross),
-    subtitle: `${c.periodLabel} · ${c.storeName} · ${fmtNum(k.orders_delivered)} ${plural(k.orders_delivered, 'заказ', 'заказа', 'заказов')}`,
+    subtitle: `${c.periodLabel} · ${c.storeName} · ${fmtNum(k.orders_delivered)} ${plural(k.orders_delivered, 'выкупленный заказ', 'выкупленных заказа', 'выкупленных заказов')}`,
     accent: ACCENT,
     delta: deltaOf(gross, prevGross),
     body,

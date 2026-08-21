@@ -15,32 +15,50 @@ interface Row {
 
 export function renderPnL(k: KPI, onFilterClick = 'window.analyticsModule?.openOrdersFiltered'): string {
   const baseRev = Math.max(1, k.revenue);
-  // Строки складываются ровно в «Чистую прибыль»: выручка минус пять статей расходов.
-  // Возвраты и отмены сюда НЕ входят — их выручка изначально не попадала в k.revenue,
-  // поэтому они показаны отдельной справкой ниже как упущенная выручка.
+  // Строки складываются ровно в «Чистую прибыль».
+  // База — выкупленные заказы: только по ним деньги реально получены.
+  // Заказы в пути и упущенная выручка вынесены в справку ниже.
+  const mpPeriod = k.period_costs;
   const rows: Row[] = [
-    { icon: 'checkCircle', label: 'Выручка',    value: k.revenue,     tint: 'var(--green)', kind: 'income',  filter: 'delivered' },
-    { icon: 'wallet',      label: 'Комиссия МП', value: -k.commission, tint: '#fb923c',      kind: 'expense', filter: 'commission' },
-    { icon: 'truck',       label: 'Логистика',   value: -k.logistics,  tint: '#60a5fa',      kind: 'expense', filter: 'logistics' },
-    { icon: 'receipt',     label: 'Услуги/штрафы/реклама', value: -k.services, tint: '#a78bfa', kind: 'expense' },
-    { icon: 'package',     label: 'Себестоимость', value: -k.cogs,     tint: '#22d3ee',      kind: 'expense' },
-    { icon: 'percent',     label: 'Налог',         value: -k.tax,      tint: '#f472b6',      kind: 'expense' },
-    { icon: 'dollarSign',  label: 'Чистая прибыль', value: k.net_profit, tint: k.net_profit >= 0 ? 'var(--green)' : 'var(--red)', kind: 'total' },
+    { icon: 'checkCircle', label: 'Выручка (выкуплено)', value: k.revenue,     tint: 'var(--green)', kind: 'income',  filter: 'delivered' },
+    { icon: 'wallet',      label: 'Комиссия МП',         value: -k.commission, tint: '#fb923c',      kind: 'expense', filter: 'commission' },
+    { icon: 'truck',       label: 'Логистика',           value: -k.logistics,  tint: '#60a5fa',      kind: 'expense', filter: 'logistics' },
+    { icon: 'receipt',     label: 'Услуги по заказам',   value: -k.services,   tint: '#a78bfa',      kind: 'expense' },
+    { icon: 'zap',         label: 'Реклама, хранение, штрафы', value: -mpPeriod, tint: '#f59e0b',    kind: 'expense' },
+    { icon: 'edit',        label: 'Свои расходы',        value: -k.manual_costs, tint: '#94a3b8',    kind: 'expense' },
+    { icon: 'package',     label: 'Себестоимость',       value: -k.cogs,       tint: '#22d3ee',      kind: 'expense' },
+    { icon: 'percent',     label: 'Налог',               value: -k.tax,        tint: '#f472b6',      kind: 'expense' },
+    { icon: 'dollarSign',  label: 'Чистая прибыль',      value: k.net_profit,  tint: k.net_profit >= 0 ? 'var(--green)' : 'var(--red)', kind: 'total' },
   ];
 
   const maxAbs = Math.max(...rows.map(r => Math.abs(r.value)), 1);
   const lost = (k.returns_revenue || 0) + (k.cancelled_revenue || 0);
 
-  const lostNote = lost > 0 ? `
-    <div class="an2-pnl-note">
-      <span>Упущенная выручка</span>
-      <span class="an2-pnl-note-val">${fmtMoney(lost)}</span>
-      <span class="an2-pnl-note-hint">
-        возвраты ${fmtMoney(k.returns_revenue)} · отмены ${fmtMoney(k.cancelled_revenue)} —
-        в расчёт прибыли не входят, эти заказы не принесли выручки
-      </span>
-    </div>
-  ` : '';
+  const notes: string[] = [];
+  if (k.in_transit_revenue > 0) {
+    notes.push(`
+      <div class="an2-pnl-note">
+        <span>Ещё в пути</span>
+        <span class="an2-pnl-note-val neutral">${fmtMoney(k.in_transit_revenue)}</span>
+        <span class="an2-pnl-note-hint">
+          заказы оформлены, но не выкуплены — денег по ним пока нет,
+          поэтому в прибыль они не входят
+        </span>
+      </div>
+    `);
+  }
+  if (lost > 0) {
+    notes.push(`
+      <div class="an2-pnl-note">
+        <span>Упущенная выручка</span>
+        <span class="an2-pnl-note-val">${fmtMoney(lost)}</span>
+        <span class="an2-pnl-note-hint">
+          возвраты ${fmtMoney(k.returns_revenue)} · отмены ${fmtMoney(k.cancelled_revenue)} —
+          продажи не состоялись, но удержания по ним в расходах выше уже учтены
+        </span>
+      </div>
+    `);
+  }
 
   return `
     <div class="an2-pnl">
@@ -64,7 +82,7 @@ export function renderPnL(k: KPI, onFilterClick = 'window.analyticsModule?.openO
           </div>
         `;
       }).join('')}
-      ${lostNote}
+      ${notes.join('')}
     </div>
   `;
 }

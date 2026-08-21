@@ -38,6 +38,10 @@ export interface WbFinanceRow {
   retail_price?: number;
   quantity?: number;
   storage_fee?: number;
+  penalty?: number;
+  deduction?: number;
+  acquiring_fee?: number;
+  acceptance?: number;
   order_dt?: string;
   sale_dt?: string;
   rr_dt?: string;
@@ -65,6 +69,9 @@ export const wbFinanceApi = {
 
     // Чтобы не уйти в бесконечный цикл при ошибке
     let safety = 0;
+    // Ретраи по 429 считаем отдельно: раньше они делили счётчик с пагинацией,
+    // из-за чего на четвёртой странице отчёт падал вместо повторной попытки.
+    let rateLimitRetries = 0;
 
     while (safety++ < 50) {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -81,14 +88,14 @@ export const wbFinanceApi = {
       });
 
       if (res.status === 429) {
-        // Ждём 60 секунд и пробуем ещё раз (максимум 2 retry)
-        if (safety <= 3) {
-          console.warn('[WB Finance] 429 rate-limit, ожидание 60 сек...');
+        if (rateLimitRetries++ < 3) {
+          console.warn(`[WB Finance] 429 rate-limit, ожидание 60 сек (попытка ${rateLimitRetries}/3)...`);
           await new Promise(r => setTimeout(r, 60_000));
           continue;
         }
         throw new Error('WB rate-limit (429). API перегружен, попробуйте через несколько минут.');
       }
+      rateLimitRetries = 0;
       if (!res.ok) {
         const text = await res.text();
         throw new Error(`WB Finance ${res.status}: ${text.slice(0, 200)}`);
@@ -123,34 +130,24 @@ export const wbFinanceApi = {
    */
   async fetchWeeklyAccruals(apiKey: string, signal?: AbortSignal): Promise<{ forPay: number; dateFrom: string; dateTo: string }> {
     const now = new Date();
-    // Начало текущей отчётной недели WB (понедельник)
-    const day = now.getDay(); // 0=вс, 1=пн...
+    // Начало отчётной недели считаем в UTC: раньше понедельник ставился по
+    // локальному времени, а форматировался через toISOString() — для МСК это
+    // давало воскресенье и отчёт начинался на сутки раньше.
+    const day = now.getUTCDay(); // 0=вс, 1=пн...
     const diffToMon = day === 0 ? -6 : 1 - day;
     const monday = new Date(now);
-    monday.setDate(now.getDate() + diffToMon);
-    monday.setHours(0, 0, 0, 0);
+    monday.setUTCDate(now.getUTCDate() + diffToMon);
+    monday.setUTCHours(0, 0, 0, 0);
 
     const fmt = (d: Date) => d.toISOString().slice(0, 10);
     const dateFrom = fmt(monday);
     const dateTo   = fmt(now);
 
-    const url = `${WB_PROXY}/wb-stats/api/v5/supplier/reportDetailByPeriod?dateFrom=${dateFrom}&dateTo=${dateTo}&limit=100000&rrdid=0`;
-    const res = await fetch(url, {
-      headers: { 'Authorization': apiKey, 'Accept': 'application/json', 'apikey': API_KEY },
-      signal,
-    });
-
-    if (res.status === 429) throw new Error('WB rate-limit (429)');
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`WB Finance ${res.status}: ${text.slice(0, 200)}`);
-    }
-
-    const text = await res.text();
-    const rows: WbFinanceRow[] = text ? JSON.parse(text) : [];
-    const forPay = Array.isArray(rows)
-      ? rows.reduce((s, r) => s + (Number(r.ppvz_for_pay) || 0), 0)
-      : 0;
+    // Переиспользуем fetchReport вместо отдельного запроса: там уже есть
+    // пагинация и ретраи по 429. Одиночный запрос молча обрезал бы неделю
+    // на лимите в 100 000 строк у крупного магазина.
+    const rows = await this.fetchReport(apiKey, dateFrom, dateTo, undefined, signal);
+    const forPay = rows.reduce((s, r) => s + (Number(r.ppvz_for_pay) || 0), 0);
 
     return { forPay, dateFrom, dateTo };
   },

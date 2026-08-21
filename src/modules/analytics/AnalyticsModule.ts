@@ -8,7 +8,7 @@
 import { debug } from '@/utils/debug';
 import { I } from '@/utils/icons';
 import { aiPage } from '@/services/aiPageContext';
-import { Mp, MP_LABEL, MP_COLOR, Order, KPI, TimeseriesPoint, PeriodPreset, StoreInfo, TaxModel } from './types';
+import { Mp, MP_LABEL, MP_COLOR, Order, KPI, TimeseriesPoint, PeriodPreset, StoreInfo, TaxModel, PeriodCost, ManualEntry } from './types';
 import { aggregateOrders, ProductMap } from './services/orderAggregator';
 import { buildCogsResolver } from './services/cogsResolver';
 import { computeKPI, computeTimeseries, computeMissingCogs, MissingCogsItem, computeSkuPerformance } from './services/kpiAggregator';
@@ -61,6 +61,8 @@ export class AnalyticsModule {
   })();
 
   private orders: Order[] = [];
+  /** Расходы МП без привязки к заказу: реклама, хранение, штрафы. */
+  private periodCosts: PeriodCost[] = [];
   private prevOrders: Order[] = [];
   private kpi: KPI | null = null;
   private prevKpi: KPI | null = null;
@@ -155,10 +157,12 @@ export class AnalyticsModule {
 
     const lines: string[] = [
       `Период: ${this._periodLabel()}`,
-      `Выручка нетто: ${fmt(k.revenue)} | Валовая: ${fmt(k.revenue_gross)}`,
-      `Заказов доставлено: ${k.orders_delivered} | В обработке: ${k.orders_processing} | Возвратов: ${k.orders_returned} | Отмен: ${k.orders_cancelled}`,
+      `База расчёта денег — выкупленные заказы с финотчётом МП.`,
+      `Выручка (выкуплено): ${fmt(k.revenue)} | Заказано за период: ${fmt(k.ordered_revenue)} | Ещё в пути: ${fmt(k.in_transit_revenue)} | Ждут расчёта МП: ${fmt(k.awaiting_revenue)}`,
+      `Заказов доставлено: ${k.orders_delivered} (из них рассчитано ${k.orders_settled}) | В обработке: ${k.orders_processing} | Возвратов: ${k.orders_returned} | Отмен: ${k.orders_cancelled} | Выкуп: ${k.buyout_pct.toFixed(1)}%`,
       `Маржа: ${k.margin_pct.toFixed(1)}% | Чистая прибыль: ${fmt(k.net_profit)} | Ср. чек: ${fmt(k.avg_check)}`,
-      `Комиссии МП: ${fmt(k.commission)} | Логистика: ${fmt(k.logistics)} | Налог: ${fmt(k.tax)} | Себестоимость: ${fmt(k.cogs)}`,
+      `Комиссии МП: ${fmt(k.commission)} | Логистика: ${fmt(k.logistics)} | Услуги по заказам: ${fmt(k.services)} | Реклама/хранение/штрафы: ${fmt(k.period_costs)} | Свои расходы: ${fmt(k.manual_costs)} | Налог: ${fmt(k.tax)} | Себестоимость: ${fmt(k.cogs)}`,
+      `Упущено: возвраты ${fmt(k.returns_revenue)}, отмены ${fmt(k.cancelled_revenue)}`,
     ];
 
     // Топ-5 товаров по выручке
@@ -270,7 +274,7 @@ export class AnalyticsModule {
       ]);
 
       const filteredStores = this.stores.filter(s => storeIds.has(s.id));
-      this.orders = aggregateOrders({
+      const agg = aggregateOrders({
         ozonPostings: liveOrders.ozonPostings,
         yandexOrders: liveOrders.yandexOrders,
         wbOrders: liveOrders.wbOrders,
@@ -279,8 +283,11 @@ export class AnalyticsModule {
         products,
         cogs,
       });
-      this.kpi = computeKPI(this.orders);
-      this.ts  = computeTimeseries(this.orders, start, end);
+      this.orders      = agg.orders;
+      this.periodCosts = agg.periodCosts;
+      const manual = this._manualFor(start, end, storeIds);
+      this.kpi = computeKPI(this.orders, this.periodCosts, manual);
+      this.ts  = computeTimeseries(this.orders, start, end, this.periodCosts, manual);
       // Каталожные vendor_code (нормализованные) — чтобы missing COGS показывал только
       // те артикулы, которые пользователь реально может найти в Репрайсере.
       const knownVc = new Set<string>();
@@ -315,6 +322,19 @@ export class AnalyticsModule {
     }
   }
 
+  /** Ручные расходы пользователя, попадающие в период и в выбранные магазины. */
+  private _manualFor(start: Date, end: Date, storeIds: Set<string>): ManualEntry[] {
+    const from = start.toISOString();
+    const to   = end.toISOString();
+    return settingsDb.manualList().filter(e => {
+      if (!e.date || e.date < from || e.date > to) return false;
+      // Запись без привязки к магазину считаем общей для выбранного среза
+      if (e.store_id && !storeIds.has(e.store_id)) return false;
+      if (e.mp && e.mp !== this.selectedMp) return false;
+      return true;
+    });
+  }
+
   private async loadPrev(stores: StoreInfo[], products: ProductMap, cogs: ReturnType<typeof buildCogsResolver>): Promise<void> {
     try {
       const { start, end } = this.getPrevRange();
@@ -323,13 +343,14 @@ export class AnalyticsModule {
         loadOrders(start, end, storeIds),
         loadTransactions([...storeIds], start, end),
       ]);
-      this.prevOrders = aggregateOrders({
+      const agg = aggregateOrders({
         ozonPostings: liveOrders.ozonPostings,
         yandexOrders: liveOrders.yandexOrders,
         wbOrders: liveOrders.wbOrders,
         transactions: txs, stores, products, cogs,
       });
-      this.prevKpi = computeKPI(this.prevOrders);
+      this.prevOrders = agg.orders;
+      this.prevKpi = computeKPI(agg.orders, agg.periodCosts, this._manualFor(start, end, storeIds));
       clearSummaryCache();
       this.render();
     } catch (e) { console.warn('[Analytics] prev:', e); }
@@ -838,7 +859,8 @@ export class AnalyticsModule {
       };
     });
     this.missingCogs = computeMissingCogs(this.orders, this.knownVendorCodes);
-    this.kpi = computeKPI(this.orders);
+    const { start, end } = this.getRange();
+    this.kpi = computeKPI(this.orders, this.periodCosts, this._manualFor(start, end, this.getFilteredStoreIds()));
     clearSummaryCache();
     clearOrdersCache();
     clearProductsCache();
@@ -876,11 +898,23 @@ export class AnalyticsModule {
       description: String(fd.get('description') ?? ''),
     });
     form.reset();
-    this.render();
+    this._recomputeWithManual();
   }
   deleteManualEntry(id: string): void {
     if (!confirm('Удалить запись?')) return;
     settingsDb.manualDelete(id);
+    this._recomputeWithManual();
+  }
+
+  /** Пересчитать KPI после правки ручных расходов — без перезагрузки заказов. */
+  private _recomputeWithManual(): void {
+    if (this.kpi) {
+      const { start, end } = this.getRange();
+      const manual = this._manualFor(start, end, this.getFilteredStoreIds());
+      this.kpi = computeKPI(this.orders, this.periodCosts, manual);
+      this.ts  = computeTimeseries(this.orders, start, end, this.periodCosts, manual);
+      clearSummaryCache();
+    }
     this.render();
   }
 

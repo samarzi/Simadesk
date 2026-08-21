@@ -13,6 +13,7 @@ import { wbFinanceApi, WbFinanceRow } from './wbFinanceApi';
 import { yandexFinanceApi, YmStatsOrder } from './yandexFinanceApi';
 import { mpTransactionsDb, MpTransaction, TxKind } from './mpTransactionsDb';
 import { YandexStore } from '@/types/yandex';
+import { normalizeMpDate } from '../utils/mpDate';
 
 export interface SyncProgress {
   storeName: string;
@@ -102,26 +103,54 @@ function classifyYmTxKind(status: string): TxKind {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Удержания WB, не попадающие ни в комиссию, ни в логистику.
+ *
+ * Раньше здесь учитывалось только хранение плюс поле `ppvz_inflicted_for_supplier`,
+ * которого в отчёте detailByPeriod нет — оно всегда давало 0. В результате штрафы,
+ * эквайринг, платная приёмка и прочие удержания не доходили до аналитики,
+ * и расходы по WB были систематически занижены.
+ *
+ * Поля суммируются со знаком: возмещение в пользу продавца уменьшает расход.
+ * Отсутствующие в ответе поля дают 0, поэтому список безопасно держать широким.
+ */
+const WB_DEDUCTION_FIELDS = [
+  'storage_fee',                 // хранение на складе
+  'penalty',                     // штрафы
+  'deduction',                   // прочие удержания
+  'acquiring_fee',               // эквайринг
+  'acceptance',                  // платная приёмка
+  'ppvz_inflicted_for_supplier', // legacy-поле, оставлено для старых записей
+] as const;
+
+function wbDeductions(row: WbFinanceRow): number {
+  let sum = 0;
+  for (const f of WB_DEDUCTION_FIELDS) {
+    sum += Number((row as unknown as Record<string, unknown>)[f]) || 0;
+  }
+  return sum;
+}
+
 function wbRowToTransaction(row: WbFinanceRow, storeId: string): MpTransaction {
   const commission = Number(row.ppvz_sales_commission) || 0;
   const logistics  = Number(row.delivery_rub) || 0;
   const revenue    = Number(row.retail_amount) || 0;
   const seller     = Number(row.ppvz_for_pay) || 0;
-  const date = row.rr_dt ?? row.sale_dt ?? row.order_dt ?? new Date().toISOString();
+  const date = normalizeMpDate(row.rr_dt ?? row.sale_dt ?? row.order_dt) || new Date().toISOString();
   return {
     store_id: storeId,
     marketplace: 'wb',
     mp_transaction_id: String(row.rrd_id),
     operation_type: row.supplier_oper_name ?? row.doc_type_name ?? null,
     operation_type_name: row.supplier_oper_name ?? row.doc_type_name ?? null,
-    operation_date: new Date(date).toISOString(),
+    operation_date: date,
     posting_number: row.srid ? String(row.srid) : null,
     items_json: row.nm_id ? [{ name: row.ts_name ?? row.subject_name ?? '', sku: row.nm_id, vendor_code: row.sa_name ?? undefined, quantity: row.quantity ?? 1 }] : null,
     accruals_for_sale: revenue,
     sale_commission: -Math.abs(commission),
     delivery_charge: -Math.abs(logistics),
     return_delivery_charge: 0,
-    services_total: Math.abs(Number(row.storage_fee) || 0) + Math.max(0, -(Number(row.ppvz_inflicted_for_supplier) || 0)),
+    services_total: wbDeductions(row),
     amount: seller,
     // Классифицируем тип операции при синке — не эвристикой в UI
     tx_kind: classifyWbTxKind(row),
@@ -131,7 +160,10 @@ function wbRowToTransaction(row: WbFinanceRow, storeId: string): MpTransaction {
 
 function ymOrderToTransactions(order: YmStatsOrder, storeId: string): MpTransaction[] {
   const txs: MpTransaction[] = [];
-  const date = order.creationDate ?? order.statusUpdateDate ?? new Date().toISOString();
+  // Без нормализации `new Date('15-08-2026 12:30:00')` даёт Invalid Date,
+  // и `.toISOString()` бросал RangeError — синхронизация финотчёта ЯМ падала
+  // целиком для магазина, а пользователь видел «финотчёт пришёл по 42% заказов».
+  const date = normalizeMpDate(order.creationDate ?? order.statusUpdateDate) || new Date().toISOString();
   const orderCommissions = order.commissions ?? [];
   const items = order.items ?? [];
   const status = order.status ?? '';
@@ -204,7 +236,7 @@ function ymOrderToTransactions(order: YmStatsOrder, storeId: string): MpTransact
     mp_transaction_id: `ym-${order.id}`,
     operation_type: status || null,
     operation_type_name: status || null,
-    operation_date: new Date(date).toISOString(),
+    operation_date: date,
     posting_number: String(order.id),
     items_json: items.map(it => ({
       name: it.offerName ?? it.name ?? '',
@@ -235,7 +267,7 @@ function ozonOpToTransaction(op: OzonTransaction, storeId: string): MpTransactio
     mp_transaction_id: String(op.operation_id),
     operation_type: op.operation_type ?? null,
     operation_type_name: op.operation_type_name ?? null,
-    operation_date: op.operation_date,
+    operation_date: normalizeMpDate(op.operation_date) || op.operation_date,
     posting_number: op.posting?.posting_number ?? null,
     items_json: op.items ?? null,
     accruals_for_sale: Number(op.accruals_for_sale) || 0,

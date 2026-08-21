@@ -60,6 +60,11 @@ function _renderProductsTabUncached(orders: Order[], f: ProductsFilters): string
         </select>
         <div style="font-size:11px;color:var(--text3);margin-left:auto">${fmtNum(skus.length)} SKU</div>
       </div>
+      <div style="margin-top:8px;font-size:10.5px;color:var(--text3);line-height:1.5">
+        В расчёт входят только <strong style="color:var(--text2)">выкупленные заказы с финотчётом маркетплейса</strong>.
+        Заказы в пути и те, по которым отчёт ещё не пришёл, здесь не показаны — по ним неизвестны комиссия и логистика,
+        а без них прибыль по товару была бы завышена.
+      </div>
     </div>
 
     <div class="an2-card" style="padding:0;overflow:hidden">

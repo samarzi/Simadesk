@@ -1,7 +1,7 @@
 import { STATUS_LABEL, STATUS_COLOR, Order } from '../../types';
 import {
   DetailCtx, detailFrame, deltaOf, card, statGrid, barList, adviceBlock, Advice,
-  estimateNote, sparkline, fmtMoney, fmtNum, plural, emptyBlock, escapeHtml,
+  awaitingNote, sparkline, fmtMoney, fmtNum, plural, emptyBlock, escapeHtml,
 } from './shared';
 
 const ACCENT = '#a78bfa';
@@ -82,11 +82,11 @@ export function renderDeliveredDetail(c: DetailCtx): string {
   ].filter(r => r.value > 0);
 
   const body = `
-    ${estimateNote(k)}
+    ${awaitingNote(k)}
 
     ${statGrid([
       { label: '% выкупа', value: `${k.buyout_pct.toFixed(1)}%`, hint: 'доставлено из закрытых заказов', color: k.buyout_pct >= 85 ? 'var(--green)' : k.buyout_pct >= 70 ? '#fbbf24' : 'var(--red)' },
-      { label: 'Средний чек', value: fmtMoney(k.avg_check), hint: 'по доставленным заказам' },
+      { label: 'Средний чек', value: fmtMoney(k.avg_check), hint: 'по заказам с финотчётом' },
       { label: 'Доставок в день', value: perDay.toFixed(1), hint: `${activeDays} ${plural(activeDays, 'активный день', 'активных дня', 'активных дней')}` },
       { label: 'Единиц в заказе', value: itemsPerOrder.toFixed(2), hint: `${fmtNum(units)} шт всего` },
       { label: 'Возвраты', value: `${fmtNum(k.orders_returned)}`, hint: `${returnPct.toFixed(1)}% от закрытых`, color: returnPct >= 10 ? 'var(--red)' : undefined },
@@ -115,7 +115,7 @@ export function renderDeliveredDetail(c: DetailCtx): string {
   return detailFrame({
     title: 'Заказов доставлено',
     value: fmtNum(k.orders_delivered),
-    subtitle: `${c.periodLabel} · ${c.storeName}`,
+    subtitle: `${c.periodLabel} · ${c.storeName} · база: выкупленные заказы`,
     accent: ACCENT,
     delta: deltaOf(k.orders_delivered, c.prevKpi?.orders_delivered),
     body,
@@ -139,8 +139,8 @@ function ordersTable(orders: Order[]): string {
               <td style="font-family:ui-monospace,monospace;font-size:10.5px">${escapeHtml(o.order_id)}</td>
               <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(names)}">${escapeHtml(names)}</td>
               <td class="num">${fmtMoney(o.revenue)}</td>
-              <td class="num ${o.net_profit >= 0 ? 'pos' : 'neg'}">${fmtMoney(o.net_profit)}${o.fees_estimated ? ' <span class="an2-est-dot" title="удержания оценены — финотчёт ещё не пришёл">~</span>' : ''}</td>
-              <td class="num">${margin.toFixed(1)}%</td>
+              <td class="num ${o.net_profit >= 0 ? 'pos' : 'neg'}">${o.source === 'real' ? fmtMoney(o.net_profit) : '<span class="an2-est-dot" title="финотчёт МП ещё не пришёл — прибыль по заказу пока не рассчитана">ждём отчёт</span>'}</td>
+              <td class="num">${o.source === 'real' ? `${margin.toFixed(1)}%` : '—'}</td>
             </tr>
           `;
         }).join('')}

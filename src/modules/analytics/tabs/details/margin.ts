@@ -1,7 +1,7 @@
 import { computeSkuPerformance } from '../../services/kpiAggregator';
 import {
   DetailCtx, detailFrame, deltaOf, card, statGrid, barList, adviceBlock, Advice,
-  estimateNote, sparkline, fmtMoney, fmtNum, plural, emptyBlock, escapeHtml,
+  awaitingNote, sparkline, fmtMoney, fmtNum, plural, emptyBlock, escapeHtml,
 } from './shared';
 
 const ACCENT = '#60a5fa';
@@ -19,6 +19,7 @@ export function renderMarginDetail(c: DetailCtx): string {
   const k = c.kpi;
   const rev = Math.max(1, k.revenue);
   const grossMargin = ((k.net_profit + k.cogs) / rev) * 100;
+  const periodPct = ((k.period_costs + k.manual_costs) / rev) * 100;
 
   // Маржа по дням: считаем только по дням с выручкой, иначе ряд рвётся нулями.
   const marginSeries = c.ts.map(p => (p.revenue > 0 ? (p.profit / p.revenue) * 100 : 0));
@@ -96,21 +97,24 @@ export function renderMarginDetail(c: DetailCtx): string {
   }
 
   const body = `
-    ${estimateNote(k)}
+    ${awaitingNote(k)}
 
     ${statGrid([
       { label: 'Маржа чистая', value: `${k.margin_pct.toFixed(1)}%`, hint: 'после всех расходов и налога', color: k.margin_pct >= 15 ? 'var(--green)' : k.margin_pct >= 5 ? '#fbbf24' : 'var(--red)' },
       { label: 'Маржа без себестоимости', value: `${grossMargin.toFixed(1)}%`, hint: 'что остаётся после удержаний МП' },
       { label: 'Комиссия', value: `${((k.commission / rev) * 100).toFixed(1)}%`, hint: 'от выручки' },
       { label: 'Логистика', value: `${logisticsPct.toFixed(1)}%`, hint: 'от выручки', color: logisticsPct >= 15 ? 'var(--red)' : undefined },
+      { label: 'Реклама и хранение', value: `${periodPct.toFixed(1)}%`, hint: 'от выручки', color: periodPct >= 10 ? 'var(--red)' : undefined },
       { label: 'Себестоимость', value: `${((k.cogs / rev) * 100).toFixed(1)}%`, hint: 'от выручки' },
-      { label: 'Прибыль с заказа', value: fmtMoney(k.orders_delivered > 0 ? k.net_profit / k.orders_delivered : 0), hint: 'в среднем', color: k.net_profit >= 0 ? 'var(--green)' : 'var(--red)' },
+      { label: 'Прибыль с заказа', value: fmtMoney(k.orders_settled > 0 ? k.net_profit / k.orders_settled : 0), hint: 'на рассчитанный заказ', color: k.net_profit >= 0 ? 'var(--green)' : 'var(--red)' },
     ])}
 
     ${card('Куда уходит каждый рубль выручки', barList([
       { label: 'Комиссия МП',   value: k.commission, color: '#fb923c', share: `${((k.commission / rev) * 100).toFixed(1)}%` },
       { label: 'Логистика',     value: k.logistics,  color: '#60a5fa', share: `${((k.logistics / rev) * 100).toFixed(1)}%` },
-      { label: 'Услуги и штрафы', value: k.services, color: '#a78bfa', share: `${((k.services / rev) * 100).toFixed(1)}%` },
+      { label: 'Услуги по заказам', value: k.services, color: '#a78bfa', share: `${((k.services / rev) * 100).toFixed(1)}%` },
+      { label: 'Реклама, хранение, штрафы', value: k.period_costs, color: '#f59e0b', share: `${((k.period_costs / rev) * 100).toFixed(1)}%` },
+      { label: 'Свои расходы', value: k.manual_costs, color: '#94a3b8', share: `${((k.manual_costs / rev) * 100).toFixed(1)}%` },
       { label: 'Себестоимость', value: k.cogs,       color: '#22d3ee', share: `${((k.cogs / rev) * 100).toFixed(1)}%` },
       { label: 'Налог',         value: k.tax,        color: '#f472b6', share: `${((k.tax / rev) * 100).toFixed(1)}%` },
       { label: 'Осталось прибыли', value: Math.max(0, k.net_profit), color: '#22c55e', share: `${k.margin_pct.toFixed(1)}%` },
@@ -138,7 +142,7 @@ export function renderMarginDetail(c: DetailCtx): string {
   return detailFrame({
     title: 'Маржа',
     value: `${k.margin_pct.toFixed(1)}%`,
-    subtitle: `${c.periodLabel} · ${c.storeName}`,
+    subtitle: `${c.periodLabel} · ${c.storeName} · база: выкупленные заказы`,
     accent: ACCENT,
     delta: deltaOf(k.margin_pct, c.prevKpi?.margin_pct),
     body,

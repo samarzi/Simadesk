@@ -1227,131 +1227,136 @@ export async function getYandexShopStats(
   return data?.result ?? data;
 }
 
-// ── Shipments (Поставки FBY) ───────────────────────────────────────────────
+// ── Заявки FBY (поставка / вывоз / утилизация) ─────────────────────────────
+//
+// ВАЖНО: Partner API Яндекс Маркета для FBY работает ТОЛЬКО НА ЧТЕНИЕ.
+// Метода создания заявки на поставку не существует — заявка заводится
+// продавцом в интерфейсе Маркета, а API отдаёт список, состав и документы.
+// Ранее здесь использовался /v2/campaigns/{id}/shipments — это эндпоинт
+// ПЕРВОЙ МИЛИ FBS, для FBY-кампаний он отвечает 404.
+
+export type YmSupplyRequestType = 'SUPPLY' | 'WITHDRAW' | 'UTILIZATION';
+
+export interface YmSupplyRequest {
+  id: string;
+  externalId: string;
+  type: YmSupplyRequestType;
+  status: string;
+  warehouseName: string;
+  createdAt: string;
+  planIntervalFrom: string;
+  planIntervalTo: string;
+  itemsCount: number;
+}
 
 /**
- * Создать отгрузку (поставку) Яндекс.Маркет.
- * POST /v2/campaigns/{campaignId}/shipments
+ * Список заявок FBY.
+ * POST /v2/campaigns/{campaignId}/supply-requests
  */
-export async function createYandexShipment(
+export async function getYandexSupplyRequests(
   store: YandexStore,
-  orderIds: number[],
-): Promise<{ shipmentId: number }> {
+  params: { dateFrom?: string; dateTo?: string; types?: YmSupplyRequestType[]; statuses?: string[] } = {},
+): Promise<YmSupplyRequest[]> {
   if (!store.campaign_id) throw new Error('campaign_id не задан');
-  const res = await fetch(`/yandex-api/v2/campaigns/${store.campaign_id}/shipments`, {
+  const body: Record<string, unknown> = {};
+  if (params.dateFrom) body.dateFrom = params.dateFrom;
+  if (params.dateTo)   body.dateTo   = params.dateTo;
+  if (params.types?.length)    body.types    = params.types;
+  if (params.statuses?.length) body.statuses = params.statuses;
+
+  const res = await fetch(`/yandex-api/v2/campaigns/${store.campaign_id}/supply-requests`, {
     method: 'POST',
     headers: {
       'Api-Key': store.api_key,
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     },
-    body: JSON.stringify({ orderIds }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Yandex shipment ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(`Yandex supply-requests ${res.status}: ${text.slice(0, 200)}`);
   }
   const data = await res.json();
-  return { shipmentId: data?.result?.id ?? data?.id ?? 0 };
+  const list: any[] = data?.result?.requests ?? data?.result?.supplyRequests ?? data?.requests ?? [];
+  return list.map((r: any) => ({
+    id: String(r.id ?? r.requestId ?? ''),
+    externalId: String(r.externalId ?? ''),
+    type: (r.type ?? 'SUPPLY') as YmSupplyRequestType,
+    status: String(r.status ?? ''),
+    warehouseName: String(r.warehouse?.name ?? r.warehouseName ?? ''),
+    createdAt: String(r.creationDate ?? r.createdAt ?? ''),
+    planIntervalFrom: String(r.plannedIntervalFrom ?? r.planIntervalFrom ?? ''),
+    planIntervalTo: String(r.plannedIntervalTo ?? r.planIntervalTo ?? ''),
+    itemsCount: Number(r.itemsCount ?? r.totalItemsCount ?? 0),
+  }));
 }
 
 /**
- * Подтвердить отгрузку.
- * POST /v2/campaigns/{campaignId}/shipments/{shipmentId}/confirm
+ * Состав заявки FBY.
+ * POST /v2/campaigns/{campaignId}/supply-requests/items
  */
-export async function confirmYandexShipment(
+export async function getYandexSupplyRequestItems(
   store: YandexStore,
-  shipmentId: number,
-): Promise<void> {
+  requestId: string,
+): Promise<Array<{ name: string; offerId: string; qty: number }>> {
   if (!store.campaign_id) throw new Error('campaign_id не задан');
-  const res = await fetch(
-    `/yandex-api/v2/campaigns/${store.campaign_id}/shipments/${shipmentId}/confirm`,
-    {
+  const items: any[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < 50; page++) {
+    const body: Record<string, unknown> = { requestId };
+    if (pageToken) body.pageToken = pageToken;
+    const res = await fetch(`/yandex-api/v2/campaigns/${store.campaign_id}/supply-requests/items`, {
       method: 'POST',
       headers: {
         'Api-Key': store.api_key,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
-    },
-  );
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Yandex shipment confirm ${res.status}: ${text.slice(0, 200)}`);
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Yandex supply-request items ${res.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    const chunk: any[] = data?.result?.items ?? data?.items ?? [];
+    items.push(...chunk);
+    pageToken = data?.result?.paging?.nextPageToken;
+    if (!pageToken || !chunk.length) break;
   }
+  return items.map((i: any) => ({
+    name: String(i.name ?? i.offerName ?? i.offerId ?? ''),
+    offerId: String(i.offerId ?? i.shopSku ?? ''),
+    qty: Number(i.count ?? i.planCount ?? i.quantity ?? 0),
+  }));
 }
 
 /**
- * Получить этикетки для отгрузки (PDF).
- * GET /v2/campaigns/{campaignId}/shipments/{shipmentId}/documents/labels
+ * Документы по заявке FBY (ссылки на файлы).
+ * POST /v2/campaigns/{campaignId}/supply-requests/documents
  */
-export async function getYandexShipmentLabels(
+export async function getYandexSupplyRequestDocuments(
   store: YandexStore,
-  shipmentId: number,
-): Promise<Blob> {
+  requestId: string,
+): Promise<Array<{ type: string; url: string }>> {
   if (!store.campaign_id) throw new Error('campaign_id не задан');
-  const res = await fetch(
-    `/yandex-api/v2/campaigns/${store.campaign_id}/shipments/${shipmentId}/documents/labels`,
-    {
-      method: 'GET',
-      headers: {
-        'Api-Key': store.api_key,
-        'Accept': 'application/pdf',
-      },
+  const res = await fetch(`/yandex-api/v2/campaigns/${store.campaign_id}/supply-requests/documents`, {
+    method: 'POST',
+    headers: {
+      'Api-Key': store.api_key,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
     },
-  );
+    body: JSON.stringify({ requestId }),
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Yandex labels ${res.status}: ${text.slice(0, 200)}`);
-  }
-  return res.blob();
-}
-
-/**
- * Список текущих отгрузок ЯМ FBY.
- * GET /v2/campaigns/{campaignId}/shipments
- * Возвращает 404 если кампания не FBY — обработка в SupplyManagementModule.
- */
-export async function getYandexShipments(
-  store: YandexStore,
-  params: { dateFrom?: string; dateTo?: string; status?: string; limit?: number } = {},
-): Promise<any[]> {
-  if (!store.campaign_id) throw new Error('campaign_id не задан');
-  const q = new URLSearchParams();
-  if (params.dateFrom) q.set('dateFrom', params.dateFrom);
-  if (params.dateTo)   q.set('dateTo',   params.dateTo);
-  if (params.status)   q.set('status',   params.status);
-  if (params.limit)    q.set('limit',    String(params.limit));
-  const res = await fetch(
-    `/yandex-api/v2/campaigns/${store.campaign_id}/shipments?${q}`,
-    { headers: { 'Api-Key': store.api_key, 'Accept': 'application/json' } },
-  );
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Yandex shipments ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(`Yandex supply-request documents ${res.status}: ${text.slice(0, 200)}`);
   }
   const data = await res.json();
-  return data?.result?.shipments ?? data?.shipments ?? [];
-}
-
-/**
- * Доступные слоты приёмки ЯМ (следующие N дней).
- * Реализовано как генерация календаря: ЯМ FBY принимает планируемый интервал,
- * мы предлагаем ближайшие 14 рабочих дней как возможные окна.
- */
-export function getYandexAvailableSlots(daysAhead = 14): Array<{ date: string; label: string }> {
-  const slots: Array<{ date: string; label: string }> = [];
-  const now = new Date();
-  const weekdays = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
-  for (let i = 1; slots.length < daysAhead; i++) {
-    const d = new Date(now.getTime() + i * 86_400_000);
-    if (d.getDay() !== 0 && d.getDay() !== 6) { // без выходных
-      const dateStr = d.toISOString().slice(0, 10);
-      const label = `${weekdays[d.getDay()]} ${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')}`;
-      slots.push({ date: dateStr, label });
-    }
-  }
-  return slots;
+  const docs: any[] = data?.result?.documents ?? data?.documents ?? [];
+  return docs.map((d: any) => ({ type: String(d.type ?? ''), url: String(d.url ?? '') }));
 }
 
 // ── Returns (Возвраты) ─────────────────────────────────────────────────────

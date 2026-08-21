@@ -2,7 +2,7 @@ import { computeSkuPerformance } from '../../services/kpiAggregator';
 import { renderPnL } from '../../components/PnLWaterfall';
 import {
   DetailCtx, detailFrame, deltaOf, card, statGrid, adviceBlock, Advice,
-  estimateNote, sparkline, fmtMoney, fmtNum, plural, emptyBlock, escapeHtml,
+  awaitingNote, sparkline, fmtMoney, fmtNum, plural, emptyBlock, escapeHtml,
 } from './shared';
 
 const ACCENT = '#22c55e';
@@ -10,7 +10,7 @@ const ACCENT = '#22c55e';
 export function renderProfitDetail(c: DetailCtx): string {
   const k = c.kpi;
   const rev = Math.max(1, k.revenue);
-  const perOrder = k.orders_delivered > 0 ? k.net_profit / k.orders_delivered : 0;
+  const perOrder = k.orders_settled > 0 ? k.net_profit / k.orders_settled : 0;
   const perUnit  = k.units_sold > 0 ? k.net_profit / k.units_sold : 0;
   const roi = k.cogs > 0 ? (k.net_profit / k.cogs) * 100 : 0;
 
@@ -76,11 +76,11 @@ export function renderProfitDetail(c: DetailCtx): string {
   }
 
   const body = `
-    ${estimateNote(k)}
+    ${awaitingNote(k)}
 
     ${statGrid([
       { label: 'Маржа', value: `${k.margin_pct.toFixed(1)}%`, hint: 'доля прибыли в выручке', color: k.margin_pct >= 15 ? 'var(--green)' : k.margin_pct >= 0 ? '#fbbf24' : 'var(--red)' },
-      { label: 'Прибыль с заказа', value: fmtMoney(perOrder), hint: `по ${fmtNum(k.orders_delivered)} доставленным`, color: perOrder >= 0 ? 'var(--green)' : 'var(--red)' },
+      { label: 'Прибыль с заказа', value: fmtMoney(perOrder), hint: `по ${fmtNum(k.orders_settled)} рассчитанным заказам`, color: perOrder >= 0 ? 'var(--green)' : 'var(--red)' },
       { label: 'Прибыль с единицы', value: fmtMoney(perUnit), hint: `${fmtNum(k.units_sold)} шт продано` },
       { label: 'Возврат на закупку', value: k.cogs > 0 ? `${roi.toFixed(0)}%` : '—', hint: k.cogs > 0 ? `на ${fmtMoney(k.cogs)} себестоимости` : 'себестоимость не задана' },
       { label: 'Прибыльных дней', value: `${profitableDays} / ${c.ts.length}`, hint: `${losingDays} в минусе` },
@@ -102,7 +102,7 @@ export function renderProfitDetail(c: DetailCtx): string {
   return detailFrame({
     title: 'Чистая прибыль',
     value: fmtMoney(k.net_profit),
-    subtitle: `${c.periodLabel} · ${c.storeName}`,
+    subtitle: `${c.periodLabel} · ${c.storeName} · база: выкупленные заказы`,
     accent: k.net_profit >= 0 ? ACCENT : '#f87171',
     delta: deltaOf(k.net_profit, c.prevKpi?.net_profit),
     body,

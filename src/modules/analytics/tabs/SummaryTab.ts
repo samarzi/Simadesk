@@ -57,14 +57,14 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
   const isLongPeriod = periodSpanDays > 60;
 
   const hasMissing = missingCogs.length > 0;
-  // Финотчёт МП приходит с задержкой 1-3 дня. Заказы без него не выбрасываются из
-  // расчёта — их удержания дозаполнены средними ставками периода, поэтому это
-  // информация, а не ошибка. Тревожим только когда оценкой покрыта бОльшая часть
-  // выручки: тогда цифрам действительно нельзя доверять как точным.
-  const estimatedPct = k.estimated_revenue_pct;
-  const heavyEstimate = k.orders_estimated > 0 && estimatedPct >= 60;
-  const someEstimate  = k.orders_estimated > 0 && estimatedPct < 60;
-  const hasQualityIssue = heavyEstimate || hasMissing;
+  // Финотчёт МП приходит через 1-3 дня после доставки. Пока его нет, заказ не
+  // участвует в выручке и прибыли — цифры занижены, но не выдуманы. Это норма,
+  // если ждёт небольшая часть; тревога — если ждёт больше половины выкупа.
+  const awaitingTotal = k.revenue + k.awaiting_revenue;
+  const awaitingPct = awaitingTotal > 0 ? (k.awaiting_revenue / awaitingTotal) * 100 : 0;
+  const heavyAwaiting = k.awaiting_orders > 0 && awaitingPct >= 50;
+  const someAwaiting  = k.awaiting_orders > 0 && awaitingPct < 50;
+  const hasQualityIssue = heavyAwaiting || hasMissing;
 
   const missingCogsHtml = hasMissing ? `
     <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(251,191,36,.2)">
@@ -103,16 +103,16 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
       <div style="display:flex;gap:12px;align-items:flex-start">
         <div style="font-size:18px;margin-top:1px">⚠</div>
         <div style="flex:1;font-size:11px;color:var(--text2);line-height:1.6">
-          ${heavyEstimate ? `
-            <div>Финотчёт маркетплейса пришёл только по <strong>${k.source_real_pct.toFixed(0)}%</strong> заказов —
-              удержания по остальным посчитаны по средним ставкам периода (${estimatedPct.toFixed(0)}% выручки).</div>
+          ${heavyAwaiting ? `
+            <div>Финотчёт маркетплейса пришёл только по <strong>${k.source_real_pct.toFixed(0)}%</strong> выкупленных заказов.
+              Остальные <strong>${fmtMoney(k.awaiting_revenue)}</strong> пока не входят в выручку и прибыль — комиссия и логистика по ним неизвестны.</div>
             <div style="margin-top:5px;color:var(--text3);font-size:10.5px">
               ${(window as any).analyticsModule?._autoSyncing
                 ? `<span style="display:inline-flex;align-items:center;gap:6px;color:#60a5fa"><span class="an2-mini-spinner"></span>Подтягиваем финотчёт за период…</span>`
                 : `Нажми <strong style="color:var(--text2)">Обновить</strong>, чтобы подтянуть отчёт. Если период свежий — это норма, отчёт придёт сам через 1–3 дня.`}
             </div>
           ` : ''}
-          ${hasMissing ? `<div${heavyEstimate ? ' style="margin-top:6px"' : ''}>В <strong>${k.missing_cogs_orders}</strong> заказах не указана себестоимость — прибыль по ним завышена.</div>` : ''}
+          ${hasMissing ? `<div${heavyAwaiting ? ' style="margin-top:6px"' : ''}>В <strong>${k.missing_cogs_orders}</strong> заказах не указана себестоимость — прибыль по ним завышена.</div>` : ''}
         </div>
       </div>
       ${missingCogsHtml}
@@ -124,14 +124,14 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
   const top = skus.filter(s => s.units_sold > 0).slice(0, 5);
 
   // Небольшая доля оценки — это норма для свежих заказов, поясняем спокойно.
-  const partialInfoHtml = someEstimate ? `
+  const partialInfoHtml = someAwaiting ? `
     <div class="an2-card" style="background:linear-gradient(90deg, rgba(96,165,250,.05), transparent);border-color:rgba(96,165,250,.18);padding:9px 14px;margin-bottom:10px">
       <div style="display:flex;gap:10px;align-items:center">
         <div style="font-size:14px;color:#60a5fa">ⓘ</div>
         <div style="flex:1;font-size:11px;color:var(--text2);line-height:1.5">
-          По <strong style="color:var(--text)">${fmtNum(k.orders_estimated)}</strong> свежим заказам маркетплейс ещё не прислал финотчёт —
-          комиссия и логистика по ним посчитаны по средним ставкам этого же периода
-          (${estimatedPct.toFixed(0)}% выручки). Через пару дней цифры уточнятся автоматически.
+          По <strong style="color:var(--text)">${fmtNum(k.awaiting_orders)}</strong> свежим выкупленным заказам
+          на <strong style="color:var(--text)">${fmtMoney(k.awaiting_revenue)}</strong> маркетплейс ещё не прислал расчёт —
+          они не входят в выручку и прибыль. Через пару дней отчёт придёт и цифры дорастут сами.
           <span style="color:var(--text3)">Это норма.</span>
         </div>
       </div>
@@ -157,13 +157,21 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
     ${partialInfoHtml}
     ${longPeriodInfoHtml}
 
+    <div class="an2-basis">
+      <span class="an2-basis-dot"></span>
+      Деньги считаются по <strong>выкупленным</strong> заказам — только по ним маркетплейс рассчитался.
+      ${k.in_transit_revenue > 0 ? `Заказы в пути на <strong>${fmtMoney(k.in_transit_revenue)}</strong> в прибыль не входят: они ещё могут быть отменены или возвращены.` : ''}
+      ${k.awaiting_revenue > 0 ? `Ещё <strong>${fmtMoney(k.awaiting_revenue)}</strong> выкуплено, но ждёт расчёта маркетплейса.` : ''}
+      Расходы включают рекламу, хранение и штрафы, не привязанные к заказам.
+    </div>
+
     <div class="an2-kpi-grid">
-      ${renderKpiCard({ label: 'Выручка', value: k.revenue, prev: prevKpi?.revenue, tint: 'rgba(212,240,0,.18)', sparkline: sparkRev, detail: 'revenue', hint: `средний чек ${fmtMoney(k.avg_check)}` })}
-      ${renderKpiCard({ label: 'Прибыль без себестоимости', value: k.net_profit + k.cogs, prev: prevKpi != null ? prevKpi.net_profit + prevKpi.cogs : null, tint: 'rgba(16,185,129,.18)', detail: 'gross', hint: `удержания МП ${fmtMoney(k.commission + k.logistics + k.services)}` })}
+      ${renderKpiCard({ label: 'Выручка (выкуплено)', value: k.revenue, prev: prevKpi?.revenue, tint: 'rgba(212,240,0,.18)', sparkline: sparkRev, detail: 'revenue', hint: `заказано ${fmtMoney(k.ordered_revenue)}${k.in_transit_revenue > 0 ? ` · в пути ${fmtMoney(k.in_transit_revenue)}` : ''}` })}
+      ${renderKpiCard({ label: 'Прибыль без себестоимости', value: k.net_profit + k.cogs, prev: prevKpi != null ? prevKpi.net_profit + prevKpi.cogs : null, tint: 'rgba(16,185,129,.18)', detail: 'gross', hint: `удержания МП ${fmtMoney(k.commission + k.logistics + k.services + k.period_costs)}` })}
       ${renderKpiCard({ label: 'Чистая прибыль', value: k.net_profit, prev: prevKpi?.net_profit, tint: 'rgba(34,197,94,.18)', sparkline: sparkProfit, detail: 'profit', hint: k.cogs > 0 ? `себестоимость ${fmtMoney(k.cogs)}` : 'себестоимость не заполнена' })}
-      ${renderKpiCard({ label: 'Маржа', value: k.margin_pct, prev: prevKpi?.margin_pct, format: 'pct', tint: 'rgba(96,165,250,.18)', detail: 'margin', hint: `${fmtMoney(k.orders_delivered > 0 ? k.net_profit / k.orders_delivered : 0)} с заказа` })}
-      ${renderKpiCard({ label: 'Заказов доставлено', value: k.orders_delivered, prev: prevKpi?.orders_delivered, format: 'int', tint: 'rgba(167,139,250,.18)', detail: 'delivered', hint: `выкуп ${k.buyout_pct.toFixed(0)}% · в работе ${fmtNum(k.orders_processing)}` })}
-      ${renderKpiCard({ label: 'Расходы', value: k.total_expenses, prev: prevKpi?.total_expenses, tint: 'rgba(248,113,113,.18)', sparkline: sparkExp, invertDelta: true, detail: 'expenses', hint: `${k.revenue > 0 ? ((k.total_expenses / k.revenue) * 100).toFixed(0) : 0}% от выручки` })}
+      ${renderKpiCard({ label: 'Маржа', value: k.margin_pct, prev: prevKpi?.margin_pct, format: 'pct', tint: 'rgba(96,165,250,.18)', detail: 'margin', hint: `${fmtMoney(k.orders_settled > 0 ? k.net_profit / k.orders_settled : 0)} с заказа` })}
+      ${renderKpiCard({ label: 'Заказов доставлено', value: k.orders_delivered, prev: prevKpi?.orders_delivered, format: 'int', tint: 'rgba(167,139,250,.18)', detail: 'delivered', hint: `выкуп ${k.buyout_pct.toFixed(0)}% · в работе ${fmtNum(k.orders_processing)}${k.awaiting_orders > 0 ? ` · ждут расчёта ${fmtNum(k.awaiting_orders)}` : ''}` })}
+      ${renderKpiCard({ label: 'Расходы', value: k.total_expenses, prev: prevKpi?.total_expenses, tint: 'rgba(248,113,113,.18)', sparkline: sparkExp, invertDelta: true, detail: 'expenses', hint: `${k.revenue > 0 ? ((k.total_expenses / k.revenue) * 100).toFixed(0) : 0}% от выручки${k.period_costs > 0 ? ` · реклама и хранение ${fmtMoney(k.period_costs)}` : ''}` })}
     </div>
 
     <div class="an2-card">

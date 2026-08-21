@@ -40,8 +40,14 @@ interface Campaign {
   roi: number;
   actionId?: number;
   promoId?: string;
-  dateFrom?: string;
-  dateTo?: string;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  // ЯМ-акции: сведения о участии и ассортименте
+  participating?: boolean;
+  activeOffers?: number;
+  potentialOffers?: number;
+  promocode?: string | null;
+  discountPct?: number | null;
 }
 
 interface AiHint {
@@ -235,10 +241,15 @@ function buildHelpModal(): string {
             Яндекс.Маркет — Акции и Буст
           </div>
           <div style="font-size:12px;color:var(--text2);line-height:1.8;display:flex;flex-direction:column;gap:8px">
-            <div><b style="color:var(--text)">Что нужно:</b> API-ключ из Яндекс.Маркет ЛК → Настройки → Партнёрский API. Также нужны Business-ID и Campaign-ID (есть в настройках магазина).</div>
+            <div><b style="color:var(--text)">Что нужно:</b> API-ключ из Яндекс.Маркет ЛК → Настройки → Партнёрский API и <b>Business-ID</b> в настройках магазина.</div>
+            <div style="background:rgba(252,63,29,.07);border-left:3px solid #f87171;padding:8px 10px;border-radius:6px">
+              <b style="color:var(--text)">Главное отличие ЯМ:</b> реклама привязана к <b>бизнесу</b>, а не к магазину.
+              Если у вас FBS и FBY — это <u>один рекламный кабинет</u> с общими акциями и общими ставками буста.
+              Поэтому данные загружаются один раз на бизнес, а не отдельно на каждую схему.
+            </div>
             <div><b style="color:var(--text)">Акции</b> — промоакции ЯМ (скидки, промокоды). Разверните акцию → посмотрите или уберите офферы.</div>
-            <div><b style="color:var(--text)">Буст-продвижение</b> — ставки за клик по товарам в поиске ЯМ. Нажмите «Загрузить ставки» → отредактируйте значения → «Сохранить». Колонка «Рекомендованная» — подсказка от ЯМ API.</div>
-            <div><b style="color:var(--text)">Важно:</b> для Буста нужен Campaign-ID в настройках магазина. Если его нет — добавьте в разделе «Магазины → Яндекс.Маркет».</div>
+            <div><b style="color:var(--text)">Буст продаж</b> — ставка задаётся в <b>процентах от цены товара</b> (0,5–99,99%), а не в рублях. Вы платите этот процент при продаже через продвижение. Ставка <b>0</b> снимает товар с буста.</div>
+            <div><b style="color:var(--text)">Рекомендация ЯМ</b> — ставка, которую советует сам Маркет, вместе с прогнозом доли показов. Колонка «Оценка» сравнивает вашу ставку с рекомендацией.</div>
           </div>
         </div>
 
@@ -515,6 +526,50 @@ export class AdvertisingModule {
   border-radius:6px;color:var(--text);font-size:12px;font-family:inherit;outline:none}
 .ad-bi:focus{border-color:var(--accent)}
 .ad-bi.ch{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,var(--bg))}
+.ad-bi-wrap{position:relative;display:inline-flex;align-items:center}
+.ad-bi-wrap .ad-bi{width:92px;padding-right:22px}
+.ad-bi-suf{position:absolute;right:8px;font-size:11px;font-weight:700;color:var(--text3);pointer-events:none}
+
+/* boost table extras */
+.ad-sku{font-size:11px;color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent);
+  padding:2px 6px;border-radius:5px}
+.ad-shp{display:block;font-size:10px;color:var(--text3);margin-top:2px;font-weight:600}
+.ad-bv{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;white-space:nowrap}
+.ad-bv-ok{background:rgba(34,197,94,.12);color:#22c55e}
+.ad-bv-low{background:rgba(245,158,11,.12);color:#f59e0b}
+.ad-bv-high{background:rgba(239,68,68,.12);color:#ef4444}
+.ad-bv-off{background:var(--bg3);color:var(--text3)}
+.ad-bv-none{color:var(--text3)}
+
+.ad-boost-bar{display:flex;align-items:center;gap:10px;padding:9px 18px;
+  border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2);flex-wrap:wrap}
+.ad-boost-search{flex:1;max-width:300px;padding:5px 10px;background:var(--bg);
+  border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;
+  font-family:inherit;outline:none}
+.ad-boost-search:focus{border-color:var(--accent)}
+.ad-boost-stat{font-size:11px;color:var(--text3);font-weight:600}
+.ad-boost-foot{display:flex;align-items:center;gap:14px;padding:12px 18px;
+  border-top:1px solid var(--border);flex-wrap:wrap}
+.ad-boost-hint{font-size:11px;color:var(--text3);line-height:1.6;flex:1;min-width:240px}
+
+/* promo extras */
+.ad-pot{margin-left:5px;font-size:10.5px;font-weight:700;color:#22c55e}
+.ad-pchip{display:inline-block;margin-left:7px;padding:1px 7px;border-radius:20px;font-size:10.5px;
+  font-weight:700;background:rgba(252,63,29,.12);color:#f87171;vertical-align:middle}
+
+/* scope chip in sub bar */
+.ad-scope{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text3);
+  background:var(--bg3);padding:3px 9px;border-radius:20px;font-weight:600}
+.ad-scope svg{opacity:.7;flex-shrink:0}
+
+/* explainer note card */
+.ad-note{background:var(--bg3);border:1px solid var(--border);border-radius:12px;
+  padding:18px;max-width:560px}
+.ad-note-warn{background:rgba(245,158,11,.06);border-color:rgba(245,158,11,.25)}
+.ad-note-t{font-size:13px;font-weight:800;color:var(--text);margin-bottom:8px}
+.ad-note-p{font-size:12px;color:var(--text2);line-height:1.7;margin:0 0 10px}
+.ad-note-s{font-size:11px;color:var(--text3);line-height:1.7;margin:0}
+.ad-note code{background:var(--bg);padding:1px 5px;border-radius:4px}
 
 /* minus textarea */
 .ad-minus{width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);
@@ -773,7 +828,7 @@ export class AdvertisingModule {
         }
         this.campaigns = []; this.filtered = []; this.isFilterActive = false;
         this.expanded.clear(); this.detailCache.clear();
-        this.ymBids = []; this.ymRec = []; this.ymBidsSearch = '';
+        this.ymBids = []; this.ymRec = []; this.ymBidsSearch = ''; this.ymBidEdits.clear(); this.ymBoostLoaded = false; this.ymBoostBusiness = null;
         this.aiHints = []; this.loadErrors = [];
         this.balances.clear(); this.selected.clear();
         this.buildShell(); this.loadStores(); return;
@@ -792,7 +847,8 @@ export class AdvertisingModule {
       if (ys && ys !== this.ymSub) {
         this.ymSub = ys; this.campaigns = []; this.filtered = [];
         this.isFilterActive = false;
-        this.ymBids = []; this.ymRec = []; this.ymBidsSearch = ''; this.aiHints = [];
+        this.ymBids = []; this.ymRec = []; this.ymBidsSearch = ''; this.ymBidEdits.clear();
+        this.ymBoostLoaded = false; this.ymBoostBusiness = null; this.aiHints = [];
         this.renderSub(); this.renderFilterBar(); this.renderTiles();
         this.renderAi(); this.flushBody(); return;
       }
@@ -1242,7 +1298,17 @@ export class AdvertisingModule {
       ? this.stores.filter(s => s.id === this.storeId)
       : this.stores;
     const targets = this.deduplicateStores(rawTargets);
-    if (!targets.length) { showToast('Нет магазинов', 'warning'); return; }
+    if (!targets.length) {
+      // Для ЯМ дедупликация отбрасывает магазины без business_id — сообщаем точную причину,
+      // иначе «Нет магазинов» вводит в заблуждение при заполненном списке.
+      showToast(
+        this.tab === 'yandex' && rawTargets.length
+          ? 'У магазинов ЯМ не заполнен Business ID — укажите его в Настройках магазина'
+          : 'Нет магазинов',
+        'warning',
+      );
+      return;
+    }
 
     this.loading = true; this.campaigns = []; this.filtered = [];
     this.isFilterActive = false; this.searchQ = ''; this.filterStatus = 'all';
@@ -1356,15 +1422,43 @@ export class AdvertisingModule {
 
   private async _ymPromoStore(store: any): Promise<Campaign[]> {
     const businessId = store.business_id ? Number(store.business_id) : 0;
+    if (!businessId) throw new Error('Не заполнен Business ID магазина');
     const list = await getYandexPromos(store.api_key, businessId);
-    return list.map((p: any) => ({
-      id: p.id, storeId: store.id, storeName: store.name,
-      name: p.name ?? 'Акция',
-      status: p.status === 'ACTIVE' ? 'active' : p.status === 'UPCOMING' ? 'upcoming' : 'inactive',
-      type: p.promoType ?? 'PROMO',
-      budget: 0, spent: 0, clicks: 0, views: 0, orders: 0, revenue: 0, roi: 0,
-      promoId: p.id, dateFrom: p.startDate, dateTo: p.endDate,
-    }) as Campaign);
+
+    const MECHANICS: Record<string, string> = {
+      DIRECT_DISCOUNT:  'Прямая скидка',
+      BLUE_FLASH:       'Флеш-скидка',
+      MARKET_PROMOCODE: 'Промокод',
+      CASHBACK:         'Кешбэк',
+    };
+
+    const now = Date.now();
+    return list.map((p: any) => {
+      const from = p.period?.dateTimeFrom ?? null;
+      const to   = p.period?.dateTimeTo ?? null;
+      const active   = p.participating === true;
+      const upcoming = from ? new Date(from).getTime() > now : false;
+      const ended    = to   ? new Date(to).getTime()   < now : false;
+
+      const mech = p.mechanicsInfo?.type ?? '';
+      const activeOffers    = p.assortmentInfo?.activeOffers ?? 0;
+      const potentialOffers = p.assortmentInfo?.potentialOffers ?? 0;
+
+      return {
+        id: p.id, storeId: store.id, storeName: store.name,
+        name: p.name ?? 'Акция',
+        // Участвуем → активна; ещё не началась → предстоит; закончилась → остановлена
+        status: active ? 'active' : ended ? 'stopped' : upcoming ? 'upcoming' : 'inactive',
+        type: MECHANICS[mech] ?? (mech || 'Акция'),
+        budget: 0, spent: 0, clicks: 0, views: 0, orders: 0, revenue: 0, roi: 0,
+        promoId: p.id, dateFrom: from, dateTo: to,
+        participating: active,
+        activeOffers, potentialOffers,
+        promocode: p.mechanicsInfo?.promocodeInfo?.promocode ?? null,
+        discountPct: p.mechanicsInfo?.promocodeInfo?.discountPercent
+                  ?? p.bestsellerInfo?.discountPercent ?? null,
+      } as Campaign;
+    });
   }
 
   // ─── render body ──────────────────────────────────────────────────────────────
@@ -1458,6 +1552,10 @@ export class AdvertisingModule {
     if (!this.stores.length)
       return empty('Нет магазинов', 'Добавьте магазин в раздел «Магазины» и вернитесь сюда');
 
+    // Буст держит данные в ymBids, а не в campaigns — маршрутизируем до проверок,
+    // завязанных на campaigns, иначе таблица ставок никогда не отрисуется.
+    if (this.tab === 'yandex' && this.ymSub === 'boost') return this.renderBoostTable();
+
     if (!this.campaigns.length && this.loadErrors.length) {
       const scopeHint = this.tab === 'wb'
         ? 'Токен WB должен иметь право <b>«Реклама»</b> (создаётся отдельно в ЛК WB → Настройки → Доступ к API → Рекламная статистика).'
@@ -1495,8 +1593,7 @@ export class AdvertisingModule {
     if (this.tab === 'ozon')  return this.ozonSub === 'perf'
       ? this.renderPerfTable(data, multiStore)
       : this.renderPromoTable(data, multiStore, 'ozon');
-    // yandex
-    if (this.ymSub === 'boost') return this.renderBoostTable();
+    // yandex — буст обработан выше, здесь остаются только акции
     return this.renderPromoTable(data, multiStore, 'ym');
   }
 
@@ -1697,17 +1794,28 @@ export class AdvertisingModule {
       const expBtn = `<button class="ad-exp ${isExp?'on':''}" data-action="${act}" data-id="${key}" ${extra}>
         <span class="ad-chev">${I.chevronDown()}</span></button>`;
 
+      // Для ЯМ показываем ассортимент: сколько товаров уже в акции и сколько можно добавить
+      const assortCell = !isOzon ? `<td class="r nm">
+        ${c.activeOffers ? `<b style="color:var(--text)">${fmt(c.activeOffers)}</b>` : '<span class="dim">0</span>'}
+        ${c.potentialOffers ? `<span class="ad-pot" title="Можно добавить ещё товаров">+${fmt(c.potentialOffers)}</span>` : ''}
+      </td>` : '';
+
+      const nameExtra = !isOzon && (c.promocode || c.discountPct)
+        ? `<span class="ad-pchip">${c.promocode ? esc(c.promocode) : `−${c.discountPct}%`}</span>`
+        : '';
+
       const main = `<tr class="adr ${isExp?'exp':''}">
         ${ms?`<td class="nm">${esc(c.storeName)}</td>`:''}
-        <td style="font-weight:600;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</td>
+        <td style="font-weight:600;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}${nameExtra}</td>
         <td class="dim nm">${esc(c.type)}</td>
         <td>${statusChip(c.status)}</td>
+        ${assortCell}
         <td class="dim nm">${c.dateFrom?c.dateFrom.slice(0,10)+' — '+(c.dateTo??'').slice(0,10):'—'}</td>
         <td>${expBtn}</td>
       </tr>`;
 
       if (!isExp) return main;
-      const cols = ms ? 6 : 5;
+      const cols = (ms ? 6 : 5) + (isOzon ? 0 : 1);
       const detail = this.detailLoading.has(key) ? skeleton(2)
         : isOzon ? this._ozonPromoProducts(key, c.actionId)
         : this._ymPromoOffers(key, String(c.promoId ?? c.id));
@@ -1718,7 +1826,9 @@ export class AdvertisingModule {
 
     return `<table class="adt"><thead><tr>
       ${ms?'<th>Магазин</th>':''}
-      <th data-sort="name">Акция</th><th>Тип</th><th>Статус</th><th>Период</th><th></th>
+      <th data-sort="name">Акция</th><th>Тип</th><th>Статус</th>
+      ${src==='ym'?'<th class="r">Товаров</th>':''}
+      <th>Период</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table>`;
   }
 
@@ -1963,6 +2073,7 @@ export class AdvertisingModule {
     this.ymBoostBusiness = target;
     this.ymBidsLoading = true; this.ymBidsSearch = ''; this.ymBidEdits.clear();
     this.ymBids = []; this.ymRec = []; this.ymBoostLoaded = false;
+    this.renderSub();   // подпись «кабинет: …» живёт в суб-баре, а не в теле
     this.flushBody();
     try {
       const sig = this.eventsAC.signal;

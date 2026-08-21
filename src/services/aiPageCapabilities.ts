@@ -1345,27 +1345,13 @@ export function capabilityForPage(page: string): AiPageCapability | null {
   };
   const SUPPLY_ACTIONS: AiAction[] = [
     {
-      name: 'get_ym_slots',
-      description: 'Показать доступные слоты приёмки Яндекс Маркет FBY на ближайшие N дней. Используй когда пользователь спрашивает "какие даты доступны", "когда можно сдать", "слоты ЯМ".',
-      args: '{ days?: number }',
-      run: async (a: { days?: number }) => {
-        const { getYandexAvailableSlots } = await import('@/services/yandexApi');
-        const days = a?.days ?? 14;
-        const slots = getYandexAvailableSlots(days);
-        w().app?.navigateTo?.('supply');
-        return `Доступные рабочие дни для отгрузки ЯМ (ближайшие ${days} рабочих дней):\n${slots.map(s => `  • ${s.label} (${s.date})`).join('\n')}\n\nДля создания отгрузки скажи: "Создай отгрузку на [дату]"`;
-      },
-    },
-    {
-      name: 'create_ym_shipment',
-      description: 'Создать отгрузку Яндекс Маркет FBY на конкретную дату. Используй когда пользователь говорит "создай поставку [дата]", "запланируй отгрузку на [дату]".',
-      args: '{ date: string, windowDays?: number }',
-      run: async (a: { date: string; windowDays?: number }) => {
-        if (!a?.date) return 'Укажи дату в формате YYYY-MM-DD, например: 2026-08-10';
+      name: 'list_ym_supply_requests',
+      description: 'Показать заявки на поставку Яндекс Маркет FBY (статус, склад, окно приёмки). Используй когда спрашивают "поставки ЯМ", "заявки Яндекса", "что везём на склад Яндекса". ВАЖНО: создать заявку FBY через API невозможно — Маркет разрешает это только в своём кабинете.',
+      args: '{}',
+      run: async () => {
         const sm = w().supplyModule;
         if (!sm) { w().app?.navigateTo?.('supply'); return 'Открываю раздел Поставки. Повтори команду через секунду.'; }
-        const result = await sm.aiCreateYmShipment(a.date, a.windowDays ?? 2);
-        return result;
+        return await sm.aiListYmSupplyRequests();
       },
     },
     {

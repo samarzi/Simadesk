@@ -5,11 +5,7 @@ import { copyButton } from '@/utils/copyButton';
 export function renderOrderDrawer(o: Order, onClose = 'window.analyticsModule?.closeOrderDrawer()'): string {
   const sourceLabel = o.source === 'real'
     ? 'Финотчёт МП'
-    : o.fees_estimated
-    ? 'Оценка по средним ставкам периода — финотчёт ещё не пришёл'
-    : o.source === 'estimated'
-    ? 'Расчёт по формуле (финотчёт ожидается)'
-    : 'Нет данных';
+    : 'Финотчёт ещё не пришёл — заказ не участвует в выручке и прибыли';
   // У возврата/отмены выручка заказа обнулена, но позиции сохраняют исходную цену —
   // помечаем её зачёркиванием, чтобы сумма позиций не спорила с итогом.
   const revenueVoid = o.status === 'returned' || o.status === 'cancelled';

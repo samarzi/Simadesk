@@ -56,6 +56,29 @@ export interface MpTransaction {
   synced_at?: string;
 }
 
+/**
+ * Убирает повторы по (store_id, mp_transaction_id).
+ *
+ * Постраничная выборка идёт через offset с сортировкой по operation_date —
+ * ключ неуникальный, поэтому строка на стыке страниц может прийти дважды.
+ * Дубль транзакции удваивает комиссию и логистику по заказу, поэтому дешевле
+ * отсеять его здесь, чем ловить потом расхождение в отчёте.
+ */
+function dedupeTransactions(list: MpTransaction[]): MpTransaction[] {
+  const seen = new Set<string>();
+  const out: MpTransaction[] = [];
+  for (const tx of list) {
+    const key = `${tx.store_id}__${tx.mp_transaction_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tx);
+  }
+  if (out.length < list.length) {
+    console.warn(`[mpTransactionsDb] отсеяно ${list.length - out.length} дублей транзакций из ${list.length}`);
+  }
+  return out;
+}
+
 export const mpTransactionsDb = {
   /** Получить транзакции по магазинам за период.
    *  Для длинных периодов (> 30 дней) бьём на 30-дневные чанки, чтобы избежать
@@ -71,7 +94,7 @@ export const mpTransactionsDb = {
 
     // Короткий период — один запрос
     if (spanMs <= CHUNK_DAYS * 86400_000) {
-      return this._fetchPage(storeIds, dateFrom, dateTo);
+      return dedupeTransactions(await this._fetchPage(storeIds, dateFrom, dateTo));
     }
 
     // Длинный период — разбиваем на 7-дневные чанки, параллельно max 4
@@ -90,7 +113,7 @@ export const mpTransactionsDb = {
       const batch = await Promise.all(slice.map(c => this._fetchPage(storeIds, c.from, c.to)));
       results.push(...batch);
     }
-    return results.flat();
+    return dedupeTransactions(results.flat());
   },
 
   /** Внутренний метод: одна страница транзакций с пагинацией. */
