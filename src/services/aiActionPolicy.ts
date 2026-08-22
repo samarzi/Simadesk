@@ -70,8 +70,19 @@ export function describePendingAction(name: string, args: any, actionLabel?: str
       return `Изменю остатки у ${Array.isArray(a.items) ? a.items.length : '—'} товаров на ${mp}.`;
     case 'reply_all_unanswered':
       return 'Сгенерирую и опубликую AI-ответы на все отзывы без ответа.';
-    case 'delete_task':
-      return `Удалю задачу «${a.title ?? '—'}». Отменить это будет нельзя.`;
+    case 'delete_task': {
+      // Ищем задачу в TaskManagerModule чтобы показать полные данные
+      const tasks: any[] = (window as any).taskManagerModule?.tasks ?? [];
+      const found = tasks.find((t: any) =>
+        t.title === a.title || String(t.id) === String(a.id)
+      );
+      const lines = [`Название: ${a.title ?? found?.title ?? '—'}`];
+      if (found?.description) lines.push(`Описание: ${String(found.description).slice(0, 120)}`);
+      if (found?.status) lines.push(`Статус: ${{ todo: 'К выполнению', in_progress: 'В работе', done: 'Выполнено' }[found.status as string] ?? found.status}`);
+      if (found?.due_date) lines.push(`Срок: ${found.due_date}`);
+      lines.push('Удаление необратимо — отменить нельзя.');
+      return lines.join('\n');
+    }
     case 'simastore_publish':
       return a.publish === false
         ? 'Сниму витрину с публикации — она перестанет быть доступна покупателям.'

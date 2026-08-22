@@ -740,7 +740,7 @@ mp_compare_prices (одинаковая ли цена по площадкам).
 | toggle_theme_on | — | Светлая тема |
 | reload_page | — | Перезагрузить страницу |
 | edit_task | title | Изменить задачу (new_title?, priority?, due_date?) |
-| delete_task | title | Удалить задачу (СПРОСИ подтверждение через clarify) |
+| delete_task | title | Удалить задачу (система покажет карточку подтверждения — не используй clarify) |
 | update_product_description | article | Обновить описание товара (name?, description?) |
 | list_repricer_rules | — | Показать все правила репрайсера |
 | edit_repricer_rule | rule_id | Изменить параметры правила (min_price?, max_price?, strategy?) |
@@ -3149,7 +3149,7 @@ export class AssistantModule {
     } catch { return null; }
   }
 
-  private async handleTaskAction(ta: TaskAction): Promise<void> {
+  private async handleTaskAction(ta: TaskAction, requestText = ''): Promise<void> {
     if (ta.action === 'create_task') {
       await this.createTaskFromAI(ta);
     } else if (ta.action === 'create_tasks' && ta.tasks?.length) {
@@ -3159,7 +3159,13 @@ export class AssistantModule {
       this.addAssistantMessage(`Создано задач: ${ta.tasks.length}. Откройте раздел Задачи для просмотра.`);
     } else if (ta.action === 'suggest_task') {
       this.addSuggestTaskCard(ta);
-    } else if (ta.action === 'edit_task' || ta.action === 'delete_task') {
+    } else if (ta.action === 'delete_task') {
+      // Удаление необратимо — всегда показываем карточку подтверждения.
+      // Раньше этот путь вызывал aiPage.run напрямую, обходя CONFIRM_REQUIRED_ACTIONS.
+      const desc = describePendingAction('delete_task', ta, ACTION_LABELS['delete_task']);
+      this.addActionPlanCard('delete_task', ta, desc, requestText || ta.title || 'задача');
+      this.setStatus('Готова');
+    } else if (ta.action === 'edit_task') {
       try {
         const result = await aiPage.run(ta.action, ta as any);
         this.addAssistantMessage(result.summary || 'Готово.');
@@ -5681,7 +5687,7 @@ export class AssistantModule {
           if (displayText) {
             this.addAssistantMessage(displayText);
           }
-          await this.handleTaskAction(taskAction);
+          await this.handleTaskAction(taskAction, text);
         } else {
           // Обычный текст — промоутим стриминговый пузырь на месте (Fix 1)
           // Strip any orphaned action JSON the AI may have appended
@@ -5956,19 +5962,23 @@ export class AssistantModule {
     requestText: string,
   ): void {
     if (!this.messagesEl) return;
+    const isDangerous = name === 'delete_task' || name === 'invite_team_member';
+    const headerIcon = isDangerous
+      ? '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'
+      : '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>';
+    const planSafe = plan.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
     const el = document.createElement('div');
     el.className = 'sd-ap-msg assistant';
     el.innerHTML = `
       <div class="sd-ap-msg-avatar">С</div>
       <div class="sd-ap-msg-bubble">
-        <div class="sd-ap-plan-card">
+        <div class="sd-ap-plan-card${isDangerous ? ' sd-ap-plan-card--danger' : ''}">
           <div class="sd-ap-plan-header">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-            </svg>
-            Готовлюсь выполнить
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">${headerIcon}</svg>
+            ${isDangerous ? 'Требует подтверждения' : 'Готовлюсь выполнить'}
           </div>
-          <div class="sd-ap-plan-body">${plan.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+          <div class="sd-ap-plan-body">${planSafe}</div>
+          <textarea class="sd-ap-plan-clarify" placeholder="Уточнить или изменить запрос…" rows="1"></textarea>
           <div class="sd-ap-plan-btns">
             <button class="sd-ap-plan-run">▶ Выполнить</button>
             <button class="sd-ap-plan-cancel">Отмена</button>
@@ -5976,13 +5986,27 @@ export class AssistantModule {
         </div>
       </div>`;
 
+    const clarifyEl = el.querySelector<HTMLTextAreaElement>('.sd-ap-plan-clarify')!;
+    clarifyEl.addEventListener('input', () => {
+      clarifyEl.style.height = 'auto';
+      clarifyEl.style.height = Math.min(clarifyEl.scrollHeight, 80) + 'px';
+    });
+
     el.querySelector<HTMLElement>('.sd-ap-plan-run')?.addEventListener('click', async (e) => {
       const btn = e.currentTarget as HTMLButtonElement;
+      const clarifyText = clarifyEl.value.trim();
       btn.disabled = true;
       btn.textContent = 'Выполняю…';
       (el.querySelector<HTMLButtonElement>('.sd-ap-plan-cancel'))!.disabled = true;
-      // Подтверждение плана — самостоятельный запуск, а не продолжение прошлого
-      // запроса: бюджет шагов и защита от повторов считаются заново.
+      clarifyEl.disabled = true;
+
+      if (clarifyText) {
+        // Уточнение изменяет запрос — возвращаем модели с дополнительным контекстом.
+        el.remove();
+        await this.sendMessage(requestText + '\n\nУточнение: ' + clarifyText);
+        return;
+      }
+      // Без уточнения — выполняем напрямую.
       this.agentSteps = 0;
       this.agentCalls.clear();
       await this.executePageAction(name, args, requestText, el, true);
@@ -6210,6 +6234,16 @@ export class AssistantModule {
    * аргументами блокируется — иначе цикл мог бы крутиться бесконечно.
    */
   private async continueAfterAction(name: string, resultMsg: string, requestText: string): Promise<void> {
+    // Атомарные точечные операции не требуют AI-комментария: пользователь видит
+    // отчётную карточку с результатом и сам решает что дальше. Запуск модели
+    // здесь только приводил к нерелевантным follow-up вызовам (fetch_analytics и т.п.).
+    const TERMINAL_ACTIONS = new Set(['delete_task', 'edit_task', 'mark_task_done', 'navigate_to']);
+    if (TERMINAL_ACTIONS.has(name)) {
+      this.setStatus('Готова');
+      this.saveSession();
+      return;
+    }
+
     const isFetch = DATA_FETCH_ACTIONS.has(name);
     const canAct = this.agentSteps < MAX_AGENT_STEPS;
 
