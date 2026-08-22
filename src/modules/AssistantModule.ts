@@ -2977,100 +2977,52 @@ export class AssistantModule {
   // ── Quick actions: fetch store data → AI analysis ─────────────────────────
 
   private async handleQuickAction(action: string): Promise<void> {
-    const analyticsModule = (window as any).analyticsModule;
-
     switch (action) {
       case 'fullAudit': {
-        await this.sendMessage('Аудит рисков');
+        // Показывает карточку подтверждения (CONFIRM_REQUIRED) — без ИИ
+        await this.runFastAction('run_risk_audit', {}, 'Провожу аудит рисков…', 'Аудит…');
         break;
       }
       case 'oosAutoTasks': {
-        await this.sendMessage('Создай задачи по OOS');
+        // Показывает карточку подтверждения (CONFIRM_REQUIRED) — без ИИ
+        await this.runFastAction('create_oos_tasks', {}, 'Ищу OOS-товары…', 'OOS…');
         break;
       }
       case 'syncAll': {
-        await this.sendMessage('Синхронизируй все');
+        await this.runFastAction('sync_marketplace', { mp: 'all' }, 'Синхронизирую…', 'Синхронизирую…');
         break;
       }
       case 'generateReport': {
-        this.isLoading = true;
-        this.setInputEnabled(false);
-        const typing = this.addTypingIndicator();
-        try {
-          const result = await aiPage.run('generate_report', { type: 'full' });
-          this.removeTypingIndicator(typing);
-          const ttsBtn = this.addAssistantMessage(result.summary);
-          if (this.ttsEnabled && ttsBtn) this.startMsgTts(result.summary, ttsBtn);
-        } catch (e: unknown) {
-          this.removeTypingIndicator(typing);
-          this.addAssistantMessage(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
-        } finally {
-          this.isLoading = false;
-          this.setInputEnabled(true);
-        }
+        await this.runFastAction('generate_report', { type: 'full' }, 'Генерирую отчёт…', 'Отчёт…');
         break;
       }
       case 'analytics30': {
-        let context = 'Раздел аналитики открыт.';
-        if (analyticsModule) {
-          context = 'Данные аналитики доступны в разделе. Текущая страница: analytics.';
-        }
-        await this.sendMessage(
-          `[БЫСТРОЕ ДЕЙСТВИЕ: Аналитика за 30 дней]\n${context}\n\n` +
-          'Проведи полный анализ магазина за последние 30 дней. ' +
-          'Найди главные тренды, риски, топ и аутсайдеров. ' +
-          'Дай 3 конкретных действия для роста выручки.'
-        );
+        (window as any).app?.navigateTo?.('analytics');
+        await this.runFastAction('fetch_analytics', {}, 'Загружаю аналитику…', 'Аналитика…');
         break;
       }
       case 'stockRisk': {
-        await this.sendMessage(
-          '[БЫСТРОЕ ДЕЙСТВИЕ: Анализ рисков остатков]\n' +
-          'Я на странице "Остатки". ' +
-          'Объясни как найти товары с критически низким запасом (менее 14 дней) в SimaDesk, ' +
-          'какие риски несёт out-of-stock и что конкретно нужно сделать прямо сейчас.'
-        );
         (window as any).app?.navigateTo?.('stock');
+        await this.runFastAction('mp_stock_health', {}, 'Проверяю остатки…', 'Остатки…');
         break;
       }
       case 'ordersCheck': {
-        await this.sendMessage(
-          '[БЫСТРОЕ ДЕЙСТВИЕ: Проверка заказов]\n' +
-          'Помоги проверить текущие заказы. ' +
-          'Что нужно проверить в разделе заказов прямо сейчас? ' +
-          'На какие статусы обратить внимание, какие дедлайны критичны? ' +
-          'Открой раздел заказов и объясни как работать с ним эффективно.'
-        );
         (window as any).app?.navigateTo?.('orders');
+        this.addAssistantMessage('Раздел заказов открыт. Обрати внимание на заказы со статусом «Ожидает упаковки» с дедлайном менее 4 часов.');
         break;
       }
       case 'dailyCheck': {
-        this.isLoading = true;
-        this.setInputEnabled(false);
-        const typing = this.addTypingIndicator();
-        try {
-          const result = await aiPage.run('daily_checklist', {});
-          this.removeTypingIndicator(typing);
-          const ttsBtn = this.addAssistantMessage(result.summary);
-          if (this.ttsEnabled && ttsBtn) this.startMsgTts(result.summary, ttsBtn);
-        } catch (e: unknown) {
-          this.removeTypingIndicator(typing);
-          this.addAssistantMessage(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
-        } finally {
-          this.isLoading = false;
-          this.setInputEnabled(true);
-        }
+        await this.runFastAction('daily_checklist', {}, 'Запускаю чеклист…', 'Чеклист…');
         break;
       }
       case 'priceAnalysis': {
-        await this.sendMessage(
-          '[БЫСТРОЕ ДЕЙСТВИЕ: Анализ цен и репрайсер]\n' +
-          'Объясни как правильно настроить репрайсер в SimaDesk для максимальной прибыли. ' +
-          'Какие стратегии ценообразования использовать? ' +
-          'Как не потерять маржу участвуя в акциях маркетплейса? ' +
-          'Как посчитать минимальную цену с учётом всех расходов?'
-        );
         (window as any).app?.navigateTo?.('repricer');
+        this.addAssistantMessage('Раздел репрайсера открыт. Здесь можно настроить автоматическое изменение цен с учётом маржи и акций маркетплейса.');
+        break;
+      }
+      case 'reviewsCheck': {
+        (window as any).app?.navigateTo?.('reviews');
+        await this.runFastAction('fetch_reviews', {}, 'Загружаю отзывы…', 'Отзывы…');
         break;
       }
       case 'howTo': {
@@ -3080,16 +3032,6 @@ export class AssistantModule {
           'какие разделы самые важные, как настроить систему для максимальной эффективности, ' +
           'какие фичи используют опытные менеджеры.'
         );
-        break;
-      }
-      case 'reviewsCheck': {
-        await this.sendMessage(
-          '[БЫСТРОЕ ДЕЙСТВИЕ: Работа с отзывами]\n' +
-          'Объясни стратегию работы с отзывами на маркетплейсах: ' +
-          'как отвечать на негатив, как стимулировать положительные отзывы, ' +
-          'как отзывы влияют на позиции в выдаче и что делать с рейтингом ниже 4.5.'
-        );
-        (window as any).app?.navigateTo?.('reviews');
         break;
       }
       case 'unitEconomy': {
@@ -3168,6 +3110,13 @@ export class AssistantModule {
     } else if (ta.action === 'edit_task') {
       try {
         const result = await aiPage.run(ta.action, ta as any);
+        changeLog.logAction({
+          category: 'ai',
+          action: ACTION_LABELS['edit_task'] ?? 'Изменение задачи',
+          details: result.summary,
+          requestText,
+          undo: result.undo,
+        });
         this.addAssistantMessage(result.summary || 'Готово.');
       } catch (e: any) {
         this.addAssistantMessage('Ошибка: ' + e.message);
@@ -3192,6 +3141,12 @@ export class AssistantModule {
         sort_order:     9999,
         parent_id:      null,
         assignee_id:    null,
+      });
+      changeLog.logAction({
+        category: 'ai',
+        action: 'Создание задачи',
+        details: task.title,
+        undo: { kind: 'task_delete_id', payload: { id: task.id }, label: `Задача: ${task.title}` },
       });
       const ttsBtn = this.addAssistantMessage(
         `Задача создана: **${task.title}**${data.due_date ? ` · срок: ${data.due_date}` : ''}\n\nНайдёте её в разделе Задачи.`
@@ -5772,6 +5727,14 @@ export class AssistantModule {
 
     const useStream = !!onChunk;
 
+    // DeepSeek и reasoning-модели требуют особого обращения:
+    // stream_options не поддерживаются через OpenRouter для DeepSeek,
+    // а R1 долго «думает» перед первым токеном контента.
+    const model = this.aiModel || 'anthropic/claude-haiku-4-5';
+    const isDeepSeek = model.startsWith('deepseek/');
+    const isReasoningModel = isDeepSeek && model.includes('r1');
+    const stallMs = isReasoningModel ? 90_000 : AI_STALL_TIMEOUT_MS;
+
     this.abortController = new AbortController();
     const { signal } = this.abortController;
 
@@ -5781,10 +5744,10 @@ export class AssistantModule {
     let timedOut = false;
     const abortSlow = () => { timedOut = true; try { this.abortController?.abort(); } catch { /* ignore */ } };
     const overallTimer = setTimeout(abortSlow, AI_REQUEST_TIMEOUT_MS);
-    let stallTimer = setTimeout(abortSlow, AI_STALL_TIMEOUT_MS);
+    let stallTimer = setTimeout(abortSlow, stallMs);
     const bumpStall = () => {
       clearTimeout(stallTimer);
-      stallTimer = setTimeout(abortSlow, AI_STALL_TIMEOUT_MS);
+      stallTimer = setTimeout(abortSlow, stallMs);
     };
     const clearTimers = () => { clearTimeout(overallTimer); clearTimeout(stallTimer); };
     const asTimeout = (e: unknown) => {
@@ -5804,12 +5767,13 @@ export class AssistantModule {
         'X-Title': 'SimaDesk Assistant',
       },
       body: JSON.stringify({
-        model: this.aiModel || 'anthropic/claude-haiku-4-5',
+        model,
         messages: apiMessages,
         max_tokens: 1500,
         temperature: 0.7,
         stream: useStream,
-        ...(useStream ? { stream_options: { include_usage: true } } : {}),
+        // stream_options не поддерживается DeepSeek через OpenRouter — не посылаем
+        ...(useStream && !isDeepSeek ? { stream_options: { include_usage: true } } : {}),
       }),
       });
     } catch (e) {
@@ -5858,7 +5822,8 @@ export class AssistantModule {
 
         const streamUsage = reportAiUsage('Сима', lastChunkWithUsage);
         if (streamUsage && !this.isAdminUser) recordDailyTokens(streamUsage.total);
-        return full;
+        // DeepSeek R1 иногда пропускает теги рассуждений в поток контента — убираем
+        return isReasoningModel ? full.replace(/<think>[\s\S]*?<\/think>/g, '').trimStart() : full;
       }
 
       // ── Non-streaming fallback ────────────────────────────────────────────────

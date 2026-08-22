@@ -208,6 +208,7 @@ export class MyAnalysisModule {
   private aiRunning = false;
   private aiProgress = '';     // status line shown during generation
   private aiApplying = false;
+  private aiCustomPrompt = '';  // extra instructions from the user
 
   constructor(el: HTMLElement) {
     this.el = el;
@@ -273,6 +274,34 @@ export class MyAnalysisModule {
     if (this.aiSuggestions[idx]) this.aiSuggestions[idx].editedName = v;
   }
 
+  aiSetCustomPrompt(v: string) { this.aiCustomPrompt = v; }
+
+  /** Loads a product description straight from the marketplace API (no drawer side-effects). */
+  private async _fetchDesc(card: ProductCard): Promise<string> {
+    try {
+      if (card.mp === 'wb') {
+        const store = this.wbStores.find(s => s.id === card.storeId);
+        if (store && card.nmId) {
+          const d = await wbApi.getCardDetails(store.api_key, card.nmId) as any;
+          return d?.description || '';
+        }
+      } else if (card.mp === 'ozon') {
+        const store = this.ozStores.find(s => s.id === card.storeId);
+        if (store) {
+          return await ozonApi.getProductDescription(card.vendorCode, card.productId ?? null,
+            { client_id: store.client_id, api_key: store.api_key });
+        }
+      } else if (card.mp === 'yandex') {
+        const store = this.yaStores.find(s => s.id === card.storeId);
+        if (store?.business_id) {
+          const o = await yandexApi.getOfferMapping(store.api_key, store.business_id, card.vendorCode) as any;
+          return o?.description || '';
+        }
+      }
+    } catch { /* ignore — description is optional context */ }
+    return '';
+  }
+
   async aiRunAnalysis() {
     if (this.aiRunning) return;
     if (!this.loaded) await this._load();
@@ -293,30 +322,52 @@ export class MyAnalysisModule {
     const BATCH = 5;
     for (let i = 0; i < candidates.length; i += BATCH) {
       const batch = candidates.slice(i, i + BATCH);
+      this.aiProgress = `Загружаем описания ${Math.min(i + BATCH, candidates.length)} / ${candidates.length}…`;
+      this._paint();
+
+      // Load descriptions in parallel — they give the AI real facts to work with.
+      const descs = await Promise.all(batch.map(c => this._fetchDesc(c)));
+
       this.aiProgress = `Анализируем ${Math.min(i + BATCH, candidates.length)} / ${candidates.length}…`;
       this._paint();
 
-      const lines = batch.map((c, bi) =>
-        `${bi + 1}. [${MP_NAME[c.mp]}] "${c.name}" | Проблемы: ${c.issues.filter(x => x.field === 'name' || x.code === 'LONG_WORD').map(x => x.label).join('; ')}`,
-      ).join('\n');
+      const lines = batch.map((c, bi) => {
+        const nameIssues = c.issues
+          .filter(x => x.field === 'name' || x.code === 'LONG_WORD')
+          .map(x => x.label).join('; ');
+        const desc = descs[bi] ? `\n   Описание: "${descs[bi].slice(0, 400)}"` : '';
+        return `${bi + 1}. Маркетплейс: ${MP_NAME[c.mp]} | Текущее название: "${c.name}" | Проблемы: ${nameIssues}${desc}`;
+      }).join('\n\n');
+
+      const mpRules =
+        `• WB: строго 40-60 символов; бренд/тип товара/материал/цвет/ключевые характеристики; без лишних слов\n` +
+        `• Ozon: 50-120 символов; каждое слово ≤27 символов; тип товара + ключевые параметры; без воды\n` +
+        `• Яндекс Маркет: 60-120 символов; тип товара + бренд + ключевые характеристики`;
+
+      const customSection = this.aiCustomPrompt.trim()
+        ? `\nДополнительные пожелания от продавца:\n${this.aiCustomPrompt.trim()}\n`
+        : '';
 
       try {
         const resp = await this._callAi(
-          `Ты эксперт по контенту для российских маркетплейсов.\n` +
-          `Для каждой карточки ниже предложи улучшенное название.\n` +
-          `Правила:\n` +
-          `• WB: 40-60 символов, ключевые слова, характеристики\n` +
-          `• Ozon: до 200 символов, каждое слово ≤27 символов\n` +
-          `• Яндекс Маркет: 60-120 символов\n` +
-          `Ответь ТОЛЬКО в таком формате (одна строка = одна карточка, номер совпадает с входом):\n` +
+          `Ты SEO-специалист по российским маркетплейсам.\n` +
+          `Задача: придумать продающее название для каждой карточки товара ниже.\n\n` +
+          `ТРЕБОВАНИЯ:\n` +
+          `1. Используй ТОЛЬКО факты из текущего названия и описания — НЕ придумывай несуществующие свойства.\n` +
+          `2. Применяй знания о том, какие ключевые слова реально ищут покупатели на этом маркетплейсе.\n` +
+          `3. НЕ добавляй в начало название маркетплейса в скобках (Ozon/WB/Яндекс и т.п.).\n` +
+          `4. Соблюдай правила платформы:\n${mpRules}\n` +
+          `${customSection}\n` +
+          `Ответь ТОЛЬКО в таком формате (одна строка = одна карточка, номер совпадает со входом):\n` +
           `1. Новое название\n` +
           `2. Новое название\n` +
           `...\n\n` +
           `Карточки:\n${lines}`,
         );
 
+        // Parse: strip leading "N. " and any stray [Ozon]/[WB]/[Яндекс] prefixes the AI might add.
         const answers = resp.split('\n')
-          .map(l => l.replace(/^\d+\.\s*/, '').trim())
+          .map(l => l.replace(/^\d+\.\s*/, '').replace(/^\[(?:Ozon|WB|Яндекс(?:\s*Маркет)?|Wildberries)\]\s*/i, '').trim())
           .filter(Boolean);
 
         for (let bi = 0; bi < batch.length; bi++) {
@@ -1079,8 +1130,15 @@ export class MyAnalysisModule {
         <div style="font-size:48px">✨</div>
         <div class="ca-ai-intro-title">ИИ-исправление названий</div>
         <div class="ca-ai-intro-text">
-          ИИ проанализирует ${n} карточк${n===1?'у':n<5?'и':'ек'} с проблемами в названии,
-          предложит улучшенные варианты для каждого маркетплейса и применит все сразу одной кнопкой.
+          ИИ прочитает описание каждого товара, использует реальные факты и SEO-знания
+          по маркетплейсам — и предложит продающее название без выдуманных характеристик.
+        </div>
+        <div class="ca-ai-prompt-block">
+          <label class="ca-ai-prompt-label">Дополнительные пожелания (промпт):</label>
+          <textarea class="ca-ai-prompt-ta" rows="3"
+            placeholder="Например: все названия должны начинаться с бренда, использовать размер и цвет, без слова «качественный»…"
+            oninput="window.myAnalysisModule?.aiSetCustomPrompt(this.value)"
+          >${this._e(this.aiCustomPrompt)}</textarea>
         </div>
         ${n === 0
           ? `<div class="ca-hint">Нет карточек с проблемами в названиях — всё хорошо!</div>`
@@ -1135,7 +1193,7 @@ export class MyAnalysisModule {
           Выбрать все
         </label>
         <div class="ca-ai-stats">
-          ${ok ? `<span class="ca-ai-stat ok">✅ Применено: ${ok}</span>` : ''}
+          ${ok      ? `<span class="ca-ai-stat ok">✅ Применено: ${ok}</span>` : ''}
           ${errored ? `<span class="ca-ai-stat err">🚫 Ошибок: ${errored}</span>` : ''}
         </div>
         <button class="ca-ai-apply-btn${(!pending||this.aiApplying)?' busy':''}"
@@ -1143,7 +1201,16 @@ export class MyAnalysisModule {
           ${!pending||this.aiApplying ? 'disabled' : ''}>
           ${this.aiApplying ? '<div class="ca-spin-sm"></div> Применяем…' : `Применить изменения (${pending})`}
         </button>
-        <button class="ca-ai-rerun" onclick="window.myAnalysisModule?.aiRunAnalysis()">↻ Пересчитать</button>
+        <button class="ca-ai-rerun${this.aiRunning?' busy':''}" onclick="window.myAnalysisModule?.aiRunAnalysis()">
+          ${this.aiRunning ? `<div class="ca-spin-sm"></div> ${this.aiProgress}` : '↻ Пересчитать'}
+        </button>
+      </div>
+      <div class="ca-ai-prompt-inline">
+        <span class="ca-ai-prompt-label">Пожелания к следующему пересчёту:</span>
+        <textarea class="ca-ai-prompt-ta ca-ai-prompt-sm" rows="2"
+          placeholder="Уточните формат, добавьте требования…"
+          oninput="window.myAnalysisModule?.aiSetCustomPrompt(this.value)"
+        >${this._e(this.aiCustomPrompt)}</textarea>
       </div>
       <div class="ca-ai-list">${rows}</div>
     </div>`;
@@ -1580,6 +1647,13 @@ export class MyAnalysisModule {
 .ca-ai-inp:focus{border-color:var(--accent);}
 .ca-ai-err-msg{font-size:12px;color:#f87171;}
 .ca-ai-issues{display:flex;flex-wrap:wrap;gap:4px;}
+.ca-ai-prompt-block{width:100%;max-width:480px;display:flex;flex-direction:column;gap:6px;margin-bottom:18px;}
+.ca-ai-prompt-label{font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;}
+.ca-ai-prompt-ta{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:13px;padding:8px 12px;border-radius:10px;resize:vertical;outline:none;line-height:1.5;font-family:inherit;}
+.ca-ai-prompt-ta:focus{border-color:var(--accent);}
+.ca-ai-prompt-inline{display:flex;align-items:flex-start;gap:10px;padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg);}
+.ca-ai-prompt-sm{flex:1;min-height:40px;max-height:80px;}
+.ca-ai-rerun.busy{opacity:.65;pointer-events:none;display:flex;align-items:center;gap:5px;}
 </style>`;
   }
 }

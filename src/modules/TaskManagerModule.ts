@@ -194,7 +194,15 @@ export class TaskManagerModule {
     this.el.style.display = 'none';
   }
 
-  show(): void { this.el.style.display = ''; this.load(); this.startReminderChecker(); }
+  show(): void {
+    this.el.style.display = '';
+    this.editingTask = null;
+    this.confirmDeleteId = null;
+    this.productPopup = null;
+    this.resetModalFlags();
+    this.load();
+    this.startReminderChecker();
+  }
   hide(): void { this.el.style.display = 'none'; this.stopReminderChecker(); }
 
   private async load(): Promise<void> {
@@ -359,6 +367,16 @@ export class TaskManagerModule {
   }
 
   // ── RENDER ──────────────────────────────────────────────────────────────
+
+  /** Re-render without re-animating the open modal */
+  private renderKeepModal(): void {
+    const prevScroll = this.el.querySelector<HTMLElement>('.tm-modal')?.scrollTop ?? 0;
+    this.modalIsRefresh = true;
+    this.render();
+    this.modalIsRefresh = false;
+    const modal = this.el.querySelector<HTMLElement>('.tm-modal');
+    if (modal) modal.scrollTop = prevScroll;
+  }
 
   render(): void {
     const viewContent =
@@ -1396,8 +1414,13 @@ export class TaskManagerModule {
     }
 
     // Confirm dialog
-    $('[data-confirm-overlay]')?.addEventListener('click', () => { this.confirmDeleteId = null; this.render(); });
-    $('[data-confirm-no]')?.addEventListener('click', () => { this.confirmDeleteId = null; this.render(); });
+    const closeConfirm = () => {
+      this.confirmDeleteId = null;
+      if (this.editingTask) this.renderKeepModal();
+      else this.render();
+    };
+    $('[data-confirm-overlay]')?.addEventListener('click', closeConfirm);
+    $('[data-confirm-no]')?.addEventListener('click', closeConfirm);
     $('[data-confirm-yes]')?.addEventListener('click', () => { if (this.confirmDeleteId) { this.deleteTask(this.confirmDeleteId); this.confirmDeleteId = null; } });
 
     // Calendar
@@ -1546,12 +1569,7 @@ export class TaskManagerModule {
         else if (mod === 'reminders') this.modalShowReminders = !this.modalShowReminders;
         else if (mod === 'files') this.modalShowFiles = !this.modalShowFiles;
         else if (mod === 'comments') this.modalShowComments = !this.modalShowComments;
-        const prevScroll = this.el.querySelector<HTMLElement>('.tm-modal')?.scrollTop ?? 0;
-        this.modalIsRefresh = true;
-        this.render();
-        this.modalIsRefresh = false;
-        const modal = this.el.querySelector<HTMLElement>('.tm-modal');
-        if (modal) modal.scrollTop = prevScroll;
+        this.renderKeepModal();
       });
     }
 
@@ -1602,11 +1620,11 @@ export class TaskManagerModule {
 
     $('[data-modal-save]')?.addEventListener('click', () => this.saveModal());
     $('[data-modal-cancel]')?.addEventListener('click', () => { this.editingTask = null; this.resetModalFlags(); this.render(); });
-    $('[data-modal-delete]')?.addEventListener('click', () => { if (this.editingTask) { this.confirmDeleteId = this.editingTask.id; this.render(); } });
+    $('[data-modal-delete]')?.addEventListener('click', () => { if (this.editingTask) { this.confirmDeleteId = this.editingTask.id; this.renderKeepModal(); } });
 
     // Reminder delete
     for (const btn of $$('[data-rem-del]')) btn.addEventListener('click', async () => {
-      try { await reminderDb.deleteReminder(btn.dataset.remDel!); this.reminders = this.reminders.filter(r => r.id !== btn.dataset.remDel); this.render(); } catch (err) { console.error(err); }
+      try { await reminderDb.deleteReminder(btn.dataset.remDel!); this.reminders = this.reminders.filter(r => r.id !== btn.dataset.remDel); this.renderKeepModal(); } catch (err) { console.error(err); }
     });
     // Reminder add
     $('[data-rem-add-btn]')?.addEventListener('click', async () => {
@@ -1615,7 +1633,7 @@ export class TaskManagerModule {
       if (!dtEl?.value || !this.editingTask) return;
       try {
         const rem = await reminderDb.createReminder({ task_id: this.editingTask.id, title: this.editingTask.title, remind_at: new Date(dtEl.value).toISOString(), repeat: (repEl?.value || 'none') as Reminder['repeat'], dismissed: false });
-        this.reminders.push(rem); this.render();
+        this.reminders.push(rem); this.renderKeepModal();
       } catch (err) { console.error(err); }
     });
 
@@ -1637,7 +1655,7 @@ export class TaskManagerModule {
           tags: '', sort_order: this.tasks.length,
           parent_id: parent.id, assignee_id: null,
         });
-        this.tasks.push(created); this.render();
+        this.tasks.push(created); this.renderKeepModal();
       } catch (err) { console.error(err); }
     });
 
@@ -1647,9 +1665,9 @@ export class TaskManagerModule {
       const files = (e.target as HTMLInputElement).files;
       if (!files?.length || !this.editingTask) return;
       const taskId = this.editingTask.id;
-      this.uploadingFile = true; this.render();
+      this.uploadingFile = true; this.renderKeepModal();
       try { for (const file of Array.from(files)) { const att = await attachmentDb.uploadFile(taskId, this.currentUserId, file); this.editAttachments.push(att); } } catch (err) { console.error(err); }
-      this.uploadingFile = false; this.render();
+      this.uploadingFile = false; this.renderKeepModal();
     });
     for (const el of $$('[data-att-download]')) el.addEventListener('click', async () => {
       const att = this.editAttachments.find(a => a.id === el.dataset.attDownload);
@@ -1657,17 +1675,17 @@ export class TaskManagerModule {
       try { const url = await attachmentDb.getDownloadUrl(att.storage_path); window.open(url, '_blank'); } catch (err) { console.error(err); }
     });
     for (const btn of $$('[data-att-del]')) btn.addEventListener('click', async () => {
-      try { await attachmentDb.deleteAttachment(btn.dataset.attDel!, btn.dataset.attPath!); this.editAttachments = this.editAttachments.filter(a => a.id !== btn.dataset.attDel); this.render(); } catch (err) { console.error(err); }
+      try { await attachmentDb.deleteAttachment(btn.dataset.attDel!, btn.dataset.attPath!); this.editAttachments = this.editAttachments.filter(a => a.id !== btn.dataset.attDel); this.renderKeepModal(); } catch (err) { console.error(err); }
     });
 
     // Comment bindings
     $('[data-comment-send]')?.addEventListener('click', async () => {
       const input = $('[data-comment-input]') as HTMLTextAreaElement | null;
       if (!input?.value.trim() || !this.editingTask) return;
-      try { const c = await commentDb.createComment(this.editingTask.id, this.currentUserId, input.value.trim()); this.editComments.push(c); this.render(); } catch (err) { console.error(err); }
+      try { const c = await commentDb.createComment(this.editingTask.id, this.currentUserId, input.value.trim()); this.editComments.push(c); this.renderKeepModal(); } catch (err) { console.error(err); }
     });
     for (const btn of $$('[data-comment-del]')) btn.addEventListener('click', async () => {
-      try { await commentDb.deleteComment(btn.dataset.commentDel!); this.editComments = this.editComments.filter(c => c.id !== btn.dataset.commentDel); this.render(); } catch (err) { console.error(err); }
+      try { await commentDb.deleteComment(btn.dataset.commentDel!); this.editComments = this.editComments.filter(c => c.id !== btn.dataset.commentDel); this.renderKeepModal(); } catch (err) { console.error(err); }
     });
 
     this.bindAutocomplete();

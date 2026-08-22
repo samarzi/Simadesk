@@ -37,6 +37,9 @@ export const CONFIRM_REQUIRED_ACTIONS = new Set<string>([
   'reply_all_unanswered', 'simastore_publish', 'simastore_add_products',
   // необратимое и внешнее
   'delete_task', 'invite_team_member', 'create_ym_supply', 'create_supply_wb',
+  // редактор документов: удаление и массовая правка содержимого
+  'docs_delete', 'docs_clear_content', 'excel_delete_sheet',
+  'excel_delete_rows', 'multi_replace', 'word_set_content',
 ]);
 
 export function needsConfirmation(name: string): boolean {
@@ -95,6 +98,17 @@ export function describePendingAction(name: string, args: any, actionLabel?: str
       return `Создам отгрузку на Яндекс Маркет${a.date ? ` на ${a.date}` : ''}.`;
     case 'create_supply_wb':
       return 'Создам поставку Wildberries из текущих заказов.';
+    case 'docs_delete':
+    case 'docs_clear_content':
+    case 'excel_delete_sheet':
+    case 'excel_delete_rows':
+    case 'multi_replace':
+    case 'word_set_content': {
+      // Счёт ведёт сам редактор — только он видит содержимое документов
+      const preview = (window as any).docsModule?.aiPreviewDestructive?.(name, a);
+      if (preview) return preview;
+      return `Выполню действие «${actionLabel ?? name}» — оно изменит содержимое документов.`;
+    }
     default:
       return `Выполню действие «${actionLabel ?? name}».`;
   }

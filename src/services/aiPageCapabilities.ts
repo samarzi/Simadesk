@@ -684,10 +684,16 @@ const TASKS_ACTIONS: AiAction[] = [
       if (a.priority) updates.priority = a.priority;
       if (a.due_date) updates.due_date = a.due_date;
       if (!Object.keys(updates).length) throw new Error('Не указано что именно изменить в задаче');
+      // Снимок старых значений для отката
+      const before: Record<string, any> = {};
+      for (const key of Object.keys(updates)) before[key] = task[key];
       await taskDb.updateTask(task.id, updates);
       tm?.load?.();
       const changed = Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(', ');
-      return `Задача «${task.title}» обновлена: ${changed}`;
+      return {
+        summary: `Задача «${task.title}» обновлена: ${changed}`,
+        undo: { kind: 'task_update_snapshot', payload: { id: task.id, before }, label: `Задача: ${task.title}` },
+      };
     },
   },
   {
@@ -701,9 +707,14 @@ const TASKS_ACTIONS: AiAction[] = [
       const task = tasks.find(t => t.title.toLowerCase().includes(needle));
       if (!task) throw new Error(`Задача «${a.title}» не найдена`);
       const { taskDb } = await import('@/services/taskDb');
+      // Снимок задачи для восстановления (включая id, чтобы INSERT прошёл с тем же ключом)
+      const snapshot = { ...task };
       await taskDb.deleteTask(task.id);
       tm?.load?.();
-      return `Задача «${task.title}» удалена`;
+      return {
+        summary: `Задача «${task.title}» удалена`,
+        undo: { kind: 'task_restore', payload: snapshot, label: `Задача: ${task.title}` },
+      };
     },
   },
 ];
@@ -1679,11 +1690,39 @@ export function installGlobalAiActions(): void {
     w().docsModule?.aiUndoRestoreMulti?.(p);
   });
 
-  // Откат статуса задачи (mark_task_done возвращал undo, но обработчика не было —
-  // «отмени» после закрытия задачи падало с «Нет обработчика отката»).
+  // Откат статуса задачи (mark_task_done).
   registerUndoHandler('task_status', async (p: { id: string; status: string }) => {
     const { taskDb } = await import('@/services/taskDb');
     await taskDb.updateTask(p.id, { status: p.status as any });
+    w().taskManagerModule?.load?.();
+  });
+
+  // Восстановление удалённой задачи (delete_task).
+  registerUndoHandler('task_restore', async (p: Record<string, any>) => {
+    const { dbFetch } = await import('@/services/dbClient');
+    const { companyService } = await import('@/services/companyService');
+    const cid = companyService.getActiveId();
+    if (!cid) throw new Error('Не выбрана компания');
+    // INSERT с явным id — восстанавливает задачу с тем же ключом
+    await dbFetch('tasks', {
+      method: 'POST',
+      body: JSON.stringify({ ...p, company_id: cid }),
+      headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal', 'Content-Type': 'application/json' },
+    });
+    w().taskManagerModule?.load?.();
+  });
+
+  // Откат изменений задачи (edit_task) — возвращает старые поля.
+  registerUndoHandler('task_update_snapshot', async (p: { id: string; before: Record<string, any> }) => {
+    const { taskDb } = await import('@/services/taskDb');
+    await taskDb.updateTask(p.id, p.before as any);
+    w().taskManagerModule?.load?.();
+  });
+
+  // Откат создания задачи (create_task) — удаляет только что созданную задачу.
+  registerUndoHandler('task_delete_id', async (p: { id: string }) => {
+    const { taskDb } = await import('@/services/taskDb');
+    await taskDb.deleteTask(p.id);
     w().taskManagerModule?.load?.();
   });
 

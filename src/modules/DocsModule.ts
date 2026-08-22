@@ -11,12 +11,25 @@ import { selectionCtx } from '@/services/selectionContext';
 import { dbFetch } from '@/services/dbClient';
 import { companyService } from '@/services/companyService';
 import { showToast } from '@/utils/toast';
+import {
+  formatCellValue, parseUserNumber, isDateFormat,
+  dateToSerial, PRESET_FORMATS,
+  type CellType,
+} from '@/utils/numFormat';
+import { createEvaluator, FUNCTION_NAMES, type Evaluator } from '@/utils/formula';
 
 type DocType = 'word' | 'excel';
 
 interface CellData {
-  v: string;   // value or formula text
-  s?: string;  // inline style cssText
+  /**
+   * Сырое значение ячейки — то, что хранится, а не то, что видно.
+   * Число — машинной строкой («1234.5»), дата — ISO, формула — с «=» в начале.
+   * Форматирование к нему применяется только на отрисовке.
+   */
+  v: string;
+  s?: string;   // inline style cssText
+  t?: CellType; // 'n' | 's' | 'd' | 'b'; отсутствие = текст
+  nf?: string;  // код числового формата Excel («#,##0.00», «dd.mm.yyyy»)
 }
 
 interface MergeRange { r1: number; c1: number; r2: number; c2: number; }
@@ -54,6 +67,10 @@ const XL_VX_THRESH = 250;      // row count above which virtual scroll activates
 const XL_VX_PAGE   = 100;      // visible rows per virtual window
 const XL_VX_BUF    = 30;       // buffer rows above/below viewport
 const XL_VX_ROW_H  = 24;       // assumed row height (px) for spacer math
+/** Пикселей на «ширину нуля» — единицу ширины колонки в OOXML (Calibri 11). */
+const XL_PX_PER_CH = 7;
+/** Пикселей на пункт: высота строки в OOXML измеряется в пунктах. */
+const XL_PX_PER_PT = 4 / 3;
 
 export class DocsModule {
   private root!: HTMLElement;
@@ -74,6 +91,9 @@ export class DocsModule {
   private xlFilterOn   = false;
   private xlFilterState: Record<number, Set<string>> = {};
   private xlSheetScroll: Record<string, Record<number, {top: number; left: number}>> = {};
+  /** Кэш вычислителя формул: пересоздаётся, когда меняются данные листа. */
+  private fxRows: CellData[][] | null = null;
+  private fxEval: Evaluator | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -276,6 +296,7 @@ export class DocsModule {
   }
 
   private updateContent(id: string, content: string): void {
+    this.invalidateFormulas();
     const doc = this.docs.find(d => d.id === id);
     if (!doc) return;
     doc.content = content;
@@ -317,11 +338,19 @@ export class DocsModule {
   }
 
   private normalizeCellGrid(p: any[][]): CellData[][] {
+    const TYPES = new Set(['n', 's', 'd', 'b']);
     return (p || []).map(row => (row || []).map((cell: unknown) => {
       if (typeof cell === 'string') return { v: cell };
       if (cell && typeof cell === 'object' && 'v' in cell) {
-        const c = cell as { v?: unknown; s?: unknown };
-        return { v: String(c.v ?? ''), s: typeof c.s === 'string' && c.s ? c.s : undefined };
+        const c = cell as { v?: unknown; s?: unknown; t?: unknown; nf?: unknown };
+        const out: CellData = { v: String(c.v ?? '') };
+        if (typeof c.s === 'string' && c.s) out.s = c.s;
+        // Тип и числовой формат обязаны переживать сохранение: без них
+        // число после перезагрузки снова становится текстом, а денежный
+        // формат теряется — ровно та потеря, ради которой всё затевалось.
+        if (typeof c.t === 'string' && TYPES.has(c.t)) out.t = c.t as CellType;
+        if (typeof c.nf === 'string' && c.nf) out.nf = c.nf;
+        return out;
       }
       return { v: '' };
     }));
@@ -498,6 +527,65 @@ export class DocsModule {
     return sheetRIds.map(rId => rIdToPath.get(rId) ?? '');
   }
 
+  /**
+   * Ячейка SheetJS → наша модель.
+   *
+   * Ключевой момент: берём СЫРОЕ значение (`cell.v`), а не отформатированное
+   * (`cell.w`). Иначе число 1234.5 с денежным форматом приезжает строкой
+   * «1 234,50 ₽» — и ломает и SUM, и сортировку, и обратный экспорт.
+   *
+   * Даты остаются серийными числами с датным форматом — ровно так, как их
+   * хранит сам Excel; преобразование к виду делает formatCellValue.
+   */
+  private xlCellFromSheetJS(cell: any): CellData {
+    if (!cell) return { v: '' };
+
+    // Формула важнее значения: сохраняем её, кэшированный результат отбрасываем —
+    // он всё равно будет пересчитан.
+    if (cell.f) {
+      const out: CellData = { v: '=' + String(cell.f) };
+      if (cell.z && cell.z !== 'General') out.nf = String(cell.z);
+      return out;
+    }
+
+    if (cell.v == null) return { v: '' };
+
+    const out: CellData = { v: '' };
+    if (cell.z && cell.z !== 'General') out.nf = String(cell.z);
+
+    switch (cell.t) {
+      case 'n':
+        out.v = String(cell.v);
+        out.t = 'n';
+        break;
+      case 'd': {
+        // cellDates:false обычно этого не даёт, но подстрахуемся
+        const d = cell.v instanceof Date ? cell.v : new Date(cell.v);
+        if (!isNaN(d.getTime())) {
+          out.v = String(dateToSerial(d));
+          out.t = 'n';
+          if (!out.nf) out.nf = 'dd.mm.yyyy';
+        } else {
+          out.v = String(cell.v);
+        }
+        break;
+      }
+      case 'b':
+        out.v = cell.v ? 'ИСТИНА' : 'ЛОЖЬ';
+        out.t = 'b';
+        break;
+      case 'e':
+        // Ошибка вычисления — показываем как есть, форматировать нечего
+        out.v = String(cell.w ?? cell.v);
+        delete out.nf;
+        break;
+      default:
+        out.v = String(cell.v);
+        break;
+    }
+    return out;
+  }
+
   // ── Import ─────────────────────────────────────────────────────────────────
   private async importFile(file: File): Promise<void> {
     const name = file.name;
@@ -508,8 +596,19 @@ export class DocsModule {
     try {
       if (ext === 'xlsx' || ext === 'xls') {
         const buf = await file.arrayBuffer();
-        // bookFiles:true exposes raw XML so we can read full style indices
-        const wb = XLSX.read(buf, { type: 'array', cellStyles: true, bookFiles: true, sheetRows: MAX_IMPORT_ROWS + 1 });
+        // bookFiles — сырой XML для полного разбора стилей;
+        // cellNF — коды числовых форматов в cell.z;
+        // cellFormula — формулы в cell.f;
+        // cellDates:false — даты остаются серийными числами, формат разберём сами.
+        const wb = XLSX.read(buf, {
+          type: 'array',
+          cellStyles: true,
+          bookFiles: true,
+          cellNF: true,
+          cellFormula: true,
+          cellDates: false,
+          sheetRows: MAX_IMPORT_ROWS + 1,
+        });
 
         // Map each sheet index → xl/worksheets/sheetN.xml path
         const sheetPaths = this.xlGetSheetPaths(wb);
@@ -529,27 +628,35 @@ export class DocsModule {
             for (let c = range.s.c; c <= range.e.c; c++) {
               const addr = XLSX.utils.encode_cell({ r, c });
               const cell = ws[addr];
-              const v = cell ? (cell.w ?? (cell.v == null ? '' : String(cell.v))) : '';
               const s = styleMap.get(addr) ?? '';
-              row.push(s ? { v, s } : { v });
+              row.push({ ...this.xlCellFromSheetJS(cell), ...(s ? { s } : {}) });
             }
             data.push(row);
           }
 
           // Column widths (wpx preferred)
+          // Ширины: «width» — исходная величина из файла, wpx — производная,
+          // которую SheetJS считает по своему MDW. Берём исходную, иначе
+          // колонки сужаются на каждом круге импорт→экспорт.
           const xlCols = ws['!cols'] || [];
           const colWidths: (number | null)[] = [];
           for (let c = range.s.c; c <= range.e.c; c++) {
             const ci = xlCols[c];
-            colWidths.push(ci?.wpx ? Math.round(ci.wpx) : ci?.width ? Math.round(ci.width * 7) : null);
+            colWidths.push(
+              ci?.width ? Math.round(ci.width * XL_PX_PER_CH)
+              : ci?.wpx ? Math.round(ci.wpx)
+              : null);
           }
 
-          // Row heights (hpx preferred)
+          // Высоты: hpt — пункты из файла, hpx — пересчёт SheetJS
           const xlRows = ws['!rows'] || [];
           const rowHeights: (number | null)[] = [];
           for (let r = range.s.r; r <= range.e.r; r++) {
             const ri = xlRows[r];
-            rowHeights.push(ri?.hpx ? Math.round(ri.hpx) : ri?.hpt ? Math.round(ri.hpt * 1.33) : null);
+            rowHeights.push(
+              ri?.hpt ? Math.round(ri.hpt * XL_PX_PER_PT)
+              : ri?.hpx ? Math.round(ri.hpx)
+              : null);
           }
 
           // Merged cells
@@ -685,7 +792,13 @@ export class DocsModule {
         return;
       } else if (format === 'csv') {
         const sh = ec.sheets[this.activeSheetIdx] ?? ec.sheets[0];
-        const values = this.trimEmpty(sh.data).map(r => r.map(c => c.v));
+        // В CSV кладём то, что видит пользователь: серийный номер даты
+        // или «1234.5» вместо «1 234,50 ₽» никому не полезны.
+        const trimmedCsv = this.trimEmpty(sh.data);
+        const values = trimmedCsv.map(r => r.map(c =>
+          c.v.startsWith('=')
+            ? this.evalFormula(c.v, trimmedCsv)
+            : formatCellValue(c.v, c.t, c.nf)));
         const ws = XLSX.utils.aoa_to_sheet(values);
         const csv = XLSX.utils.sheet_to_csv(ws);
         this.download(`${doc.title}.csv`, new Blob(['﻿'+csv], { type: 'text/csv;charset=utf-8' }));
@@ -707,13 +820,16 @@ export class DocsModule {
     const { default: JSZip } = await import('jszip');
     const zip = new JSZip();
 
-    const bodyXml = this.htmlBodyToWordXml(doc.content);
+    const { xml: bodyXml, images, links } = this.htmlBodyToWordXml(doc.content);
 
     const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
   xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+  xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"
   xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
   mc:Ignorable="w14">
   <w:body>${bodyXml}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
@@ -753,6 +869,8 @@ export class DocsModule {
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
   <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
+${[...new Set(images.map(i => i.ext))].map(e =>
+  `  <Default Extension="${e}" ContentType="image/${e === 'jpg' ? 'jpeg' : e}"/>`).join('\n')}
 </Types>`;
 
     const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -764,6 +882,8 @@ export class DocsModule {
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>
+${images.map(i => `  <Relationship Id="${i.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${i.name}"/>`).join('\n')}
+${links.map(l => `  <Relationship Id="${l.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${l.url.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}" TargetMode="External"/>`).join('\n')}
 </Relationships>`;
 
     zip.file('[Content_Types].xml', contentTypes);
@@ -772,6 +892,7 @@ export class DocsModule {
     zip.file('word/styles.xml', stylesXml);
     zip.file('word/numbering.xml', numberingXml);
     zip.file('word/_rels/document.xml.rels', docRels);
+    images.forEach(i => zip.file(`word/media/${i.name}`, i.bytes));
 
     const blob = await zip.generateAsync({
       type: 'blob',
@@ -781,7 +902,11 @@ export class DocsModule {
   }
 
   /** Convert HTML string to WordprocessingML body content (w:p, w:tbl, etc.). */
-  private htmlBodyToWordXml(html: string): string {
+  private htmlBodyToWordXml(html: string): {
+    xml: string;
+    images: Array<{ rid:string; name:string; ext:string; bytes:Uint8Array }>;
+    links: Array<{ rid:string; url:string }>;
+  } {
     const parser = new DOMParser();
     const dom = parser.parseFromString(`<!doctype html><html><body>${html}</body></html>`, 'text/html');
     const body = dom.body;
@@ -803,6 +928,97 @@ export class DocsModule {
       const named: Record<string,string> = {black:'000000',white:'FFFFFF',red:'FF0000',green:'008000',blue:'0000FF',yellow:'FFFF00',orange:'FFA500',purple:'800080',gray:'808080',grey:'808080'};
       const lower = css.toLowerCase().trim();
       return named[lower] ?? null;
+    };
+
+    // ── Ресурсы документа: картинки и ссылки получают r:id ───────────────
+    // styles.xml = rId1, numbering.xml = rId2, поэтому свои начинаем с rId3.
+    const images: Array<{ rid:string; name:string; ext:string; bytes:Uint8Array }> = [];
+    const links: Array<{ rid:string; url:string }> = [];
+    let ridSeq = 2;
+    const nextRid = () => `rId${++ridSeq}`;
+
+    const linkMap = new Map<string,string>();
+    const addLink = (url: string): string => {
+      const hit = linkMap.get(url);
+      if (hit) return hit;
+      const rid = nextRid();
+      links.push({ rid, url });
+      linkMap.set(url, rid);
+      return rid;
+    };
+
+    /** data:-URI → байты. Внешние URL пропускаем: скачать их мы не можем. */
+    const dataUriToBytes = (uri: string): { bytes: Uint8Array; ext: string } | null => {
+      const m = uri.match(/^data:image\/([a-z0-9+.-]+);base64,(.+)$/i);
+      if (!m) return null;
+      let ext = m[1].toLowerCase();
+      if (ext === 'jpeg') ext = 'jpg';
+      if (ext === 'svg+xml') return null; // Word не вставляет SVG как растр
+      try {
+        const bin = atob(m[2].replace(/\s/g, ''));
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return { bytes, ext };
+      } catch { return null; }
+    };
+
+    /** Размер картинки из заголовка файла — атрибутам в HTML доверять нельзя. */
+    const imageSize = (b: Uint8Array): { w:number; h:number } | null => {
+      const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+      // PNG: ширина и высота в IHDR
+      if (b.length > 24 && b[0] === 0x89 && b[1] === 0x50)
+        return { w: dv.getUint32(16), h: dv.getUint32(20) };
+      // GIF: в заголовке, little-endian
+      if (b.length > 10 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46)
+        return { w: dv.getUint16(6, true), h: dv.getUint16(8, true) };
+      // JPEG: ищем маркер SOFn
+      if (b.length > 4 && b[0] === 0xFF && b[1] === 0xD8) {
+        let i = 2;
+        while (i < b.length - 9) {
+          if (b[i] !== 0xFF) { i++; continue; }
+          const mk = b[i + 1];
+          if (mk >= 0xC0 && mk <= 0xCF && mk !== 0xC4 && mk !== 0xC8 && mk !== 0xCC)
+            return { h: dv.getUint16(i + 5), w: dv.getUint16(i + 7) };
+          i += 2 + ((b[i + 2] << 8) | b[i + 3]);
+        }
+      }
+      return null;
+    };
+
+    const EMU_PER_PX = 9525;          // 96 dpi
+    const MAX_IMG_PX = 600;           // ширина текстового поля A4 с полями 2.54см
+
+    const imageRun = (img: HTMLImageElement): string => {
+      const src = img.getAttribute('src') || '';
+      const decoded = dataUriToBytes(src);
+      if (!decoded) return '';       // внешнюю ссылку встроить нечем
+
+      const nat = imageSize(decoded.bytes) ?? { w: 400, h: 300 };
+      // Явно заданный размер уважаем, иначе берём натуральный
+      const attrW = parseFloat(img.getAttribute('width') || img.style?.width || '') || 0;
+      const attrH = parseFloat(img.getAttribute('height') || img.style?.height || '') || 0;
+      let w = attrW || nat.w;
+      let h = attrH || (attrW ? Math.round(attrW * nat.h / nat.w) : nat.h);
+      if (w > MAX_IMG_PX) { h = Math.round(h * MAX_IMG_PX / w); w = MAX_IMG_PX; }
+
+      const rid = nextRid();
+      const idx = images.length + 1;
+      images.push({ rid, name: `image${idx}.${decoded.ext}`, ext: decoded.ext, bytes: decoded.bytes });
+
+      const cx = Math.round(w * EMU_PER_PX), cy = Math.round(h * EMU_PER_PX);
+      const alt = ex(img.getAttribute('alt') || `Изображение ${idx}`);
+      return `<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">`
+        + `<wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>`
+        + `<wp:docPr id="${idx}" name="Picture ${idx}" descr="${alt}"/>`
+        + `<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr>`
+        + `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">`
+        + `<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">`
+        + `<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">`
+        + `<pic:nvPicPr><pic:cNvPr id="${idx}" name="${images[idx-1].name}" descr="${alt}"/><pic:cNvPicPr/></pic:nvPicPr>`
+        + `<pic:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>`
+        + `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`
+        + `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>`
+        + `</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
     };
 
     interface RP { bold?:boolean; italic?:boolean; under?:boolean; strike?:boolean; sz?:number; color?:string; bg?:string; font?:string; }
@@ -865,7 +1081,29 @@ export class DocsModule {
       if (node.nodeType!==Node.ELEMENT_NODE) return '';
       const el=node as Element; const tag=el.tagName.toLowerCase();
       if (tag==='br') return '<w:r><w:br/></w:r>';
-      if (tag==='img'||tag==='script'||tag==='style') return '';
+      if (tag==='script'||tag==='style') return '';
+      if (tag==='img') return imageRun(el as HTMLImageElement);
+
+      // Ссылка — отдельный контейнер с r:id, иначе в Word остаётся
+      // только текст, а адрес пропадает
+      if (tag==='a') {
+        const href=(el as HTMLAnchorElement).getAttribute('href')||'';
+        const inner=Array.from(el.childNodes)
+          .map(c=>collectRuns(c, mergeRP(rp, mergeRP({color:'0563C1',under:true}, rpFromEl(el)))))
+          .join('');
+        if(!inner) return '';
+        if(!/^(https?:|mailto:|tel:|ftp:)/i.test(href)) return inner;
+        const rid=addLink(href);
+        return `<w:hyperlink r:id="${rid}">${inner}</w:hyperlink>`;
+      }
+
+      if (tag==='sub') return Array.from(el.childNodes).map(c=>collectRuns(c,mergeRP(rp,rpFromEl(el)))).join('')
+        .replace(/<w:rPr>/g,'<w:rPr><w:vertAlign w:val="subscript"/>')
+        .replace(/<w:r>(?!<w:rPr>)/g,'<w:r><w:rPr><w:vertAlign w:val="subscript"/></w:rPr>');
+      if (tag==='sup') return Array.from(el.childNodes).map(c=>collectRuns(c,mergeRP(rp,rpFromEl(el)))).join('')
+        .replace(/<w:rPr>/g,'<w:rPr><w:vertAlign w:val="superscript"/>')
+        .replace(/<w:r>(?!<w:rPr>)/g,'<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr>');
+
       // Don't recurse into block-like elements that escaped into inline context
       const merged=mergeRP(rp, rpFromEl(el));
       return Array.from(el.childNodes).map(c=>collectRuns(c,merged)).join('');
@@ -1003,7 +1241,7 @@ export class DocsModule {
     };
 
     Array.from(body.childNodes).forEach(c=>processBlock(c, {}));
-    return out || '<w:p/>';
+    return { xml: out || '<w:p/>', images, links };
   }
 
   // ── Excel OOXML Export via JSZip (SheetJS CE cannot write cell styles) ────
@@ -1068,28 +1306,49 @@ export class DocsModule {
     const addFill = (c?: string): number => { if(!c) return 0; if(fllMap.has(c)) return fllMap.get(c)!; const i=fills.length; fills.push(c); fllMap.set(c,i); return i; };
     const addBorder = (b?: XStyle['border']): number => { const k=JSON.stringify(b||null); if(brdMap.has(k)) return brdMap.get(k)!; const i=borders.length; borders.push(b||null); brdMap.set(k,i); return i; };
 
-    // cellXfs: index 0 = default (no style)
-    interface XF { fId:number; lId:number; bId:number; align?:XAlign; }
-    const xfs: XF[] = [{ fId:0, lId:0, bId:0 }];
-    const xfMap = new Map<string,number>([['',0]]);
+    // Числовые форматы: встроенные id 0…163 зарезервированы, свои начинаем со 164
+    const numFmts: string[] = [];
+    const nfMap = new Map<string,number>();
+    const addNumFmt = (code?: string): number => {
+      if(!code || code === 'General') return 0;
+      const hit = nfMap.get(code);
+      if(hit != null) return hit;
+      const id = 164 + numFmts.length;
+      numFmts.push(code); nfMap.set(code, id); return id;
+    };
 
-    const getXfIdx = (css: string|undefined): number => {
-      const key = css||'';
-      if(xfMap.has(key)) return xfMap.get(key)!;
-      const st = parseCssToXl(key);
-      const fId = addFont(st.font);
-      const lId = addFill(st.fillColor);
-      const bId = addBorder(st.border);
-      const xf: XF = { fId, lId, bId, ...(st.align?{align:st.align}:{}) };
+    // cellXfs: index 0 = default (no style)
+    interface XF { fId:number; lId:number; bId:number; nId:number; align?:XAlign; }
+    const xfs: XF[] = [{ fId:0, lId:0, bId:0, nId:0 }];
+    const xfMap = new Map<string,number>([['|',0]]);
+
+    // Стиль ячейки в xlsx — это пара «оформление + числовой формат»,
+    // поэтому ключом дедупликации служат оба.
+    const getXfIdx = (css: string|undefined, nf?: string): number => {
+      const key = (css||'') + '|' + (nf||'');
+      const hit = xfMap.get(key);
+      if(hit != null) return hit;
+      const st = parseCssToXl(css||'');
+      const xf: XF = {
+        fId: addFont(st.font),
+        lId: addFill(st.fillColor),
+        bId: addBorder(st.border),
+        nId: addNumFmt(nf),
+        ...(st.align?{align:st.align}:{}),
+      };
       const idx = xfs.length; xfs.push(xf); xfMap.set(key,idx); return idx;
     };
 
-    // Pre-scan all cells to populate tables deterministically
-    ec.sheets.forEach(sh => sh.data.forEach(row => row.forEach(cell => { if(cell.s) getXfIdx(cell.s); })));
+    // Предпроход: наполняем таблицы стилей в детерминированном порядке
+    ec.sheets.forEach(sh => sh.data.forEach(row => row.forEach(cell => {
+      if(cell.s || cell.nf) getXfIdx(cell.s, cell.nf);
+    })));
 
     // ── Build styles.xml ────────────────────────────────────────────────────
     const fntXml = (f: XFont) => {
-      let x = f.bold?'<b/>':'' + (f.italic?'<i/>':'') + (f.under?'<u/>':'') + (f.strike?'<strike/>':'');
+      // Скобки обязательны: тернарник связывает слабее «+», без них
+      // жирный шрифт съедал курсив, подчёркивание и зачёркивание.
+      let x = (f.bold?'<b/>':'') + (f.italic?'<i/>':'') + (f.under?'<u/>':'') + (f.strike?'<strike/>':'');
       if(f.color) x+=`<color rgb="${f.color}"/>`;
       x+=`<sz val="${f.sz??11}"/><name val="${ex(f.name??'Calibri')}"/>`;
       return `<font>${x}</font>`;
@@ -1105,14 +1364,18 @@ export class DocsModule {
       ? `<border>${brdSide(b.left,'left')}${brdSide(b.right,'right')}${brdSide(b.top,'top')}${brdSide(b.bottom,'bottom')}<diagonal/></border>`
       : '<border><left/><right/><top/><bottom/><diagonal/></border>';
     const xfXml  = (xf: XF, base=false) => {
-      const app = base?'':' applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"';
+      const app = base?'':' applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"'
+        + (xf.nId?' applyNumberFormat="1"':'');
       const al = xf.align ? `<alignment${xf.align.h?` horizontal="${xf.align.h}"`:''}${xf.align.v?` vertical="${xf.align.v}"`:''}/>` : '';
-      return `<xf numFmtId="0" fontId="${xf.fId}" fillId="${xf.lId}" borderId="${xf.bId}" xfId="0"${app}>${al}</xf>`;
+      return `<xf numFmtId="${xf.nId}" fontId="${xf.fId}" fillId="${xf.lId}" borderId="${xf.bId}" xfId="0"${app}>${al}</xf>`;
     };
+    const numFmtsXml = numFmts.length
+      ? `<numFmts count="${numFmts.length}">${numFmts.map((code,i)=>`<numFmt numFmtId="${164+i}" formatCode="${ex(code)}"/>`).join('')}</numFmts>`
+      : '';
 
     const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<fonts count="${fonts.length}">${fonts.map(fntXml).join('')}</fonts>
+${numFmtsXml}<fonts count="${fonts.length}">${fonts.map(fntXml).join('')}</fonts>
 <fills count="${fills.length}">${fills.map((c,i)=>fillXml(c,i)).join('')}</fills>
 <borders count="${borders.length}">${borders.map(brdXml).join('')}</borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
@@ -1135,34 +1398,54 @@ export class DocsModule {
       const rowHeights = sh.rowHeights??[];
 
       // <cols>
+      // Ширина в OOXML измеряется в «ширинах нуля» шрифта по умолчанию.
+      // XL_PX_PER_CH — тот же коэффициент, что и при импорте, иначе колонки
+      // ужимаются на каждом круге экспорт→импорт.
       let colsXml='';
       if(colWidths.some(w=>w!=null)) {
-        const parts=colWidths.slice(0,numCols).map((w,i)=>w?`<col min="${i+1}" max="${i+1}" width="${(w/7).toFixed(2)}" customWidth="1"/>`:null).filter(Boolean);
+        const parts=colWidths.slice(0,numCols).map((w,i)=>w?`<col min="${i+1}" max="${i+1}" width="${(w/XL_PX_PER_CH).toFixed(2)}" customWidth="1"/>`:null).filter(Boolean);
         if(parts.length) colsXml=`<cols>${parts.join('')}</cols>`;
       }
 
       // <sheetData>
       let rowsXml='';
       trimmed.forEach((row,rIdx)=>{
+        // ht задаётся в пунктах, а мы храним пиксели — без перевода строки
+        // раздувались бы в полтора раза на каждом экспорте.
         const h=rowHeights[rIdx];
-        const rowAttr=h?` ht="${h}" customHeight="1"`:'';
+        const rowAttr=h?` ht="${(h/XL_PX_PER_PT).toFixed(2)}" customHeight="1"`:'';
         let cells='';
         row.forEach((cell,cIdx)=>{
           const ref=colLtr(cIdx)+(rIdx+1);
-          const sIdx=getXfIdx(cell.s);
+          const sIdx=getXfIdx(cell.s, cell.nf);
           const sAttr=sIdx?` s="${sIdx}"`:' s="0"';
           const v=cell.v??'';
           if(!v&&!sIdx) return;
           if(!v) { cells+=`<c r="${ref}"${sAttr}/>`; return; }
-          // Detect numeric (not formula, not starts with 0 unless "0" exactly, finite)
-          const num = !v.startsWith('=') && v.trim()!=='' && !isNaN(Number(v)) && isFinite(Number(v)) && !/^0\d/.test(v.trim());
-          if(num) {
-            cells+=`<c r="${ref}"${sAttr}><v>${ex(v)}</v></c>`;
-          } else if(v.startsWith('=')) {
-            cells+=`<c r="${ref}" t="str"${sAttr}><f>${ex(v.slice(1))}</f></c>`;
-          } else {
-            cells+=`<c r="${ref}" t="inlineStr"${sAttr}><is><t xml:space="preserve">${ex(v)}</t></is></c>`;
+
+          if(v.startsWith('=')) {
+            // Формулу отдаём вместе с посчитанным значением: без кэша Excel
+            // покажет пустую ячейку, пока пользователь не нажмёт пересчёт.
+            const calc=this.evalFormula(v, trimmed);
+            const cn=Number(calc);
+            if(calc!=='' && !calc.startsWith('#') && !isNaN(cn) && isFinite(cn))
+              cells+=`<c r="${ref}"${sAttr}><f>${ex(v.slice(1))}</f><v>${cn}</v></c>`;
+            else
+              cells+=`<c r="${ref}" t="str"${sAttr}><f>${ex(v.slice(1))}</f><v>${ex(calc)}</v></c>`;
+            return;
           }
+
+          // Число пишем числом — тогда Excel считает по нему, а не показывает
+          // предупреждение «число сохранено как текст».
+          if(cell.t==='n') {
+            const n=Number(v);
+            if(!isNaN(n) && isFinite(n)) { cells+=`<c r="${ref}"${sAttr}><v>${n}</v></c>`; return; }
+          }
+          if(cell.t==='b') {
+            cells+=`<c r="${ref}" t="b"${sAttr}><v>${/^(1|true|истина)$/i.test(v)?1:0}</v></c>`;
+            return;
+          }
+          cells+=`<c r="${ref}" t="inlineStr"${sAttr}><is><t xml:space="preserve">${ex(v)}</t></is></c>`;
         });
         if(cells||h!=null) rowsXml+=`<row r="${rIdx+1}"${rowAttr}>${cells}</row>`;
       });
@@ -1234,6 +1517,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
 
   // ── Render ─────────────────────────────────────────────────────────────────
   private render(): void {
+    this.invalidateFormulas();
     document.getElementById('dx-fill-handle')?.remove();
     const active = this.docs.find(d => d.id === this.activeId) ?? null;
     this.root.innerHTML = `
@@ -1831,7 +2115,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     let dragging = false;
     let editMode = false;
     let editTd: HTMLTableCellElement | null = null;
-    let editOrigVal = '';
+    let editOrigCell: CellData = { v: '' };
 
     const getEC = (): ExcelContent => this.parseExcelContent(doc.content);
     const getSheet = (): SheetData => {
@@ -1868,9 +2152,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         tr.querySelectorAll<HTMLTableCellElement>('td[data-r]').forEach(td => {
           const c = +(td.dataset.c!);
           if (isNaN(c) || c < 0 || c >= vd[r].length) return;
-          const v = td.dataset.formula ?? td.innerText;
-          const s = cellStyle(td);
-          vd[r][c] = s ? { v, s } : { v };
+          vd[r][c] = this.cellFromTd(td, cellStyle(td));
         });
       });
     };
@@ -1881,9 +2163,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
       body.querySelectorAll<HTMLTableRowElement>('tr[data-row]').forEach(tr => {
         const row: CellData[] = [];
         tr.querySelectorAll<HTMLTableCellElement>('td[data-r]').forEach(td => {
-          const v = td.dataset.formula ?? td.innerText;
-          const s = cellStyle(td);
-          row.push(s ? { v, s } : { v });
+          row.push(this.cellFromTd(td, cellStyle(td)));
         });
         rows.push(row);
       });
@@ -1920,8 +2200,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         row.forEach((cell, ci) => {
           const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${ri}"][data-c="${ci}"]`);
           if (!td) return;
-          if (cell.v.startsWith('=')) { td.dataset.formula = cell.v; td.innerText = this.evalFormula(cell.v, snap.data); }
-          else { delete td.dataset.formula; td.innerText = cell.v; }
+          this.applyCellToTd(td, cell, snap.data);
           td.style.cssText = cell.s ?? '';
         });
       });
@@ -1972,26 +2251,31 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
       td.contentEditable = 'false';
       td.classList.remove('dx-editing');
       if (revert) {
-        if (editOrigVal.startsWith('=')) { td.dataset.formula = editOrigVal; td.innerText = this.evalFormula(editOrigVal, grid()); }
-        else { delete td.dataset.formula; td.innerText = editOrigVal; }
+        this.applyCellToTd(td, editOrigCell, grid());
       } else {
-        const txt = td.innerText;
-        if (txt.startsWith('=')) { td.dataset.formula = txt; td.innerText = this.evalFormula(txt, grid()); }
-        else delete td.dataset.formula;
+        // Разбираем ввод: число/дата/процент получают тип и формат,
+        // текст остаётся текстом. Формат ячейки при этом сохраняется.
+        const parsed = this.interpretInput(td.innerText, editOrigCell.nf, editOrigCell.t);
+        if (editOrigCell.s) parsed.s = editOrigCell.s;
+        this.applyCellToTd(td, parsed, grid());
         if (doCommit) saveGrid(grid());
       }
       syncFormulaBar();
     };
-    const AC_FUNS = ['SUM','AVERAGE','MIN','MAX','COUNT','COUNTA','COUNTBLANK','COUNTIF','SUMIF','VLOOKUP','IF','IFERROR','ABS','ROUND','FLOOR','CEILING','SQRT','INT','POWER','MOD','CONCATENATE','LEN','LEFT','RIGHT','MID','TRIM','UPPER','LOWER','TEXT','AND','OR','NOT'];
+    // Список берём из движка, чтобы подсказки не расходились с реальностью
+    const AC_FUNS = FUNCTION_NAMES;
     const enterEdit = (r: number, c: number, initChar = '') => {
       if (editMode) exitEdit(true);
       const td = body.querySelector<HTMLTableCellElement>(`td[data-r="${r}"][data-c="${c}"]`);
       if (!td) return;
       editMode = true; editTd = td;
-      editOrigVal = td.dataset.formula ?? td.innerText;
+      editOrigCell = this.cellFromTd(td, cellStyle(td));
       td.contentEditable = 'true';
       td.classList.add('dx-editing');
-      if (initChar) { pushUndo(); td.innerText = initChar; delete td.dataset.formula; }
+      // В режиме правки Excel показывает сырое значение, а не оформленное:
+      // «1 234,50 ₽» → «1234.5», формула → сам текст формулы
+      if (!initChar && td.innerText !== editOrigCell.v) td.innerText = editOrigCell.v;
+      if (initChar) { pushUndo(); td.innerText = initChar; delete td.dataset.formula; delete td.dataset.raw; }
       td.focus();
       const range = document.createRange(), sel = window.getSelection();
       range.selectNodeContents(td); range.collapse(false);
@@ -2882,18 +3166,30 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
       });
       sel.value=''; commit();
     });
+    // Числовой формат — слой отображения над значением, а не замена текста.
+    // Меняем только data-nf и перерисовываем; сырое число остаётся нетронутым,
+    // поэтому SUM, сортировка и экспорт продолжают видеть число.
     this.root.querySelectorAll<HTMLButtonElement>('[data-xf-num]').forEach(btn=>{
+      btn.addEventListener('mousedown', e => e.preventDefault());
       btn.addEventListener('click',()=>{
-        const cell=curCell(); if(!cell) return;
-        const val=cell.innerText.trim(), fmt=btn.dataset.xfNum!;
-        const n=parseFloat(val.replace(',','.').replace(/[^\d.-]/g,''));
-        if(isNaN(n)&&fmt!=='date'&&fmt!=='general') return;
-        if(fmt==='general') cell.innerText=val;
-        else if(fmt==='number') cell.innerText=n.toLocaleString('ru-RU',{minimumFractionDigits:0,maximumFractionDigits:2});
-        else if(fmt==='currency') cell.innerText=n.toLocaleString('ru-RU',{style:'currency',currency:'RUB'});
-        else if(fmt==='percent') cell.innerText=n.toLocaleString('ru-RU',{style:'percent',maximumFractionDigits:2});
-        else if(fmt==='date'){const d=new Date(val);if(!isNaN(d.getTime()))cell.innerText=d.toLocaleDateString('ru-RU');}
-        commit();
+        const cells=selectedCells(); if(!cells.length) return;
+        const preset=btn.dataset.xfNum!;
+        const code=PRESET_FORMATS[preset] ?? 'General';
+        pushUndo();
+        const rows=grid();
+        cells.forEach(td=>{
+          const cur=this.cellFromTd(td, cellStyle(td));
+          // Текст, который выглядит как число, при навешивании числового
+          // формата становится числом — так же ведёт себя Excel.
+          if(code!=='General' && code!=='@' && cur.t!=='n' && !cur.v.startsWith('=')){
+            const n=parseUserNumber(cur.v);
+            if(n!==null){ cur.v=String(n); cur.t='n'; }
+          }
+          if(code==='General') delete cur.nf; else cur.nf=code;
+          if(code==='@'){ delete cur.t; delete cur.nf; }
+          this.applyCellToTd(td, cur, rows);
+        });
+        commit(); updateToolbarState();
       });
     });
 
@@ -3578,13 +3874,105 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     const span = mergeInfo?.spans.get(`${r},${c}`);
     const spanAttrs = span ? ` rowspan="${span[0]}" colspan="${span[1]}"` : '';
     const v = cell.v ?? '';
-    const combined = [extraStyle, cell.s || ''].filter(Boolean).join(';');
+
+    // Формула: сырой текст живёт в data-formula, в ячейке — вычисленный результат
+    const isFormula = v.startsWith('=');
+    const raw = isFormula ? this.evalFormula(v, rows) : v;
+    const type: CellType | undefined = isFormula
+      ? (raw !== '' && !isNaN(Number(raw)) ? 'n' : undefined)
+      : cell.t;
+
+    const display = this.esc(formatCellValue(raw, type, cell.nf));
+
+    // Excel выравнивает числа вправо, если автор не задал выравнивание явно
+    const hasAlign = /text-align\s*:/.test(cell.s ?? '') || /text-align\s*:/.test(extraStyle);
+    const autoAlign = (type === 'n' && !hasAlign) ? 'text-align:right' : '';
+
+    const combined = [extraStyle, cell.s || '', autoAlign].filter(Boolean).join(';');
     const styleAttr = combined ? ` style="${this.esc(combined)}"` : '';
-    if (v.startsWith('=')) {
-      const result = this.evalFormula(v, rows);
-      return `<td data-r="${r}" data-c="${c}"${spanAttrs}${styleAttr} data-formula="${this.esc(v)}">${this.esc(result)}</td>`;
+
+    const meta =
+      (isFormula ? ` data-formula="${this.esc(v)}"` : '') +
+      (cell.nf ? ` data-nf="${this.esc(cell.nf)}"` : '') +
+      (cell.t ? ` data-t="${cell.t}"` : '') +
+      // data-raw нужен только когда показанное отличается от хранимого,
+      // иначе grid() прочитает обратно уже отформатированный текст
+      (!isFormula && display !== this.esc(v) ? ` data-raw="${this.esc(v)}"` : '');
+
+    return `<td data-r="${r}" data-c="${c}"${spanAttrs}${styleAttr}${meta}>${display}</td>`;
+  }
+
+  /** Пересчитать текст и мета-атрибуты ячейки в DOM из модели. */
+  private applyCellToTd(td: HTMLTableCellElement, cell: CellData, rows: CellData[][]): void {
+    const v = cell.v ?? '';
+    const isFormula = v.startsWith('=');
+    const raw = isFormula ? this.evalFormula(v, rows) : v;
+    const type: CellType | undefined = isFormula
+      ? (raw !== '' && !isNaN(Number(raw)) ? 'n' : undefined)
+      : cell.t;
+
+    if (isFormula) td.dataset.formula = v; else delete td.dataset.formula;
+    if (cell.nf) td.dataset.nf = cell.nf; else delete td.dataset.nf;
+    if (cell.t) td.dataset.t = cell.t; else delete td.dataset.t;
+
+    const display = formatCellValue(raw, type, cell.nf);
+    td.innerText = display;
+    if (!isFormula && display !== v) td.dataset.raw = v; else delete td.dataset.raw;
+  }
+
+  /**
+   * Разобрать то, что пользователь напечатал в ячейку, в модель.
+   * Ведёт себя как Excel: распознаёт числа, проценты и даты, а формат
+   * подхватывает из ячейки, если пользователь его уже задавал.
+   */
+  private interpretInput(text: string, prevNf?: string, prevType?: CellType): CellData {
+    const t = text.trim();
+    if (!t) return { v: '' };
+
+    // Формула — сохраняем как есть, формат результата остаётся прежним
+    if (t.startsWith('=')) return prevNf ? { v: t, nf: prevNf } : { v: t };
+
+    // Дата в привычных записях → серийный номер Excel + датный формат
+    const dm = t.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})$/);
+    const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dm || iso) {
+      const [y, mo, d] = dm
+        ? [+dm[3] < 100 ? 2000 + +dm[3] : +dm[3], +dm[2], +dm[1]]
+        : [+iso![1], +iso![2], +iso![3]];
+      if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+        const dt = new Date(Date.UTC(y, mo - 1, d));
+        if (!isNaN(dt.getTime())) {
+          return {
+            v: String(dateToSerial(dt)),
+            t: 'n',
+            nf: prevNf && isDateFormat(prevNf) ? prevNf : 'dd.mm.yyyy',
+          };
+        }
+      }
     }
-    return `<td data-r="${r}" data-c="${c}"${spanAttrs}${styleAttr}>${this.esc(v)}</td>`;
+
+    const n = parseUserNumber(t);
+    if (n !== null) {
+      const out: CellData = { v: String(n), t: 'n' };
+      if (t.endsWith('%')) out.nf = prevNf && prevNf.includes('%') ? prevNf : '0.00%';
+      else if (prevNf && !isDateFormat(prevNf)) out.nf = prevNf;
+      else if (prevNf && isDateFormat(prevNf) && prevType === 'n') out.nf = prevNf;
+      return out;
+    }
+
+    // Текст. Числовой формат к нему неприменим — снимаем, чтобы
+    // «1 234,50 ₽» не превратилось обратно в число при следующем рендере.
+    return { v: t };
+  }
+
+  /** Прочитать ячейку из DOM обратно в модель, не потеряв сырое значение. */
+  private cellFromTd(td: HTMLTableCellElement, style?: string): CellData {
+    const v = td.dataset.formula ?? td.dataset.raw ?? td.innerText;
+    const out: CellData = { v };
+    if (style) out.s = style;
+    if (td.dataset.t) out.t = td.dataset.t as CellType;
+    if (td.dataset.nf) out.nf = td.dataset.nf;
+    return out;
   }
 
   private colLetter(n: number): string {
@@ -3644,111 +4032,467 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     this.render();
   }
 
+  // ── Чтение данных для ассистента ───────────────────────────────────────────
+  // describe() показывает лишь первые 30 строк — на таблице в тысячи строк
+  // модель физически не видит данные и начинает выдумывать. Эти действия
+  // дают ей запрашивать нужный срез самостоятельно.
+
+  /** Отображаемое значение ячейки: формулы посчитаны, форматы применены. */
+  private aiCellText(sheet: SheetData, r: number, c: number): string {
+    const cell = sheet.data[r]?.[c];
+    if (!cell) return '';
+    const v = cell.v ?? '';
+    if (v.startsWith('=')) return this.evalFormula(v, sheet.data);
+    return formatCellValue(v, cell.t, cell.nf);
+  }
+
+  /** Числовое значение ячейки или null, если это не число. */
+  private aiCellNum(sheet: SheetData, r: number, c: number): number | null {
+    const cell = sheet.data[r]?.[c];
+    if (!cell) return null;
+    const raw = cell.v?.startsWith('=')
+      ? this.evalFormula(cell.v, sheet.data)
+      : (cell.v ?? '');
+    if (raw.trim() === '') return null;
+    const n = parseUserNumber(raw);
+    return n ?? null;
+  }
+
+  /** Лист по имени, иначе активный. */
+  private aiSheetNamed(name?: string): { ec: ExcelContent; sheet: SheetData; doc: DocItem } {
+    const s = this.aiSheet();
+    if (!s) throw new Error('Нет открытой таблицы');
+    if (!name) return s;
+    const found = s.ec.sheets.find(sh => sh.name.toLowerCase() === name.trim().toLowerCase());
+    if (!found) throw new Error(`Лист «${name}» не найден. Есть: ${s.ec.sheets.map(x => x.name).join(', ')}`);
+    return { ...s, sheet: found };
+  }
+
+  /** Индексы строк с данными (без шапки, без полностью пустых). */
+  private aiDataRows(sheet: SheetData): number[] {
+    const out: number[] = [];
+    for (let r = 1; r < sheet.data.length; r++) {
+      if (sheet.data[r].some(c => (c.v || '').trim())) out.push(r);
+    }
+    return out;
+  }
+
+  /**
+   * Условия отбора: { "Город": "Мадрид", "Цена": ">100" }.
+   * Синтаксис критериев тот же, что в СУММЕСЛИ — включая > < <> и маски *?.
+   */
+  private aiBuildFilter(sheet: SheetData, where?: Record<string, string>): (r: number) => boolean {
+    if (!where || !Object.keys(where).length) return () => true;
+    const tests: Array<{ c: number; pred: (v: string) => boolean }> = [];
+    for (const [key, crit] of Object.entries(where)) {
+      const c = this.aiResolveCol(sheet, key);
+      if (c < 0) throw new Error(`Колонка «${key}» не найдена`);
+      tests.push({ c, pred: this.aiCriteria(String(crit)) });
+    }
+    return (r: number) => tests.every(t => t.pred(this.aiCellText(sheet, r, t.c)));
+  }
+
+  /** «>100», «<>абв», «Мадрид», «А*» → предикат по тексту ячейки. */
+  private aiCriteria(crit: string): (v: string) => boolean {
+    const raw = crit.trim();
+    const m = raw.match(/^(<=|>=|<>|=|<|>)(.*)$/);
+    if (m) {
+      const op = m[1], operand = m[2].trim();
+      const on = parseUserNumber(operand);
+      return (v: string) => {
+        if (on !== null) {
+          const vn = parseUserNumber(v);
+          if (vn === null) return op === '<>';
+          switch (op) {
+            case '>': return vn > on;  case '>=': return vn >= on;
+            case '<': return vn < on;  case '<=': return vn <= on;
+            case '<>': return vn !== on; default: return vn === on;
+          }
+        }
+        const a = v.trim().toLowerCase(), b = operand.toLowerCase();
+        switch (op) {
+          case '<>': return a !== b;
+          case '>': return a > b;  case '>=': return a >= b;
+          case '<': return a < b;  case '<=': return a <= b;
+          default: return a === b;
+        }
+      };
+    }
+    if (/[*?]/.test(raw)) {
+      const rx = new RegExp('^' + raw.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i');
+      return (v: string) => rx.test(v.trim());
+    }
+    return (v: string) => v.trim().toLowerCase() === raw.toLowerCase();
+  }
+
+  /** Прочитать прямоугольный диапазон как текст. */
+  private aiExcelReadRange(a: { range: string; sheet?: string }): string {
+    const { sheet } = this.aiSheetNamed(a?.sheet);
+    const m = String(a?.range ?? '').trim().toUpperCase()
+      .match(/^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/);
+    if (!m) throw new Error('Диапазон нужен в виде A1:D20');
+    const c1 = this.letterToCol(m[1]), r1 = +m[2] - 1;
+    const c2 = m[3] ? this.letterToCol(m[3]) : c1;
+    const r2 = m[4] ? +m[4] - 1 : r1;
+
+    const maxRows = 500;
+    const rows: string[] = [];
+    for (let r = Math.min(r1, r2); r <= Math.max(r1, r2) && rows.length < maxRows; r++) {
+      const cells: string[] = [];
+      for (let c = Math.min(c1, c2); c <= Math.max(c1, c2); c++) {
+        cells.push(`${this.colLetter(c)}${r + 1}=${this.aiCellText(sheet, r, c) || '—'}`);
+      }
+      rows.push('  ' + cells.join(' | '));
+    }
+    const total = Math.abs(r2 - r1) + 1;
+    return `Лист «${sheet.name}», диапазон ${a.range} (${total} строк):\n${rows.join('\n')}`
+      + (total > maxRows ? `\n  …показаны первые ${maxRows}` : '');
+  }
+
+  /** Отобрать строки по условиям и вернуть нужные колонки. */
+  private aiExcelQuery(a: {
+    where?: Record<string, string>; columns?: string[];
+    limit?: number; sheet?: string; sortBy?: string; desc?: boolean;
+  }): string {
+    const { sheet } = this.aiSheetNamed(a?.sheet);
+    const header = sheet.data[0] ?? [];
+    const filter = this.aiBuildFilter(sheet, a?.where);
+
+    const cols = a?.columns?.length
+      ? a.columns.map(ref => {
+          const c = this.aiResolveCol(sheet, ref);
+          if (c < 0) throw new Error(`Колонка «${ref}» не найдена`);
+          return c;
+        })
+      : header.map((_, i) => i);
+
+    let hits = this.aiDataRows(sheet).filter(filter);
+
+    if (a?.sortBy) {
+      const sc = this.aiResolveCol(sheet, a.sortBy);
+      if (sc < 0) throw new Error(`Колонка сортировки «${a.sortBy}» не найдена`);
+      const dir = a.desc ? -1 : 1;
+      hits.sort((x, y) => {
+        const xn = this.aiCellNum(sheet, x, sc), yn = this.aiCellNum(sheet, y, sc);
+        if (xn !== null && yn !== null) return (xn - yn) * dir;
+        return this.aiCellText(sheet, x, sc).localeCompare(this.aiCellText(sheet, y, sc), 'ru') * dir;
+      });
+    }
+
+    const total = hits.length;
+    const limit = Math.min(a?.limit ?? 50, 200);
+    hits = hits.slice(0, limit);
+
+    const head = cols.map(c => `${this.colLetter(c)}«${(header[c]?.v || '').trim()}»`).join(' | ');
+    const lines = hits.map(r =>
+      `  стр.${r + 1}: ` + cols.map(c => this.aiCellText(sheet, r, c) || '—').join(' | '));
+
+    return `Лист «${sheet.name}»: найдено ${total} строк${total > limit ? `, показаны первые ${limit}` : ''}.\n`
+      + `Колонки: ${head}\n${lines.join('\n') || '  (совпадений нет)'}`;
+  }
+
+  /** Агрегаты, при необходимости с группировкой. */
+  private aiExcelAggregate(a: {
+    op: string; column?: string; groupBy?: string;
+    where?: Record<string, string>; sheet?: string; limit?: number;
+  }): string {
+    const { sheet } = this.aiSheetNamed(a?.sheet);
+    const op = String(a?.op ?? 'sum').toLowerCase();
+    const OPS = ['sum', 'avg', 'average', 'count', 'min', 'max', 'countdistinct'];
+    if (!OPS.includes(op)) throw new Error(`Операция «${a?.op}» неизвестна. Доступны: ${OPS.join(', ')}`);
+
+    const needsValue = op !== 'count' && op !== 'countdistinct';
+    let vc = -1;
+    if (a?.column) {
+      vc = this.aiResolveCol(sheet, a.column);
+      if (vc < 0) throw new Error(`Колонка «${a.column}» не найдена`);
+    } else if (needsValue) {
+      throw new Error(`Для «${op}» нужна колонка со значениями (column)`);
+    }
+
+    const filter = this.aiBuildFilter(sheet, a?.where);
+    const rows = this.aiDataRows(sheet).filter(filter);
+
+    const compute = (list: number[], texts: string[]): string => {
+      switch (op) {
+        case 'sum': return this.aiNum(list.reduce((s, v) => s + v, 0));
+        case 'avg': case 'average':
+          return list.length ? this.aiNum(list.reduce((s, v) => s + v, 0) / list.length) : '—';
+        case 'min': return list.length ? this.aiNum(Math.min(...list)) : '—';
+        case 'max': return list.length ? this.aiNum(Math.max(...list)) : '—';
+        case 'countdistinct': return String(new Set(texts.filter(t => t.trim())).size);
+        default: return String(texts.length);
+      }
+    };
+
+    const collect = (rs: number[]) => ({
+      nums: vc >= 0 ? rs.map(r => this.aiCellNum(sheet, r, vc)).filter((n): n is number => n !== null) : [],
+      texts: rs.map(r => vc >= 0 ? this.aiCellText(sheet, r, vc) : 'x'),
+    });
+
+    const filterNote = a?.where ? ` при условии ${JSON.stringify(a.where)}` : '';
+
+    if (!a?.groupBy) {
+      const { nums, texts } = collect(rows);
+      const label = a?.column ? ` по «${(sheet.data[0]?.[vc]?.v || '').trim()}»` : '';
+      return `Лист «${sheet.name}»: ${op.toUpperCase()}${label}${filterNote} = ${compute(nums, texts)} (строк: ${rows.length})`;
+    }
+
+    const gc = this.aiResolveCol(sheet, a.groupBy);
+    if (gc < 0) throw new Error(`Колонка группировки «${a.groupBy}» не найдена`);
+
+    const groups = new Map<string, number[]>();
+    for (const r of rows) {
+      const key = this.aiCellText(sheet, r, gc).trim() || '(пусто)';
+      (groups.get(key) ?? groups.set(key, []).get(key)!).push(r);
+    }
+
+    const limit = Math.min(a?.limit ?? 50, 200);
+    const lines = [...groups.entries()]
+      .map(([key, rs]) => {
+        const { nums, texts } = collect(rs);
+        return { key, n: rs.length, val: compute(nums, texts) };
+      })
+      .sort((x, y) => {
+        const xn = parseFloat(x.val), yn = parseFloat(y.val);
+        return (!isNaN(xn) && !isNaN(yn)) ? yn - xn : y.n - x.n;
+      })
+      .slice(0, limit)
+      .map(g => `  ${g.key}: ${g.val} (строк: ${g.n})`);
+
+    return `Лист «${sheet.name}»: ${op.toUpperCase()}`
+      + (a.column ? ` по «${(sheet.data[0]?.[vc]?.v || '').trim()}»` : '')
+      + ` с группировкой по «${a.groupBy}»${filterNote}\n`
+      + `Групп: ${groups.size}${groups.size > limit ? `, показаны первые ${limit}` : ''}\n`
+      + lines.join('\n');
+  }
+
+  /** Округлить до вменяемого вида для показа модели. */
+  private aiNum(n: number): string {
+    if (!isFinite(n)) return '—';
+    const r = Math.round(n * 100) / 100;
+    return String(r);
+  }
+
+  /** Найти текст в таблице, вернуть адреса. */
+  private aiExcelFind(a: {
+    query: string; columns?: string[]; exact?: boolean; limit?: number; sheet?: string;
+  }): string {
+    const { sheet } = this.aiSheetNamed(a?.sheet);
+    const q = String(a?.query ?? '').trim();
+    if (!q) throw new Error('Не указано, что искать');
+    const low = q.toLowerCase();
+
+    const header = sheet.data[0] ?? [];
+    const cols = a?.columns?.length
+      ? a.columns.map(ref => {
+          const c = this.aiResolveCol(sheet, ref);
+          if (c < 0) throw new Error(`Колонка «${ref}» не найдена`);
+          return c;
+        })
+      : header.map((_, i) => i);
+
+    const limit = Math.min(a?.limit ?? 50, 200);
+    const hits: string[] = [];
+    let total = 0;
+
+    for (let r = 0; r < sheet.data.length; r++) {
+      for (const c of cols) {
+        const txt = this.aiCellText(sheet, r, c);
+        if (!txt) continue;
+        const match = a?.exact ? txt.trim().toLowerCase() === low : txt.toLowerCase().includes(low);
+        if (!match) continue;
+        total++;
+        if (hits.length < limit) {
+          hits.push(`  ${this.colLetter(c)}${r + 1} (стр.${r + 1}, «${(header[c]?.v || '').trim()}»): ${txt}`);
+        }
+      }
+    }
+
+    return `Лист «${sheet.name}»: «${q}» встречается ${total} раз${total > limit ? `, показаны первые ${limit}` : ''}.\n`
+      + (hits.join('\n') || '  (не найдено)');
+  }
+
+  /** Проверки качества данных — дубли, пустоты, нечисловые значения. */
+  private aiExcelValidate(a: {
+    duplicates?: string[]; required?: string[]; numeric?: string[];
+    positive?: string[]; sheet?: string;
+  }): string {
+    const { sheet } = this.aiSheetNamed(a?.sheet);
+    const header = sheet.data[0] ?? [];
+    const rows = this.aiDataRows(sheet);
+    const out: string[] = [];
+    const LIST = 20;
+
+    const resolve = (ref: string) => {
+      const c = this.aiResolveCol(sheet, ref);
+      if (c < 0) throw new Error(`Колонка «${ref}» не найдена`);
+      return c;
+    };
+    const title = (c: number) => `${this.colLetter(c)}«${(header[c]?.v || '').trim()}»`;
+
+    for (const ref of a?.duplicates ?? []) {
+      const c = resolve(ref);
+      const seen = new Map<string, number[]>();
+      for (const r of rows) {
+        const v = this.aiCellText(sheet, r, c).trim().toLowerCase();
+        if (!v) continue;
+        (seen.get(v) ?? seen.set(v, []).get(v)!).push(r + 1);
+      }
+      const dups = [...seen.entries()].filter(([, rs]) => rs.length > 1);
+      out.push(dups.length
+        ? `Дубли в ${title(c)}: ${dups.length} значений повторяются\n`
+          + dups.slice(0, LIST).map(([v, rs]) => `    «${v}» — строки ${rs.join(', ')}`).join('\n')
+          + (dups.length > LIST ? `\n    …ещё ${dups.length - LIST}` : '')
+        : `Дубли в ${title(c)}: не найдено`);
+    }
+
+    for (const ref of a?.required ?? []) {
+      const c = resolve(ref);
+      const empty = rows.filter(r => !this.aiCellText(sheet, r, c).trim());
+      out.push(empty.length
+        ? `Пустые в ${title(c)}: ${empty.length} строк — ${empty.slice(0, LIST).map(r => r + 1).join(', ')}`
+          + (empty.length > LIST ? ` …ещё ${empty.length - LIST}` : '')
+        : `Пустые в ${title(c)}: нет`);
+    }
+
+    for (const ref of a?.numeric ?? []) {
+      const c = resolve(ref);
+      const bad = rows.filter(r => {
+        const t = this.aiCellText(sheet, r, c).trim();
+        return t !== '' && this.aiCellNum(sheet, r, c) === null;
+      });
+      out.push(bad.length
+        ? `Нечисловые в ${title(c)}: ${bad.length} строк — `
+          + bad.slice(0, LIST).map(r => `стр.${r + 1}="${this.aiCellText(sheet, r, c)}"`).join(', ')
+          + (bad.length > LIST ? ` …ещё ${bad.length - LIST}` : '')
+        : `Нечисловые в ${title(c)}: нет`);
+    }
+
+    for (const ref of a?.positive ?? []) {
+      const c = resolve(ref);
+      const bad = rows.filter(r => { const n = this.aiCellNum(sheet, r, c); return n !== null && n <= 0; });
+      out.push(bad.length
+        ? `Неположительные в ${title(c)}: ${bad.length} строк — `
+          + bad.slice(0, LIST).map(r => `стр.${r + 1}=${this.aiCellText(sheet, r, c)}`).join(', ')
+          + (bad.length > LIST ? ` …ещё ${bad.length - LIST}` : '')
+        : `Неположительные в ${title(c)}: нет`);
+    }
+
+    if (!out.length) return 'Не указано, что проверять. Доступно: duplicates, required, numeric, positive.';
+    return `Проверка листа «${sheet.name}» (${rows.length} строк данных):\n` + out.join('\n');
+  }
+
+  /** Схема листа: заголовки, типы, заполненность — дёшево по токенам. */
+  private aiExcelSchema(a?: { sheet?: string }): string {
+    const { ec, sheet } = this.aiSheetNamed(a?.sheet);
+    const header = sheet.data[0] ?? [];
+    const rows = this.aiDataRows(sheet);
+    const sample = rows.slice(0, 3);
+
+    const cols = header.map((h, c) => {
+      const filled = rows.filter(r => this.aiCellText(sheet, r, c).trim()).length;
+      const numeric = rows.filter(r => this.aiCellNum(sheet, r, c) !== null).length;
+      const uniq = new Set(rows.map(r => this.aiCellText(sheet, r, c).trim()).filter(Boolean)).size;
+      const kind = numeric > filled * 0.8 ? 'число' : uniq <= Math.max(20, rows.length * 0.05) ? 'категория' : 'текст';
+      const ex = sample.map(r => this.aiCellText(sheet, r, c)).filter(Boolean).slice(0, 2);
+      return `  ${this.colLetter(c)} «${(h.v || '').trim() || '(без имени)'}» — ${kind}, `
+        + `заполнено ${filled}/${rows.length}, уникальных ${uniq}`
+        + (ex.length ? `, напр.: ${ex.map(e => `«${e}»`).join(', ')}` : '');
+    });
+
+    return `Лист «${sheet.name}» (из ${ec.sheets.length}): ${rows.length} строк данных × ${header.length} колонок.\n`
+      + `Колонки:\n${cols.join('\n')}\n`
+      + `Для выборки строк — excel_query, для итогов — excel_aggregate, для поиска — excel_find.`;
+  }
+
   /** describe() — текущее состояние открытого документа для модели. */
   private aiDescribe(): string {
     const fsFocus = this.isFullscreen
       ? '[РЕЖИМ: Полный экран редактора. Пользователь работает с документом. Фокусируйся только на нём — давай советы, подсказки и действия именно по этому файлу. Ты можешь отвечать на вопросы об API (остатки, заказы, аналитика WB/Ozon) если пользователь явно спросит, но сам не переключайся на другие разделы.]\n\n'
       : '';
-    const allDocsInfo = this.docs.length > 0
-      ? `\n\n📂 Все открытые документы (${this.docs.length}):\n` +
-        this.docs.map((d, i) => {
+
+    // Обзор намеренно краткий. Раньше сюда сваливались 30 строк данных и
+    // частотный анализ всех колонок — тысячи токенов на каждый вызов, а
+    // ответить по таблице в 5000 строк всё равно было нельзя. Теперь модель
+    // получает карту документов и берёт данные через excel_query/aggregate.
+    const docList = this.docs.length
+      ? `\n\n📂 Документы (${this.docs.length}):\n` + this.docs.map((d, i) => {
+          const active = d.id === this.activeId ? ' ← АКТИВНЫЙ' : '';
           let extra = '';
           if (d.type === 'excel') {
             try {
               const ec = this.parseExcelContent(d.content);
-              const sheets = ec.sheets.map(sh => {
-                const cols = sh.data[0]?.length ?? 0;
-                const dataRows = sh.data.slice(1).filter(r => r.some(c => (c.v||'').trim())).length;
-                const hdrs = (sh.data[0] ?? []).map((c, ci) => `${this.colLetter(ci)}="${(c.v||'').trim()||'(пусто)'}"`).slice(0, 8).join(', ');
-                return `    Лист «${sh.name}»: ${dataRows} стр × ${cols} кол. | Заголовки: ${hdrs}`;
-              }).join('\n');
-              extra = '\n' + sheets;
-            } catch { extra = ''; }
+              extra = ' — листы: ' + ec.sheets.map(sh => {
+                const rows = sh.data.filter(r => r.some(c => (c.v || '').trim())).length;
+                return `«${sh.name}» (${Math.max(0, rows - 1)}×${sh.data[0]?.length ?? 0})`;
+              }).join(', ');
+            } catch { /* повреждённое содержимое не должно ронять обзор */ }
           } else {
-            const len = d.content.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().length;
-            extra = ` (~${len} симв.)`;
+            const len = d.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length;
+            extra = ` — ~${len} симв.`;
           }
-          const active = d.id === this.activeId ? ' ← АКТИВНЫЙ' : '';
-          return `  ${i+1}. id="${d.id}" «${d.title}» [${d.type}]${active}${extra}`;
-        }).join('\n') +
-        '\n\nДля операций по нескольким документам: multi_replace/multi_count/docs_delete/docs_rename/docs_clear_content с параметром docIds.'
+          return `  ${i + 1}. id="${d.id}" «${d.title}» [${d.type}]${active}${extra}`;
+        }).join('\n')
       : '';
+
     const doc = this.aiDoc();
-    if (!doc) return fsFocus + 'Нет открытого документа. Пользователь может создать Word или Excel.' + allDocsInfo;
+    if (!doc) return fsFocus + 'Нет открытого документа. Пользователь может создать Word или Excel.' + docList;
+
     if (doc.type === 'word') {
       const text = doc.content.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
       const words = text ? text.split(/\s+/).filter(Boolean).length : 0;
-      const paragraphs = (doc.content.match(/<(p|h[1-6])\b/gi) ?? []).length;
-      const headingMatches = [...doc.content.matchAll(/<(h[1-6])[^>]*>(.*?)<\/h[1-6]>/gi)];
-      const headings = headingMatches
+      const headings = [...doc.content.matchAll(/<(h[1-6])[^>]*>(.*?)<\/h[1-6]>/gi)]
         .map(m => `  ${m[1].toUpperCase()}: ${m[2].replace(/<[^>]+>/g, '').trim()}`)
-        .slice(0, 10).join('\n');
-      return fsFocus + `Открыт Word-документ «${doc.title}».
-Статистика: ${words} слов, ${text.length} символов, ~${paragraphs} абзацев.${headings ? '\nЗаголовки в документе:\n' + headings : ''}
-Содержимое (первые 1500 симв): "${text.slice(0, 1500)}"${text.length > 1500 ? '\n...(текст обрезан)' : ''}` + allDocsInfo;
+        .slice(0, 12).join('\n');
+      return fsFocus + `Открыт Word-документ «${doc.title}»: ${words} слов, ${text.length} символов.`
+        + (headings ? `\nЗаголовки:\n${headings}` : '')
+        + `\nНачало: "${text.slice(0, 600)}"${text.length > 600 ? '…' : ''}`
+        + `\nДля структуры вызови word_outline, для точечной правки — word_edit_paragraph.`
+        + docList;
     }
+
     const s = this.aiSheet();
-    if (!s) return `Открыт документ «${doc.title}», но лист пуст.`;
-    const { ec, sheet, doc: docRef } = s;
-    const data = sheet.data;
-    const cols = data[0]?.length ?? 0;
-    const headers = (data[0] ?? []).map((c, i) => `${this.colLetter(i)}="${(c.v || '').trim() || '(пусто)'}"`);
+    if (!s) return fsFocus + `Открыт документ «${doc.title}», но лист пуст.` + docList;
+    const { ec, sheet } = s;
     const artCols = this.aiArticleCols(sheet);
 
-    // Только непустые строки (данные)
-    const dataRows = data.slice(1).filter(row => row.some(c => (c.v || '').trim()));
+    let schema: string;
+    try {
+      schema = this.aiExcelSchema();
+    } catch {
+      schema = `Лист «${sheet.name}»: ${sheet.data.length} строк.`;
+    }
 
-    // Все данные до 30 строк (не только 5)
-    const sample = dataRows.slice(0, 30).map((row, ri) =>
-      `  строка ${ri + 2}: ` + row.slice(0, cols).map((c, ci) => `${this.colLetter(ci)}=${(c.v || '').trim() || '—'}`).join(' | '),
-    ).join('\n');
-
-    // Частотный анализ текстовых колонок — чтобы ИИ знал сколько «Мадрид» и т.д.
-    const freqParts: string[] = [];
-    (data[0] ?? []).forEach((hdr, ci) => {
-      if (artCols.includes(ci)) return; // артикулы не анализируем
-      const hName = (hdr.v || '').trim();
-      if (!hName) return;
-      const vals: Record<string, number> = {};
-      dataRows.forEach(row => {
-        const v = (row[ci]?.v || '').trim();
-        if (v) vals[v] = (vals[v] || 0) + 1;
-      });
-      const uniq = Object.keys(vals).length;
-      if (uniq === 0 || uniq > 200) return; // слишком много уникальных — числа/коды
-      const top = Object.entries(vals).sort((a, b) => b[1] - a[1]).slice(0, 8);
-      freqParts.push(`  Колонка ${this.colLetter(ci)} «${hName}» (${uniq} уник.): ${top.map(([v, n]) => `"${v}"×${n}`).join(', ')}${uniq > 8 ? ' ...' : ''}`);
-    });
-
-    // Список листов
     const sheetsInfo = ec.sheets.length > 1
-      ? `\nВсе листы: ${ec.sheets.map(sh => `«${sh.name}» (${sh.data.filter(r => r.some(c => (c.v||'').trim())).length} строк)`).join(', ')}`
+      ? `\nВсе листы: ${ec.sheets.map(sh => `«${sh.name}»`).join(', ')} (активный — «${sheet.name}»)`
       : '';
+    const styled = sheet.data.some(r => r.some(c => c.s));
 
-    const styled = data.some(r => r.some(c => c.s));
-    return fsFocus + `Открыта таблица «${docRef.title}», лист «${sheet.name}» (всего листов: ${ec.sheets.length}).
-Заполненных строк данных: ${dataRows.length} (строки 2…${dataRows.length + 1}) × ${cols} колонок.
-Заголовки (строка 1): ${headers.join(', ')}
-Колонки-артикулы (по умолчанию НЕ трогать при заменах): ${artCols.length ? artCols.map(i => this.colLetter(i)).join(', ') : 'не обнаружены'}
-Оформление: ${styled ? 'в ячейках есть стили' : 'без оформления'}${sheetsInfo}
-${freqParts.length ? 'Частота значений по колонкам:\n' + freqParts.join('\n') : ''}
-Данные (до 30 строк):
-${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${dataRows.length - 30} строк` : ''}${allDocsInfo}`;
+    return fsFocus + `Открыта таблица «${doc.title}».\n${schema}${sheetsInfo}\n`
+      + `Колонки-артикулы (по умолчанию НЕ трогать при заменах): `
+      + `${artCols.length ? artCols.map(i => this.colLetter(i)).join(', ') : 'не обнаружены'}\n`
+      + `Оформление: ${styled ? 'в ячейках есть стили' : 'без оформления'}\n`
+      + `ВАЖНО: конкретных значений здесь нет. Чтобы ответить по данным — вызови `
+      + `excel_query (отбор строк), excel_aggregate (суммы, средние, группировки), `
+      + `excel_find (поиск) или excel_read_range. Не выдумывай цифры и не считай по памяти.`
+      + docList;
   }
 
   /** Публичная точка: капабилити текущей страницы редактора для ассистента. */
   getAiCapability(): AiPageCapability {
     const isWord = this.aiDoc()?.type === 'word';
     const fsSuggestions = isWord ? [
+      { label: '📋 Структура', prompt: 'Покажи структуру документа: какие в нём абзацы и заголовки' },
+      { label: '✍️ Дополни текст', prompt: 'Предложи продолжение для этого текста и допиши его в конец' },
       { label: '📊 Статистика', prompt: 'Посчитай слова и символы в документе' },
       { label: '🔁 Замена текста', prompt: 'Помоги заменить текст в документе' },
-      { label: '✨ Убрать форматирование', prompt: 'Убери все стили и форматирование из документа' },
-      { label: '✍️ Дополни текст', prompt: 'Предложи продолжение для этого текста' },
     ] : [
       { label: '🔎 Что в документе?', prompt: 'Проанализируй открытый документ: что за данные, структура, ключевые значения' },
+      { label: '📊 Сводка по данным', prompt: 'Посчитай итоги по открытой таблице: суммы и средние по числовым колонкам, разбивка по основной категории' },
+      { label: '🧹 Проверить данные', prompt: 'Проверь таблицу на ошибки: дубли артикулов, пустые обязательные поля, нечисловые значения в числовых колонках' },
       { label: '✨ Улучшить дизайн', prompt: 'Улучши оформление текущей таблицы' },
-      { label: '🔁 Замена текста', prompt: 'Помоги заменить текст в таблице' },
-      { label: '📊 Сводка по данным', prompt: 'Дай краткую сводку по данным в открытой таблице' },
     ];
     const normalSuggestions = isWord ? [
       { label: '➕ Новый Word', prompt: 'Создай новый Word-документ' },
@@ -3757,9 +4501,9 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
       { label: '🔁 Замена', prompt: 'Помоги заменить текст в документе' },
     ] : [
       { label: '➕ Новый Excel', prompt: 'Создай новый документ Excel' },
-      { label: '✨ Улучшить дизайн', prompt: 'Улучши дизайн текущей таблицы' },
       { label: '🔎 Что в таблице?', prompt: 'Проанализируй открытую таблицу: что за данные, какие колонки' },
-      { label: '🔁 Замена', prompt: 'Помоги заменить текст в таблице' },
+      { label: '📊 Посчитать итоги', prompt: 'Посчитай итоги по открытой таблице с разбивкой по основной категории' },
+      { label: '🧹 Проверить данные', prompt: 'Проверь таблицу на дубли и пропуски' },
     ];
     return {
       page: 'docs',
@@ -3969,6 +4713,86 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
           description: 'Скопировать лист внутри той же таблицы. from — название исходного листа (по умолчанию активный). newName — название копии. Использовать когда просят «скопируй лист», «продублируй вкладку».',
           args: '{ from?: string, newName?: string }',
           run: (a) => this.aiExcelCopySheet(a),
+        },
+
+        // ── Чтение и анализ ───────────────────────────────────────────────
+        // Обзор документа в describe() умышленно краткий: эти действия
+        // позволяют запросить именно нужный срез вместо догадок по образцу.
+        {
+          name: 'excel_schema',
+          description: 'Схема листа: какие колонки, их тип (число/категория/текст), заполненность, уникальность, примеры значений. Дёшево по объёму. Вызывать ПЕРВЫМ, когда нужно понять структуру таблицы перед выборкой или расчётом.',
+          args: '{ sheet?: string }',
+          run: (a) => this.aiExcelSchema(a),
+        },
+        {
+          name: 'excel_query',
+          description: 'Выбрать строки по условиям и показать нужные колонки. where — {"Колонка":"критерий"}, критерий как в СУММЕСЛИ: точное значение, ">100", "<>нет", маска "А*". columns — какие колонки показать. sortBy/desc — сортировка. Использовать для «покажи заказы из Мадрида», «какие товары дороже 1000».',
+          args: '{ where?: object, columns?: string[], sortBy?: string, desc?: boolean, limit?: number, sheet?: string }',
+          run: (a) => this.aiExcelQuery(a),
+        },
+        {
+          name: 'excel_aggregate',
+          description: 'Посчитать итог: op = sum|avg|count|min|max|countdistinct. column — по какой колонке считать (не нужна для count). groupBy — разбить по колонке. where — предварительный отбор. Использовать для «сколько всего», «сумма по городам», «средняя цена», «сколько уникальных артикулов». НЕ считай в уме по образцу строк — вызывай это.',
+          args: '{ op: string, column?: string, groupBy?: string, where?: object, limit?: number, sheet?: string }',
+          run: (a) => this.aiExcelAggregate(a),
+        },
+        {
+          name: 'excel_find',
+          description: 'Найти текст в таблице и получить адреса ячеек и номера строк. columns — где искать (по умолчанию везде), exact — точное совпадение вместо вхождения. Использовать для «где встречается X», «в какой строке Y».',
+          args: '{ query: string, columns?: string[], exact?: boolean, limit?: number, sheet?: string }',
+          run: (a) => this.aiExcelFind(a),
+        },
+        {
+          name: 'excel_read_range',
+          description: 'Прочитать конкретный диапазон, например A1:D20. Использовать когда пользователь называет диапазон явно или нужно посмотреть кусок листа целиком.',
+          args: '{ range: string, sheet?: string }',
+          run: (a) => this.aiExcelReadRange(a),
+        },
+        {
+          name: 'excel_validate',
+          description: 'Проверить качество данных: duplicates — колонки на дубли, required — колонки, где не должно быть пустот, numeric — где должны быть только числа, positive — где числа должны быть больше нуля. Использовать для «найди дубли артикулов», «проверь таблицу на ошибки», «где пустые цены».',
+          args: '{ duplicates?: string[], required?: string[], numeric?: string[], positive?: string[], sheet?: string }',
+          run: (a) => this.aiExcelValidate(a),
+        },
+
+        // ── Точечное редактирование Word ──────────────────────────────────
+        // Раньше правка сводилась к word_set_content, который переписывает
+        // документ целиком и стирает оформление.
+        {
+          name: 'word_outline',
+          description: 'Структура Word-документа: пронумерованный список абзацев с их типом и началом текста. Вызывать ПЕРЕД точечной правкой, чтобы узнать номер нужного абзаца.',
+          args: '{ limit?: number }',
+          run: () => this.aiWordOutline(),
+        },
+        {
+          name: 'word_edit_paragraph',
+          description: 'Заменить содержимое одного абзаца по его номеру из word_outline. Оформление остальных абзацев не трогается. Использовать для «перепиши третий абзац», «поправь заголовок».',
+          args: '{ index: number, text?: string, html?: string }',
+          run: (a) => this.aiWordEditParagraph(a),
+        },
+        {
+          name: 'word_insert',
+          description: 'Вставить новый фрагмент. position: end (по умолчанию), start или after — тогда нужен afterIndex из word_outline. Использовать для «добавь абзац», «вставь раздел после второго».',
+          args: '{ text?: string, html?: string, position?: string, afterIndex?: number }',
+          run: (a) => this.aiWordInsert(a),
+        },
+        {
+          name: 'word_delete_paragraph',
+          description: 'Удалить абзац по номеру из word_outline.',
+          args: '{ index: number }',
+          run: (a) => this.aiWordDeleteParagraph(a),
+        },
+        {
+          name: 'word_insert_table',
+          description: 'Вставить таблицу. rows — массив массивов строк, первая строка считается шапкой, если headers не false. Использовать для «сделай таблицу», «оформи это таблицей».',
+          args: '{ rows: string[][], headers?: boolean, position?: string, afterIndex?: number }',
+          run: (a) => this.aiWordInsertTable(a),
+        },
+        {
+          name: 'word_style_text',
+          description: 'Оформить все вхождения текста: bold, italic, underline, color (#RRGGBB), bg, size (пункты). Использовать для «выдели красным слово X», «сделай жирным все упоминания Y».',
+          args: '{ find: string, bold?: boolean, italic?: boolean, underline?: boolean, color?: string, bg?: string, size?: number, caseSensitive?: boolean }',
+          run: (a) => this.aiWordStyleText(a),
         },
       ],
     };
@@ -4315,6 +5139,210 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     return this.docsResult(doc.id, before, 'Форматирование очищено: убраны стили, цвета, жирность, курсив.', 'Отменить очистку форматирования');
   }
 
+  // ── Точечное редактирование Word ───────────────────────────────────────────
+  // Работаем через DOM, а не регулярками: строковая замена по HTML ломается
+  // на вложенных тегах и съедает оформление.
+
+  /** Разобрать содержимое активного Word-документа в DOM. */
+  private aiWordDom(): { doc: DocItem; body: HTMLElement; before: string } {
+    const doc = this.aiDoc();
+    if (!doc || doc.type !== 'word') throw new Error('Сейчас открыт не Word-документ');
+    const parsed = new DOMParser().parseFromString(
+      `<!doctype html><html><body>${doc.content}</body></html>`, 'text/html');
+    return { doc, body: parsed.body, before: doc.content };
+  }
+
+  /** Блоки верхнего уровня — то, что пользователь называет «абзацами». */
+  private aiWordBlocks(body: HTMLElement): HTMLElement[] {
+    const TAGS = new Set(['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','PRE','UL','OL','TABLE','DIV']);
+    const out: HTMLElement[] = [];
+    Array.from(body.children).forEach(el => {
+      if (TAGS.has(el.tagName)) out.push(el as HTMLElement);
+    });
+    return out;
+  }
+
+  private aiWordSave(doc: DocItem, body: HTMLElement, before: string, summary: string, label: string): AiActionResult {
+    this.updateContent(doc.id, body.innerHTML);
+    this.render();
+    return this.docsResult(doc.id, before, summary, label);
+  }
+
+  private aiWordOutline(): string {
+    const { body } = this.aiWordDom();
+    const blocks = this.aiWordBlocks(body);
+    if (!blocks.length) return 'Документ пуст — абзацев нет.';
+    const KIND: Record<string, string> = {
+      P: 'абзац', H1: 'заголовок 1', H2: 'заголовок 2', H3: 'заголовок 3',
+      H4: 'заголовок 4', H5: 'заголовок 5', H6: 'заголовок 6',
+      BLOCKQUOTE: 'цитата', PRE: 'код', UL: 'список', OL: 'нум. список',
+      TABLE: 'таблица', DIV: 'блок',
+    };
+    const lines = blocks.slice(0, 200).map((el, i) => {
+      const txt = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+      const kind = KIND[el.tagName] ?? el.tagName.toLowerCase();
+      const extra = el.tagName === 'TABLE'
+        ? ` (${el.querySelectorAll('tr').length} строк)`
+        : (el.tagName === 'UL' || el.tagName === 'OL') ? ` (${el.querySelectorAll('li').length} пунктов)` : '';
+      return `  ${i + 1}. [${kind}]${extra} ${txt.slice(0, 90)}${txt.length > 90 ? '…' : ''}`;
+    });
+    return `Структура документа (${blocks.length} блоков):\n${lines.join('\n')}`
+      + (blocks.length > 200 ? '\n  …показаны первые 200' : '')
+      + '\nНомера из этого списка передавай в word_edit_paragraph / word_delete_paragraph / afterIndex.';
+  }
+
+  /** Проверить номер абзаца и вернуть сам элемент. */
+  private aiWordBlockAt(blocks: HTMLElement[], index: unknown): HTMLElement {
+    const i = Number(index);
+    if (!Number.isInteger(i) || i < 1 || i > blocks.length) {
+      throw new Error(`Номер абзаца ${index} вне диапазона 1…${blocks.length}. Сначала вызови word_outline.`);
+    }
+    return blocks[i - 1];
+  }
+
+  /** HTML из аргументов действия: html как есть, text — с экранированием. */
+  private aiWordFragment(a: { text?: string; html?: string }): string {
+    if (a?.html) return a.html;
+    if (a?.text == null || a.text === '') throw new Error('Нужен text или html');
+    return a.text.split(/\n{2,}/)
+      .map(par => `<p>${this.esc(par).replace(/\n/g, '<br>')}</p>`)
+      .join('');
+  }
+
+  private aiWordEditParagraph(a: { index: number; text?: string; html?: string }): AiActionResult {
+    const { doc, body, before } = this.aiWordDom();
+    const blocks = this.aiWordBlocks(body);
+    const el = this.aiWordBlockAt(blocks, a?.index);
+    const wasText = (el.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 60);
+
+    if (a?.html) {
+      el.innerHTML = a.html;
+    } else {
+      if (a?.text == null) throw new Error('Нужен text или html');
+      // Меняем только текст, сохраняя тег и стиль абзаца
+      el.textContent = a.text;
+    }
+
+    return this.aiWordSave(doc, body, before,
+      `Абзац ${a.index} («${wasText}…») заменён.`, 'Отменить правку абзаца');
+  }
+
+  private aiWordInsert(a: { text?: string; html?: string; position?: string; afterIndex?: number }): AiActionResult {
+    const { doc, body, before } = this.aiWordDom();
+    const frag = this.aiWordFragment(a);
+    const pos = (a?.position ?? 'end').toLowerCase();
+
+    if (pos === 'start') {
+      body.insertAdjacentHTML('afterbegin', frag);
+    } else if (pos === 'after') {
+      const blocks = this.aiWordBlocks(body);
+      const el = this.aiWordBlockAt(blocks, a?.afterIndex);
+      el.insertAdjacentHTML('afterend', frag);
+    } else {
+      body.insertAdjacentHTML('beforeend', frag);
+    }
+
+    const where = pos === 'start' ? 'в начало' : pos === 'after' ? `после абзаца ${a?.afterIndex}` : 'в конец';
+    return this.aiWordSave(doc, body, before, `Фрагмент вставлен ${where}.`, 'Отменить вставку');
+  }
+
+  private aiWordDeleteParagraph(a: { index: number }): AiActionResult {
+    const { doc, body, before } = this.aiWordDom();
+    const blocks = this.aiWordBlocks(body);
+    const el = this.aiWordBlockAt(blocks, a?.index);
+    const txt = (el.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    el.remove();
+    return this.aiWordSave(doc, body, before,
+      `Абзац ${a.index} («${txt}…») удалён.`, 'Вернуть абзац');
+  }
+
+  private aiWordInsertTable(a: {
+    rows: string[][]; headers?: boolean; position?: string; afterIndex?: number;
+  }): AiActionResult {
+    const rows = a?.rows;
+    if (!Array.isArray(rows) || !rows.length || !Array.isArray(rows[0])) {
+      throw new Error('rows должен быть массивом массивов строк, например [["A","B"],["1","2"]]');
+    }
+    const withHeader = a?.headers !== false;
+    const cellStyle = 'border:1px solid #999;padding:6px';
+    const html =
+      `<table style="border-collapse:collapse;width:100%">` +
+      rows.map((row, ri) => {
+        const isHdr = withHeader && ri === 0;
+        const tag = isHdr ? 'th' : 'td';
+        const st = isHdr ? `${cellStyle};background-color:#F2F2F2;font-weight:bold` : cellStyle;
+        return `<tr>${row.map(v => `<${tag} style="${st}">${this.esc(String(v ?? ''))}</${tag}>`).join('')}</tr>`;
+      }).join('') +
+      `</table>`;
+
+    return this.aiWordInsert({
+      html, position: a?.position, afterIndex: a?.afterIndex,
+    });
+  }
+
+  private aiWordStyleText(a: {
+    find: string; bold?: boolean; italic?: boolean; underline?: boolean;
+    color?: string; bg?: string; size?: number; caseSensitive?: boolean;
+  }): AiActionResult {
+    const needle = String(a?.find ?? '');
+    if (!needle) throw new Error('Не указано, какой текст оформить (find)');
+
+    const css: string[] = [];
+    if (a.bold) css.push('font-weight:bold');
+    if (a.italic) css.push('font-style:italic');
+    if (a.underline) css.push('text-decoration:underline');
+    if (a.color) css.push(`color:${a.color}`);
+    if (a.bg) css.push(`background-color:${a.bg}`);
+    if (a.size) css.push(`font-size:${a.size}pt`);
+    if (!css.length) throw new Error('Не указано ни одного оформления');
+
+    const { doc, body, before } = this.aiWordDom();
+    const style = css.join(';');
+    let count = 0;
+
+    // Обходим только текстовые узлы — так разметка вокруг остаётся целой
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    const targets: Text[] = [];
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const t = n as Text;
+      const hay = a.caseSensitive ? t.data : t.data.toLowerCase();
+      const nee = a.caseSensitive ? needle : needle.toLowerCase();
+      if (hay.includes(nee)) targets.push(t);
+    }
+
+    for (const node of targets) {
+      const parts: Array<{ text: string; hit: boolean }> = [];
+      let rest = node.data;
+      for (;;) {
+        const hay = a.caseSensitive ? rest : rest.toLowerCase();
+        const nee = a.caseSensitive ? needle : needle.toLowerCase();
+        const i = hay.indexOf(nee);
+        if (i < 0) { if (rest) parts.push({ text: rest, hit: false }); break; }
+        if (i > 0) parts.push({ text: rest.slice(0, i), hit: false });
+        parts.push({ text: rest.slice(i, i + needle.length), hit: true });
+        rest = rest.slice(i + needle.length);
+      }
+
+      const frag = body.ownerDocument.createDocumentFragment();
+      for (const p of parts) {
+        if (p.hit) {
+          const span = body.ownerDocument.createElement('span');
+          span.setAttribute('style', style);
+          span.textContent = p.text;
+          frag.appendChild(span);
+          count++;
+        } else {
+          frag.appendChild(body.ownerDocument.createTextNode(p.text));
+        }
+      }
+      node.parentNode?.replaceChild(frag, node);
+    }
+
+    if (!count) throw new Error(`Текст «${needle}» в документе не найден`);
+    return this.aiWordSave(doc, body, before,
+      `Оформлено вхождений: ${count}.`, 'Отменить оформление');
+  }
+
   private aiWordHeading(a: { text?: string; level?: number }): AiActionResult {
     const doc = this.aiDoc();
     if (!doc || doc.type !== 'word') throw new Error('Сейчас открыт не Word-документ');
@@ -4566,189 +5594,35 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     setTimeout(() => document.addEventListener('click', (e) => { if (!drop.contains(e.target as Node)) drop.remove(); }, {once: true}), 10);
   }
 
-  private evalFormula(formula: string, rows: CellData[][], _depth = 0): string {
-    if(_depth>20) return '#REC';
-    if(!formula.startsWith('=')) return formula;
-    let expr=formula.slice(1);
+  /**
+   * Вычислить формулу по данным листа.
+   *
+   * Разбор делегирован src/utils/formula.ts: там честный токенизатор и
+   * рекурсивный спуск, поэтому работают вложенные вызовы вроде
+   * =IF(A1>0,SUM(B1:B5),0), которые прежний разбор регулярками не тянул.
+   *
+   * Вычислитель кэшируется на набор строк: за один проход отрисовки лист
+   * обходится один раз, а не пересчитывается заново для каждой ячейки.
+   */
+  private evalFormula(formula: string, rows: CellData[][]): string {
+    return this.evaluatorFor(rows).evalToString(formula);
+  }
 
-    const cellVal=(r:number,c:number):number=>{
-      const cell=rows[r]?.[c]; const raw=cell?.v??'';
-      if(raw.startsWith('=')){const n=parseFloat(this.evalFormula(raw,rows,_depth+1));return isNaN(n)?0:n;}
-      const n=parseFloat(String(raw).replace(',','.')); return isNaN(n)?0:n;
-    };
-    const cellStr=(r:number,c:number):string=>{
-      const cell=rows[r]?.[c]; const raw=cell?.v??'';
-      if(raw.startsWith('=')) return this.evalFormula(raw,rows,_depth+1);
-      return raw;
-    };
-    const unquote=(s:string)=>s.replace(/^["']|["']$/g,'');
-    const parseRef=(s:string)=>{
-      const m=s.trim().toUpperCase().match(/^([A-Z]+)(\d+)$/);
-      return m?{r:+m[2]-1,c:this.letterToCol(m[1])}:null;
-    };
-
-    // ── VLOOKUP(lookup, table_range, col_index, [exact]) ──────────────────────
-    expr=expr.replace(/\bVLOOKUP\s*\(([^()]+)\)/gi,(_m,args)=>{
-      try{
-        const pts=args.split(',').map((s:string)=>s.trim()); if(pts.length<3) return '#N/A';
-        const lookupVal=unquote(pts[0]); const rangeM=pts[1].match(/([A-Z]+)(\d+):([A-Z]+)(\d+)/i); if(!rangeM) return '#N/A';
-        const c1n=this.letterToCol(rangeM[1]),r1n=+rangeM[2]-1,r2n=+rangeM[4]-1;
-        const colOffset=parseInt(pts[2])-1;
-        const exact=pts[3]?.trim()!=='FALSE';
-        const lNum=parseFloat(lookupVal);
-        for(let r=r1n;r<=r2n;r++){
-          const v=cellStr(r,c1n);
-          const match=exact?(v===lookupVal||(parseFloat(v)===lNum&&!isNaN(lNum))):v.toLowerCase().includes(lookupVal.toLowerCase());
-          if(match) return cellStr(r,c1n+colOffset);
-        }
-        return '#N/A';
-      }catch{return '#N/A';}
+  /** Вычислитель для набора строк; переиспользуется в пределах отрисовки. */
+  private evaluatorFor(rows: CellData[][]): Evaluator {
+    if (this.fxRows === rows && this.fxEval) return this.fxEval;
+    this.fxRows = rows;
+    this.fxEval = createEvaluator({
+      raw: (r, c) => rows[r]?.[c]?.v ?? '',
+      isNumeric: (r, c) => rows[r]?.[c]?.t === 'n',
     });
+    return this.fxEval;
+  }
 
-    // ── COUNTIF(range, criteria) ──────────────────────────────────────────────
-    expr=expr.replace(/\bCOUNTIF\s*\(([^()]+)\)/gi,(_m,args)=>{
-      try{
-        const pts=args.split(',').map((s:string)=>s.trim()); if(pts.length<2) return '0';
-        const rm=pts[0].match(/([A-Z]+)(\d+):([A-Z]+)(\d+)/i); if(!rm) return '0';
-        const c1n=this.letterToCol(rm[1]),r1n=+rm[2]-1,c2n=this.letterToCol(rm[3]),r2n=+rm[4]-1;
-        const crit=unquote(pts[1]); const opM=crit.match(/^([><=!]{1,2})(.*)/);
-        let cnt=0;
-        for(let r=r1n;r<=r2n;r++) for(let c=c1n;c<=c2n;c++){
-          const v=cellStr(r,c); const n=parseFloat(v); const cn=parseFloat(opM?opM[2]:crit);
-          if(opM){const op=opM[1];if(op==='>'&&n>cn)cnt++;else if(op==='>='&&n>=cn)cnt++;else if(op==='<'&&n<cn)cnt++;else if(op==='<='&&n<=cn)cnt++;else if((op==='<>'||op==='!=')&&v!==opM[2])cnt++;else if(op==='='&&v===opM[2])cnt++;}
-          else if(v===crit||(parseFloat(v)===parseFloat(crit)&&!isNaN(parseFloat(crit))))cnt++;
-        }
-        return String(cnt);
-      }catch{return '0';}
-    });
-
-    // ── SUMIF(range, criteria, sum_range) ─────────────────────────────────────
-    expr=expr.replace(/\bSUMIF\s*\(([^()]+)\)/gi,(_m,args)=>{
-      try{
-        const pts=args.split(',').map((s:string)=>s.trim()); if(pts.length<3) return '0';
-        const rm=pts[0].match(/([A-Z]+)(\d+):([A-Z]+)(\d+)/i); if(!rm) return '0';
-        const c1n=this.letterToCol(rm[1]),r1n=+rm[2]-1,r2n=+rm[4]-1;
-        const rm2=pts[2].match(/([A-Z]+)(\d+)/i); if(!rm2) return '0';
-        const sumC=this.letterToCol(rm2[1]);
-        const crit=unquote(pts[1]); const opM=crit.match(/^([><=!]{1,2})(.*)/);
-        let sum=0;
-        for(let r=r1n;r<=r2n;r++){
-          const v=cellStr(r,c1n); const n=parseFloat(v); const cn=parseFloat(opM?opM[2]:crit);
-          let match=false;
-          if(opM){const op=opM[1];if(op==='>'&&n>cn)match=true;else if(op==='>='&&n>=cn)match=true;else if(op==='<'&&n<cn)match=true;else if(op==='<='&&n<=cn)match=true;else if((op==='<>'||op==='!=')&&v!==opM[2])match=true;else if(op==='='&&v===opM[2])match=true;}
-          else if(v===crit||(parseFloat(v)===parseFloat(crit)&&!isNaN(parseFloat(crit))))match=true;
-          if(match) sum+=cellVal(r,sumC);
-        }
-        return String(sum);
-      }catch{return '0';}
-    });
-
-    // ── COUNTA, COUNTBLANK ────────────────────────────────────────────────────
-    expr=expr.replace(/\bCOUNTA\s*\(([^()]+)\)/gi,(_m,args)=>{
-      const rm=args.match(/([A-Z]+)(\d+):([A-Z]+)(\d+)/i); if(!rm) return '0';
-      const c1n=this.letterToCol(rm[1]),r1n=+rm[2]-1,c2n=this.letterToCol(rm[3]),r2n=+rm[4]-1;
-      let cnt=0; for(let r=r1n;r<=r2n;r++) for(let c=c1n;c<=c2n;c++) if(cellStr(r,c).trim()) cnt++;
-      return String(cnt);
-    });
-    expr=expr.replace(/\bCOUNTBLANK\s*\(([^()]+)\)/gi,(_m,args)=>{
-      const rm=args.match(/([A-Z]+)(\d+):([A-Z]+)(\d+)/i); if(!rm) return '0';
-      const c1n=this.letterToCol(rm[1]),r1n=+rm[2]-1,c2n=this.letterToCol(rm[3]),r2n=+rm[4]-1;
-      let cnt=0; for(let r=r1n;r<=r2n;r++) for(let c=c1n;c<=c2n;c++) if(!cellStr(r,c).trim()) cnt++;
-      return String(cnt);
-    });
-
-    // ── Text functions ────────────────────────────────────────────────────────
-    const resolveStr=(s:string)=>{ const ref=parseRef(s.trim()); return ref?cellStr(ref.r,ref.c):unquote(s.trim()); };
-    expr=expr.replace(/\bUPPER\s*\(([^()]*)\)/gi,(_m,a)=>resolveStr(a).toUpperCase());
-    expr=expr.replace(/\bLOWER\s*\(([^()]*)\)/gi,(_m,a)=>resolveStr(a).toLowerCase());
-    expr=expr.replace(/\bTRIM\s*\(([^()]*)\)/gi,(_m,a)=>resolveStr(a).trim().replace(/\s+/g,' '));
-    expr=expr.replace(/\bLEN\s*\(([^()]*)\)/gi,(_m,a)=>String(resolveStr(a).length));
-    expr=expr.replace(/\bLEFT\s*\(([^()]*)\)/gi,(_m,args)=>{
-      const pts=args.split(','); return resolveStr(pts[0]).slice(0,parseInt(pts[1]?.trim()??'1'));
-    });
-    expr=expr.replace(/\bRIGHT\s*\(([^()]*)\)/gi,(_m,args)=>{
-      const pts=args.split(','); return resolveStr(pts[0]).slice(-parseInt(pts[1]?.trim()??'1'));
-    });
-    expr=expr.replace(/\bMID\s*\(([^()]*)\)/gi,(_m,args)=>{
-      const pts=args.split(','); const s=resolveStr(pts[0]); const st=parseInt(pts[1]?.trim()??'1')-1; const ln=parseInt(pts[2]?.trim()??'1'); return s.slice(st,st+ln);
-    });
-    expr=expr.replace(/\bTEXT\s*\(([^()]*)\)/gi,(_m,args)=>{
-      const pts=args.split(','); const n_=parseFloat(resolveStr(pts[0])); const fmt_=unquote(pts[1]?.trim()??'');
-      if(isNaN(n_)) return resolveStr(pts[0]);
-      const dec=(fmt_.match(/\.([0#]+)/)?.[1]?.length)??0;
-      if(fmt_.includes('%')) return (n_*100).toFixed(dec)+'%';
-      return n_.toFixed(dec);
-    });
-    expr=expr.replace(/\bCONCATENATE\s*\(([^()]*)\)/gi,(_m,args)=>args.split(',').map((s:string)=>resolveStr(s)).join(''));
-
-    // ── & string concatenation: "A"&"B" or A1&B1 ─────────────────────────────
-    // Replace "str"&... patterns before cell-ref expansion
-    expr=expr.replace(/"([^"]*)"&"([^"]*)"/g,(_m,a_,b_)=>'"'+(a_+b_)+'"');
-
-    // ── IF / IFERROR ──────────────────────────────────────────────────────────
-    expr=expr.replace(/\bIF\s*\(([^()]+),([^()]+),([^()]*)\)/gi,(_m,cond,tv,fv)=>{
-      try{
-        const cc=cond.trim().replace(/([A-Z]+)(\d+)/gi,(_r:string,col:string,row:string)=>String(cellVal(+row-1,this.letterToCol(col))));
-        if(!/^[\d.+\-*/()<>=!&|\s]+$/.test(cc)) return '#ERR';
-        // eslint-disable-next-line no-new-func
-        return Function('"use strict";return('+cc+')')() ? unquote(tv.trim()) : unquote((fv??'').trim());
-      }catch{return '#ERR';}
-    });
-    expr=expr.replace(/\bIFERROR\s*\(([^()]+),([^()]*)\)/gi,(_m,val,errVal)=>{
-      const v=val.trim(); return(v.startsWith('#')||v==='NaN'||v==='Infinity')?unquote(errVal.trim()):v;
-    });
-
-    // ── Range → comma-separated values ───────────────────────────────────────
-    expr=expr.replace(/([A-Z]+)(\d+):([A-Z]+)(\d+)/gi,(_m,c1,r1,c2,r2)=>{
-      const cn1=this.letterToCol(c1),cn2=this.letterToCol(c2),rn1=+r1-1,rn2=+r2-1;
-      const vals:number[]=[];
-      for(let r=Math.min(rn1,rn2);r<=Math.max(rn1,rn2);r++)
-        for(let c=Math.min(cn1,cn2);c<=Math.max(cn1,cn2);c++) vals.push(cellVal(r,c));
-      return vals.join(',');
-    });
-    expr=expr.replace(/([A-Z]+)(\d+)/gi,(_m,col,row)=>String(cellVal(+row-1,this.letterToCol(col))));
-
-    // ── AND / OR / NOT ────────────────────────────────────────────────────────
-    expr=expr.replace(/\bAND\s*\(([^()]*)\)/gi,(_m,args)=>args.split(',').map((s:string)=>parseFloat(s.trim())).every((n:number)=>n!==0)?'1':'0');
-    expr=expr.replace(/\bOR\s*\(([^()]*)\)/gi,(_m,args)=>args.split(',').map((s:string)=>parseFloat(s.trim())).some((n:number)=>n!==0)?'1':'0');
-    expr=expr.replace(/\bNOT\s*\(([^()]*)\)/gi,(_m,a)=>parseFloat(a.trim())===0?'1':'0');
-
-    const applyFn=(name:string,fn:(a:number[])=>number)=>{
-      const re=new RegExp(`${name}\\s*\\(([^()]*)\\)`,'gi');
-      let prev='';
-      while(prev!==expr){prev=expr;expr=expr.replace(re,(_m,args)=>{
-        const list=String(args).split(',').map((s:string)=>parseFloat(s.trim())).filter((n:number)=>!isNaN(n));
-        return String(fn(list));
-      });}
-    };
-    applyFn('SUM',a=>a.reduce((s,v)=>s+v,0));
-    applyFn('AVERAGE',a=>a.length?a.reduce((s,v)=>s+v,0)/a.length:0);
-    applyFn('AVG',a=>a.length?a.reduce((s,v)=>s+v,0)/a.length:0);
-    applyFn('MIN',a=>a.length?Math.min(...a):0);
-    applyFn('MAX',a=>a.length?Math.max(...a):0);
-    applyFn('COUNT',a=>a.length);
-    applyFn('ABS',a=>Math.abs(a[0]??0));
-    applyFn('ROUND',a=>a[1]!=null?Math.round((a[0]??0)*Math.pow(10,a[1]))/Math.pow(10,a[1]):Math.round(a[0]??0));
-    applyFn('SQRT',a=>Math.sqrt(a[0]??0));
-    applyFn('POWER',a=>Math.pow(a[0]??0,a[1]??2));
-    applyFn('MOD',a=>(a[1]!=null&&a[1]!==0)?a[0]%a[1]:0);
-    applyFn('INT',a=>Math.floor(a[0]??0));
-    applyFn('FLOOR',a=>a[1]?Math.floor((a[0]??0)/a[1])*a[1]:Math.floor(a[0]??0));
-    applyFn('CEILING',a=>a[1]?Math.ceil((a[0]??0)/a[1])*a[1]:Math.ceil(a[0]??0));
-
-    // Strip remaining string literals
-    expr=expr.replace(/"[^"]*"/g,'0');
-
-    if(!/^[\d+\-*/().\s,eE]+$/.test(expr)){
-      // Return as string result (text functions produced it)
-      return expr.startsWith('#')?expr:expr;
-    }
-    try{
-      // eslint-disable-next-line no-new-func
-      const val=Function('"use strict";return('+expr+')')();
-      if(typeof val!=='number'||!isFinite(val)) return String(val??'');
-      return String(Math.round(val*1e10)/1e10);
-    }catch{return expr;}
+  /** Сбросить кэш формул — данные изменились. */
+  private invalidateFormulas(): void {
+    this.fxRows = null;
+    this.fxEval = null;
   }
 
 
@@ -4861,16 +5735,110 @@ ${sample || '  (нет строк)'}${dataRows.length > 30 ? `\n  ... ещё ${d
     return { summary: `Создан ${type === 'word' ? 'Word-документ' : 'Excel-файл'} «${title}» (id="${doc.id}").` };
   }
 
-  private aiDocsDelete(a: { docIds?: string[] | 'all'; names?: string[] }): AiActionResult {
-    let targets: DocItem[] = [];
-    if (a?.docIds === 'all') {
-      targets = [...this.docs];
-    } else if (Array.isArray(a?.docIds) && a.docIds.length > 0) {
-      targets = this.docs.filter(d => (a.docIds as string[]).includes(d.id));
-    } else if (Array.isArray(a?.names) && a.names.length > 0) {
+  /** Разрешить ссылки на документы в аргументах действия. Общая для показа и выполнения. */
+  private aiResolveDocs(a: { docIds?: string[] | 'all'; names?: string[] }): DocItem[] {
+    if (a?.docIds === 'all') return [...this.docs];
+    if (Array.isArray(a?.docIds) && a.docIds.length > 0)
+      return this.docs.filter(d => (a.docIds as string[]).includes(d.id));
+    if (Array.isArray(a?.names) && a.names.length > 0) {
       const lows = a.names.map(n => n.trim().toLowerCase());
-      targets = this.docs.filter(d => lows.some(l => d.title.trim().toLowerCase().includes(l)));
+      return this.docs.filter(d => lows.some(l => d.title.trim().toLowerCase().includes(l)));
     }
+    return [];
+  }
+
+  /**
+   * Что произойдёт, если выполнить разрушающее действие — текст карточки
+   * подтверждения. Считаем по реальным данным, чтобы пользователь видел
+   * «будет удалено 47 строк», а не общую фразу.
+   *
+   * Возвращает null, если действие не разрушающее или посчитать не вышло.
+   */
+  aiPreviewDestructive(name: string, args: any): string | null {
+    const a = args ?? {};
+    try {
+      switch (name) {
+        case 'docs_delete': {
+          const t = this.aiResolveDocs(a);
+          if (!t.length) return null;
+          return `Будут удалены документы (${t.length}): ${t.map(d => `«${d.title}»`).join(', ')}.\n`
+            + 'Удаление документа необратимо — отменить нельзя.';
+        }
+        case 'docs_clear_content': {
+          const t = this.aiResolveDocs(a);
+          if (!t.length) return null;
+          return `Будет стёрто всё содержимое документов (${t.length}): `
+            + `${t.map(d => `«${d.title}»`).join(', ')}.\nСами документы останутся, но станут пустыми.`;
+        }
+        case 'excel_delete_sheet': {
+          const s = this.aiSheet();
+          if (!s) return null;
+          const target = a.name
+            ? s.ec.sheets.find(sh => sh.name.toLowerCase() === String(a.name).trim().toLowerCase())
+            : s.sheet;
+          if (!target) return null;
+          const rows = target.data.filter(r => r.some(c => (c.v || '').trim())).length;
+          return `Будет удалён лист «${target.name}» вместе с данными (${rows} заполненных строк).\n`
+            + `Останется листов: ${s.ec.sheets.length - 1}.`;
+        }
+        case 'excel_delete_rows': {
+          const s = this.aiSheet();
+          if (!s) return null;
+          const n = this.aiCountRowsToDelete(s.sheet, a);
+          if (n == null) return null;
+          return `Будет удалено строк: ${n} из листа «${s.sheet.name}».`;
+        }
+        case 'multi_replace': {
+          const t = this.aiResolveDocs(a);
+          const docs = t.length ? t : this.docs;
+          const find = String(a.find ?? '');
+          if (!find) return null;
+          let hits = 0, touched = 0;
+          for (const d of docs) {
+            const hay = a.caseSensitive ? d.content : d.content.toLowerCase();
+            const nee = a.caseSensitive ? find : find.toLowerCase();
+            const c = hay.split(nee).length - 1;
+            if (c > 0) { hits += c; touched++; }
+          }
+          return `Замена «${find}» → «${a.replaceWith ?? ''}» затронет `
+            + `${hits} вхождений в ${touched} документах.`;
+        }
+        case 'word_set_content': {
+          const doc = this.aiDoc();
+          if (!doc || doc.type !== 'word') return null;
+          if (a.append) return null;   // дописывание в конец ничего не рушит
+          const len = doc.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length;
+          return `Содержимое документа «${doc.title}» будет полностью заменено.\n`
+            + `Текущий текст (${len} символов) и всё его оформление будут потеряны.`;
+        }
+        default: return null;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  /** Сколько строк попадёт под excel_delete_rows — по тем же правилам, что и удаление. */
+  private aiCountRowsToDelete(sheet: SheetData, a: any): number | null {
+    if (Array.isArray(a?.rows) && a.rows.length) {
+      return a.rows.filter((r: number) => r >= 1 && r <= sheet.data.length).length;
+    }
+    if (a?.column && a?.value_filter != null) {
+      const c = this.aiResolveCol(sheet, String(a.column));
+      if (c < 0) return null;
+      const pred = this.aiCriteria(String(a.value_filter));
+      const start = a.skipHeader === false ? 0 : 1;
+      let n = 0;
+      for (let r = start; r < sheet.data.length; r++) {
+        if (pred(this.aiCellText(sheet, r, c))) n++;
+      }
+      return n;
+    }
+    return null;
+  }
+
+  private aiDocsDelete(a: { docIds?: string[] | 'all'; names?: string[] }): AiActionResult {
+    const targets = this.aiResolveDocs(a);
     if (!targets.length) throw new Error('Документы не найдены. Проверь id или названия через describe().');
     const names = targets.map(d => `«${d.title}»`).join(', ');
     for (const doc of targets) {
