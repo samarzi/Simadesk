@@ -574,8 +574,8 @@ const HOME_ACTIONS: AiAction[] = [
       const oos = stockItems.filter((i: any) => (i.stockTotal ?? 0) === 0).slice(0, 5);
       for (const item of oos) {
         await taskDb.createTask({
-          title: `OOS: пополнить «${String(item.name || item.offerId).slice(0, 50)}»`,
-          description: `Товар закончился на складе (${item.mp ?? 'МП'}). Срочно заказать у поставщика.`,
+          title: `OOS: пополнить ${productLabel(item.offerId ?? item.article, item.name)}`,
+          description: `Артикул: ${item.offerId ?? item.article ?? '—'}\nТовар: ${item.name ?? '—'}\nМаркетплейс: ${item.mp ?? '—'}\n\nТовар закончился на складе. Срочно заказать у поставщика.`,
           status: 'todo', priority: 'red', scheduled_date: null,
           due_date: null, due_time: null, end_time: null, all_day: true,
           tags: 'Сима,OOS', sort_order: 9999, parent_id: null, assignee_id: null,
@@ -1151,8 +1151,8 @@ const PRODUCERS_ACTIONS: AiAction[] = [
       let created = 0;
       for (const item of critical.slice(0, 10)) {
         await taskDb.createTask({
-          title: `Заказ поставщику: «${String(item.name || item.offerId).slice(0, 40)}»`,
-          description: `Остаток: ${item.stockTotal ?? 0} ед. (${item.mp ?? 'МП'}). Необходимо пополнить запас.`,
+          title: `Заказ поставщику: ${productLabel(item.offerId ?? item.article, item.name, 40)}`,
+          description: `Артикул: ${item.offerId ?? item.article ?? '—'}\nТовар: ${item.name ?? '—'}\nМаркетплейс: ${item.mp ?? '—'}\nОстаток: ${item.stockTotal ?? 0} ед.\n\nНеобходимо пополнить запас.`,
           status: 'todo', priority: item.stockTotal === 0 ? 'red' : 'yellow',
           scheduled_date: null, due_date: null, due_time: null, end_time: null,
           all_day: true, tags: 'Сима,Поставка', sort_order: 9999, parent_id: null, assignee_id: null,
@@ -1508,6 +1508,32 @@ function mpPatchCachedProduct(
   }
 }
 
+/** Русское склонление после числа: 1 позиция, 2 позиции, 5 позиций. */
+export function plural(n: number, one: string, few: string, many: string): string {
+  const abs = Math.abs(n) % 100;
+  const last = abs % 10;
+  if (abs > 10 && abs < 20) return `${n} ${many}`;
+  if (last > 1 && last < 5) return `${n} ${few}`;
+  if (last === 1) return `${n} ${one}`;
+  return `${n} ${many}`;
+}
+
+/**
+ * Подпись товара для задач и отчётов: АРТИКУЛ первым, затем название.
+ *
+ * По названию товар не найти ни в кабинете маркетплейса, ни у поставщика —
+ * работают по артикулу. Поэтому в заголовке задачи он должен стоять первым и
+ * не обрезаться, а название лишь поясняет, о чём речь.
+ */
+export function productLabel(article: unknown, name: unknown, maxName = 45): string {
+  const a = String(article ?? '').trim();
+  const n = String(name ?? '').trim();
+  const shortName = n.length > maxName ? n.slice(0, maxName).trimEnd() + '…' : n;
+  if (a && a !== '—' && shortName) return `[${a}] ${shortName}`;
+  if (a && a !== '—') return `[${a}]`;
+  return shortName || '—';
+}
+
 interface OosRow { mp: string; article: string; name: string }
 
 /**
@@ -1719,20 +1745,24 @@ export function installGlobalAiActions(): void {
       for (const [mp, list] of byMp) {
         const label = MP_LABEL[mp as MpKind] ?? mp;
         const shown = list.slice(0, 50);
-        const lines = shown.map(r => `• [${r.article}] ${String(r.name).slice(0, 60)}`).join('\n');
-        const more = list.length > shown.length ? `\n…и ещё ${list.length - shown.length} позиций.` : '';
+        const lines = shown.map(r => `• ${productLabel(r.article, r.name, 60)}`).join('\n');
+        const more = list.length > shown.length ? `\n…и ещё ${list.length - shown.length}.` : '';
+        // Одна позиция — артикул выносим прямо в заголовок: по нему товар и ищут.
+        const title = list.length === 1
+          ? `OOS: пополнить ${productLabel(list[0].article, list[0].name)} — ${label}`
+          : `Пополнить ${plural(list.length, 'товар', 'товара', 'товаров')} без остатка — ${label}`;
         await taskDb.createTask({
-          title: `Пополнить ${list.length} товаров без остатка — ${label}`,
-          description: `Проверка Симы от ${today}. Нулевой остаток на ${label}: ${list.length} позиций.\n\n${lines}${more}`,
+          title,
+          description: `Проверка Симы от ${today}. Нулевой остаток на ${label}: ${plural(list.length, 'позиция', 'позиции', 'позиций')}.\n\n${lines}${more}`,
           status: 'todo', priority: 'red', scheduled_date: null,
           due_date: null, due_time: null, end_time: null, all_day: true,
           tags: 'Сима,OOS', sort_order: 9999, parent_id: null, assignee_id: null,
         });
-        created.push(`${label} — ${list.length} позиций`);
+        created.push(`${label} — ${plural(list.length, 'позиция', 'позиции', 'позиций')}`);
       }
 
       w().taskManagerModule?.load?.();
-      return `Создано ${created.length} ${created.length === 1 ? 'задача' : 'задачи'} (по одной на маркетплейс), всего ${rows.length} позиций:\n${created.map(c => `• ${c}`).join('\n')}`;
+      return `Создано ${plural(created.length, 'задача', 'задачи', 'задач')} (по одной на маркетплейс), всего ${plural(rows.length, 'позиция', 'позиции', 'позиций')}:\n${created.map(c => `• ${c}`).join('\n')}`;
     },
   });
 
