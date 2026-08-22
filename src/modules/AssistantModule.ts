@@ -2,9 +2,9 @@ import '@/styles/assistant.css';
 import { showToast } from '@/utils/toast';
 import { edgeTtsSpeak, edgeTtsStop, edgeTtsUnlock } from '@/services/edgeTts';
 import { TtsStreamSession } from '@/services/ttsStream';
-import { CONFIRM_REQUIRED_ACTIONS, describePendingAction } from '@/services/aiActionPolicy';
+import { CONFIRM_REQUIRED_ACTIONS, PREVIEW_REQUIRED_ACTIONS, describePendingAction } from '@/services/aiActionPolicy';
 import { aiPage, aiGlow } from '@/services/aiPageContext';
-import { installGlobalAiActions, StoreAmbiguousError, MP_LABEL } from '@/services/aiPageCapabilities';
+import { installGlobalAiActions, StoreAmbiguousError, ProductAmbiguousError, MP_LABEL, getChangePreview } from '@/services/aiPageCapabilities';
 import { changeLog } from '@/modules/LogsModule';
 import { esc } from '@/utils/format';
 import { supportChatService, supportErrorText, SupportMessage, SupportAttachment, SUPPORT_REASONS } from '@/services/supportChatService';
@@ -6044,6 +6044,57 @@ export class AssistantModule {
     this.scrollToBottom();
   }
 
+  /** Карточка выбора при неоднозначном товаре — несколько совпадений под одним артикулом. */
+  private addProductSelectionCard(
+    err: ProductAmbiguousError,
+    actionName: string,
+    args: any,
+    requestText: string,
+  ): void {
+    if (!this.messagesEl) return;
+    const el = document.createElement('div');
+    el.className = 'sd-ap-msg assistant';
+    const fmtRub = (n: number | null) => n != null ? `${n}₽` : '—';
+    const btns = err.hits.map((h, i) =>
+      `<button class="sd-ap-store-btn" data-idx="${i}">` +
+      `<span class="sd-ap-product-btn-art">[${h.article.replace(/</g, '&lt;')}]</span> ` +
+      `${h.name.slice(0, 40).replace(/</g, '&lt;')} · ${MP_LABEL[h.mp]} «${h.storeName.replace(/</g, '&lt;')}» · ${fmtRub(h.price)} · ${h.stock ?? '—'} шт` +
+      `</button>`
+    ).join('');
+    el.innerHTML = `
+      <div class="sd-ap-msg-avatar">С</div>
+      <div class="sd-ap-msg-bubble">
+        <div class="sd-ap-plan-card">
+          <div class="sd-ap-plan-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            </svg>
+            Несколько совпадений — выбери товар
+          </div>
+          <div class="sd-ap-plan-body">Под этим артикулом найдено несколько позиций:</div>
+          <div class="sd-ap-store-btns">${btns}</div>
+        </div>
+      </div>`;
+
+    el.querySelectorAll<HTMLButtonElement>('.sd-ap-store-btn').forEach((btn, i) => {
+      btn.addEventListener('click', async () => {
+        el.querySelectorAll<HTMLButtonElement>('.sd-ap-store-btn').forEach(b => { b.disabled = true; });
+        btn.textContent = '✓ ' + btn.textContent;
+        const hit = err.hits[i];
+        this.agentSteps = 0;
+        this.agentCalls.clear();
+        await this.executePageAction(
+          actionName,
+          { ...args, article: hit.article, store: hit.storeName },
+          requestText, el, true,
+        );
+      });
+    });
+
+    this.messagesEl.appendChild(el);
+    this.scrollToBottom();
+  }
+
   /** Выполнить подтверждённое page_action: glow + run + log + follow-up. */
   private async executePageAction(
     name: string,
@@ -6061,6 +6112,22 @@ export class AssistantModule {
       this.setStatus('Готова');
       this.saveSession();
       return;
+    }
+    // Предпросмотр «было → станет» только на прямом запросе (не в цепочке шагов).
+    if (!confirmed && this.agentSteps === 0 && PREVIEW_REQUIRED_ACTIONS.has(name)) {
+      const preview = await getChangePreview(name, args);
+      if (preview) {
+        planCardEl?.remove();
+        const isStock = name === 'mp_update_stock';
+        const dir = preview.curValue != null
+          ? `${preview.curValue} ${preview.unit} → ${preview.newValue} ${preview.unit}`
+          : `→ ${preview.newValue} ${preview.unit}`;
+        const desc = `[${args.article ?? '?'}] ${preview.label}\n${isStock ? 'Остаток' : 'Цена'}: ${dir}`;
+        this.addActionPlanCard(name, args, desc, requestText);
+        this.setStatus('Готова');
+        this.saveSession();
+        return;
+      }
     }
     // Показываем номер шага: многошаговая работа иначе неотличима от зависания.
     const stepLabel = this.agentSteps > 0
@@ -6085,6 +6152,13 @@ export class AssistantModule {
         this.setStatus('Готова');
         aiGlow(false);
         this.addStoreSelectionCard(e, name, args, requestText);
+        return;
+      }
+      if (e instanceof ProductAmbiguousError) {
+        planCardEl?.remove();
+        this.setStatus('Готова');
+        aiGlow(false);
+        this.addProductSelectionCard(e, name, args, requestText);
         return;
       }
       resultMsg = `Не удалось выполнить: ${(e instanceof Error ? e.message : String(e)) ?? e}`;

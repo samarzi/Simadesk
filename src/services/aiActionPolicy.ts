@@ -18,6 +18,15 @@
  * Точечные изменения сюда НЕ входят: пользователь называет конкретный артикул
  * или задачу, объём предсказуем, а результат обратим через «отмени».
  */
+/**
+ * Точечные изменения: перед выполнением показываем «было → станет» и просим
+ * подтвердить. Только когда пользователь явно просит (agentSteps === 0).
+ * В середине агент-цепочки пропускаем — иначе каждый шаг прерывается.
+ */
+export const PREVIEW_REQUIRED_ACTIONS = new Set<string>([
+  'mp_update_stock', 'mp_update_price',
+]);
+
 export const CONFIRM_REQUIRED_ACTIONS = new Set<string>([
   // массовое создание задач
   'create_oos_tasks', 'create_daily_brief', 'create_urgent_orders_task',

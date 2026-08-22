@@ -1230,6 +1230,7 @@ html.light .sd-ap-msg-bubble pre { background: rgba(20, 10, 40, 0.05); }
 }
 .sd-ap-store-btn:hover:not(:disabled) { background: var(--ap-accent-str); color: #fff; }
 .sd-ap-store-btn:disabled { opacity: 0.55; cursor: default; }
+.sd-ap-product-btn-art { font-weight: 700; margin-right: 2px; }
 
 /* Chain action steps */
 .sd-ap-chain-steps {

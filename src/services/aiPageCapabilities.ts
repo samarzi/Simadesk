@@ -1424,6 +1424,54 @@ export class StoreAmbiguousError extends Error {
   }
 }
 
+/** Несколько товаров подходят под запрос — пользователь должен выбрать. */
+export interface ProductAmbiguousHit {
+  mp: MpKind;
+  storeName: string;
+  article: string;
+  name: string;
+  price: number | null;
+  stock: number | null;
+}
+export class ProductAmbiguousError extends Error {
+  constructor(public readonly hits: ProductAmbiguousHit[]) {
+    super('ProductAmbiguous');
+    this.name = 'ProductAmbiguousError';
+  }
+}
+
+/**
+ * Текущие значения товара из кеша — для предпросмотра «было → станет».
+ * Возвращает null если товар не найден (best-effort, не блокирует действие).
+ */
+export async function getChangePreview(
+  name: string,
+  args: { article?: string; mp?: string; stock?: number; price?: number },
+): Promise<{ label: string; curValue: number | null; newValue: number; unit: string } | null> {
+  if (name !== 'mp_update_stock' && name !== 'mp_update_price') return null;
+  const mp = args.mp as MpKind;
+  if (!['ozon', 'wb', 'yandex'].includes(mp) || !args.article) return null;
+  try {
+    const products = await mpProducts(mp);
+    const q = String(args.article).toLowerCase().trim();
+    const hit = products.find(p => {
+      const a = String(p.offer_id ?? p.vendor_code ?? '').toLowerCase();
+      return a === q;
+    });
+    if (!hit) return null;
+    const label = String(hit.name ?? hit.title ?? args.article).slice(0, 50);
+    if (name === 'mp_update_stock') {
+      const cur = (p => {
+        const n = (p.stock_fbs ?? 0) + (p.stock_fbo ?? 0);
+        return n > 0 ? n : (p.stock_total ?? p.stock_fbs ?? null);
+      })(hit);
+      return { label, curValue: cur, newValue: Number(args.stock), unit: 'шт' };
+    }
+    const cur = hit.price ?? hit.basic_price ?? hit.offer_price ?? null;
+    return { label, curValue: cur, newValue: Number(args.price), unit: '₽' };
+  } catch { return null; }
+}
+
 export const MP_LABEL: Record<MpKind, string> = {
   ozon: 'Ozon', wb: 'Wildberries', yandex: 'Яндекс Маркет',
 };
@@ -2350,7 +2398,10 @@ export function installGlobalAiActions(): void {
     const best = hits[0];
     const ties = hits.filter(h => h.score === best.score);
     if (ties.length > 1) {
-      throw new Error(`Под «${article}» в ${MP_LABEL[mp]} подходит несколько товаров:\n${ties.map(h => '• ' + fmtHit(h)).join('\n')}\nУточни точный артикул или магазин.`);
+      throw new ProductAmbiguousError(ties.map(h => ({
+        mp: h.mp, storeName: h.storeName, article: h.article,
+        name: h.name, price: h.price, stock: h.stock,
+      })));
     }
     return best;
   }
