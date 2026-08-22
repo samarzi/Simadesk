@@ -4,7 +4,7 @@ import { edgeTtsSpeak, edgeTtsStop, edgeTtsUnlock } from '@/services/edgeTts';
 import { TtsStreamSession } from '@/services/ttsStream';
 import { CONFIRM_REQUIRED_ACTIONS, describePendingAction } from '@/services/aiActionPolicy';
 import { aiPage, aiGlow } from '@/services/aiPageContext';
-import { installGlobalAiActions } from '@/services/aiPageCapabilities';
+import { installGlobalAiActions, StoreAmbiguousError, MP_LABEL } from '@/services/aiPageCapabilities';
 import { changeLog } from '@/modules/LogsModule';
 import { esc } from '@/utils/format';
 import { supportChatService, supportErrorText, SupportMessage, SupportAttachment, SUPPORT_REASONS } from '@/services/supportChatService';
@@ -5997,6 +5997,53 @@ export class AssistantModule {
     this.scrollToBottom();
   }
 
+  /**
+   * Показать карточку выбора магазина, когда несколько магазинов подходят под запрос.
+   * После выбора действие перезапускается с явным именем магазина.
+   */
+  private addStoreSelectionCard(
+    err: StoreAmbiguousError,
+    actionName: string,
+    args: any,
+    requestText: string,
+  ): void {
+    if (!this.messagesEl) return;
+    const mpLabel = MP_LABEL[err.mp] ?? err.mp;
+    const el = document.createElement('div');
+    el.className = 'sd-ap-msg assistant';
+    const btns = err.stores
+      .map(s => `<button class="sd-ap-store-btn" data-store="${s.name.replace(/"/g, '&quot;')}">${s.name.replace(/</g, '&lt;')}</button>`)
+      .join('');
+    el.innerHTML = `
+      <div class="sd-ap-msg-avatar">С</div>
+      <div class="sd-ap-msg-bubble">
+        <div class="sd-ap-plan-card">
+          <div class="sd-ap-plan-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/>
+            </svg>
+            В каком магазине ${mpLabel}?
+          </div>
+          <div class="sd-ap-plan-body">У тебя несколько магазинов. Выбери, в каком выполнить операцию:</div>
+          <div class="sd-ap-store-btns">${btns}</div>
+        </div>
+      </div>`;
+
+    el.querySelectorAll<HTMLButtonElement>('.sd-ap-store-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        el.querySelectorAll<HTMLButtonElement>('.sd-ap-store-btn').forEach(b => { b.disabled = true; });
+        btn.textContent = btn.textContent + ' ✓';
+        const store = btn.dataset.store!;
+        this.agentSteps = 0;
+        this.agentCalls.clear();
+        await this.executePageAction(actionName, { ...args, store }, requestText, el, true);
+      });
+    });
+
+    this.messagesEl.appendChild(el);
+    this.scrollToBottom();
+  }
+
   /** Выполнить подтверждённое page_action: glow + run + log + follow-up. */
   private async executePageAction(
     name: string,
@@ -6033,6 +6080,13 @@ export class AssistantModule {
         undo: res.undo,
       });
     } catch (e: unknown) {
+      if (e instanceof StoreAmbiguousError) {
+        planCardEl?.remove();
+        this.setStatus('Готова');
+        aiGlow(false);
+        this.addStoreSelectionCard(e, name, args, requestText);
+        return;
+      }
       resultMsg = `Не удалось выполнить: ${(e instanceof Error ? e.message : String(e)) ?? e}`;
       changeLog.logAction({
         category: 'ai',

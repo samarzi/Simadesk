@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mpResolveStore, mpMatchScore, MP_LABEL } from '@/services/aiPageCapabilities';
+import { mpResolveStore, mpMatchScore, MP_LABEL, StoreAmbiguousError } from '@/services/aiPageCapabilities';
 
 const S = (id: string, name: string) => ({ id, name });
 
@@ -8,10 +8,15 @@ describe('mpResolveStore — выбор магазина для операций
     expect(mpResolveStore([S('1', 'Основной')], undefined, 'ozon').id).toBe('1');
   });
 
-  it('несколько магазинов без подсказки — ошибка со списком имён', () => {
+  it('несколько магазинов без подсказки — StoreAmbiguousError с перечнем магазинов', () => {
     const stores = [S('1', 'Основной'), S('2', 'Электроника')];
-    expect(() => mpResolveStore(stores, undefined, 'yandex'))
-      .toThrow(/несколько магазинов Яндекс Маркет.*Основной.*Электроника/s);
+    let err: unknown;
+    try { mpResolveStore(stores, undefined, 'yandex'); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(StoreAmbiguousError);
+    const ambig = err as StoreAmbiguousError;
+    expect(ambig.mp).toBe('yandex');
+    expect(ambig.stores.map(s => s.name)).toContain('Основной');
+    expect(ambig.stores.map(s => s.name)).toContain('Электроника');
   });
 
   it('подсказка выбирает магазин по части имени, без учёта регистра', () => {
@@ -25,10 +30,16 @@ describe('mpResolveStore — выбор магазина для операций
     expect(mpResolveStore(stores, 'Склад', 'ozon').id).toBe('1');
   });
 
-  it('неоднозначная подсказка — ошибка перечисляет только подходящие', () => {
+  it('неоднозначная подсказка — StoreAmbiguousError перечисляет только подходящие', () => {
     const stores = [S('1', 'Склад Москва'), S('2', 'Склад Питер'), S('3', 'Розница')];
-    expect(() => mpResolveStore(stores, 'склад', 'ozon')).toThrow(/Склад Москва.*Склад Питер/s);
-    expect(() => mpResolveStore(stores, 'склад', 'ozon')).not.toThrow(/Розница/);
+    let err: unknown;
+    try { mpResolveStore(stores, 'склад', 'ozon'); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(StoreAmbiguousError);
+    const ambig = err as StoreAmbiguousError;
+    const names = ambig.stores.map(s => s.name);
+    expect(names).toContain('Склад Москва');
+    expect(names).toContain('Склад Питер');
+    expect(names).not.toContain('Розница');
   });
 
   it('несуществующий магазин — ошибка перечисляет доступные', () => {

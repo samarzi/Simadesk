@@ -1408,6 +1408,22 @@ let installed = false;
 // ── Хелперы прямых операций на маркетплейсах ─────────────────────────────────
 
 export type MpKind = 'ozon' | 'wb' | 'yandex';
+
+/**
+ * Специальная ошибка: несколько магазинов подходят под запрос.
+ * executePageAction перехватывает её и показывает UI-карточку выбора,
+ * а не отдаёт текст ошибки модели — та потом переспрашивала бы в чате.
+ */
+export class StoreAmbiguousError extends Error {
+  constructor(
+    public readonly stores: Array<{ id: string; name: string }>,
+    public readonly mp: MpKind,
+  ) {
+    super(`StoreAmbiguous:${mp}`);
+    this.name = 'StoreAmbiguousError';
+  }
+}
+
 export const MP_LABEL: Record<MpKind, string> = {
   ozon: 'Ozon', wb: 'Wildberries', yandex: 'Яндекс Маркет',
 };
@@ -1428,13 +1444,11 @@ export function mpResolveStore<T extends { id: string; name: string }>(
     if (exact.length === 1) return exact[0];
     const partial = stores.filter(s => s.name.toLowerCase().includes(h));
     if (partial.length === 1) return partial[0];
-    if (partial.length > 1) {
-      throw new Error(`Под «${hint}» подходит несколько магазинов ${label}: ${partial.map(s => `«${s.name}»`).join(', ')}. Уточни название точнее.`);
-    }
+    if (partial.length > 1) throw new StoreAmbiguousError(partial, mp);
     throw new Error(`Магазин «${hint}» не найден среди ${label}. Доступные: ${stores.map(s => `«${s.name}»`).join(', ')}.`);
   }
   if (stores.length === 1) return stores[0];
-  throw new Error(`У тебя несколько магазинов ${label}: ${stores.map(s => `«${s.name}»`).join(', ')}. Уточни, в каком выполнить операцию.`);
+  throw new StoreAmbiguousError(stores, mp);
 }
 
 /**

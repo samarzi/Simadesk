@@ -1209,6 +1209,28 @@ html.light .sd-ap-msg-bubble pre { background: rgba(20, 10, 40, 0.05); }
 }
 .sd-ap-clarify-opt:hover { background: var(--ap-accent-str); color: #fff; }
 
+/* Store selection card */
+.sd-ap-store-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 4px 11px 10px;
+}
+.sd-ap-store-btn {
+  padding: 5px 14px;
+  border: 1px solid var(--ap-accent);
+  border-radius: 20px;
+  background: var(--ap-accent-soft);
+  color: var(--ap-accent);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+.sd-ap-store-btn:hover:not(:disabled) { background: var(--ap-accent-str); color: #fff; }
+.sd-ap-store-btn:disabled { opacity: 0.55; cursor: default; }
+
 /* Chain action steps */
 .sd-ap-chain-steps {
   padding: 8px 11px 10px;
