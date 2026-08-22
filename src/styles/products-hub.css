@@ -1524,18 +1524,18 @@ html.light .cmp-mp-badge--yandex { background: rgba(255,176,0,.15); color: #8a68
 .cmp-btn:hover:not(:disabled) { background: var(--bg3); color: var(--text1); }
 .cmp-btn:disabled { opacity: .5; cursor: not-allowed; }
 .cmp-btn-primary {
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: #0a0a0a;
   border-color: var(--accent);
 }
-.cmp-btn-primary:hover:not(:disabled) { filter: brightness(1.1); background: var(--accent); color: #fff; }
+.cmp-btn-primary:hover:not(:disabled) { filter: brightness(1.1); background: var(--accent); color: #0a0a0a; }
 .cmp-btn-sm { font-size: 11px; padding: 3px 10px; }
 
 /* ── Small spinner ───────────────────────────────────────────────── */
 .cmp-spinner-sm {
   display: inline-block;
   width: 12px; height: 12px;
-  border: 2px solid rgba(255,255,255,.35);
-  border-top-color: #fff;
+  border: 2px solid rgba(0,0,0,.2);
+  border-top-color: #0a0a0a;
   border-radius: 50%;
   animation: spin .6s linear infinite;
   vertical-align: middle;
@@ -1755,7 +1755,7 @@ textarea.cmp-edit-input { resize: vertical; min-height: 70px; }
   cursor: pointer; transition: background .13s, color .13s;
 }
 .cmp-photo-add-tab.active, .cmp-photo-add-tab:hover {
-  background: var(--accent); color: #fff; border-color: var(--accent);
+  background: var(--accent); color: #0a0a0a; border-color: var(--accent);
 }
 .cmp-photo-add-url {
   display: flex; gap: 6px; align-items: center;
@@ -1818,13 +1818,15 @@ textarea.cmp-edit-input { resize: vertical; min-height: 70px; }
   cursor: pointer;
 }
 .cmp-btn-xs.cmp-btn-primary {
-  background: var(--accent); border-color: var(--accent); color: #fff;
+  background: var(--accent); border-color: var(--accent); color: #0a0a0a;
 }
 
 /* ── Completeness indicator ──────────────────────────────────────── */
 .ph-completeness {
-  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
-  cursor: help;
+  margin-bottom: 6px;
+}
+.ph-completeness-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 5px;
 }
 .ph-completeness-label {
   font-size: 10px; color: var(--text3); white-space: nowrap; flex-shrink: 0;
@@ -1834,6 +1836,22 @@ textarea.cmp-edit-input { resize: vertical; min-height: 70px; }
 }
 .ph-completeness-fill {
   height: 100%; border-radius: 2px; transition: width .3s;
+}
+.ph-completeness-chips {
+  display: flex; flex-wrap: wrap; gap: 3px;
+}
+.ph-completeness-chip {
+  font-size: 10px; padding: 1px 6px; border-radius: 4px;
+  white-space: nowrap; font-weight: 500;
+}
+.ph-completeness-chip.done {
+  background: rgba(34,197,94,.12); color: #16a34a;
+}
+html.dark .ph-completeness-chip.done {
+  background: rgba(34,197,94,.14); color: #4ade80;
+}
+.ph-completeness-chip.miss {
+  background: var(--border); color: var(--text3);
 }
 
 /* ── Sparkline ───────────────────────────────────────────────────── */

@@ -717,6 +717,31 @@ const TASKS_ACTIONS: AiAction[] = [
       };
     },
   },
+  {
+    name: 'delete_all_tasks',
+    description: 'Удалить ВСЕ задачи или задачи по ключевому слову (filter). Используй только когда пользователь явно просит удалить все задачи или все задачи определённого типа (например, все OOS-задачи).',
+    args: '{ filter?: string }',
+    run: async (a: { filter?: string }) => {
+      const tm = w().taskManagerModule;
+      const allTasks: any[] = tm?.tasks ?? [];
+      const needle = (a.filter || '').toLowerCase().trim();
+      const targets = needle
+        ? allTasks.filter(t => t.title.toLowerCase().includes(needle))
+        : allTasks;
+      if (targets.length === 0) {
+        throw new Error(needle ? `Задачи со словом «${a.filter}» не найдены` : 'Задач нет');
+      }
+      const { taskDb } = await import('@/services/taskDb');
+      const snapshots = targets.map(t => ({ ...t }));
+      await Promise.all(targets.map(t => taskDb.deleteTask(t.id)));
+      tm?.load?.();
+      const label = needle ? `задачи «${a.filter}» (${targets.length} шт.)` : `все задачи (${targets.length} шт.)`;
+      return {
+        summary: `Удалено задач: ${targets.length}${needle ? ` (фильтр: «${a.filter}»)` : ''}`,
+        undo: { kind: 'task_bulk_restore', payload: snapshots, label },
+      };
+    },
+  },
 ];
 
 // ── AI helper: генерация ответа на отзыв ──────────────────────────────────────
@@ -1709,6 +1734,20 @@ export function installGlobalAiActions(): void {
       body: JSON.stringify({ ...p, company_id: cid }),
       headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal', 'Content-Type': 'application/json' },
     });
+    w().taskManagerModule?.load?.();
+  });
+
+  // Восстановление пачки удалённых задач (delete_all_tasks).
+  registerUndoHandler('task_bulk_restore', async (snapshots: Record<string, any>[]) => {
+    const { dbFetch } = await import('@/services/dbClient');
+    const { companyService } = await import('@/services/companyService');
+    const cid = companyService.getActiveId();
+    if (!cid) throw new Error('Не выбрана компания');
+    await Promise.all(snapshots.map(p => dbFetch('tasks', {
+      method: 'POST',
+      body: JSON.stringify({ ...p, company_id: cid }),
+      headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal', 'Content-Type': 'application/json' },
+    })));
     w().taskManagerModule?.load?.();
   });
 

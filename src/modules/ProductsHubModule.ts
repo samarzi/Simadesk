@@ -1366,7 +1366,7 @@ export class ProductsHubModule {
     // Проверка устаревших данных (>7 дней без синхронизации)
     const STALE_MS = 7 * 24 * 3600 * 1000;
     const staleStores = p.mp_entries.filter(e => {
-      const t = catalogCache.getSyncedAt(e.store_id);
+      const t = catalogCache.getSyncedAt(e.store_id) ?? this.storeSyncedAt.get(e.store_id) ?? null;
       return !t || (Date.now() - new Date(t).getTime() > STALE_MS);
     });
     if (staleStores.length) {
@@ -1394,9 +1394,14 @@ export class ProductsHubModule {
     const totalCount = criteria.length;
     const pct = Math.round((doneCount / totalCount) * 100);
     const completenessColor = pct >= 80 ? 'var(--green,#22c55e)' : pct >= 50 ? 'var(--yellow,#eab308)' : 'var(--red,#ef4444)';
-    const completenessBar = `<div class="ph-completeness" title="${criteria.filter(([,v])=>!v).map(([l])=>l).join(', ') || 'Всё заполнено'}">
-      <div class="ph-completeness-label">${doneCount}/${totalCount} заполнено</div>
-      <div class="ph-completeness-track"><div class="ph-completeness-fill" style="width:${pct}%;background:${completenessColor}"></div></div>
+    const completenessBar = `<div class="ph-completeness">
+      <div class="ph-completeness-header">
+        <div class="ph-completeness-label">${doneCount}/${totalCount} заполнено</div>
+        <div class="ph-completeness-track"><div class="ph-completeness-fill" style="width:${pct}%;background:${completenessColor}"></div></div>
+      </div>
+      <div class="ph-completeness-chips">
+        ${criteria.map(([label, done]) => `<span class="ph-completeness-chip${done ? ' done' : ' miss'}">${done ? '✓' : '✗'} ${label}</span>`).join('')}
+      </div>
     </div>`;
 
     return `

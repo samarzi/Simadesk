@@ -181,6 +181,7 @@ const ACTION_LABELS: Record<string, string> = {
   mark_task_done: 'Выполнение задачи',
   edit_task: 'Редактирование задачи',
   delete_task: 'Удаление задачи',
+  delete_all_tasks: 'Удаление всех задач',
   create_reorder_tasks: 'Задачи по дозаказу',
   // Поставки / Реклама
   create_repricer_rule: 'Правило репрайсера',
@@ -740,7 +741,8 @@ mp_compare_prices (одинаковая ли цена по площадкам).
 | toggle_theme_on | — | Светлая тема |
 | reload_page | — | Перезагрузить страницу |
 | edit_task | title | Изменить задачу (new_title?, priority?, due_date?) |
-| delete_task | title | Удалить задачу (система покажет карточку подтверждения — не используй clarify) |
+| delete_task | title | Удалить одну задачу по названию (система покажет карточку подтверждения — не используй clarify) |
+| delete_all_tasks | filter? | Удалить ВСЕ задачи или все задачи по ключевому слову (filter). Используй вместо delete_task когда просят удалить «все», «все OOS», «все задачи по дозаказу» и т.п. |
 | update_product_description | article | Обновить описание товара (name?, description?) |
 | list_repricer_rules | — | Показать все правила репрайсера |
 | edit_repricer_rule | rule_id | Изменить параметры правила (min_price?, max_price?, strategy?) |
@@ -5856,7 +5858,7 @@ export class AssistantModule {
       'create_doc', 'generate_report', 'export_analytics_report',
       'export_orders_excel', 'export_orders_excel_global',
       // task actions
-      'create_task_global', 'edit_task', 'delete_task', 'mark_task_done',
+      'create_task_global', 'edit_task', 'delete_task', 'delete_all_tasks', 'mark_task_done',
       'create_oos_tasks', 'create_urgent_orders_task', 'create_low_stock_tasks',
       // reviews
       'fetch_reviews', 'reply_review', 'ai_generate_review_reply', 'reply_all_unanswered',
@@ -5927,7 +5929,7 @@ export class AssistantModule {
     requestText: string,
   ): void {
     if (!this.messagesEl) return;
-    const isDangerous = name === 'delete_task' || name === 'invite_team_member';
+    const isDangerous = name === 'delete_task' || name === 'delete_all_tasks' || name === 'invite_team_member';
     const headerIcon = isDangerous
       ? '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'
       : '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>';
@@ -6202,7 +6204,7 @@ export class AssistantModule {
     // Атомарные точечные операции не требуют AI-комментария: пользователь видит
     // отчётную карточку с результатом и сам решает что дальше. Запуск модели
     // здесь только приводил к нерелевантным follow-up вызовам (fetch_analytics и т.п.).
-    const TERMINAL_ACTIONS = new Set(['delete_task', 'edit_task', 'mark_task_done', 'navigate_to']);
+    const TERMINAL_ACTIONS = new Set(['delete_task', 'delete_all_tasks', 'edit_task', 'mark_task_done', 'navigate_to']);
     if (TERMINAL_ACTIONS.has(name)) {
       this.setStatus('Готова');
       this.saveSession();

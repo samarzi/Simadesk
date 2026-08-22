@@ -943,8 +943,8 @@ html:not(.light) .docs-excel th.dx-hdr-selected {
   white-space: nowrap; transition: all .15s; flex-shrink: 0;
 }
 .fpr-btn:hover { border-color: var(--accent); color: var(--accent); }
-.fpr-btn-accent { background: var(--accent); border-color: var(--accent); color: #fff; }
-.fpr-btn-accent:hover { opacity: .85; color: #fff; }
+.fpr-btn-accent { background: var(--accent); border-color: var(--accent); color: #0a0a0a; }
+.fpr-btn-accent:hover { opacity: .85; color: #0a0a0a; }
 .fpr-opts {
   display: flex;
   gap: 16px;

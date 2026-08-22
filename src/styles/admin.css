@@ -861,7 +861,7 @@ html.light .ap-api-tag.ya { color: #cc2626; }
 .ap-btn-sm {
   padding: 5px 14px; font-size: 12px; font-weight: 600;
   border-radius: 7px; border: none;
-  background: var(--accent); color: #fff; cursor: pointer;
+  background: var(--accent); color: #0a0a0a; cursor: pointer;
   transition: opacity .14s;
 }
 .ap-btn-sm:hover { opacity: .85; }

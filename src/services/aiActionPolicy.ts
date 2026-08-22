@@ -36,7 +36,7 @@ export const CONFIRM_REQUIRED_ACTIONS = new Set<string>([
   // массовые ответы и публикации
   'reply_all_unanswered', 'simastore_publish', 'simastore_add_products',
   // необратимое и внешнее
-  'delete_task', 'invite_team_member', 'create_ym_supply', 'create_supply_wb',
+  'delete_task', 'delete_all_tasks', 'invite_team_member', 'create_ym_supply', 'create_supply_wb',
   // редактор документов: удаление и массовая правка содержимого
   'docs_delete', 'docs_clear_content', 'excel_delete_sheet',
   'excel_delete_rows', 'multi_replace', 'word_set_content',
@@ -85,6 +85,13 @@ export function describePendingAction(name: string, args: any, actionLabel?: str
       if (found?.due_date) lines.push(`Срок: ${found.due_date}`);
       lines.push('Удаление необратимо — отменить нельзя.');
       return lines.join('\n');
+    }
+    case 'delete_all_tasks': {
+      const tasks: any[] = (window as any).taskManagerModule?.tasks ?? [];
+      const needle = (a.filter || '').toLowerCase().trim();
+      const count = needle ? tasks.filter(t => t.title.toLowerCase().includes(needle)).length : tasks.length;
+      const what = needle ? `задачи со словом «${a.filter}»` : 'все задачи';
+      return `Удалю ${what} — ${count} шт.\nУдаление необратимо — отменить нельзя.`;
     }
     case 'simastore_publish':
       return a.publish === false
