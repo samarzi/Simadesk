@@ -12,6 +12,8 @@ export interface KpiCardOpts {
   detail?: string;
   /** Мелкая подпись под значением (контекст: из чего сложилось). */
   hint?: string;
+  /** Текст для кнопки «?» — объяснение методологии расчёта. */
+  tooltip?: string;
 }
 
 function renderSpark(points: number[]): string {
@@ -50,12 +52,17 @@ export function renderKpiCard(opts: KpiCardOpts): string {
   const spark = opts.sparkline ? renderSpark(opts.sparkline) : '';
 
   const rootCls = `an2-kpi${opts.detail ? ' an2-kpi-clickable' : ''}`;
-  const attrs = opts.detail
+  const clickAttr = opts.detail
     ? `onclick="window.analyticsModule?.openDetail('${opts.detail}')" title="Открыть подробный разбор: ${opts.label}"`
     : '';
 
+  const tooltipBtn = opts.tooltip
+    ? `<button class="an2-kpi-qbtn" onclick="event.stopPropagation();window.analyticsModule?.showKpiTooltip(event,'${opts.tooltip.replace(/'/g, "\\'")}')" title="Как считается?">?</button>`
+    : '';
+
   return `
-    <div class="${rootCls}" ${attrs} style="--an-tint: ${tint}; color: ${opts.tint ?? 'var(--accent)'}">
+    <div class="${rootCls}" ${clickAttr} style="--an-tint: ${tint}; color: ${opts.tint ?? 'var(--accent)'}">
+      ${tooltipBtn}
       <div class="an2-kpi-label" style="color: var(--text3)">${opts.label}</div>
       <div class="an2-kpi-value an2-anim-count" style="color: var(--text)">${valueText}</div>
       ${deltaHtml}

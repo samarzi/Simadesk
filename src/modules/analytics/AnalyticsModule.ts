@@ -729,6 +729,33 @@ export class AnalyticsModule {
     this._scheduleBodyOnly();
   }
 
+  /** Показать попап с объяснением методологии KPI-карточки. */
+  showKpiTooltip(event: MouseEvent, text: string): void {
+    const id = 'an2-kpi-tooltip-popup';
+    let el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      el.className = 'an2-kpi-tooltip-popup';
+      el.innerHTML = `<button class="an2-kpi-tooltip-close" onclick="document.getElementById('${id}')?.remove()">&times;</button><p class="an2-kpi-tooltip-text"></p>`;
+      document.body.appendChild(el);
+      document.addEventListener('click', (e) => {
+        const popup = document.getElementById(id);
+        if (popup && !popup.contains(e.target as Node)) popup.remove();
+      }, { once: true, capture: true });
+    }
+    el.querySelector<HTMLElement>('.an2-kpi-tooltip-text')!.textContent = text;
+    // Позиционируем под кнопкой
+    const btn = event.currentTarget as HTMLElement;
+    const r = btn.getBoundingClientRect();
+    const popupW = 280;
+    let left = r.left + r.width / 2 - popupW / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - popupW - 8));
+    el.style.left  = `${left}px`;
+    el.style.top   = `${r.bottom + 8 + window.scrollY}px`;
+    el.style.width = `${popupW}px`;
+  }
+
   openOrder(id: string): void {
     this.openedOrderId = id;
     this._mountOrderDrawer();

@@ -1326,10 +1326,7 @@ export class TaskManagerModule {
           <div style="font-size:20px;font-weight:700;color:#6366f1;margin-bottom:8px">${esc(String(price))} ₽</div>` : ''}
           ${barcode ? `
           <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Штрихкод: ${esc(String(barcode))}</div>` : ''}
-          <div style="display:flex;gap:8px;margin-top:12px">
-            <button class="tm-save" data-product-goto style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px 14px">
-              ${IC.right} Перейти в товары
-            </button>
+          <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
             <button class="tm-cancel" data-product-close style="padding:8px 14px">Закрыть</button>
           </div>
         </div>
@@ -1412,14 +1409,15 @@ export class TaskManagerModule {
     this.bindKanbanDrag();
     this.bindEisenhowerDrag();
 
-    // Article links — click navigates directly to products with search filter
+    // Article links — click opens product info popup
     for (const link of $$('.tm-article-link')) {
       link.addEventListener('click', (e) => {
         e.stopPropagation();
         e.preventDefault();
         const a = link.dataset.article;
         if (!a) return;
-        this.navigateToProduct(a);
+        const product = this.products.find(p => getArticle(p) === a);
+        if (product) { this.productPopup = product; this.render(); }
       });
     }
     $('[data-product-overlay]')?.addEventListener('click', () => { this.productPopup = null; this.render(); });
@@ -1548,7 +1546,12 @@ export class TaskManagerModule {
         else if (mod === 'reminders') this.modalShowReminders = !this.modalShowReminders;
         else if (mod === 'files') this.modalShowFiles = !this.modalShowFiles;
         else if (mod === 'comments') this.modalShowComments = !this.modalShowComments;
+        const prevScroll = this.el.querySelector<HTMLElement>('.tm-modal')?.scrollTop ?? 0;
+        this.modalIsRefresh = true;
         this.render();
+        this.modalIsRefresh = false;
+        const modal = this.el.querySelector<HTMLElement>('.tm-modal');
+        if (modal) modal.scrollTop = prevScroll;
       });
     }
 
@@ -1729,8 +1732,11 @@ export class TaskManagerModule {
           const names = this.members.map(m => m.first_name || m.telegram_username || '').filter(n => n && n.toLowerCase().includes(query)).slice(0, 8);
           showAc(names, '@');
         } else {
-          const articles = this.products.map(p => getArticle(p)).filter(a => a && a.toLowerCase().includes(query)).slice(0, 8);
-          showAc(articles, '/');
+          if (!query) { hideAc(); }
+          else {
+            const articles = this.products.map(p => getArticle(p)).filter(a => a && a.toLowerCase().includes(query)).slice(0, 8);
+            showAc(articles, '/');
+          }
         }
       } else { hideAc(); }
     });

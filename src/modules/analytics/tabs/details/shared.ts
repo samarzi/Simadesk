@@ -10,13 +10,14 @@ import { fmtMoney, fmtNum, fmtFull, escapeHtml } from '../../components/format';
 
 export type DetailKey =
   | 'revenue'    // Выручка
-  | 'gross'      // Прибыль без себестоимости
+  | 'gross'      // Выплата МП
   | 'profit'     // Чистая прибыль
   | 'margin'     // Маржа
   | 'delivered'  // Заказов доставлено
-  | 'expenses';  // Расходы
+  | 'expenses'   // Расходы
+  | 'returns';   // Возвраты и отмены
 
-export const DETAIL_KEYS: DetailKey[] = ['revenue', 'gross', 'profit', 'margin', 'delivered', 'expenses'];
+export const DETAIL_KEYS: DetailKey[] = ['revenue', 'gross', 'profit', 'margin', 'delivered', 'expenses', 'returns'];
 
 export function isDetailKey(v: string): v is DetailKey {
   return (DETAIL_KEYS as string[]).includes(v);

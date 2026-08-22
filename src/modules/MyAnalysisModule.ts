@@ -70,6 +70,25 @@ interface FixedItem {
 /** Live snapshot of a card read straight from the marketplace API. */
 interface LiveSnapshot { name: string; photoUrls: string[]; price: number; rawStatus: string; }
 
+/** One AI suggestion for a single card during bulk AI fix. */
+interface AiSuggestion {
+  uid: string;
+  mp: Mp;
+  storeId: string;
+  storeName: string;
+  vendorCode: string;
+  currentName: string;
+  suggestedName: string;
+  issueLabels: string[];
+  /** User has edited the suggested name in the review UI. */
+  editedName: string;
+  /** Whether user wants to include this card in the bulk apply. */
+  selected: boolean;
+  /** Result after apply: 'ok' | 'error' | null (not applied yet). */
+  applyResult: 'ok' | 'error' | null;
+  applyError?: string;
+}
+
 // ─── Issue detection ──────────────────────────────────────────────────────────
 
 function auditCard(c: Omit<ProductCard,'issues'|'score'>): Issue[] {
@@ -180,17 +199,32 @@ export class MyAnalysisModule {
   private drawerAiNames: string[] = [];   // AI name suggestions
 
   // Fixed-items tab
-  private activeTab: 'issues' | 'fixed' = 'issues';
+  private activeTab: 'issues' | 'fixed' | 'ai' = 'issues';
   private fixedItems: FixedItem[] = [];
   private fixedVerifying = false;
+
+  // AI bulk fix
+  private aiSuggestions: AiSuggestion[] = [];
+  private aiRunning = false;
+  private aiProgress = '';     // status line shown during generation
+  private aiApplying = false;
 
   constructor(el: HTMLElement) {
     this.el = el;
     this.el.style.cssText = 'display:none;flex-direction:column;flex:1;overflow:hidden;';
     (window as any).myAnalysisModule = this;
+    // fixedItems are loaded per-company in _load() once we know the active company ID.
+  }
+
+  /** localStorage key scoped to the current company so items never bleed across companies. */
+  private _fixedKey(): string {
+    const cid = companyService.getActiveId() ?? 'default';
+    return `sd_ca_fixed_${cid}`;
+  }
+
+  private _loadFixed() {
     try {
-      const raw = JSON.parse(localStorage.getItem('sd_ca_fixed') || '[]') as any[];
-      // Entries written before targetIssues/remaining existed carry `fixedIssues` instead.
+      const raw = JSON.parse(localStorage.getItem(this._fixedKey()) || '[]') as any[];
       this.fixedItems = (Array.isArray(raw) ? raw : []).map((f: any): FixedItem => ({
         ...f,
         targetIssues:  f.targetIssues  ?? f.fixedIssues ?? [],
@@ -219,7 +253,187 @@ export class MyAnalysisModule {
   setSearch(v: string)     { this.searchQ = v; this._paint(); }
   async reload()           { this.loaded = false; await this._load(); }
 
-  setTab(t: 'issues' | 'fixed') { this.activeTab = t; this._paint(); }
+  setTab(t: 'issues' | 'fixed' | 'ai') { this.activeTab = t; this._paint(); }
+
+  // ─── AI bulk fix ──────────────────────────────────────────────────────────
+
+  aiToggleSuggestion(idx: number) {
+    if (this.aiSuggestions[idx]) {
+      this.aiSuggestions[idx].selected = !this.aiSuggestions[idx].selected;
+      this._paint();
+    }
+  }
+
+  aiSelectAll(v: boolean) {
+    this.aiSuggestions.forEach(s => { if (s.applyResult !== 'ok') s.selected = v; });
+    this._paint();
+  }
+
+  aiEditName(idx: number, v: string) {
+    if (this.aiSuggestions[idx]) this.aiSuggestions[idx].editedName = v;
+  }
+
+  async aiRunAnalysis() {
+    if (this.aiRunning) return;
+    if (!this.loaded) await this._load();
+
+    const candidates = this.cards.filter(c =>
+      c.issues.some(i => i.field === 'name' || i.code === 'LONG_WORD'),
+    );
+    if (!candidates.length) {
+      (window as any).app?.toast?.('Нет карточек с проблемами в названии', 'info');
+      return;
+    }
+
+    this.aiRunning   = true;
+    this.aiProgress  = `Анализируем 0 / ${candidates.length}…`;
+    this.aiSuggestions = [];
+    this._paint();
+
+    const BATCH = 5;
+    for (let i = 0; i < candidates.length; i += BATCH) {
+      const batch = candidates.slice(i, i + BATCH);
+      this.aiProgress = `Анализируем ${Math.min(i + BATCH, candidates.length)} / ${candidates.length}…`;
+      this._paint();
+
+      const lines = batch.map((c, bi) =>
+        `${bi + 1}. [${MP_NAME[c.mp]}] "${c.name}" | Проблемы: ${c.issues.filter(x => x.field === 'name' || x.code === 'LONG_WORD').map(x => x.label).join('; ')}`,
+      ).join('\n');
+
+      try {
+        const resp = await this._callAi(
+          `Ты эксперт по контенту для российских маркетплейсов.\n` +
+          `Для каждой карточки ниже предложи улучшенное название.\n` +
+          `Правила:\n` +
+          `• WB: 40-60 символов, ключевые слова, характеристики\n` +
+          `• Ozon: до 200 символов, каждое слово ≤27 символов\n` +
+          `• Яндекс Маркет: 60-120 символов\n` +
+          `Ответь ТОЛЬКО в таком формате (одна строка = одна карточка, номер совпадает с входом):\n` +
+          `1. Новое название\n` +
+          `2. Новое название\n` +
+          `...\n\n` +
+          `Карточки:\n${lines}`,
+        );
+
+        const answers = resp.split('\n')
+          .map(l => l.replace(/^\d+\.\s*/, '').trim())
+          .filter(Boolean);
+
+        for (let bi = 0; bi < batch.length; bi++) {
+          const c = batch[bi];
+          const suggested = answers[bi] ?? c.name;
+          this.aiSuggestions.push({
+            uid: c.uid, mp: c.mp, storeId: c.storeId, storeName: c.storeName,
+            vendorCode: c.vendorCode, currentName: c.name, suggestedName: suggested,
+            editedName: suggested,
+            issueLabels: c.issues.filter(x => x.field === 'name' || x.code === 'LONG_WORD').map(x => x.label),
+            selected: true, applyResult: null,
+          });
+        }
+      } catch (e: unknown) {
+        for (const c of batch) {
+          this.aiSuggestions.push({
+            uid: c.uid, mp: c.mp, storeId: c.storeId, storeName: c.storeName,
+            vendorCode: c.vendorCode, currentName: c.name, suggestedName: '',
+            editedName: '', issueLabels: [], selected: false,
+            applyResult: 'error', applyError: (e instanceof Error ? e.message : String(e)).slice(0, 100),
+          });
+        }
+      }
+
+      this._paint();
+    }
+
+    this.aiRunning  = false;
+    this.aiProgress = '';
+    this._paint();
+  }
+
+  async aiApplyAll() {
+    if (this.aiApplying) return;
+    const toApply = this.aiSuggestions.filter(s => s.selected && s.applyResult !== 'ok');
+    if (!toApply.length) return;
+
+    this.aiApplying = true;
+    this._paint();
+
+    for (const s of toApply) {
+      const card = this.cards.find(c => c.uid === s.uid);
+      if (!card) { s.applyResult = 'error'; s.applyError = 'Карточка не найдена'; continue; }
+
+      try {
+        const finalName = s.editedName.trim() || s.suggestedName;
+
+        if (card.mp === 'ozon') {
+          const store = this.ozStores.find(st => st.id === card.storeId)!;
+          const creds = { client_id: store.client_id, api_key: store.api_key };
+          const item  = (await ozonApi.getFullProductInfo(card.vendorCode, card.productId ?? null, creds) as any) ?? {};
+          await ozonApi.updateProduct(creds, {
+            offer_id: card.vendorCode, name: finalName,
+            description_category_id: item.description_category_id, type_id: item.type_id,
+          });
+          await dbFetch(`ozon_products?store_id=eq.${card.storeId}&offer_id=eq.${encodeURIComponent(card.vendorCode)}`, {
+            method: 'PATCH', body: JSON.stringify({ name: finalName }),
+          });
+        } else if (card.mp === 'wb') {
+          const store = this.wbStores.find(st => st.id === card.storeId)!;
+          await wbApi.updateCard(store.api_key, card.nmId!, { title: finalName });
+          await dbFetch(`wb_products?store_id=eq.${card.storeId}&nm_id=eq.${card.nmId}`, {
+            method: 'PATCH', body: JSON.stringify({ title: finalName }),
+          });
+        } else {
+          const store = this.yaStores.find(st => st.id === card.storeId)!;
+          await yandexApi.updateOffer(store.api_key, store.business_id!, {
+            offerId: card.vendorCode, name: finalName,
+          });
+          await dbFetch(`yandex_products?store_id=eq.${card.storeId}&offer_id=eq.${encodeURIComponent(card.vendorCode)}`, {
+            method: 'PATCH', body: JSON.stringify({ name: finalName }),
+          });
+        }
+
+        // Update in-memory card and track as fixed
+        const idx = this.cards.findIndex(c => c.uid === card.uid);
+        const oldIssues     = card.issues.slice();
+        const oldName       = card.name;
+        if (idx >= 0) {
+          this.cards[idx].name   = finalName;
+          this.cards[idx].issues = auditCard(this.cards[idx]);
+          this.cards[idx].score  = scoreCard(this.cards[idx].issues);
+        }
+        const newIssues = idx >= 0 ? this.cards[idx].issues : oldIssues;
+        const resolved  = oldIssues.filter(oi => !newIssues.some(ni => ni.code === oi.code));
+        if (resolved.length > 0) {
+          const fixed: FixedItem = {
+            uid: card.uid, mp: card.mp, vendorCode: card.vendorCode,
+            storeName: card.storeName, storeId: card.storeId,
+            oldName, newName: finalName,
+            oldPhotoCount: card.photoUrls.length, newPhotoCount: card.photoUrls.length,
+            targetIssues: resolved.map(i => ({ code: i.code, label: i.label, severity: i.severity })),
+            remaining: [], fixedAt: Date.now(), status: 'pending',
+          };
+          this.fixedItems = [fixed, ...this.fixedItems.filter(f => f.uid !== card.uid)];
+        }
+
+        s.applyResult = 'ok';
+        s.suggestedName = finalName;
+      } catch (e: unknown) {
+        s.applyResult = 'error';
+        s.applyError  = (e instanceof Error ? e.message : String(e)).slice(0, 120);
+      }
+
+      this._paint();
+    }
+
+    this._saveFixed();
+    this.aiApplying = false;
+    const ok  = toApply.filter(s => s.applyResult === 'ok').length;
+    const err = toApply.filter(s => s.applyResult === 'error').length;
+    (window as any).app?.toast?.(
+      err ? `Применено ${ok}, ошибок ${err}` : `Применено ${ok} карточек`,
+      err ? 'info' : 'success',
+    );
+    this._paint();
+  }
 
   async verifyFixed(uid: string) {
     const fixed = this.fixedItems.find(f => f.uid === uid);
@@ -380,7 +594,7 @@ export class MyAnalysisModule {
   }
 
   private _saveFixed() {
-    localStorage.setItem('sd_ca_fixed', JSON.stringify(this.fixedItems));
+    localStorage.setItem(this._fixedKey(), JSON.stringify(this.fixedItems));
   }
 
   openDrawer(uid: string) {
@@ -571,6 +785,9 @@ export class MyAnalysisModule {
     }
 
     this.drawerSaving = false;
+    // Always close the drawer after a save attempt so the user sees the updated card list.
+    this.drawerCard  = null;
+    this._drawerOpen = false;
     this._paint();
   }
 
@@ -641,6 +858,7 @@ export class MyAnalysisModule {
 
       this.cards = cards;
       this.loaded = true;
+      this._loadFixed();   // reload per-company list every time data is refreshed
     } catch (e: unknown) {
       this.error = (e instanceof Error ? e.message : String(e)) || String(e);
       debug.warn('[CardAudit]', e);
@@ -773,6 +991,9 @@ export class MyAnalysisModule {
         <button class="ca-tab${this.activeTab==='fixed'?' on':''}" onclick="window.myAnalysisModule?.setTab('fixed')">
           Исправленные${fixedCount ? `<span class="ca-tab-badge">${fixedCount}</span>` : ''}
         </button>
+        <button class="ca-tab ca-tab-ai${this.activeTab==='ai'?' on':''}" onclick="window.myAnalysisModule?.setTab('ai')">
+          ✨ ИИ Исправление
+        </button>
       </div>
 
       ${this.activeTab === 'issues' ? `<div class="ca-filters">
@@ -818,6 +1039,7 @@ export class MyAnalysisModule {
 
   private _body() {
     if (this.activeTab === 'fixed') return this._fixedBody();
+    if (this.activeTab === 'ai')    return this._aiBody();
 
     if (this.loading && !this.loaded)
       return `<div class="ca-body ca-ctr"><div class="ca-spin"></div><span class="ca-hint">${this.loadMsg}</span></div>`;
@@ -835,6 +1057,96 @@ export class MyAnalysisModule {
         <button class="ca-btn" onclick="window.myAnalysisModule?.setIssueFilter('all');window.myAnalysisModule?.setMp('all');window.myAnalysisModule?.setStore('all')">Сбросить фильтры</button></div>`;
 
     return `<div class="ca-body"><div class="ca-list">${list.map(c=>this._row(c)).join('')}</div></div>`;
+  }
+
+  private _aiBody(): string {
+    const nameIssueCards = this.loaded
+      ? this.cards.filter(c => c.issues.some(i => i.field === 'name' || i.code === 'LONG_WORD'))
+      : [];
+
+    // ── Empty / loading states ─────────────────────────────────────────────
+    if (!this.loaded && !this.aiSuggestions.length) {
+      return `<div class="ca-body ca-ctr">
+        <div style="font-size:36px">✨</div>
+        <div class="ca-hint">Сначала загрузите карточки на вкладке «Проблемы».</div>
+        <button class="ca-btn" onclick="window.myAnalysisModule?.setTab('issues')">Перейти к проблемам</button>
+      </div>`;
+    }
+
+    if (!this.aiSuggestions.length) {
+      const n = nameIssueCards.length;
+      return `<div class="ca-body ca-ctr">
+        <div style="font-size:48px">✨</div>
+        <div class="ca-ai-intro-title">ИИ-исправление названий</div>
+        <div class="ca-ai-intro-text">
+          ИИ проанализирует ${n} карточк${n===1?'у':n<5?'и':'ек'} с проблемами в названии,
+          предложит улучшенные варианты для каждого маркетплейса и применит все сразу одной кнопкой.
+        </div>
+        ${n === 0
+          ? `<div class="ca-hint">Нет карточек с проблемами в названиях — всё хорошо!</div>`
+          : `<button class="ca-ai-run-btn${this.aiRunning?' busy':''}" onclick="window.myAnalysisModule?.aiRunAnalysis()">
+              ${this.aiRunning
+                ? `<div class="ca-spin-sm"></div> ${this.aiProgress || 'Анализируем…'}`
+                : `✨ Запустить анализ (${n} карточ${n===1?'ка':n<5?'ки':'ек'})`}
+            </button>`}
+      </div>`;
+    }
+
+    // ── Review + apply UI ─────────────────────────────────────────────────
+    const ok      = this.aiSuggestions.filter(s => s.applyResult === 'ok').length;
+    const errored = this.aiSuggestions.filter(s => s.applyResult === 'error').length;
+    const pending = this.aiSuggestions.filter(s => s.selected && s.applyResult !== 'ok').length;
+    const allSel  = this.aiSuggestions.filter(s => s.applyResult !== 'ok').every(s => s.selected);
+
+    const rows = this.aiSuggestions.map((s, i) => {
+      const isOk  = s.applyResult === 'ok';
+      const isErr = s.applyResult === 'error';
+      return `
+      <div class="ca-ai-row${isOk?' ai-ok':isErr?' ai-err':''}">
+        <div class="ca-ai-row-top">
+          ${isOk
+            ? `<span class="ca-ai-chk ai-done">✅</span>`
+            : `<input type="checkbox" class="ca-ai-chk" ${s.selected?'checked':''} onchange="window.myAnalysisModule?.aiToggleSuggestion(${i})">`}
+          <span class="ca-mp-b" style="color:${MP_COLOR[s.mp]};border-color:${MP_COLOR[s.mp]}22;background:${MP_COLOR[s.mp]}14">${MP_NAME[s.mp]}</span>
+          <span class="ca-ai-store">${this._e(s.storeName)}</span>
+          <span class="ca-ai-vc">${this._e(s.vendorCode)}</span>
+          ${isErr ? `<span class="ca-ai-err-badge">Ошибка</span>` : ''}
+        </div>
+        <div class="ca-ai-names">
+          <div class="ca-ai-old"><span class="ca-ai-lbl">Было:</span> ${this._e(s.currentName)}</div>
+          ${isOk
+            ? `<div class="ca-ai-new-done"><span class="ca-ai-lbl">Применено:</span> ${this._e(s.suggestedName)}</div>`
+            : isErr
+              ? `<div class="ca-ai-err-msg">${this._e(s.applyError ?? 'Неизвестная ошибка')}</div>`
+              : `<div class="ca-ai-new">
+                  <span class="ca-ai-lbl">ИИ предлагает:</span>
+                  <input class="ca-ai-inp" value="${this._e(s.editedName)}"
+                    oninput="window.myAnalysisModule?.aiEditName(${i},this.value)" placeholder="Отредактируйте название…">
+                </div>`}
+        </div>
+        ${s.issueLabels.length ? `<div class="ca-ai-issues">${s.issueLabels.map(l=>`<span class="ca-ic sev-warning">⚠️ ${this._e(l)}</span>`).join('')}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    return `<div class="ca-body">
+      <div class="ca-ai-toolbar">
+        <label class="ca-ai-selall">
+          <input type="checkbox" ${allSel?'checked':''} onchange="window.myAnalysisModule?.aiSelectAll(this.checked)">
+          Выбрать все
+        </label>
+        <div class="ca-ai-stats">
+          ${ok ? `<span class="ca-ai-stat ok">✅ Применено: ${ok}</span>` : ''}
+          ${errored ? `<span class="ca-ai-stat err">🚫 Ошибок: ${errored}</span>` : ''}
+        </div>
+        <button class="ca-ai-apply-btn${(!pending||this.aiApplying)?' busy':''}"
+          onclick="window.myAnalysisModule?.aiApplyAll()"
+          ${!pending||this.aiApplying ? 'disabled' : ''}>
+          ${this.aiApplying ? '<div class="ca-spin-sm"></div> Применяем…' : `Применить изменения (${pending})`}
+        </button>
+        <button class="ca-ai-rerun" onclick="window.myAnalysisModule?.aiRunAnalysis()">↻ Пересчитать</button>
+      </div>
+      <div class="ca-ai-list">${rows}</div>
+    </div>`;
   }
 
   private _fixedBody(): string {
@@ -1233,6 +1545,41 @@ export class MyAnalysisModule {
 .ca-fx-retry:hover{background:rgba(99,102,241,.18);}
 .ca-fx-del{background:transparent;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:6px 10px;border-radius:8px;}
 .ca-fx-del:hover{color:var(--red);}
+/* ─── AI tab ─────────────────────────────────────────────── */
+.ca-tab-ai{position:relative;}
+.ca-ai-intro-title{font-size:20px;font-weight:800;color:var(--text);margin:12px 0 8px;}
+.ca-ai-intro-text{font-size:13px;color:var(--text2);line-height:1.6;max-width:420px;text-align:center;margin-bottom:20px;}
+.ca-ai-run-btn{background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;border:none;font-size:14px;font-weight:700;padding:12px 28px;border-radius:12px;cursor:pointer;display:flex;align-items:center;gap:8px;box-shadow:0 4px 16px rgba(99,102,241,.35);}
+.ca-ai-run-btn:hover:not(.busy){opacity:.9;}
+.ca-ai-run-btn.busy{opacity:.65;pointer-events:none;}
+.ca-ai-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--bg2);}
+.ca-ai-selall{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer;}
+.ca-ai-stats{display:flex;gap:8px;font-size:12px;}
+.ca-ai-stat.ok{color:var(--green);}
+.ca-ai-stat.err{color:#f87171;}
+.ca-ai-apply-btn{margin-left:auto;background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;border:none;font-size:13px;font-weight:700;padding:8px 20px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:6px;}
+.ca-ai-apply-btn.busy,.ca-ai-apply-btn[disabled]{opacity:.55;pointer-events:none;}
+.ca-ai-rerun{background:var(--bg3);border:1px solid var(--border);color:var(--text3);font-size:12px;font-weight:600;padding:6px 12px;border-radius:8px;cursor:pointer;white-space:nowrap;}
+.ca-ai-rerun:hover{color:var(--text);}
+.ca-ai-list{display:flex;flex-direction:column;gap:8px;padding:12px 16px;overflow-y:auto;flex:1;}
+.ca-ai-row{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;transition:opacity .2s;}
+.ca-ai-row.ai-ok{border-color:rgba(68,221,136,.3);background:rgba(68,221,136,.05);}
+.ca-ai-row.ai-err{border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.05);}
+.ca-ai-row-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.ca-ai-chk{width:16px;height:16px;cursor:pointer;flex-shrink:0;}
+.ca-ai-chk.ai-done{font-size:16px;}
+.ca-ai-store{font-size:12px;color:var(--text2);}
+.ca-ai-vc{font-size:12px;font-weight:700;color:var(--text);font-family:monospace;background:var(--bg3);padding:2px 6px;border-radius:5px;}
+.ca-ai-err-badge{font-size:11px;font-weight:700;color:#f87171;background:rgba(248,113,113,.12);padding:2px 8px;border-radius:20px;}
+.ca-ai-names{display:flex;flex-direction:column;gap:5px;}
+.ca-ai-old{font-size:12px;color:var(--text3);}
+.ca-ai-new{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.ca-ai-new-done{font-size:13px;color:var(--green);font-weight:600;}
+.ca-ai-lbl{font-size:11px;color:var(--text3);font-weight:600;white-space:nowrap;}
+.ca-ai-inp{flex:1;min-width:200px;background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:600;padding:6px 10px;border-radius:8px;outline:none;}
+.ca-ai-inp:focus{border-color:var(--accent);}
+.ca-ai-err-msg{font-size:12px;color:#f87171;}
+.ca-ai-issues{display:flex;flex-wrap:wrap;gap:4px;}
 </style>`;
   }
 }

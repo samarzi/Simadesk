@@ -5,6 +5,7 @@ import { renderProfitDetail }    from './profit';
 import { renderMarginDetail }    from './margin';
 import { renderDeliveredDetail } from './delivered';
 import { renderExpensesDetail }  from './expenses';
+import { renderReturnsDetail }   from './returns';
 
 export type { DetailCtx, DetailKey };
 export { isDetailKey, DETAIL_KEYS };
@@ -17,5 +18,6 @@ export function renderDetail(key: DetailKey, ctx: DetailCtx): string {
     case 'margin':    return renderMarginDetail(ctx);
     case 'delivered': return renderDeliveredDetail(ctx);
     case 'expenses':  return renderExpensesDetail(ctx);
+    case 'returns':   return renderReturnsDetail(ctx);
   }
 }

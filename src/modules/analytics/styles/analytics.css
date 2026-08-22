@@ -1102,6 +1102,43 @@ tr:hover .an2-copy-btn { opacity: 1; }
   line-height: 1.35;
   max-width: 62%;
 }
+/* Кнопка «?» на KPI-карточке */
+.an2-kpi-qbtn {
+  position: absolute; top: 10px; right: 12px;
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: var(--bg2);
+  color: var(--text3);
+  font-size: 10px; font-weight: 800;
+  line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; z-index: 2;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.an2-kpi-qbtn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+/* Попап объяснения */
+.an2-kpi-tooltip-popup {
+  position: absolute; z-index: 9999;
+  background: var(--bg2, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.18);
+  padding: 14px 16px 12px;
+  animation: an-card-in .2s ease;
+}
+.an2-kpi-tooltip-close {
+  position: absolute; top: 8px; right: 10px;
+  background: none; border: none;
+  font-size: 15px; line-height: 1;
+  color: var(--text3); cursor: pointer; padding: 0;
+}
+.an2-kpi-tooltip-close:hover { color: var(--text); }
+.an2-kpi-tooltip-text {
+  font-size: 12px; line-height: 1.55;
+  color: var(--text2); margin: 0; padding-right: 16px;
+}
+
 .an2-kpi-clickable { cursor: pointer; }
 .an2-kpi-arrow {
   position: absolute; top: 12px; right: 14px;

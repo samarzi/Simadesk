@@ -7,23 +7,24 @@ import {
 const ACCENT = '#10b981';
 
 /**
- * «Прибыль без себестоимости» = выручка − комиссия − логистика − услуги − налог.
- * Это то, что остаётся от продажи после всех удержаний площадки, но до закупки товара.
- * Показатель отвечает на вопрос «сколько маркетплейс оставляет мне с рубля».
+ * «Выплата МП» = выручка − комиссия − логистика − услуги − реклама/хранение/штрафы.
+ * Это та сумма, которую маркетплейс переведёт на расчётный счёт.
+ * Себестоимость и налог здесь не учитываются — это собственные расходы продавца.
  */
 export function renderGrossDetail(c: DetailCtx): string {
   const k = c.kpi;
   const rev = Math.max(1, k.revenue);
-  const gross = k.net_profit + k.cogs;
-  const prevGross = c.prevKpi ? c.prevKpi.net_profit + c.prevKpi.cogs : null;
+  const gross = k.revenue - k.commission - k.logistics - k.services - k.period_costs;
+  const prevGross = c.prevKpi
+    ? c.prevKpi.revenue - c.prevKpi.commission - c.prevKpi.logistics - c.prevKpi.services - c.prevKpi.period_costs
+    : null;
   const grossPct = (gross / rev) * 100;
   const mpFees = k.commission + k.logistics + k.services + k.period_costs;
   const mpFeesPct = (mpFees / rev) * 100;
 
-  // Ряд по дням строим сам: в ts.profit лежит ЧИСТАЯ прибыль (с себестоимостью),
-  // а этот показатель — до неё. Иначе график спорил бы с числом в шапке.
+  // Ряд по дням: выручка − удержания МП (без себестоимости и налога)
   const grossByDay = dailySeries(c.orders, o =>
-    (o.status === 'delivered' ? o.revenue - o.tax : 0)
+    (o.status === 'delivered' ? o.revenue : 0)
     - o.commission - o.logistics - o.logistics_return - o.services);
   const grossSeries = c.ts.map(p => grossByDay.get(p.date) ?? 0);
   const perOrder = k.orders_settled > 0 ? gross / k.orders_settled : 0;
@@ -115,7 +116,7 @@ export function renderGrossDetail(c: DetailCtx): string {
   `;
 
   return detailFrame({
-    title: 'Прибыль без себестоимости',
+    title: 'Выплата МП',
     value: fmtMoney(gross),
     subtitle: `${c.periodLabel} · ${c.storeName} · ${fmtNum(k.orders_delivered)} ${plural(k.orders_delivered, 'выкупленный заказ', 'выкупленных заказа', 'выкупленных заказов')}`,
     accent: ACCENT,
