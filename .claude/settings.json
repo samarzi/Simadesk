@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(ssh -i * root@135.106.172.135 *)",
-      "Bash(ssh -i * -o * root@135.106.172.135 *)"
+      "Bash(ssh -i * -o * root@135.106.172.135 *)",
+      "Bash(bash scripts/deploy.sh)"
     ]
   }
 }

@@ -230,40 +230,48 @@ export class DocsModule {
    * лучше не иметь кеша (данные приедут из БД), чем иметь кеш-пустышку,
    * которая при следующей загрузке выглядит как «документ пуст».
    */
+  private trySet(key: string, value: string): boolean {
+    try { localStorage.setItem(key, value); return true; }
+    catch { return false; }
+  }
+
   private saveDocContent(doc: DocItem): void {
     const key = this.ck(doc.id);
-    try {
-      localStorage.setItem(key, doc.content);
-      return;
-    } catch { /* квота — пробуем освободить место */ }
-
-    try { localStorage.removeItem(key); } catch { /* ignore */ }
+    if (this.trySet(key, doc.content)) return;
 
     // Освобождаем место за счёт кеша неоткрытых документов, от самых старых.
-    // Если в итоге всё равно не поместились — возвращаем выселенных обратно:
-    // рушить чужой кеш ради документа, который не влезает в принципе, нельзя.
+    // Свой собственный ключ НЕ трогаем: если новая версия не поместится, старая
+    // сохранённая копия останется единственным, что переживёт перезагрузку.
+    // Стереть её ради версии, которая всё равно не влезла, — потерять документ.
     const victims = this.docs
       .filter(d => d.id !== doc.id && d.id !== this.activeId && !this.pendingContent.has(d.id))
       .sort((a, b) => a.updated_at - b.updated_at);
-    const evicted: DocItem[] = [];
+
+    const evicted: Array<{ key: string; value: string }> = [];
     let stored = false;
     for (const v of victims) {
-      try { localStorage.removeItem(this.ck(v.id)); evicted.push(v); } catch { /* ignore */ }
-      try { localStorage.setItem(key, doc.content); stored = true; break; }
-      catch { /* продолжаем выселять */ }
+      const vk = this.ck(v.id);
+      const prev = localStorage.getItem(vk);
+      if (prev === null) continue;
+      try { localStorage.removeItem(vk); } catch { continue; }
+      evicted.push({ key: vk, value: prev });
+      if (this.trySet(key, doc.content)) { stored = true; break; }
     }
+
+    // Возвращаем выселенных: после удачной записи — всех, кто ещё влезет,
+    // после неудачной — обязательно всех, кого мы тронули зря.
+    for (const e of evicted) this.trySet(e.key, e.value);
     if (stored) return;
 
-    for (const v of evicted) {
-      try { localStorage.setItem(this.ck(v.id), v.content); } catch { break; }
-    }
-
-    // Локального кеша у документа не будет — единственным источником станет БД.
-    debug.warn('[DocsModule] doc content too large for localStorage, relying on DB', doc.id);
+    // Записать в кеш не вышло. В памяти документ цел, но перезагрузку переживёт
+    // только то, что примет сервер, — поэтому ждём подтверждения от него и,
+    // если его нет, честно говорим пользователю, что правки под угрозой.
+    debug.warn('[DocsModule] doc content does not fit localStorage', doc.id);
     this.saveDocToDb(doc, (ok) => {
-      if (ok || this.warnedNoPersist.has(doc.id)) return;
+      if (ok) { this.warnedNoPersist.delete(doc.id); return; }
+      if (this.warnedNoPersist.has(doc.id)) return;
       this.warnedNoPersist.add(doc.id);
-      showToast(`«${doc.title}» не помещается в кеш браузера, а сервер недоступен. Экспортируйте файл, чтобы не потерять правки.`, 'error');
+      showToast(`«${doc.title}»: не удалось сохранить ни в браузере, ни на сервере. Экспортируйте файл, чтобы не потерять правки.`, 'error');
     });
   }
 
@@ -307,10 +315,10 @@ export class DocsModule {
   /** Sync all docs from Supabase, merge with local cache (DB wins on conflict). */
   private async syncFromDb(): Promise<void> {
     const companyId = companyService.getActiveId();
-    if (!companyId) return;
+    if (!companyId) { this.resolvePending(); return; }
     try {
       const rows = await dbFetch<DocItem[]>(`docs_documents?company_id=eq.${companyId}&select=id,type,title,content,updated_at&order=updated_at.desc`);
-      if (!Array.isArray(rows) || !rows.length) return;
+      if (!Array.isArray(rows) || !rows.length) { this.resolvePending(); return; }
       let changed = false;
       for (const row of rows) {
         const local = this.docs.find(d => d.id === row.id);
@@ -340,9 +348,8 @@ export class DocsModule {
       }
       // Документ есть локально, но в БД его нет и содержимого мы так и не нашли —
       // снимаем флаг, иначе он навсегда останется «загружается».
-      for (const id of [...this.pendingContent]) {
-        if (!rows.some(r => r.id === id)) this.pendingContent.delete(id);
-      }
+      const stillPending = [...this.pendingContent].filter(id => !rows.some(r => r.id === id));
+      if (stillPending.length) { this.resolvePending(stillPending); changed = true; }
       if (changed) {
         this.docs.sort((a, b) => b.updated_at - a.updated_at);
         if (!this.activeId && this.docs.length) this.activeId = this.docs[0].id;
@@ -351,6 +358,39 @@ export class DocsModule {
       }
     } catch (e) {
       debug.warn('[DocsModule] syncFromDb failed', e);
+      // Сервер не ответил. Оставить документы в состоянии «загружается» нельзя —
+      // спиннер висел бы вечно. Показываем их как есть и говорим, что случилось.
+      this.resolvePending();
+      this.render();
+    }
+  }
+
+  /**
+   * Снять пометку «ждём содержимое с сервера» — сервер ответил, но документа
+   * там не оказалось, либо не ответил вовсе. Пустой документ подставляем только
+   * здесь и только один раз: до этого момента редактор показывает загрузку,
+   * а не пустой лист, который пользователь принял бы за потерю данных.
+   */
+  private resolvePending(ids?: string[]): void {
+    const list = ids ?? [...this.pendingContent];
+    if (!list.length) return;
+    const lost: string[] = [];
+    for (const id of list) {
+      this.pendingContent.delete(id);
+      const doc = this.docs.find(d => d.id === id);
+      if (!doc) continue;
+      if (!doc.content) {
+        doc.content = doc.type === 'word' ? '' : this.emptyExcel();
+        lost.push(doc.title);
+      }
+    }
+    if (lost.length) {
+      showToast(
+        lost.length === 1
+          ? `Не удалось загрузить содержимое «${lost[0]}» — на сервере его нет.`
+          : `Не удалось загрузить содержимое ${lost.length} документов — на сервере их нет.`,
+        'error',
+      );
     }
   }
 
