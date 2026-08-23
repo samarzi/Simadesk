@@ -5022,12 +5022,19 @@ export class AssistantModule {
       return;
     }
 
-    // Fast: замена текста — "замени Старое на Новое" / "заменить X на Y"
-    const replaceRe = /^(?:замени|заменить|replace)\s+(.+?)\s+на\s+(.+)$/i;
+    // Fast: замена текста — "замени X на Y" / "поменяй X на Y"
+    const replaceRe = /^(?:замени(?:ть)?|поменяй|исправь|replace)\s+(.+?)\s+на\s+(.+)$/i;
     const replaceMatch = t.match(replaceRe);
-    if (replaceMatch) {
-      const find = replaceMatch[1].trim();
-      const replaceWith = replaceMatch[2].trim();
+    // Fast: "измени ... с X на Y" / "измени ... X на Y" — Word-контекст (дата, имя и т.п.)
+    const changeWithRe = /^(?:измени(?:ть)?)\s+.+?\s+с\s+(.+?)\s+на\s+(.+)$/i;
+    const changeSimpleRe = /^(?:измени(?:ть)?)\s+(.+?)\s+на\s+(.+)$/i;
+    const changeMatch = !replaceMatch && aiPage.hasAction('word_replace')
+      ? (t.match(changeWithRe) || t.match(changeSimpleRe))
+      : null;
+    const replaceOrChangeMatch = replaceMatch || changeMatch;
+    if (replaceOrChangeMatch) {
+      const find = replaceOrChangeMatch[1].trim();
+      const replaceWith = replaceOrChangeMatch[2].trim();
       const action = aiPage.hasAction('excel_replace') ? 'excel_replace'
         : aiPage.hasAction('word_replace') ? 'word_replace' : null;
       if (action) {
@@ -6222,7 +6229,17 @@ export class AssistantModule {
     // Атомарные точечные операции не требуют AI-комментария: пользователь видит
     // отчётную карточку с результатом и сам решает что дальше. Запуск модели
     // здесь только приводил к нерелевантным follow-up вызовам (fetch_analytics и т.п.).
-    const TERMINAL_ACTIONS = new Set(['delete_task', 'delete_all_tasks', 'edit_task', 'mark_task_done', 'navigate_to']);
+    const TERMINAL_ACTIONS = new Set([
+      'delete_task', 'delete_all_tasks', 'edit_task', 'mark_task_done', 'navigate_to',
+      // редактор: замена выполнена — карточка с результатом достаточна, AI follow-up только путает
+      'word_replace', 'excel_replace', 'multi_replace',
+      'word_clear_formatting', 'word_heading',
+      'excel_set_cell', 'excel_style_column', 'excel_sort_sheet',
+      'excel_add_sheet', 'excel_insert_column', 'excel_delete_rows', 'excel_add_to_column',
+      'excel_clear_cells',
+      'set_price', 'mp_update_stock', 'mp_update_price',
+      'filter_products',
+    ]);
     if (TERMINAL_ACTIONS.has(name)) {
       this.setStatus('Готова');
       this.saveSession();
