@@ -3417,8 +3417,8 @@ export class AssistantModule {
        }
 
        if (this.matchesHotkey(e, this.hotkeyConfig.holdVoice)) {
+         e.preventDefault(); // всегда, в том числе на key-repeat — иначе буква вставляется в textarea
          if (this.voiceHotkeyHeld) return;
-         e.preventDefault();
          this.voiceHotkeyHeld = true;
          this.voiceSendOnEnd = false;
          if (!this.isOpen) this.openPanel();
