@@ -3265,4 +3265,48 @@ export class ProductsHubModule {
     this.renderList();
     return `Изменено цен: ${changed} в ${targets.length} товарах на ${a.mp}. Дельта: ${percent ? delta + '%' : delta + '₽'}`;
   }
+
+  /**
+   * Применить фильтры из команды Симы.
+   * q — поиск по артикулу/названию, mp — маркетплейс, stock — 'pos'/'zero'/'any'.
+   * Возвращает текст-сводку: сколько товаров показано.
+   */
+  aiFilter(a: { q?: string; mp?: string; stock?: 'pos' | 'zero' | 'any'; reset?: boolean }): string {
+    if (a.reset) {
+      this.filters = { q: '', mp: '', store_id: '', no_cost: false, no_mp: false, no_repricer: false, status: '', stock: 'any', price_min: null, price_max: null };
+      const searchEl = this.el.querySelector<HTMLInputElement>('#ph-search');
+      if (searchEl) searchEl.value = '';
+    } else {
+      if (a.q !== undefined) {
+        this.filters.q = a.q.toLowerCase().trim();
+        const searchEl = this.el.querySelector<HTMLInputElement>('#ph-search');
+        if (searchEl) searchEl.value = a.q.trim();
+      }
+      if (a.mp !== undefined) {
+        const normMp = a.mp.toLowerCase()
+          .replace(/яндекс.*маркет|ym/g, 'yandex')
+          .replace(/wildberries|вб|wb/g, 'wb')
+          .replace(/озон/g, 'ozon')
+          .replace(/all|все|сброс/g, '') as any;
+        this.filters.mp = normMp;
+      }
+      if (a.stock !== undefined) {
+        this.filters.stock = a.stock;
+      }
+    }
+    this.applyFilters();
+    this.renderList(true);
+    this.updateFilterBadge();
+
+    const total = this.items.length;
+    const shown = this.filtered.length;
+    const parts: string[] = [];
+    if (a.reset) parts.push('Фильтры сброшены');
+    if (a.q) parts.push(`поиск «${a.q}»`);
+    if (a.mp && a.mp !== '') parts.push(`маркетплейс: ${a.mp}`);
+    if (a.stock === 'pos') parts.push('с остатками');
+    if (a.stock === 'zero') parts.push('без остатков (OOS)');
+    const desc = parts.length ? ` (${parts.join(', ')})` : '';
+    return `Показано ${shown} из ${total} товаров${desc}.`;
+  }
 }

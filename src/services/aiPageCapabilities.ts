@@ -1038,6 +1038,23 @@ const PRODUCTS_HUB_ACTIONS: AiAction[] = [
       return `Товар «${item.name ?? a.article}» найден. ${changes.join('; ')}. API редактирования описания пока не подключён напрямую — откройте карточку товара в разделе Товары и внесите изменения вручную.`;
     },
   },
+  {
+    name: 'filter_products',
+    description: 'Отфильтровать товары в разделе Товары по критериям: наличие остатков, маркетплейс, поиск по названию/артикулу. Используй когда говорят «выбери товары с остатками», «покажи только Wildberries», «найди туфли», «сброс фильтров».',
+    args: '{ q?: string, mp?: string, stock?: "pos"|"zero"|"any", reset?: boolean }',
+    run: async (a: { q?: string; mp?: string; stock?: 'pos' | 'zero' | 'any'; reset?: boolean }) => {
+      const pm = w().productsHubModule;
+      if (!pm) {
+        // Переходим на страницу если ещё не там
+        w().app?.navigateTo?.('products-hub');
+        await new Promise(r => setTimeout(r, 800));
+        const pm2 = w().productsHubModule;
+        if (!pm2) throw new Error('Раздел Товары не открыт');
+        return pm2.aiFilter(a);
+      }
+      return pm.aiFilter(a);
+    },
+  },
 ];
 
 // ── Actions: аналитика ────────────────────────────────────────────────────────

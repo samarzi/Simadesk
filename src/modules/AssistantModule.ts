@@ -163,6 +163,7 @@ const ACTION_LABELS: Record<string, string> = {
   apply_price_delta: 'Массовое изменение цен',
   bulk_price_change: 'Массовое изменение цен',
   bulk_price_filtered: 'Изменение цен по условию',
+  filter_products: 'Фильтр товаров',
   hide_product: 'Скрытие товара',
   show_product: 'Активация товара',
   update_product_description: 'Обновление описания товара',
@@ -752,6 +753,7 @@ mp_compare_prices (одинаковая ли цена по площадкам).
 | get_subscription_info | — | Информация о тарифе и подписке |
 | check_api_keys | — | Статус API-ключей всех МП и AI |
 | invite_team_member | email | Пригласить сотрудника (role: admin/manager/viewer) |
+| filter_products | q?, mp?, stock?, reset? | Отфильтровать товары на странице Товары. stock: "pos" (с остатками), "zero" (OOS), "any". mp: "wb"/"ozon"/"yandex". q: поиск по названию/артикулу. reset: true — сброс всех фильтров. |
 | hide_product | article | Скрыть товар (СПРОСИ подтверждение через clarify) |
 | show_product | article | Активировать скрытый товар |
 | bulk_price_filtered | mp, delta | Цены по условию: mp + маржа (min_margin?, percent?) |
@@ -5886,7 +5888,7 @@ export class AssistantModule {
       'sync_marketplace',
       // products
       'bulk_price_change', 'bulk_price_filtered', 'set_price',
-      'hide_product', 'show_product', 'update_product_description',
+      'filter_products', 'hide_product', 'show_product', 'update_product_description',
       // repricer
       'list_repricer_rules', 'edit_repricer_rule', 'create_repricer_rule',
       // store
