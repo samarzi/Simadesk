@@ -387,12 +387,13 @@ html, body {
 .docs-recent-date { font-size: 11px; color: var(--muted); }
 .docs-recent-badge { font-size: 10px; padding: 2px 7px; border-radius: 5px; background: rgba(212,240,0,.14); color: var(--accent, #d4f000); font-weight: 600; flex-shrink: 0; }
 .docs-recent-del {
-  flex-shrink: 0; display: none; align-items: center; justify-content: center;
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; border-radius: 6px; border: none; background: none;
   color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1;
-  transition: background .1s, color .1s; font-family: inherit;
+  transition: background .1s, color .1s, opacity .12s; font-family: inherit;
+  opacity: 0; pointer-events: none;
 }
-.docs-recent-row:hover .docs-recent-del { display: flex; }
+.docs-recent-row:hover .docs-recent-del { opacity: 1; pointer-events: auto; }
 .docs-recent-del:hover { background: rgba(255,60,60,.15); color: #f77; }
 /* Topbar recent dropdown */
 .docs-recent-wrap { position: relative; }

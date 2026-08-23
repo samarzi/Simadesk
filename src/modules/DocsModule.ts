@@ -3810,13 +3810,38 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         const id = el.dataset.recentId!;
         const type = el.dataset.recentType as DocType;
         recentWrap?.classList.remove('open');
-        if (this.docs.some(d => d.id === id)) {
+        const existingDoc = this.docs.find(d => d.id === id);
+        if (existingDoc) {
+          // Doc already in memory — might have empty content if slim-saved to localStorage.
+          // Restore from recent cache before switching to avoid showing a blank sheet.
+          if (!existingDoc.content) {
+            const rec = this.recent.find(r => r.id === id);
+            if (rec?.content) {
+              existingDoc.content = rec.content;
+              existingDoc.updated_at = rec.updated_at;
+            } else {
+              this.syncFromDb();
+            }
+          }
           this.activeId = id; this.activeSheetIdx = 0; this.render(); return;
         }
         const rec = this.recent.find(r => r.id === id);
         if (!rec) return;
-        const newDoc: DocItem = { id, type, title: rec.title, content: rec.content ?? (type === 'word' ? '' : this.emptyExcel()), updated_at: rec.updated_at };
-        this.addDoc(newDoc);
+        if (rec.content) {
+          // Have cached content — restore fully and keep DB in sync.
+          this.addDoc({ id, type, title: rec.title, content: rec.content, updated_at: rec.updated_at });
+        } else {
+          // No cached content (saveRecent may have failed due to quota).
+          // Add a shell and fetch from DB — do NOT overwrite DB with empty content.
+          const shell: DocItem = { id, type, title: rec.title, content: type === 'word' ? '' : this.emptyExcel(), updated_at: rec.updated_at };
+          this.docs.unshift(shell);
+          this.activeId = id;
+          this.activeSheetIdx = 0;
+          this.touchRecent(shell);
+          this.save();
+          this.render();
+          this.syncFromDb();
+        }
       });
     });
     this.root.querySelectorAll<HTMLElement>('.docs-recent-del').forEach(btn => {
