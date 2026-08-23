@@ -82,7 +82,17 @@ export class DocsModule {
   private xlVirtData: CellData[][] | null = null;
   private xlVirtMerges: MergeRange[] | null = null;
   private isFullscreen: boolean = false;
-  private recent: Array<{id:string;title:string;type:DocType;updated_at:number;content?:string}> = [];
+  /**
+   * Недавние — ТОЛЬКО метаданные. Раньше здесь лежала полная копия каждого
+   * документа (до 10 штук), которая переписывалась при каждой правке: кеш
+   * распухал вдвое и выбивал квоту localStorage. Содержимое берётся из docs
+   * или из БД.
+   */
+  private recent: Array<{id:string;title:string;type:DocType;updated_at:number}> = [];
+  /** Документы, чьё содержимое ещё не пришло из БД — их нельзя перезаписывать. */
+  private pendingContent = new Set<string>();
+  /** Документы, о непрохождении сохранения которых пользователь уже предупреждён. */
+  private warnedNoPersist = new Set<string>();
   private xlLastSel: { r1: number; c1: number; r2: number; c2: number; docId: string; sheetIdx: number } | null = null;
   private xlUndoStack: Array<{data: CellData[][], docId: string, sheetIdx: number, r: number, c: number}> = [];
   private xlRedoStack: Array<{data: CellData[][], docId: string, sheetIdx: number, r: number, c: number}> = [];
@@ -111,6 +121,7 @@ export class DocsModule {
       this.flushSave();
       this.docs = [];
       this.recent = [];
+      this.pendingContent.clear();
       this.activeId = null;
       this.activeSheetIdx = 0;
       this.loadedCompanyId = cid;
@@ -135,15 +146,57 @@ export class DocsModule {
   }
 
   // ── Storage (company-scoped keys) ─────────────────────────────────────────
+  //
+  // Содержимое каждого документа лежит в СВОЁМ ключе, а общий ключ хранит только
+  // индекс (id/тип/заголовок/время). Раньше все документы писались одним блобом,
+  // и при переполнении квоты код обнулял content у всех, кто больше 50 КБ —
+  // после F5 таблица оказывалась пустой. Теперь переполнение затрагивает только
+  // тот документ, который не поместился, а остальные остаются нетронутыми.
   private sk(): string { const c = companyService.getActiveId(); return c ? `${STORAGE_KEY}_${c}` : STORAGE_KEY; }
   private rk(): string { const c = companyService.getActiveId(); return c ? `${RECENT_KEY}_${c}` : RECENT_KEY; }
   private ak(): string { const c = companyService.getActiveId(); return c ? `${ACTIVE_KEY}_${c}` : ACTIVE_KEY; }
+  /** Ключ содержимого одного документа. */
+  private ck(id: string): string { return `${this.sk()}__doc_${id}`; }
 
   private load(): void {
-    try { const raw = localStorage.getItem(this.sk()); this.docs = raw ? JSON.parse(raw) : []; }
-    catch { this.docs = []; }
-    try { const raw = localStorage.getItem(this.rk()); this.recent = raw ? JSON.parse(raw) : []; }
-    catch { this.recent = []; }
+    let index: any[] = [];
+    try { const raw = localStorage.getItem(this.sk()); index = raw ? JSON.parse(raw) : []; }
+    catch { index = []; }
+
+    this.docs = [];
+    for (const meta of index) {
+      if (!meta || typeof meta.id !== 'string') continue;
+      const doc: DocItem = {
+        id: meta.id,
+        type: meta.type === 'word' ? 'word' : 'excel',
+        title: typeof meta.title === 'string' ? meta.title : 'Документ',
+        content: '',
+        updated_at: typeof meta.updated_at === 'number' ? meta.updated_at : 0,
+      };
+      // Старый формат хранил content прямо в индексе — уважаем его при миграции.
+      let content: string | null = null;
+      try { content = localStorage.getItem(this.ck(meta.id)); } catch { /* ignore */ }
+      if (content === null && typeof meta.content === 'string') content = meta.content;
+      if (content === null) {
+        // Содержимое не в кеше — придёт из БД. До тех пор документ нельзя
+        // ни показывать пустым, ни перезаписывать.
+        doc.content = '';
+        this.pendingContent.add(doc.id);
+      } else {
+        doc.content = content;
+      }
+      this.docs.push(doc);
+    }
+
+    try {
+      const raw = localStorage.getItem(this.rk());
+      const list = raw ? JSON.parse(raw) : [];
+      this.recent = Array.isArray(list)
+        ? list.filter(r => r && typeof r.id === 'string')
+              .map(r => ({ id: r.id, title: String(r.title ?? 'Документ'), type: r.type === 'word' ? 'word' as const : 'excel' as const, updated_at: Number(r.updated_at) || 0 }))
+        : [];
+    } catch { this.recent = []; }
+
     const savedActive = localStorage.getItem(this.ak());
     if (savedActive && this.docs.some(d => d.id === savedActive)) {
       this.activeId = savedActive;
@@ -153,22 +206,102 @@ export class DocsModule {
   }
 
   private save(): void {
+    // Порядок важен. Индекс живёт в том же ключе, где старый формат держал
+    // документы вместе с содержимым, поэтому запись индекса стирает старый блоб.
+    // Сначала раскладываем содержимое по своим ключам и только потом трогаем
+    // индекс — иначе миграция со старого формата теряла бы данные.
+    for (const doc of this.docs) {
+      if (this.pendingContent.has(doc.id)) continue;   // ещё не загружен из БД
+      this.saveDocContent(doc);
+    }
     try {
-      localStorage.setItem(this.sk(), JSON.stringify(this.docs));
+      const index = this.docs.map(d => ({ id: d.id, type: d.type, title: d.title, updated_at: d.updated_at }));
+      localStorage.setItem(this.sk(), JSON.stringify(index));
       if (this.activeId) localStorage.setItem(this.ak(), this.activeId);
     } catch (e) {
-      debug.warn('[DocsModule] save failed', e);
-      try {
-        // Oversized docs: save with empty content so metadata is preserved;
-        // their content will be restored from DB on next syncFromDb.
-        const slim = this.docs.map(d => ({ ...d, content: d.content.length > 50000 ? '' : d.content }));
-        localStorage.setItem(this.sk(), JSON.stringify(slim));
-        // Push oversized docs to DB so their content isn't permanently lost.
-        for (const doc of this.docs) {
-          if (doc.content.length > 50000) this.saveDocToDb(doc);
-        }
-      } catch { /* ignore */ }
+      debug.warn('[DocsModule] index save failed', e);
     }
+  }
+
+  /**
+   * Записать содержимое одного документа в кеш.
+   * Если не помещается — чистим свой ключ, освобождаем место за счёт неактивных
+   * документов и пробуем снова. Контент НИКОГДА не подменяется пустой строкой:
+   * лучше не иметь кеша (данные приедут из БД), чем иметь кеш-пустышку,
+   * которая при следующей загрузке выглядит как «документ пуст».
+   */
+  private saveDocContent(doc: DocItem): void {
+    const key = this.ck(doc.id);
+    try {
+      localStorage.setItem(key, doc.content);
+      return;
+    } catch { /* квота — пробуем освободить место */ }
+
+    try { localStorage.removeItem(key); } catch { /* ignore */ }
+
+    // Освобождаем место за счёт кеша неоткрытых документов, от самых старых.
+    // Если в итоге всё равно не поместились — возвращаем выселенных обратно:
+    // рушить чужой кеш ради документа, который не влезает в принципе, нельзя.
+    const victims = this.docs
+      .filter(d => d.id !== doc.id && d.id !== this.activeId && !this.pendingContent.has(d.id))
+      .sort((a, b) => a.updated_at - b.updated_at);
+    const evicted: DocItem[] = [];
+    let stored = false;
+    for (const v of victims) {
+      try { localStorage.removeItem(this.ck(v.id)); evicted.push(v); } catch { /* ignore */ }
+      try { localStorage.setItem(key, doc.content); stored = true; break; }
+      catch { /* продолжаем выселять */ }
+    }
+    if (stored) return;
+
+    for (const v of evicted) {
+      try { localStorage.setItem(this.ck(v.id), v.content); } catch { break; }
+    }
+
+    // Локального кеша у документа не будет — единственным источником станет БД.
+    debug.warn('[DocsModule] doc content too large for localStorage, relying on DB', doc.id);
+    this.saveDocToDb(doc, (ok) => {
+      if (ok || this.warnedNoPersist.has(doc.id)) return;
+      this.warnedNoPersist.add(doc.id);
+      showToast(`«${doc.title}» не помещается в кеш браузера, а сервер недоступен. Экспортируйте файл, чтобы не потерять правки.`, 'error');
+    });
+  }
+
+  private dropDocContent(id: string): void {
+    try { localStorage.removeItem(this.ck(id)); } catch { /* ignore */ }
+  }
+
+  // ── История отмен ─────────────────────────────────────────────────────────
+  /**
+   * Ограничение истории — по объёму, а не по числу шагов.
+   *
+   * Раньше стек держал до 100 полных копий листа. На таблице 5000×26 один
+   * снимок — это 130 000 объектов ячеек, а сто снимков укладывали вкладку в
+   * OOM. Рухнувшая вкладка неотличима от «данные пропали», и несохранённые
+   * правки при этом действительно терялись. Теперь глубина истории зависит от
+   * размера листа: на мелких таблицах она прежняя, на больших — короче.
+   */
+  private static readonly UNDO_MAX_STEPS = 100;
+  private static readonly UNDO_MAX_CELLS = 400_000;
+
+  private trimUndoStack(stack: Array<{ data: CellData[][] }>): void {
+    while (stack.length > DocsModule.UNDO_MAX_STEPS) stack.shift();
+    let cells = stack.reduce((n, s) => n + this.snapCells(s.data), 0);
+    while (stack.length > 1 && cells > DocsModule.UNDO_MAX_CELLS) {
+      cells -= this.snapCells(stack[0].data);
+      stack.shift();
+    }
+  }
+
+  private snapCells(data: CellData[][]): number {
+    let n = 0;
+    for (const row of data) n += row.length;
+    return n;
+  }
+
+  /** Снимок листа для истории: копия без общих ссылок. */
+  private snapshotGrid(data: CellData[][]): CellData[][] {
+    return data.map(row => row.map(c => ({ ...c })));
   }
 
   /** Sync all docs from Supabase, merge with local cache (DB wins on conflict). */
@@ -184,15 +317,31 @@ export class DocsModule {
         if (!local) {
           this.docs.push(row);
           changed = true;
-        } else if (row.updated_at > local.updated_at || (row.content && !local.content)) {
-          // Never let empty DB content overwrite non-empty local data.
-          // This guards against the case where a bug previously saved an empty
-          // shell to Supabase (old "open from recent" path), giving it a newer
-          // updated_at than the user's real content in localStorage.
+          continue;
+        }
+        const wasPending = this.pendingContent.has(row.id);
+        // Документ ждал содержимого из БД — принимаем его безусловно.
+        if (wasPending) {
+          if (row.content) {
+            local.content = row.content;
+            local.title = row.title;
+            local.updated_at = row.updated_at;
+            this.pendingContent.delete(row.id);
+            changed = true;
+          }
+          continue;
+        }
+        if (row.updated_at > local.updated_at || (row.content && !local.content)) {
+          // Пустое содержимое из БД никогда не затирает непустое локальное.
           const safeContent = (row.content || !local.content) ? row.content : local.content;
           Object.assign(local, { ...row, content: safeContent });
           changed = true;
         }
+      }
+      // Документ есть локально, но в БД его нет и содержимого мы так и не нашли —
+      // снимаем флаг, иначе он навсегда останется «загружается».
+      for (const id of [...this.pendingContent]) {
+        if (!rows.some(r => r.id === id)) this.pendingContent.delete(id);
       }
       if (changed) {
         this.docs.sort((a, b) => b.updated_at - a.updated_at);
@@ -206,18 +355,20 @@ export class DocsModule {
   }
 
   /** Upsert a single doc to Supabase. Fire-and-forget. */
-  private saveDocToDb(doc: DocItem): void {
+  private saveDocToDb(doc: DocItem, done?: (ok: boolean) => void): void {
     const companyId = companyService.getActiveId();
-    if (!companyId) return;
-    // Never write an empty-content shell to DB — it would corrupt the stored doc.
-    // Empty Word doc ('') is intentional; empty Excel doc is the emptyExcel() stub.
+    if (!companyId) { done?.(false); return; }
+    // Пустую заготовку в БД не пишем — она затёрла бы настоящий документ.
+    // Пустой Word ('') осмыслен, пустой Excel — это заглушка emptyExcel().
     const emptyStub = this.emptyExcel();
-    if (doc.type === 'excel' && (doc.content === emptyStub || !doc.content)) return;
+    if (doc.type === 'excel' && (doc.content === emptyStub || !doc.content)) { done?.(false); return; }
+    if (this.pendingContent.has(doc.id)) { done?.(false); return; }
     dbFetch<unknown>(`docs_documents`, {
       method: 'POST',
       body: JSON.stringify({ id: doc.id, company_id: companyId, type: doc.type, title: doc.title, content: doc.content, updated_at: doc.updated_at }),
       headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-    }).catch(e => debug.warn('[DocsModule] saveDocToDb failed', e));
+    }).then(() => done?.(true))
+      .catch(e => { debug.warn('[DocsModule] saveDocToDb failed', e); done?.(false); });
   }
 
   /** Delete a doc from Supabase. Fire-and-forget. */
@@ -235,7 +386,7 @@ export class DocsModule {
 
   private touchRecent(doc: DocItem): void {
     this.recent = this.recent.filter(r => r.id !== doc.id);
-    this.recent.unshift({ id: doc.id, title: doc.title, type: doc.type, updated_at: doc.updated_at, content: doc.content });
+    this.recent.unshift({ id: doc.id, title: doc.title, type: doc.type, updated_at: doc.updated_at });
     if (this.recent.length > MAX_RECENT) this.recent = this.recent.slice(0, MAX_RECENT);
     this.saveRecent();
   }
@@ -273,7 +424,10 @@ export class DocsModule {
     this.docs.unshift(doc);
     if (this.docs.length > MAX_DOCS) {
       this.docs.sort((a, b) => b.updated_at - a.updated_at);
+      const evicted = this.docs.slice(MAX_DOCS);
       this.docs = this.docs.slice(0, MAX_DOCS);
+      // Кеш вытесненных документов больше не нужен — иначе он копится мёртвым грузом.
+      for (const e of evicted) { this.pendingContent.delete(e.id); this.dropDocContent(e.id); }
     }
     this.activeId = doc.id;
     this.activeSheetIdx = 0;
@@ -302,6 +456,8 @@ export class DocsModule {
     if (!skipConfirm && !confirm(`Закрыть «${doc.title}»?\nДокумент будет закрыт.`)) return;
     this.touchRecent(doc);
     this.docs.splice(idx, 1);
+    this.pendingContent.delete(id);
+    this.dropDocContent(id);
     if (this.activeId === id) { this.activeId = this.docs[0]?.id ?? null; this.activeSheetIdx = 0; }
     this.save();
     this.deleteDocFromDb(id);
@@ -317,9 +473,15 @@ export class DocsModule {
   }
 
   private updateContent(id: string, content: string): void {
-    this.invalidateFormulas();
     const doc = this.docs.find(d => d.id === id);
     if (!doc) return;
+    // Содержимое ещё едет из БД — редактор сейчас показывает заглушку, а не
+    // документ. Любая запись отсюда затёрла бы настоящие данные.
+    if (this.pendingContent.has(id)) {
+      debug.warn('[DocsModule] ignored write to doc whose content is still loading', id);
+      return;
+    }
+    this.invalidateFormulas();
     doc.content = content;
     doc.updated_at = Date.now();
     this.touchRecent(doc);
@@ -1593,6 +1755,14 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     if (active) this.bindEditor(active);
   }
 
+  private renderLoading(doc: DocItem): string {
+    return `<div class="docs-loading">
+      <div class="docs-loading-spin"></div>
+      <div class="docs-loading-txt">Загружаем «${this.esc(doc.title)}»…</div>
+      <div class="docs-loading-sub">Содержимого нет в локальном кеше — забираем с сервера.</div>
+    </div>`;
+  }
+
   private renderTabs(): string {
     if (!this.docs.length) return '<div class="docs-hint">Нет открытых документов</div>';
     return this.docs.map(d => {
@@ -1652,7 +1822,12 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
   }
 
   private renderEditor(doc: DocItem): string {
-    const editor = doc.type === 'word' ? this.renderWord(doc) : this.renderExcel(doc);
+    // Содержимое ещё не пришло из БД — показываем загрузку, а не пустой лист.
+    // Пустой лист выглядел бы как «данные пропали», и первая же правка
+    // записала бы эту пустоту поверх настоящего документа.
+    const editor = this.pendingContent.has(doc.id)
+      ? this.renderLoading(doc)
+      : (doc.type === 'word' ? this.renderWord(doc) : this.renderExcel(doc));
     const exportMenu = doc.type === 'word'
       ? `<option value="docx">Word (.docx)</option><option value="html">HTML</option><option value="txt">Текст</option>`
       : `<option value="xlsx">Excel (.xlsx)</option><option value="csv">CSV</option>`;
@@ -2200,8 +2375,8 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     const commit = () => saveGrid(grid());
 
     const pushUndo = () => {
-      this.xlUndoStack.push({ data: JSON.parse(JSON.stringify(grid())), docId: doc.id, sheetIdx: this.activeSheetIdx, r: curR, c: curC });
-      if (this.xlUndoStack.length > 100) this.xlUndoStack.shift();
+      this.xlUndoStack.push({ data: this.snapshotGrid(grid()), docId: doc.id, sheetIdx: this.activeSheetIdx, r: curR, c: curC });
+      this.trimUndoStack(this.xlUndoStack);
       this.xlRedoStack = [];
     };
     const restoreGridSnap = (snap: {data: CellData[][], docId: string, sheetIdx: number, r: number, c: number}) => {
@@ -2232,12 +2407,14 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     };
     const doUndo = () => {
       if (!this.xlUndoStack.length) return;
-      this.xlRedoStack.push({ data: JSON.parse(JSON.stringify(grid())), docId: doc.id, sheetIdx: this.activeSheetIdx, r: curR, c: curC });
+      this.xlRedoStack.push({ data: this.snapshotGrid(grid()), docId: doc.id, sheetIdx: this.activeSheetIdx, r: curR, c: curC });
+      this.trimUndoStack(this.xlRedoStack);
       restoreGridSnap(this.xlUndoStack.pop()!);
     };
     const doRedo = () => {
       if (!this.xlRedoStack.length) return;
-      this.xlUndoStack.push({ data: JSON.parse(JSON.stringify(grid())), docId: doc.id, sheetIdx: this.activeSheetIdx, r: curR, c: curC });
+      this.xlUndoStack.push({ data: this.snapshotGrid(grid()), docId: doc.id, sheetIdx: this.activeSheetIdx, r: curR, c: curC });
+      this.trimUndoStack(this.xlUndoStack);
       restoreGridSnap(this.xlRedoStack.pop()!);
     };
     const getMaxRows = () => vd ? vd.length : body.querySelectorAll<HTMLTableRowElement>('tr[data-row]').length;
@@ -3831,38 +4008,31 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         const id = el.dataset.recentId!;
         const type = el.dataset.recentType as DocType;
         recentWrap?.classList.remove('open');
-        const existingDoc = this.docs.find(d => d.id === id);
-        if (existingDoc) {
-          // Doc already in memory — might have empty content if slim-saved to localStorage.
-          // Restore from recent cache before switching to avoid showing a blank sheet.
-          if (!existingDoc.content) {
-            const rec = this.recent.find(r => r.id === id);
-            if (rec?.content) {
-              existingDoc.content = rec.content;
-              existingDoc.updated_at = rec.updated_at;
-            } else {
-              this.syncFromDb();
-            }
-          }
-          this.activeId = id; this.activeSheetIdx = 0; this.render(); return;
+        // Уже открыт — просто переключаемся.
+        if (this.docs.some(d => d.id === id)) {
+          this.activeId = id; this.activeSheetIdx = 0; this.render();
+          if (this.pendingContent.has(id)) this.syncFromDb();
+          return;
         }
         const rec = this.recent.find(r => r.id === id);
         if (!rec) return;
-        if (rec.content) {
-          // Have cached content — restore fully and keep DB in sync.
-          this.addDoc({ id, type, title: rec.title, content: rec.content, updated_at: rec.updated_at });
-        } else {
-          // No cached content (saveRecent may have failed due to quota).
-          // Add a shell and fetch from DB — do NOT overwrite DB with empty content.
-          const shell: DocItem = { id, type, title: rec.title, content: type === 'word' ? '' : this.emptyExcel(), updated_at: rec.updated_at };
-          this.docs.unshift(shell);
-          this.activeId = id;
-          this.activeSheetIdx = 0;
-          this.touchRecent(shell);
-          this.save();
-          this.render();
-          this.syncFromDb();
-        }
+        // Содержимое — из кеша документа, иначе ждём БД. Пустую заглушку в БД
+        // не пишем: она бы затёрла настоящий документ.
+        let cached: string | null = null;
+        try { cached = localStorage.getItem(this.ck(id)); } catch { /* ignore */ }
+        const shell: DocItem = {
+          id, type, title: rec.title,
+          content: cached ?? '',
+          updated_at: rec.updated_at,
+        };
+        this.docs.unshift(shell);
+        if (cached === null) this.pendingContent.add(id);
+        this.activeId = id;
+        this.activeSheetIdx = 0;
+        this.touchRecent(shell);
+        this.save();
+        this.render();
+        if (cached === null) this.syncFromDb();
       });
     });
     this.root.querySelectorAll<HTMLElement>('.docs-recent-del').forEach(btn => {
@@ -3894,6 +4064,8 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
       this.root.querySelector('.docs-shell')?.classList.toggle('docs-fullscreen',this.isFullscreen);
       aiPage.register(this.getAiCapability());
     });
+    // Пока содержимое грузится, редактора в DOM нет — привязывать нечего.
+    if (this.pendingContent.has(doc.id)) return;
     if(doc.type==='word') this.bindWord(doc);
     else this.bindExcel(doc);
   }
@@ -4853,8 +5025,8 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     const ec = this.parseExcelContent(doc.content);
     const sheet = ec.sheets[sheetIdx] ?? ec.sheets[0];
     if (!sheet) return;
-    this.xlUndoStack.push({ data: JSON.parse(JSON.stringify(sheet.data)), docId, sheetIdx, r, c });
-    if (this.xlUndoStack.length > 100) this.xlUndoStack.shift();
+    this.xlUndoStack.push({ data: this.snapshotGrid(sheet.data), docId, sheetIdx, r, c });
+    this.trimUndoStack(this.xlUndoStack);
     this.xlRedoStack = [];
   }
 

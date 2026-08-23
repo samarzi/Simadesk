@@ -4767,3 +4767,17 @@ html:not(.light) .docs-excel-wrap.dx-freeze-row .docs-excel tbody tr[data-row="0
 }
 .dx-ac-item:hover { background: #e8f0fe; }
 .dx-ac-hi { color: var(--accent); font-weight: 700; }
+
+/* Документ грузится с сервера — кеша в браузере нет */
+.docs-loading {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px; padding: 40px 20px;
+}
+.docs-loading-spin {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 2.5px solid var(--border); border-top-color: var(--accent, #d4f000);
+  animation: docs-loading-spin .7s linear infinite;
+}
+@keyframes docs-loading-spin { to { transform: rotate(360deg); } }
+.docs-loading-txt { font-size: 14px; font-weight: 500; color: var(--text); }
+.docs-loading-sub { font-size: 12px; color: var(--muted); }
