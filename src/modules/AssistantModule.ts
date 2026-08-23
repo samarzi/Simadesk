@@ -3399,7 +3399,11 @@ export class AssistantModule {
    private setupVoiceHotkey(): void {
      document.addEventListener('keydown', (e: KeyboardEvent) => {
        const activeEl = document.activeElement as HTMLElement;
-       if (activeEl?.tagName === 'INPUT' || activeEl?.tagName === 'TEXTAREA' || activeEl?.isContentEditable) return;
+       // Пропускаем хоткей в чужих полях ввода, но НЕ в своём textarea —
+       // иначе нажатие горячей клавиши печатает символ вместо запуска диктовки.
+       const isExternalInput = (activeEl?.tagName === 'INPUT' || activeEl?.tagName === 'TEXTAREA' || activeEl?.isContentEditable)
+         && activeEl !== this.textareaEl;
+       if (isExternalInput) return;
 
        if (this.matchesHotkey(e, this.hotkeyConfig.quickVoice)) {
          e.preventDefault();
@@ -4890,6 +4894,18 @@ export class AssistantModule {
         this.isLoading = false;
         this.setInputEnabled(true);
       }
+      return;
+    }
+
+    // Fast: удалить все задачи (или все задачи по ключевому слову) — без ИИ, сразу карточка подтверждения
+    const deleteAllTasksRe = /^(?:удали|удалить|убери|очисти)\s+все\s+задач[иу]?(?:\s+(?:по\s+)?(.+))?$/i;
+    const deleteAllMatch = text.trim().match(deleteAllTasksRe);
+    if (deleteAllMatch) {
+      const filter = deleteAllMatch[1]?.trim() || undefined;
+      const args = filter ? { filter } : {};
+      const desc = describePendingAction('delete_all_tasks', args, ACTION_LABELS['delete_all_tasks']);
+      this.addActionPlanCard('delete_all_tasks', args, desc, text);
+      this.setStatus('Готова');
       return;
     }
 
