@@ -185,7 +185,12 @@ export class DocsModule {
           this.docs.push(row);
           changed = true;
         } else if (row.updated_at > local.updated_at || (row.content && !local.content)) {
-          Object.assign(local, row);
+          // Never let empty DB content overwrite non-empty local data.
+          // This guards against the case where a bug previously saved an empty
+          // shell to Supabase (old "open from recent" path), giving it a newer
+          // updated_at than the user's real content in localStorage.
+          const safeContent = (row.content || !local.content) ? row.content : local.content;
+          Object.assign(local, { ...row, content: safeContent });
           changed = true;
         }
       }
@@ -204,6 +209,10 @@ export class DocsModule {
   private saveDocToDb(doc: DocItem): void {
     const companyId = companyService.getActiveId();
     if (!companyId) return;
+    // Never write an empty-content shell to DB — it would corrupt the stored doc.
+    // Empty Word doc ('') is intentional; empty Excel doc is the emptyExcel() stub.
+    const emptyStub = this.emptyExcel();
+    if (doc.type === 'excel' && (doc.content === emptyStub || !doc.content)) return;
     dbFetch<unknown>(`docs_documents`, {
       method: 'POST',
       body: JSON.stringify({ id: doc.id, company_id: companyId, type: doc.type, title: doc.title, content: doc.content, updated_at: doc.updated_at }),
@@ -244,7 +253,19 @@ export class DocsModule {
   }
 
   private flushSave(): void {
-    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; this.save(); }
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+      this.save();
+      // Also persist to DB so edits survive localStorage quota failures.
+      // Fire-and-forget — the browser may cancel on unload, but keepalive
+      // requests survive; at minimum, the localStorage write above is the
+      // primary safety net.
+      if (this.activeId) {
+        const doc = this.docs.find(d => d.id === this.activeId);
+        if (doc) this.saveDocToDb(doc);
+      }
+    }
   }
 
   // ── CRUD ───────────────────────────────────────────────────────────────────
