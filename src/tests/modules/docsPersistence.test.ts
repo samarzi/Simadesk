@@ -53,7 +53,8 @@ function installQuotaStorage(limitBytes: number) {
     },
     removeItem: (k: string) => { store.delete(k); },
     clear: () => store.clear(),
-    key: () => null, length: 0,
+    key: (i: number) => [...store.keys()][i] ?? null,
+    get length() { return store.size; },
   };
   Object.defineProperty(globalThis, 'localStorage', { value: mock, writable: true, configurable: true });
   return store;
@@ -317,5 +318,48 @@ describe('сервер недоступен — редактор не долже
 
     // Старая копия обязана уцелеть: она единственное, что переживёт F5.
     expect(store.get('docs_v2_CO__doc_d1'), 'сохранённая копия уничтожена').toBe(ok);
+  });
+});
+
+describe('восстановление содержимого из ключа чужой области', () => {
+  it('находит документ, сохранённый до загрузки компании', () => {
+    installQuotaStorage(5_000_000);
+    const content = bigExcel(10);
+    // Индекс — в области компании, а содержимое осталось под ключом без неё:
+    // так получалось, когда сохранение происходило до готовности companyService.
+    localStorage.setItem('docs_v2_CO', JSON.stringify([
+      { id: 'd1', type: 'excel', title: 'Полки', updated_at: 1000 },
+    ]));
+    localStorage.setItem('docs_v2__doc_d1', content);
+
+    const M: any = boot();
+    expect(M.docs[0].content, 'содержимое не подобрано из чужого ключа').toBe(content);
+    expect(M.pendingContent.has('d1'), 'документ не должен считаться потерянным').toBe(false);
+  });
+
+  it('подобранное содержимое переносится в текущую область при сохранении', () => {
+    installQuotaStorage(5_000_000);
+    const content = bigExcel(10);
+    localStorage.setItem('docs_v2_CO', JSON.stringify([
+      { id: 'd1', type: 'excel', title: 'Полки', updated_at: 1000 },
+    ]));
+    localStorage.setItem('docs_v2__doc_d1', content);
+
+    const M: any = boot();
+    M.activeId = 'd1';
+    M.save();
+    expect(localStorage.getItem('docs_v2_CO__doc_d1')).toBe(content);
+  });
+
+  it('чужой документ не подбирается по чужому id', () => {
+    installQuotaStorage(5_000_000);
+    localStorage.setItem('docs_v2_CO', JSON.stringify([
+      { id: 'd1', type: 'excel', title: 'Полки', updated_at: 1000 },
+    ]));
+    localStorage.setItem('docs_v2__doc_ДРУГОЙ', bigExcel(10));
+
+    const M: any = boot();
+    expect(M.pendingContent.has('d1')).toBe(true);
+    expect(M.docs[0].content).toBe('');
   });
 });

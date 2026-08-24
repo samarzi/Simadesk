@@ -177,6 +177,11 @@ export class DocsModule {
       let content: string | null = null;
       try { content = localStorage.getItem(this.ck(meta.id)); } catch { /* ignore */ }
       if (content === null && typeof meta.content === 'string') content = meta.content;
+      // Ключ мог быть записан под другой областью видимости: если в момент
+      // сохранения компания ещё не загрузилась, sk() возвращал ключ без её id.
+      // Такой «осиротевший» кеш — единственный уцелевший экземпляр документа,
+      // поэтому подбираем его и возвращаем в текущую область.
+      if (content === null) content = this.findOrphanContent(meta.id);
       if (content === null) {
         // Содержимое не в кеше — придёт из БД. До тех пор документ нельзя
         // ни показывать пустым, ни перезаписывать.
@@ -277,6 +282,30 @@ export class DocsModule {
 
   private dropDocContent(id: string): void {
     try { localStorage.removeItem(this.ck(id)); } catch { /* ignore */ }
+  }
+
+  /**
+   * Найти содержимое документа под чужим ключом.
+   *
+   * Ключи кеша привязаны к компании (docs_v2_<company>__doc_<id>), но если в
+   * момент записи компания ещё не загрузилась, ключ получался без неё. Тогда
+   * документ «пропадал» при следующем заходе, хотя данные лежали рядом.
+   * Здесь мы ищем содержимое по id в любой области видимости.
+   */
+  private findOrphanContent(id: string): string | null {
+    const suffix = `__doc_${id}`;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !key.endsWith(suffix) || !key.startsWith(STORAGE_KEY)) continue;
+        const value = localStorage.getItem(key);
+        if (value) {
+          debug.warn('[DocsModule] recovered doc content from stray key', key);
+          return value;
+        }
+      }
+    } catch { /* ignore */ }
+    return null;
   }
 
   // ── История отмен ─────────────────────────────────────────────────────────
