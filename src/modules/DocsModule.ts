@@ -41,6 +41,16 @@ interface SheetData {
   rowHeights?: (number | null)[];
   merges?: MergeRange[];
   truncated?: boolean;
+  /**
+   * Палитра стилей листа — только для хранения.
+   * В памяти оформление лежит в cell.s строкой CSS, но записывать её в каждую
+   * ячейку нельзя: одна и та же строка вида «background-color:#ffff00;…» весит
+   * около сотни байт, и таблица на 1000 строк раздувалась до 4 МБ при квоте
+   * localStorage в 5 МБ на весь домен. Документ переставал помещаться в кеш,
+   * а вместе с ним терялись и цвета. При сериализации одинаковые стили
+   * сводятся сюда, а в ячейке остаётся номер (si).
+   */
+  styles?: string[];
 }
 
 interface ExcelContent {
@@ -574,7 +584,7 @@ export class DocsModule {
         return {
           sheets: p.sheets.map((s: any) => ({
             name: s.name || 'Лист 1',
-            data: this.normalizeCellGrid(s.data || []),
+            data: this.normalizeCellGrid(s.data || [], Array.isArray(s.styles) ? s.styles : undefined),
             colWidths: s.colWidths,
             rowHeights: s.rowHeights,
             merges: s.merges,
@@ -589,14 +599,46 @@ export class DocsModule {
     return JSON.parse(this.emptyExcel());
   }
 
-  private normalizeCellGrid(p: any[][]): CellData[][] {
+  /**
+   * Сериализация книги для хранения: одинаковые стили сводятся в палитру листа,
+   * в ячейке остаётся её номер. Это единственное место, где книга превращается
+   * в строку — иначе разные вызовы разошлись бы по формату.
+   */
+  private serializeExcel(ec: ExcelContent): string {
+    const sheets = ec.sheets.map(sheet => {
+      const palette: string[] = [];
+      const index = new Map<string, number>();
+      const data = sheet.data.map(row => row.map(cell => {
+        const out: any = { v: cell.v };
+        if (cell.t) out.t = cell.t;
+        if (cell.nf) out.nf = cell.nf;
+        if (cell.s) {
+          let i = index.get(cell.s);
+          if (i === undefined) { i = palette.length; palette.push(cell.s); index.set(cell.s, i); }
+          out.si = i;
+        }
+        return out;
+      }));
+      return {
+        ...sheet,
+        data,
+        ...(palette.length ? { styles: palette } : {}),
+      };
+    });
+    return JSON.stringify({ sheets });
+  }
+
+  private normalizeCellGrid(p: any[][], styles?: string[]): CellData[][] {
     const TYPES = new Set(['n', 's', 'd', 'b']);
     return (p || []).map(row => (row || []).map((cell: unknown) => {
       if (typeof cell === 'string') return { v: cell };
       if (cell && typeof cell === 'object' && 'v' in cell) {
-        const c = cell as { v?: unknown; s?: unknown; t?: unknown; nf?: unknown };
+        const c = cell as { v?: unknown; s?: unknown; t?: unknown; nf?: unknown; si?: unknown };
         const out: CellData = { v: String(c.v ?? '') };
-        if (typeof c.s === 'string' && c.s) out.s = c.s;
+        // Стиль приходит либо номером в палитре листа (новый формат), либо
+        // строкой прямо в ячейке (старый) — понимаем оба.
+        if (typeof c.si === 'number' && styles && typeof styles[c.si] === 'string') out.s = styles[c.si];
+        else if (typeof c.s === 'string' && c.s) out.s = c.s;
         // Тип и числовой формат обязаны переживать сохранение: без них
         // число после перезагрузки снова становится текстом, а денежный
         // формат теряется — ровно та потеря, ради которой всё затевалось.
@@ -921,7 +963,7 @@ export class DocsModule {
           return { name: sheetName, data, colWidths, rowHeights, ...(merges.length ? { merges } : {}), ...(truncated ? { truncated: true as const } : {}) };
         });
 
-        this.addDoc({ id: this.newId(), type: 'excel', title: bare, content: JSON.stringify({ sheets }), updated_at: now });
+        this.addDoc({ id: this.newId(), type: 'excel', title: bare, content: this.serializeExcel({ sheets }), updated_at: now });
         return;
       }
 
@@ -936,7 +978,7 @@ export class DocsModule {
           return r.map((v: unknown) => ({ v: v == null ? '' : String(v) }));
         });
         if (!data.length) data.push([{ v: '' }]);
-        this.addDoc({ id: this.newId(), type: 'excel', title: bare, content: JSON.stringify({ sheets: [{ name: 'Sheet1', data }] }), updated_at: now });
+        this.addDoc({ id: this.newId(), type: 'excel', title: bare, content: this.serializeExcel({ sheets: [{ name: 'Sheet1', data }] }), updated_at: now });
         return;
       }
 
@@ -2438,7 +2480,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     const saveGrid = (data: CellData[][]) => {
       const ec = getEC();
       ec.sheets[this.activeSheetIdx] = { ...getSheet(), data };
-      this.updateContent(doc.id, JSON.stringify(ec));
+      this.updateContent(doc.id, this.serializeExcel(ec));
     };
 
     const commit = () => saveGrid(grid());
@@ -2455,7 +2497,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         if (snapDoc) {
           const ec = this.parseExcelContent(snapDoc.content);
           ec.sheets[snap.sheetIdx] = { ...(ec.sheets[snap.sheetIdx] ?? { name: 'Sheet1' }), data: snap.data };
-          this.updateContent(snap.docId, JSON.stringify(ec));
+          this.updateContent(snap.docId, this.serializeExcel(ec));
           if (snap.docId === this.activeId) this.render();
         }
         return;
@@ -3328,7 +3370,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         while (cws.length <= colIdx) cws.push(null);
         cws[colIdx] = maxW;
         ec.sheets[this.activeSheetIdx] = { ...sh, colWidths: cws };
-        this.updateContent(doc.id, JSON.stringify(ec));
+        this.updateContent(doc.id, this.serializeExcel(ec));
       });
       handle.addEventListener('mousedown', (e) => {
         e.preventDefault(); e.stopPropagation();
@@ -3353,7 +3395,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
           while (cws.length <= colIdx) cws.push(null);
           cws[colIdx] = w;
           ec.sheets[this.activeSheetIdx] = { ...sh, colWidths: cws };
-          this.updateContent(doc.id, JSON.stringify(ec));
+          this.updateContent(doc.id, this.serializeExcel(ec));
         };
         document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp);
       });
@@ -3677,7 +3719,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
             while (rhs.length <= rowIdx) rhs.push(null);
             rhs[rowIdx] = h;
             ec.sheets[this.activeSheetIdx] = { ...sh, rowHeights: rhs };
-            this.updateContent(doc.id, JSON.stringify(ec));
+            this.updateContent(doc.id, this.serializeExcel(ec));
           };
           document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp);
         });
@@ -4315,7 +4357,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
   }
 
   private aiPersist(doc: DocItem, ec: ExcelContent): void {
-    this.updateContent(doc.id, JSON.stringify(ec));
+    this.updateContent(doc.id, this.serializeExcel(ec));
     this.render();
   }
 
@@ -5369,7 +5411,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     const row = sheet.data[args.row];
     while (row.length <= args.col) row.push({ v: '' });
     row[args.col] = { v: String(args.value ?? '') };
-    this.updateContent(docId, JSON.stringify(ec));
+    this.updateContent(docId, this.serializeExcel(ec));
     if (this.root.style.display !== 'none') this.render();
   }
 
@@ -5948,7 +5990,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
             }
           }
         }
-        this.updateContent(doc.id, JSON.stringify(ec));
+        this.updateContent(doc.id, this.serializeExcel(ec));
         lines.push(`«${doc.title}» (Excel): заменено ${count}`);
       }
     }
@@ -6198,7 +6240,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         for (const sh of ec.sheets) {
           sh.data = sh.data.map(row => row.map(() => ({ v: '' } as CellData)));
         }
-        this.updateContent(doc.id, JSON.stringify(ec));
+        this.updateContent(doc.id, this.serializeExcel(ec));
       }
     }
     this.render();
@@ -6366,7 +6408,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
       data: Array.from({ length: XL_ROWS }, () => Array.from({ length: XL_COLS }, () => ({ v: '' } as CellData))),
     });
     this.activeSheetIdx = ec.sheets.length - 1;
-    this.updateContent(doc.id, JSON.stringify(ec));
+    this.updateContent(doc.id, this.serializeExcel(ec));
     this.render();
     return { summary: `Добавлен лист «${name}» (всего листов: ${ec.sheets.length}).` };
   }
@@ -6385,7 +6427,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     }
     const old = sh.name;
     sh.name = a.to.trim();
-    this.updateContent(doc.id, JSON.stringify(ec));
+    this.updateContent(doc.id, this.serializeExcel(ec));
     this.render();
     return { summary: `Лист «${old}» переименован в «${sh.name}».` };
   }
@@ -6405,7 +6447,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     const name = ec.sheets[idx].name;
     ec.sheets.splice(idx, 1);
     if (this.activeSheetIdx >= ec.sheets.length) this.activeSheetIdx = ec.sheets.length - 1;
-    this.updateContent(doc.id, JSON.stringify(ec));
+    this.updateContent(doc.id, this.serializeExcel(ec));
     this.render();
     return { summary: `Лист «${name}» удалён. Осталось листов: ${ec.sheets.length}.` };
   }
@@ -6430,7 +6472,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     copy.name = name;
     ec.sheets.push(copy);
     this.activeSheetIdx = ec.sheets.length - 1;
-    this.updateContent(doc.id, JSON.stringify(ec));
+    this.updateContent(doc.id, this.serializeExcel(ec));
     this.render();
     return { summary: `Лист «${src.name}» скопирован как «${name}».` };
   }
