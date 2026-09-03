@@ -528,15 +528,39 @@ export class DocsModule {
     });
   }
 
+  /**
+   * Закрыть вкладку — документ убирается из открытых, но НИЧЕГО не теряет.
+   *
+   * Раньше крестик на вкладке звал deleteDoc: диалог обещал «документ будет
+   * закрыт», а код стирал кеш и слал DELETE на сервер. Документ исчезал
+   * безвозвратно, оставаясь при этом в «Недавних» — оттуда он уже не
+   * открывался. Закрытие обязано быть обратимым.
+   */
+  private closeDoc(id: string): void {
+    const idx = this.docs.findIndex(d => d.id === id);
+    if (idx === -1) return;
+    const doc = this.docs[idx];
+    this.flushSave();                 // не теряем несохранённую правку
+    this.touchRecent(doc);
+    this.saveDocContent(doc);         // содержимое остаётся в кеше
+    this.saveDocToDb(doc);            // и на сервере
+    this.docs.splice(idx, 1);
+    if (this.activeId === id) { this.activeId = this.docs[0]?.id ?? null; this.activeSheetIdx = 0; }
+    this.save();
+    this.render();
+  }
+
+  /** Удалить документ насовсем — из кеша и с сервера. Необратимо. */
   private deleteDoc(id: string, skipConfirm = false): void {
     const idx = this.docs.findIndex(d => d.id === id);
     if (idx === -1) return;
     const doc = this.docs[idx];
-    if (!skipConfirm && !confirm(`Закрыть «${doc.title}»?\nДокумент будет закрыт.`)) return;
-    this.touchRecent(doc);
+    if (!skipConfirm && !confirm(`Удалить «${doc.title}» навсегда?\nДокумент исчезнет с сервера и из этого браузера. Отменить будет нельзя.`)) return;
     this.docs.splice(idx, 1);
     this.pendingContent.delete(id);
     this.dropDocContent(id);
+    this.recent = this.recent.filter(r => r.id !== id);   // мёртвых записей в «Недавних» не оставляем
+    this.saveRecent();
     if (this.activeId === id) { this.activeId = this.docs[0]?.id ?? null; this.activeSheetIdx = 0; }
     this.save();
     this.deleteDocFromDb(id);
@@ -4160,14 +4184,14 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
       });
     });
     this.root.querySelectorAll<HTMLElement>('.docs-tab-close').forEach(el=>{
-      el.addEventListener('click',e=>{e.stopPropagation();this.deleteDoc(el.dataset.close!);});
+      el.addEventListener('click',e=>{e.stopPropagation();this.closeDoc(el.dataset.close!);});
     });
   }
 
   private bindEditor(doc: DocItem): void {
     const titleInp=this.root.querySelector<HTMLInputElement>('#docs-title-inp');
     titleInp?.addEventListener('input',()=>this.renameDoc(doc.id,titleInp.value));
-    this.root.querySelector('#docs-delete-btn')?.addEventListener('click',()=>{if(confirm(`Удалить «${doc.title}»? Это действие нельзя отменить.`))this.deleteDoc(doc.id,true);});
+    this.root.querySelector('#docs-delete-btn')?.addEventListener('click',()=>this.deleteDoc(doc.id));
     const exportSel=this.root.querySelector<HTMLSelectElement>('#docs-export-sel');
     exportSel?.addEventListener('change',()=>{if(exportSel.value){this.exportDoc(doc,exportSel.value);exportSel.value='';}});
     this.root.querySelector('#docs-fs-btn')?.addEventListener('click',()=>{
