@@ -77,6 +77,7 @@ function boot() {
   M.xlUndoStack = []; M.xlRedoStack = []; M.xlSheetScroll = {};
   M.fxRows = null; M.fxEval = null;
   M.pendingContent = new Set();
+  M.warnedNoPersist = new Set();
   M.load();
   return M;
 }
@@ -87,6 +88,25 @@ beforeEach(() => {
 });
 
 describe('документ переживает обновление страницы', () => {
+  it('не открывает посторонние серверные документы при восстановлении вкладки', async () => {
+    installQuotaStorage(5_000_000);
+    const A = boot();
+    A.docs = [{ id: 'd1', type: 'excel', title: 'Прайс', content: '', updated_at: 1000 }];
+    A.activeId = 'd1';
+    A.pendingContent.add('d1');
+    A.render = () => {};
+    dbState.rows = [
+      { id: 'd1', type: 'excel', title: 'Прайс', content: bigExcel(2), updated_at: 2000 },
+      { id: 'old-1', type: 'excel', title: 'Старая таблица', content: bigExcel(1), updated_at: 1500 },
+      { id: 'old-2', type: 'excel', title: 'Ещё одна таблица', content: bigExcel(1), updated_at: 1400 },
+    ];
+
+    await A.syncFromDb();
+
+    expect(A.docs.map((d: any) => d.id)).toEqual(['d1']);
+    expect(A.docs[0].content).toBe(bigExcel(2));
+  });
+
   it('小 документ: правка сохраняется и читается после перезапуска', () => {
     installQuotaStorage(5_000_000);
     const A = boot();

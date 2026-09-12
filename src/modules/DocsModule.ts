@@ -362,8 +362,11 @@ export class DocsModule {
       for (const row of rows) {
         const local = this.docs.find(d => d.id === row.id);
         if (!local) {
-          this.docs.push(row);
-          changed = true;
+          // Синхронизация нужна для восстановления уже открытых вкладок и
+          // документов, выбранных из «Недавних». Нельзя превращать каждый
+          // документ, найденный в БД, в новую открытую вкладку: при открытии
+          // одного файла из «Недавних» это внезапно показывало пользователю
+          // чужие/старые таблицы, которых даже нет в списке «Недавние».
           continue;
         }
         const wasPending = this.pendingContent.has(row.id);
@@ -4136,46 +4139,51 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         }
       };
       document.addEventListener('click', closeOnOutside);
-    }
-    this.root.querySelectorAll<HTMLElement>('.docs-recent-row').forEach(el=>{
-      el.addEventListener('click',(e)=>{
-        e.stopPropagation();
-        const id = el.dataset.recentId!;
-        const type = el.dataset.recentType as DocType;
-        recentWrap?.classList.remove('open');
-        // Уже открыт — просто переключаемся.
-        if (this.docs.some(d => d.id === id)) {
-          this.activeId = id; this.activeSheetIdx = 0; this.render();
-          if (this.pendingContent.has(id)) this.syncFromDb();
+      
+      // Делегирование событий для открытия файлов из недавних
+      recentWrap.addEventListener('click', (e) => {
+        const row = (e.target as HTMLElement).closest('.docs-recent-row') as HTMLElement;
+        if (row) {
+          e.stopPropagation();
+          const id = row.dataset.recentId!;
+          const type = row.dataset.recentType as DocType;
+          recentWrap.classList.remove('open');
+          // Уже открыт — просто переключаемся.
+          if (this.docs.some(d => d.id === id)) {
+            this.activeId = id; this.activeSheetIdx = 0; this.render();
+            if (this.pendingContent.has(id)) this.syncFromDb();
+            return;
+          }
+          const rec = this.recent.find(r => r.id === id);
+          if (!rec) return;
+          // Содержимое — из кеша документа, иначе ждём БД. Пустую заглушку в БД
+          // не пишем: она бы затёрла настоящий документ.
+          let cached: string | null = null;
+          try { cached = localStorage.getItem(this.ck(id)); } catch { /* ignore */ }
+          const shell: DocItem = {
+            id, type, title: rec.title,
+            content: cached ?? '',
+            updated_at: rec.updated_at,
+          };
+          this.docs.unshift(shell);
+          if (cached === null) this.pendingContent.add(id);
+          this.activeId = id;
+          this.activeSheetIdx = 0;
+          this.touchRecent(shell);
+          this.save();
+          this.render();
+          if (cached === null) this.syncFromDb();
           return;
         }
-        const rec = this.recent.find(r => r.id === id);
-        if (!rec) return;
-        // Содержимое — из кеша документа, иначе ждём БД. Пустую заглушку в БД
-        // не пишем: она бы затёрла настоящий документ.
-        let cached: string | null = null;
-        try { cached = localStorage.getItem(this.ck(id)); } catch { /* ignore */ }
-        const shell: DocItem = {
-          id, type, title: rec.title,
-          content: cached ?? '',
-          updated_at: rec.updated_at,
-        };
-        this.docs.unshift(shell);
-        if (cached === null) this.pendingContent.add(id);
-        this.activeId = id;
-        this.activeSheetIdx = 0;
-        this.touchRecent(shell);
-        this.save();
-        this.render();
-        if (cached === null) this.syncFromDb();
+        
+        // Делегирование событий для удаления из недавних
+        const delBtn = (e.target as HTMLElement).closest('.docs-recent-del') as HTMLElement;
+        if (delBtn) {
+          e.stopPropagation();
+          this.removeRecent(delBtn.dataset.delRecent!);
+        }
       });
-    });
-    this.root.querySelectorAll<HTMLElement>('.docs-recent-del').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.removeRecent(btn.dataset.delRecent!);
-      });
-    });
+    }
     this.root.querySelectorAll<HTMLElement>('.docs-tab').forEach(el=>{
       const id=el.dataset.id!;
       el.addEventListener('click',e=>{
