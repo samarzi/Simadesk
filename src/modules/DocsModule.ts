@@ -4140,8 +4140,17 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
       };
       document.addEventListener('click', closeOnOutside);
       
-      // Делегирование событий для открытия файлов из недавних
+      // Делегирование событий для списка недавних
       recentWrap.addEventListener('click', (e) => {
+        // Делегирование событий для удаления из недавних
+        const delBtn = (e.target as HTMLElement).closest('.docs-recent-del') as HTMLElement;
+        if (delBtn) {
+          e.stopPropagation();
+          this.removeRecent(delBtn.dataset.delRecent!);
+          return;
+        }
+        
+        // Делегирование событий для открытия файлов из недавних
         const row = (e.target as HTMLElement).closest('.docs-recent-row') as HTMLElement;
         if (row) {
           e.stopPropagation();
@@ -4173,14 +4182,6 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
           this.save();
           this.render();
           if (cached === null) this.syncFromDb();
-          return;
-        }
-        
-        // Делегирование событий для удаления из недавних
-        const delBtn = (e.target as HTMLElement).closest('.docs-recent-del') as HTMLElement;
-        if (delBtn) {
-          e.stopPropagation();
-          this.removeRecent(delBtn.dataset.delRecent!);
         }
       });
     }
