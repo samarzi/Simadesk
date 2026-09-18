@@ -77,6 +77,23 @@ const XL_VX_THRESH = 250;      // row count above which virtual scroll activates
 const XL_VX_PAGE   = 100;      // visible rows per virtual window
 const XL_VX_BUF    = 30;       // buffer rows above/below viewport
 const XL_VX_ROW_H  = 24;       // assumed row height (px) for spacer math
+/**
+ * Устаревшая индексная палитра Excel (ECMA-376, §18.8.27).
+ * Ею пользуются выгрузки из 1С, ERP и файлы, сделанные в старых версиях Excel:
+ * цвет задаётся не кодом, а номером в этой таблице. Индексы 64 и 65 —
+ * «автоматические» цвета системы, в палитру не входят.
+ */
+const XL_INDEXED_COLORS: string[] = [
+  '000000','ffffff','ff0000','00ff00','0000ff','ffff00','ff00ff','00ffff',
+  '000000','ffffff','ff0000','00ff00','0000ff','ffff00','ff00ff','00ffff',
+  '800000','008000','000080','808000','800080','008080','c0c0c0','808080',
+  '9999ff','993366','ffffcc','ccffff','660066','ff8080','0066cc','ccccff',
+  '000080','ff00ff','ffff00','00ffff','800080','800000','008080','0000ff',
+  '00ccff','ccffff','ccffcc','ffff99','99ccff','ff99cc','cc99ff','ffcc99',
+  '3366ff','33cccc','99cc00','ffcc00','ff9900','ff6600','666699','969696',
+  '003366','339966','003300','333300','993300','993366','333399','333333',
+];
+
 /** Пикселей на «ширину нуля» — единицу ширины колонки в OOXML (Calibri 11). */
 const XL_PX_PER_CH = 7;
 /** Пикселей на пункт: высота строки в OOXML измеряется в пунктах. */
@@ -689,7 +706,11 @@ export class DocsModule {
     const entry = wb.files['xl/theme/theme1.xml'] ?? wb.files['xl/theme/Theme1.xml'];
     if (!entry) return colors;
     const xml = new TextDecoder().decode(entry.content as Uint8Array);
-    const slots = ['dk1','lt1','dk2','lt2','accent1','accent2','accent3','accent4','accent5','accent6','hlink','folHlink'];
+    // ВНИМАНИЕ: порядок не совпадает с порядком элементов в <a:clrScheme>.
+    // В XML они идут dk1, lt1, dk2, lt2, а индекс theme="N" в styles.xml
+    // ссылается на них попарно наоборот: 0=lt1, 1=dk1, 2=lt2, 3=dk2.
+    // Из-за чтения «как в документе» тёмные заголовки приезжали светлыми.
+    const slots = ['lt1','dk1','lt2','dk2','accent1','accent2','accent3','accent4','accent5','accent6','hlink','folHlink'];
     slots.forEach((slot, i) => {
       const srgb = xml.match(new RegExp(`<a:${slot}[^>]*>\\s*<a:srgbClr val="([0-9A-Fa-f]{6})"`));
       if (srgb) { colors[i] = srgb[1].toLowerCase(); return; }
@@ -715,23 +736,84 @@ export class DocsModule {
   }
 
   /** Resolve OOXML color object {rgb?, theme?, tint?, indexed?} → 6-char hex or null */
-  private xlResolveColor(colorObj: any, themeColors: string[]): string | null {
+  private xlResolveColor(colorObj: any, themeColors: string[], customPalette?: string[]): string | null {
     if (!colorObj) return null;
+    const tinted = (hex: string) => {
+      const tint = colorObj.tint ? +colorObj.tint : 0;
+      return tint ? this.xlTintHex(hex, tint) : hex;
+    };
     if (colorObj.rgb && typeof colorObj.rgb === 'string') {
       const raw = colorObj.rgb;
       const h = raw.length === 8 ? raw.slice(2) : raw;
       if (h.length !== 6) return null;
-      const hex = h.toLowerCase();
-      const tint = colorObj.tint ? +colorObj.tint : 0;
-      return tint ? this.xlTintHex(hex, tint) : hex;
+      return tinted(h.toLowerCase());
     }
     if (colorObj.theme != null) {
       const base = themeColors[+colorObj.theme] ?? '';
       if (!base) return null;
-      const tint = colorObj.tint ? +colorObj.tint : 0;
-      return tint ? this.xlTintHex(base, tint) : base;
+      return tinted(base);
+    }
+    // Индексная палитра — ей красят выгрузки из 1С, ERP и старого Excel.
+    // Без этой ветки такие заливки просто исчезали: файл открывался без цветов.
+    if (colorObj.indexed != null) {
+      const i = +colorObj.indexed;
+      // 64 и 65 — «автоматические» цвета системы (текст и фон), а не палитра.
+      if (i === 64 || i === 65) return null;
+      const hex = (customPalette && customPalette.length ? customPalette[i] : undefined) ?? XL_INDEXED_COLORS[i];
+      if (!hex) return null;
+      return tinted(hex);
     }
     return null;
+  }
+
+  /**
+   * Цвета заливок из сырого xl/styles.xml.
+   *
+   * SheetJS теряет индексные цвета: на <fgColor indexed="13"/> он отдаёт пустой
+   * объект, и заливка исчезала — файлы из 1С и старого Excel открывались
+   * без цветов. Здесь разбираем <fills> сами, сохраняя все три формы записи
+   * цвета, а заодно подхватываем переопределённую палитру <indexedColors>.
+   */
+  private xlReadFillsFromXml(wb: any): Array<any | null> {
+    const entry = wb?.files?.['xl/styles.xml'] ?? wb?.files?.['xl/Styles.xml'];
+    if (!entry) return [];
+    const xml = new TextDecoder('utf-8').decode(entry.content as Uint8Array);
+
+    // Книга может переопределить устаревшую палитру своей.
+    const custom: string[] = [];
+    const idxBlock = xml.match(/<indexedColors>([\s\S]*?)<\/indexedColors>/);
+    if (idxBlock) {
+      const re = /<rgbColor[^>]*rgb="([0-9A-Fa-f]{6,8})"/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(idxBlock[1])) !== null) {
+        const h = m[1].length === 8 ? m[1].slice(2) : m[1];
+        custom.push(h.toLowerCase());
+      }
+    }
+
+    const fillsBlock = xml.match(/<fills[^>]*>([\s\S]*?)<\/fills>/);
+    if (!fillsBlock) return [];
+    const out: Array<any | null> = [];
+    const fillRe = /<fill>([\s\S]*?)<\/fill>|<fill\s*\/>/g;
+    let fm: RegExpExecArray | null;
+    while ((fm = fillRe.exec(fillsBlock[1])) !== null) {
+      const body = fm[1] ?? '';
+      if (!/patternType="solid"/.test(body)) { out.push(null); continue; }
+      const fg = body.match(/<fgColor([^>]*)\/?>/);
+      if (!fg) { out.push(null); continue; }
+      const a = fg[1];
+      const color: any = {};
+      const rgb = a.match(/\brgb="([0-9A-Fa-f]{6,8})"/);
+      const theme = a.match(/\btheme="(\d+)"/);
+      const indexed = a.match(/\bindexed="(\d+)"/);
+      const tint = a.match(/\btint="(-?[\d.]+)"/);
+      if (rgb) color.rgb = rgb[1];
+      else if (theme) color.theme = +theme[1];
+      else if (indexed) color.indexed = +indexed[1];
+      if (tint) color.tint = +tint[1];
+      out.push(Object.keys(color).length ? { color, custom } : null);
+    }
+    return out;
   }
 
   private xlBuildStyleMap(wb: any, sheetFilePath: string): Map<string, string> {
@@ -739,6 +821,8 @@ export class DocsModule {
     if (!S || !wb.files || !sheetFilePath) return new Map();
 
     const themeColors = this.xlReadThemeColors(wb);
+    // Заливки берём из сырого XML: SheetJS теряет индексные цвета.
+    const rawFills = this.xlReadFillsFromXml(wb);
 
     // Pre-compute CellXf index → CSS string
     const xfCSS: string[] = (S.CellXf || []).map((xf: any) => {
@@ -746,9 +830,13 @@ export class DocsModule {
       const parts: string[] = [];
 
       // Background fill
-      const fill = S.Fills?.[+xf.fillId];
-      if (fill?.patternType === 'solid') {
-        const hex = this.xlResolveColor(fill.fgColor, themeColors);
+      const fillId = +xf.fillId;
+      const raw = rawFills[fillId];
+      const fill = S.Fills?.[fillId];
+      if (raw || fill?.patternType === 'solid') {
+        const hex = raw
+          ? this.xlResolveColor(raw.color, themeColors, raw.custom)
+          : this.xlResolveColor(fill.fgColor, themeColors);
         if (hex && !/^f{6}$/i.test(hex) && !/^0{6}$/.test(hex)) {
           parts.push(`background-color:#${hex}`);
         }
