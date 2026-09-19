@@ -14,6 +14,12 @@ export interface UndoSpec {
   kind: string;            // подсистема, умеющая откатывать (напр. 'docs')
   payload: any;            // снимок состояния «до» для восстановления
   label?: string;          // человеческое описание того, что откатится
+  /**
+   * Снимок оказался слишком большим и в localStorage/на сервер не поехал —
+   * он лежит только в памяти вкладки (см. heavyUndo ниже). После перезагрузки
+   * страницы такой откат недоступен, и мы честно об этом говорим.
+   */
+  heavy?: boolean;
 }
 
 export interface ChangeLogEntry {
@@ -52,6 +58,22 @@ const KEY = 'change_log_v1';
 const MAX = 2000;
 const RETENTION_DAYS = 50;
 
+/**
+ * Предел на снимок для отката, который мы готовы положить в localStorage
+ * и отправить на сервер.
+ *
+ * Редактор кладёт в undo.payload.before ПОЛНОЕ содержимое документа. Для
+ * таблицы на тысячи строк это мегабайты. Каждое действие ассистента поэтому:
+ *   — перечитывало и переписывало весь журнал (JSON.parse + stringify),
+ *   — забивало общую на домен квоту localStorage в 5 МБ, выбивая оттуда
+ *     кеш самих документов,
+ *   — и уезжало на сервер многомегабайтным POST.
+ * После команды «закрась» на 5000 ячеек следующий запрос к ассистенту просто
+ * подвисал. Теперь крупные снимки живут только в памяти вкладки.
+ */
+const UNDO_INLINE_LIMIT = 32 * 1024;
+const heavyUndo = new Map<string, UndoSpec>();
+
 function load(): ChangeLogEntry[] {
   try {
     const all: ChangeLogEntry[] = JSON.parse(localStorage.getItem(KEY) ?? '[]');
@@ -77,9 +99,19 @@ export const changeLog = {
       : undefined);
     const userId = entry.userId ?? authUser?.id;
     const full: ChangeLogEntry = { ...entry, id, ts: new Date().toISOString(), user: userName, userId };
-    entries.unshift(full);
+    // Крупный снимок не сохраняем и не отправляем — держим в памяти вкладки.
+    let stored = full;
+    if (full.undo && full.undo.payload !== undefined) {
+      let size = 0;
+      try { size = JSON.stringify(full.undo.payload).length; } catch { size = UNDO_INLINE_LIMIT + 1; }
+      if (size > UNDO_INLINE_LIMIT) {
+        heavyUndo.set(id, full.undo);
+        stored = { ...full, undo: { kind: full.undo.kind, label: full.undo.label, payload: undefined, heavy: true } };
+      }
+    }
+    entries.unshift(stored);
     save(entries);
-    this._pushToServer(full);
+    this._pushToServer(stored);
     return id;
   },
 
@@ -122,7 +154,11 @@ export const changeLog = {
     if (e.undone) return 'Уже отменено';
     const handler = undoHandlers[e.undo.kind];
     if (!handler) return `Нет обработчика отката «${e.undo.kind}»`;
-    await handler(e.undo.payload);
+    const spec = heavyUndo.get(id) ?? e.undo;
+    if (spec.payload === undefined) {
+      return 'Снимок для отката был только в этой вкладке — после перезагрузки страницы откатить нельзя.';
+    }
+    await handler(spec.payload);
     this.markUndone(id);
     // Аудиторная запись об отмене (кто, когда, что откатил)
     this.add({
@@ -143,7 +179,8 @@ export const changeLog = {
     const undoneIds: string[] = [];
     for (const e of entries) {
       const handler = undoHandlers[e.undo!.kind];
-      if (handler) { await handler(e.undo!.payload); this.markUndone(e.id); n++; undoneIds.push(e.id); }
+      const spec = heavyUndo.get(e.id) ?? e.undo!;
+      if (handler && spec.payload !== undefined) { await handler(spec.payload); this.markUndone(e.id); n++; undoneIds.push(e.id); }
     }
     if (n > 0) {
       // Одна аудиторная запись на всё дерево

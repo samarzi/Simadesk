@@ -2801,6 +2801,19 @@ export class AssistantModule {
       e.preventDefault();
       e.stopPropagation();
       if (!hovered) return;
+      // Клик по ячейке таблицы должен ещё и ВЫДЕЛИТЬ её в редакторе.
+      // Раньше курсор только описывал ячейку словами, а выделения в гриде не
+      // возникало — значит инструмент «покрасить выделенное» отвечал «нет
+      // активного выделения», и ассистенту оставался только «весь лист».
+      // Пользователь тыкал в одну ячейку, а закрашивалась вся таблица.
+      // Прогоняем родной mousedown/mouseup грида: вся логика выделения уже
+      // там, дублировать её не нужно.
+      const cellTd = hovered.closest('td[data-r][data-c]');
+      if (cellTd) {
+        for (const type of ['mousedown', 'mouseup'] as const) {
+          cellTd.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+        }
+      }
       selectionCtx.set(this.extractAiCursorInfo(hovered));
       this.deactivateAiCursor();
     };
@@ -2845,13 +2858,17 @@ export class AssistantModule {
     if (td) {
       const r = +(td.dataset.r ?? 0);
       const c = +(td.dataset.c ?? 0);
-      const col = String.fromCharCode(65 + c);
+      // База-26, а не 65+c: за колонкой Z шли «[», «\\», «]» вместо AA, AB, AC.
+      let col = '', n = c + 1;
+      while (n > 0) { const rem = (n - 1) % 26; col = String.fromCharCode(65 + rem) + col; n = Math.floor((n - 1) / 26); }
       const cellLabel = `${col}${r + 1}`;
       const val = (td.textContent ?? '').trim();
       return {
         type: 'excel-cells',
         label: `Ячейка ${cellLabel}${val ? ` · «${val.slice(0, 40)}»` : ''}`,
-        prompt: `[КОНТЕКСТ: ячейка Excel ${cellLabel}]\n${val || '(пусто)'}`,
+        // Явно говорим, что ячейка ВЫДЕЛЕНА: иначе модель считала указание
+        // просто описанием и красила весь лист вместо одной ячейки.
+        prompt: `[КОНТЕКСТ: выделена одна ячейка Excel ${cellLabel}. Любое оформление или правка «этой ячейки» относится только к ней — используй excel_style_selection, не трогай остальной лист.]\n${val || '(пусто)'}`,
         data: { cell: cellLabel },
       };
     }
