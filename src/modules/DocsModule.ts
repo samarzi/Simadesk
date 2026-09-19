@@ -3558,18 +3558,32 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
       if(sel.value) selectedCells().forEach(c=>c.style.fontSize=sel.value);
       sel.value=''; commit(); updateToolbarState();
     });
-    this.root.querySelector<HTMLInputElement>('[data-xf-color]')?.addEventListener('input',e=>{
-      const hex=(e.target as HTMLInputElement).value;
-      selectedCells().forEach(c=>c.style.color=hex);
-      const bar=this.root.querySelector<HTMLElement>('#dx-color-bar'); if(bar) bar.style.background=hex;
-      commit();
-    });
-    this.root.querySelector<HTMLInputElement>('[data-xf-bg]')?.addEventListener('input',e=>{
-      const hex=(e.target as HTMLInputElement).value;
-      selectedCells().forEach(c=>c.style.background=hex);
-      const bar=this.root.querySelector<HTMLElement>('#dx-bg-bar'); if(bar) bar.style.background=hex;
-      commit();
-    });
+    // Системная палитра шлёт `input` на каждое движение мыши по градиенту —
+    // десятки событий в секунду. Каждое звало commit(), а это сериализация
+    // всей книги плюс запись в localStorage: на большом листе главный поток
+    // вставал намертво и браузер предлагал закрыть страницу. Красим сразу,
+    // чтобы правка была видна, а сохраняем один раз — когда палитра закрылась
+    // (`change`) или после паузы, если она так и осталась открытой.
+    const wireColor = (attr: string, barId: string, apply: (td: HTMLTableCellElement, hex: string) => void) => {
+      const input = this.root.querySelector<HTMLInputElement>(`[${attr}]`);
+      if (!input) return;
+      let timer = 0, snapped = false;
+      const paint = (hex: string) => {
+        if (!snapped) { pushUndo(); snapped = true; }  // снимок для Ctrl+Z — ДО первой правки
+        selectedCells().forEach(td => apply(td, hex));
+        const bar = this.root.querySelector<HTMLElement>(`#${barId}`);
+        if (bar) bar.style.background = hex;
+      };
+      const flush = () => { clearTimeout(timer); timer = 0; snapped = false; commit(); };
+      input.addEventListener('input', e => {
+        paint((e.target as HTMLInputElement).value);
+        clearTimeout(timer);
+        timer = window.setTimeout(flush, 400);
+      });
+      input.addEventListener('change', e => { paint((e.target as HTMLInputElement).value); flush(); });
+    };
+    wireColor('data-xf-color', 'dx-color-bar', (td, hex) => { td.style.color = hex; });
+    wireColor('data-xf-bg', 'dx-bg-bar', (td, hex) => { td.style.background = hex; });
     this.root.querySelectorAll<HTMLButtonElement>('[data-xa-align]').forEach(btn=>{
       btn.addEventListener('mousedown',e=>e.preventDefault());
       btn.addEventListener('click',()=>{selectedCells().forEach(c=>c.style.textAlign=btn.dataset.xaAlign!);commit();updateToolbarState();});
@@ -5049,7 +5063,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         },
         {
           name: 'excel_style_range',
-          description: 'Применить форматирование к явно заданному диапазону ячеек. Использовать когда пользователь говорит «закрась все ячейки», «весь лист», «колонку A», «строки 1-5», «диапазон A1:D10» — т.е. указывает конкретный диапазон или весь лист. range — "all" для всего листа, или Excel-диапазон вида "A1:Z100".',
+          description: 'Применить форматирование к ЯВНО НАЗВАННОМУ диапазону. Только когда пользователь сам назвал диапазон словами: «весь лист», «колонку A», «строки 1-5», «A1:D10». Если он говорит «эту ячейку», «вот эту», «выделенные», «их» — использовать excel_style_selection, а НЕ этот инструмент. range обязателен: "all" для всего листа, "A1:Z100" для диапазона, "B7" для одной ячейки. Без range инструмент вернёт ошибку — не подставлять "all" наугад.',
           args: '{ range: "all"|"A1:Z100", bold?: boolean, italic?: boolean, underline?: boolean, strikethrough?: boolean, color?: "#hex", bg?: "#hex", align?: "left"|"center"|"right" }',
           run: (a) => this.aiStyleRange(a),
         },
@@ -5329,6 +5343,40 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     return this.docsResult(doc.id, before, `Ячейка ${m[1].toUpperCase()}${m[2]} = «${a.value ?? ''}».`, 'Отменить изменение ячейки');
   }
 
+  /**
+   * Склеить оформление ячейки с новыми свойствами.
+   *
+   * Раньше стиль просто дописывался в хвост: `cell.s + ';' + добавка`. Внешне
+   * это работало — в CSS побеждает последнее правило, — но строка росла при
+   * каждой команде. Десять смен заливки давали десять `background:` подряд
+   * в КАЖДОЙ задетой ячейке. На листе в тысячи строк документ распухал на
+   * мегабайты за несколько правок; палитра стилей переставала дедуплицировать
+   * (строки-то все разные), сохранение упиралось в квоту localStorage,
+   * а вкладка в какой-то момент просто вставала колом.
+   *
+   * Теперь свойство заменяется по имени. Порядок свойств сохраняется, поэтому
+   * одинаково оформленные ячейки дают одинаковую строку и снова схлопываются
+   * в один элемент палитры.
+   */
+  private mergeCellCss(existing: string | undefined, added: string): string {
+    const props = new Map<string, string>();
+    const put = (css: string) => {
+      for (const decl of css.split(';')) {
+        const i = decl.indexOf(':');
+        if (i <= 0) continue;
+        let prop = decl.slice(0, i).trim().toLowerCase();
+        const val = decl.slice(i + 1).trim();
+        if (!prop || !val) continue;
+        // background-color из импорта xlsx и background из тулбара — одно свойство
+        if (prop === 'background-color') prop = 'background';
+        props.set(prop, val);
+      }
+    };
+    put(existing ?? '');
+    put(added);
+    return Array.from(props, ([prop, val]) => `${prop}:${val}`).join(';');
+  }
+
   private aiExcelStyleColumn(a: { column: string; bold?: boolean; italic?: boolean; bg?: string; color?: string; align?: string }): AiActionResult {
     const s = this.aiSheet();
     if (!s) throw new Error('Сейчас открыт не Excel-документ');
@@ -5348,7 +5396,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     let n = 0;
     for (const row of sheet.data) {
       while (row.length <= idx) row.push({ v: '' });
-      row[idx] = { ...row[idx], s: ((row[idx].s ?? '') + ';' + style).replace(/;+/g, ';').replace(/^;/, '') };
+      row[idx] = { ...row[idx], s: this.mergeCellCss(row[idx].s, style) };
       n++;
     }
     this.aiPersist(doc, ec);
@@ -5371,10 +5419,20 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     if (a.align && ['left','center','right'].includes(a.align)) css.push(`text-align:${a.align}`);
     if (!css.length) throw new Error('Не заданы параметры оформления');
     const addStyle = css.join(';') + ';';
+    // Границы реально существующего листа. Красить «про запас» за их пределами
+    // нечего: таких ячеек нет, а попытка их создать в цикле ниже — это
+    // миллионы объектов и намертво зависшая вкладка.
+    const lastRow = Math.max(sheet.data.length - 1, 0);
+    const lastCol = Math.max(...sheet.data.map(row => row.length), 1) - 1;
     let r1 = 0, c1 = 0, r2: number, c2: number;
-    if (!a.range || a.range === 'all') {
-      r2 = Math.max(sheet.data.length - 1, 0);
-      c2 = Math.max(...sheet.data.map(row => row.length), 1) - 1;
+    if (a.range === 'all') {
+      r2 = lastRow;
+      c2 = lastCol;
+    } else if (!a.range) {
+      // Пустой range раньше молча означал «весь лист»: ассистент забывал
+      // аргумент — и пользователь получал перекрашенную таблицу целиком
+      // вместо одной ячейки. Теперь это ошибка, а не тихая катастрофа.
+      throw new Error('Не указан диапазон. Передай range вида "A1:D10", либо "all" для всего листа, либо используй excel_style_selection для выделенных ячеек.');
     } else {
       const m = a.range.toUpperCase().match(/^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/);
       if (!m) throw new Error(`Неверный формат диапазона: ${a.range}. Пример: "A1:D10" или "all"`);
@@ -5382,13 +5440,16 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
       c2 = m[3] ? this.letterToCol(m[3]) : c1;
       r2 = m[4] ? parseInt(m[4]) - 1 : r1;
     }
+    r1 = Math.max(0, r1); c1 = Math.max(0, c1);
+    r2 = Math.min(r2, lastRow); c2 = Math.min(c2, lastCol);
+    if (r2 < r1 || c2 < c1) throw new Error(`Диапазон ${a.range} целиком за пределами листа (${this.colLetter(lastCol)}${lastRow + 1}).`);
     let count = 0;
     for (let r = r1; r <= r2; r++) {
       if (!sheet.data[r]) sheet.data[r] = [];
       for (let c = c1; c <= c2; c++) {
         while (sheet.data[r].length <= c) sheet.data[r].push({ v: '' });
         const cell = sheet.data[r][c] ?? { v: '' };
-        sheet.data[r][c] = { ...cell, s: ((cell.s ?? '') + ';' + addStyle).replace(/;+/g, ';').replace(/^;/, '') };
+        sheet.data[r][c] = { ...cell, s: this.mergeCellCss(cell.s, addStyle) };
         count++;
       }
     }
@@ -5417,18 +5478,26 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     if (a.align && ['left','center','right'].includes(a.align)) css.push(`text-align:${a.align}`);
     if (!css.length) throw new Error('Не заданы параметры оформления');
     const addStyle = css.join(';') + ';';
+    // Выделение приходит из сетки и обычно уже корректно, но если лист успел
+    // укоротиться (удалили строки, переключили лист), зажимаем по факту —
+    // иначе цикл начнёт достраивать несуществующие строки.
+    const lastRow = Math.max(sheet.data.length - 1, 0);
+    const lastCol = Math.max(...sheet.data.map(row => row.length), 1) - 1;
+    const rr1 = Math.max(0, r1), cc1 = Math.max(0, c1);
+    const rr2 = Math.min(r2, lastRow), cc2 = Math.min(c2, lastCol);
+    if (rr2 < rr1 || cc2 < cc1) throw new Error('Выделение больше не соответствует листу — выдели ячейки заново.');
     let count = 0;
-    for (let r = r1; r <= r2; r++) {
+    for (let r = rr1; r <= rr2; r++) {
       if (!sheet.data[r]) sheet.data[r] = [];
-      for (let c = c1; c <= c2; c++) {
+      for (let c = cc1; c <= cc2; c++) {
         while (sheet.data[r].length <= c) sheet.data[r].push({ v: '' });
         const cell = sheet.data[r][c] ?? { v: '' };
-        sheet.data[r][c] = { ...cell, s: ((cell.s ?? '') + ';' + addStyle).replace(/;+/g, ';').replace(/^;/, '') };
+        sheet.data[r][c] = { ...cell, s: this.mergeCellCss(cell.s, addStyle) };
         count++;
       }
     }
     this.aiPersist(doc, ec);
-    const rangeStr = `${this.colLetter(c1)}${r1+1}:${this.colLetter(c2)}${r2+1}`;
+    const rangeStr = `${this.colLetter(cc1)}${rr1+1}:${this.colLetter(cc2)}${rr2+1}`;
     return this.docsResult(doc.id, before, `Применено оформление к ${count} ячейкам (${rangeStr}).`, 'Отменить оформление');
   }
 
