@@ -6625,7 +6625,9 @@ export class AssistantModule {
           }
         }
       }
-      start = text.lastIndexOf('{', start - 1);
+      // lastIndexOf('{', -1) возвращает 0, а не -1: при тексте, начинающемся
+      // с «{», цикл крутился бы вечно и вешал вкладку.
+      start = start > 0 ? text.lastIndexOf('{', start - 1) : -1;
     }
     return null;
   }
