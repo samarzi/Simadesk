@@ -4241,9 +4241,17 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         }
       };
       document.addEventListener('click', closeOnOutside);
-      
-      // Делегирование событий для списка недавних
-      recentWrap.addEventListener('click', (e) => {
+    }
+
+    // Список недавних рисуется в ДВУХ местах: выпадашка в шапке
+    // (#docs-recent-wrap) и блок на пустом экране «Нет открытых документов»
+    // (.docs-recent). Делегирование кликов висело только на шапке, поэтому на
+    // пустом экране строки были мёртвыми: закрыл последний документ — и
+    // открыть его обратно из недавних уже нельзя, хотя в списке он виден.
+    // Оба контейнера пересоздаются в render() через innerHTML, так что
+    // обработчики не копятся.
+    {
+      const onRecentClick = (e: Event) => {
         // Делегирование событий для удаления из недавних
         const delBtn = (e.target as HTMLElement).closest('.docs-recent-del') as HTMLElement;
         if (delBtn) {
@@ -4258,7 +4266,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
           e.stopPropagation();
           const id = row.dataset.recentId!;
           const type = row.dataset.recentType as DocType;
-          recentWrap.classList.remove('open');
+          recentWrap?.classList.remove('open');  // на пустом экране выпадашки нет
           // Уже открыт — просто переключаемся.
           if (this.docs.some(d => d.id === id)) {
             this.activeId = id; this.activeSheetIdx = 0; this.render();
@@ -4285,7 +4293,9 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
           this.render();
           if (cached === null) this.syncFromDb();
         }
-      });
+      };
+      this.root.querySelectorAll<HTMLElement>('#docs-recent-wrap, .docs-recent')
+        .forEach(el => el.addEventListener('click', onRecentClick));
     }
     this.root.querySelectorAll<HTMLElement>('.docs-tab').forEach(el=>{
       const id=el.dataset.id!;
