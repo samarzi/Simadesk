@@ -3455,9 +3455,17 @@ export class AssistantModule {
       drop.style.width = Math.max(r.width, 300) + 'px';
       drop.style.top   = (r.bottom + 4) + 'px';
 
-      // Build provider chips dynamically
-      const providers = [...new Set(models.map(m => m.id.split('/')[0]))].sort();
-      const providerChips = providers.map(p =>
+      // Only show providers with ≥5 models to avoid 50+ chips
+      const providerCount = new Map<string, number>();
+      for (const m of models) {
+        const p = m.id.split('/')[0];
+        providerCount.set(p, (providerCount.get(p) ?? 0) + 1);
+      }
+      const topProviders = [...providerCount.entries()]
+        .filter(([, n]) => n >= 5)
+        .sort((a, b) => b[1] - a[1])
+        .map(([p]) => p);
+      const providerChips = topProviders.map(p =>
         `<button class="sd-ap-mpick-chip" data-filter="p:${p}">${p.charAt(0).toUpperCase() + p.slice(1)}</button>`
       ).join('');
 

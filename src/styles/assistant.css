@@ -777,9 +777,11 @@ html.light .sd-ap-mode-tab.active { color: #fff; }
 }
 
 .sd-ap-mpick-filters {
-  display: flex; flex-wrap: wrap; gap: 4px;
+  display: flex; flex-wrap: nowrap; gap: 4px;
   padding: 6px 10px; border-bottom: 1px solid var(--ap-line);
+  overflow-x: auto; scrollbar-width: none;
 }
+.sd-ap-mpick-filters::-webkit-scrollbar { display: none; }
 .sd-ap-mpick-chip {
   padding: 2px 8px; border-radius: 20px; font-size: 10px; font-family: inherit;
   border: 1px solid var(--ap-line); background: transparent;
