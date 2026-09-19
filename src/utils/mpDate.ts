@@ -47,3 +47,50 @@ export function normalizeMpDate(raw: string | null | undefined): string {
   const d = new Date(s);
   return isNaN(d.getTime()) ? '' : d.toISOString();
 }
+
+/**
+ * Календарный день по Москве для ISO-инстанта — «YYYY-MM-DD».
+ *
+ * Все три площадки отчитываются по московскому времени, и продавец мыслит
+ * московскими сутками. Раньше день брался срезом первых 10 символов ISO-строки,
+ * то есть по UTC: заказ, сделанный в 01:30 по Москве, попадал во вчерашний день
+ * и во вчерашний столбец графика. На длинном периоде это была краевая
+ * погрешность, но для периода «Сегодня» — потеря первых трёх часов суток.
+ */
+export function mskDayKey(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  // Не разобралось — отдаём срез, он хотя бы сортируется.
+  if (isNaN(t)) return String(iso).slice(0, 10);
+  return new Date(t + MSK_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** Час (0-23) и день недели (0=вс) по Москве — для тепловой карты активности. */
+export function mskHourAndDay(iso: string | null | undefined): { hour: number; day: number } | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (isNaN(t)) return null;
+  const shifted = new Date(t + MSK_OFFSET_MS);
+  return { hour: shifted.getUTCHours(), day: shifted.getUTCDay() };
+}
+
+/**
+ * Границы периода в московских сутках, выраженные UTC-инстантами.
+ * `days = 1` — сегодня с 00:00 МСК; `days = 30` — последние 30 суток включая текущие.
+ */
+export function mskRange(days: number, now: Date = new Date()): { start: Date; end: Date } {
+  // «Сейчас» в московской системе координат.
+  const msk = new Date(now.getTime() + MSK_OFFSET_MS);
+  const endMskMidnight = Date.UTC(msk.getUTCFullYear(), msk.getUTCMonth(), msk.getUTCDate());
+  const startMskMidnight = endMskMidnight - (Math.max(1, days) - 1) * 86_400_000;
+  return {
+    start: new Date(startMskMidnight - MSK_OFFSET_MS),
+    end:   new Date(endMskMidnight + 86_400_000 - 1 - MSK_OFFSET_MS),
+  };
+}
+
+/** Московская полночь заданного дня «YYYY-MM-DD» как UTC-инстант. */
+export function mskDayStart(day: string): Date {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(Date.UTC(y, (m || 1) - 1, d || 1) - MSK_OFFSET_MS);
+}

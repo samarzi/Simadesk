@@ -3,6 +3,7 @@ import {
   DetailCtx, detailFrame, deltaOf, card, statGrid, barList, adviceBlock, Advice,
   awaitingNote, sparkline, fmtMoney, fmtNum, plural, emptyBlock, escapeHtml,
 } from './shared';
+import { mskDayKey } from '@/utils/mpDate';
 
 const ACCENT = '#a78bfa';
 const MAX_ROWS = 60;
@@ -21,7 +22,7 @@ export function renderDeliveredDetail(c: DetailCtx): string {
   const byDay = new Map<string, number>();
   for (const o of delivered) {
     if (!o.date) continue;
-    const d = o.date.slice(0, 10);
+    const d = mskDayKey(o.date);
     byDay.set(d, (byDay.get(d) ?? 0) + 1);
   }
   const series = c.ts.map(p => byDay.get(p.date) ?? 0);

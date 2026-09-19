@@ -3,6 +3,7 @@ import {
   DetailCtx, detailFrame, deltaOf, card, statGrid, adviceBlock, Advice,
   sparkline, fmtMoney, fmtNum, plural, emptyBlock, escapeHtml,
 } from './shared';
+import { mskDayKey } from '@/utils/mpDate';
 
 const ACCENT = '#fb923c';
 
@@ -18,7 +19,7 @@ export function renderReturnsDetail(c: DetailCtx): string {
   const canByDay = new Map<string, number>();
   for (const o of c.orders) {
     if (!o.date) continue;
-    const d = o.date.slice(0, 10);
+    const d = mskDayKey(o.date);
     if (o.status === 'returned')  retByDay.set(d, (retByDay.get(d) ?? 0) + 1);
     if (o.status === 'cancelled') canByDay.set(d, (canByDay.get(d) ?? 0) + 1);
   }

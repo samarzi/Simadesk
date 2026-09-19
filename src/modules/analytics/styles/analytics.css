@@ -85,6 +85,7 @@ html.light .an2 {
   display: flex; gap: 2px; padding: 2px;
   background: var(--bg3); border: 1px solid var(--border);
   border-radius: 10px;
+  flex-wrap: wrap; /* с кнопкой «Сегодня» их семь — на узком экране переносим */
 }
 .an2-period-btn {
   font-size: 11px; font-weight: 700; padding: 5px 10px;
@@ -237,7 +238,6 @@ html.light .an2 {
   overflow: hidden;
   transition: all .25s cubic-bezier(.22,.61,.36,1);
   cursor: pointer;
-  animation: an-card-in .4s cubic-bezier(.22,.61,.36,1) backwards;
 }
 .an2-kpi::before {
   content: ''; position: absolute; inset: 0;
@@ -246,11 +246,19 @@ html.light .an2 {
 }
 .an2-kpi:hover { border-color: var(--an-card-border-hover); transform: translateY(-2px); box-shadow: var(--an-shadow-soft); }
 .an2-kpi:hover::before { opacity: .55; }
-.an2-kpi:nth-child(1) { animation-delay: 0ms; }
-.an2-kpi:nth-child(2) { animation-delay: 50ms; }
-.an2-kpi:nth-child(3) { animation-delay: 100ms; }
-.an2-kpi:nth-child(4) { animation-delay: 150ms; }
-.an2-kpi:nth-child(5) { animation-delay: 200ms; }
+/* Вступительная анимация — только при смене экрана (класс an2-fresh на .an2-body).
+   Без этого условия карточки пересоздавались вместе с innerHTML и «въезжали»
+   заново на каждый тик прогресса синка и на каждое нажатие фильтра. */
+.an2-fresh .an2-kpi {
+  animation: an-card-in .4s cubic-bezier(.22,.61,.36,1) backwards;
+}
+.an2-fresh .an2-kpi:nth-child(1) { animation-delay: 0ms; }
+.an2-fresh .an2-kpi:nth-child(2) { animation-delay: 50ms; }
+.an2-fresh .an2-kpi:nth-child(3) { animation-delay: 100ms; }
+.an2-fresh .an2-kpi:nth-child(4) { animation-delay: 150ms; }
+.an2-fresh .an2-kpi:nth-child(5) { animation-delay: 200ms; }
+.an2-fresh .an2-kpi:nth-child(6) { animation-delay: 250ms; }
+.an2-fresh .an2-kpi:nth-child(7) { animation-delay: 300ms; }
 .an2-kpi-label {
   font-size: 10px; font-weight: 800;
   letter-spacing: 1.2px; text-transform: uppercase;
@@ -295,6 +303,8 @@ html.light .an2 {
   border-radius: 14px;
   padding: 16px;
   margin-bottom: 12px;
+}
+.an2-fresh .an2-card {
   animation: an-card-in .4s cubic-bezier(.22,.61,.36,1) backwards;
 }
 .an2-card-head {

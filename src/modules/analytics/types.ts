@@ -305,5 +305,5 @@ export interface DateRange {
   end: Date;
 }
 
-/** Период с пресетами. */
-export type PeriodPreset = '7' | '30' | '90' | '180' | '365' | 'all' | 'custom';
+/** Период с пресетами. '1' — текущие московские сутки. */
+export type PeriodPreset = '1' | '7' | '30' | '90' | '180' | '365' | 'all' | 'custom';

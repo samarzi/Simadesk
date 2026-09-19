@@ -97,17 +97,19 @@ function aggregate(data: TimeseriesPoint[], gran: Granularity): TimeseriesPoint[
   if (gran === 'day' || data.length === 0) return data;
   const buckets = new Map<string, TimeseriesPoint>();
   for (const p of data) {
-    const d = new Date(p.date + 'T12:00:00');
+    // p.date — уже готовый ключ дня «YYYY-MM-DD». Считаем всё в UTC:
+    // раньше дата разбиралась как локальный полдень и в зонах восточнее UTC+12
+    // неделя могла съехать на сутки.
+    const d = new Date(p.date + 'T00:00:00.000Z');
     if (isNaN(d.getTime())) continue;
     let key: string;
     if (gran === 'week') {
-      const day = d.getDay();
-      const mondayOffset = day === 0 ? -6 : 1 - day;
-      const monday = new Date(d);
-      monday.setDate(d.getDate() + mondayOffset);
+      const dow = d.getUTCDay();
+      const mondayOffset = dow === 0 ? -6 : 1 - dow;
+      const monday = new Date(d.getTime() + mondayOffset * 86_400_000);
       key = monday.toISOString().slice(0, 10);
     } else {
-      key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
     }
     const cur = buckets.get(key) ?? { date: key, revenue: 0, expenses: 0, profit: 0 };
     cur.revenue  += p.revenue;

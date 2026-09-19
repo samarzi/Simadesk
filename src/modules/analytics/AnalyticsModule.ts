@@ -7,6 +7,7 @@
 
 import { debug } from '@/utils/debug';
 import { I } from '@/utils/icons';
+import { mskRange } from '@/utils/mpDate';
 import { aiPage } from '@/services/aiPageContext';
 import { Mp, MP_LABEL, MP_COLOR, Order, KPI, TimeseriesPoint, PeriodPreset, StoreInfo, TaxModel, PeriodCost, ManualEntry } from './types';
 import { aggregateOrders, ProductMap } from './services/orderAggregator';
@@ -181,7 +182,7 @@ export class AnalyticsModule {
 
   private _periodLabel(): string {
     const labels: Record<string, string> = {
-      '7': '7 дней', '30': '30 дней', '90': '90 дней',
+      '1': 'сегодня', '7': '7 дней', '30': '30 дней', '90': '90 дней',
       '180': '6 месяцев', '365': '12 месяцев', 'all': 'всё время',
     };
     if (this.period === 'custom' && this.customFrom && this.customTo) return `${this.customFrom} — ${this.customTo}`;
@@ -205,18 +206,17 @@ export class AnalyticsModule {
       const end   = new Date(this.customTo   + 'T23:59:59.999Z');
       return { start, end };
     }
-    const now = new Date();
-    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
     if (this.period === 'all') {
+      const { end } = mskRange(1);
       const start = this._allFrom
         ? new Date(this._allFrom)
-        : new Date(Date.UTC(now.getUTCFullYear() - 1, 0, 1));
+        : new Date(Date.UTC(new Date().getUTCFullYear() - 1, 0, 1));
       start.setUTCHours(0, 0, 0, 0);
       return { start, end };
     }
-    const days = parseInt(this.period) || 30;
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (days - 1)));
-    return { start, end };
+    // Границы — московские сутки: площадки отчитываются по Москве, и продавец
+    // мыслит так же. По UTC «сегодня» начиналось бы в 03:00 по Москве.
+    return mskRange(parseInt(this.period) || 30);
   }
 
   private getPrevRange(): { start: Date; end: Date } {
@@ -986,6 +986,12 @@ export class AnalyticsModule {
     `;
     // Сбрасываем body-html cache, чтобы следующий _paintBody действительно перерисовался
     this._lastBodyHtml = '';
+    this._lastViewKey = `${this.tab}|${this.detail ?? ''}|${this.activitySubTab}`;
+    if (this._freshTimer) clearTimeout(this._freshTimer);
+    this._freshTimer = window.setTimeout(() => {
+      this._freshTimer = 0;
+      this.container.querySelector<HTMLElement>('.an2-body')?.classList.remove('an2-fresh');
+    }, 700);
   }
 
   /** Обновляет только .an2-body без пересоздания шапки/дроуеров.
@@ -996,7 +1002,17 @@ export class AnalyticsModule {
     const body = this.container.querySelector<HTMLElement>('.an2-body');
     if (!root || !body) { this._paintFull(); return; }
     const busy = this.loading || this.syncing;
-    const newClass = `an2-body${busy ? ' is-loading' : ''}`;
+
+    // Вступительная анимация карточек проигрывается только когда пользователь
+    // реально сменил экран. Раньше класс висел всегда, а `innerHTML` пересоздаёт
+    // узлы при каждой перерисовке — и карточки заново «въезжали» на каждый тик
+    // прогресса синка, на каждый ввод в поиске, на каждый фильтр. Это и был
+    // тот самый дёрганый дашборд.
+    const viewKey = `${this.tab}|${this.detail ?? ''}|${this.activitySubTab}`;
+    const viewChanged = viewKey !== this._lastViewKey;
+    this._lastViewKey = viewKey;
+
+    const newClass = `an2-body${busy ? ' is-loading' : ''}${viewChanged ? ' an2-fresh' : ''}`;
     const newHtml  = this._tabContent();
 
     if (body.className === newClass && this._lastBodyHtml === newHtml) {
@@ -1006,12 +1022,24 @@ export class AnalyticsModule {
     body.className = newClass;
     body.innerHTML = newHtml;
     this._lastBodyHtml = newHtml;
+
+    // Снимаем разрешение на анимацию, как только она отыграла: следующий
+    // перерисовыв этого же экрана пройдёт уже без въезда.
+    if (viewChanged) {
+      if (this._freshTimer) clearTimeout(this._freshTimer);
+      this._freshTimer = window.setTimeout(() => {
+        this._freshTimer = 0;
+        this.container.querySelector<HTMLElement>('.an2-body')?.classList.remove('an2-fresh');
+      }, 700);
+    }
   }
   private _lastBodyHtml = '';
+  private _lastViewKey = '';
+  private _freshTimer = 0;
 
   private renderHeader(): string {
     const periods: Array<[PeriodPreset, string]> = [
-      ['7', '7д'], ['30', '30д'], ['90', '90д'], ['180', '6м'], ['365', '12м'], ['all', 'С начала'],
+      ['1', 'Сегодня'], ['7', '7д'], ['30', '30д'], ['90', '90д'], ['180', '6м'], ['365', '12м'], ['all', 'С начала'],
     ];
 
     const mps: Mp[] = ['ozon', 'wb', 'yandex'];
@@ -1149,7 +1177,9 @@ export class AnalyticsModule {
 
   private renderBody(): string {
     const busy = this.loading || this.syncing;
-    return `<div class="an2-body${busy ? ' is-loading' : ''}">${this._tabContent()}</div>`;
+    // an2-fresh — разрешение на вступительную анимацию. При полной отрисовке
+    // экран собирается заново, поэтому она уместна; снимается таймером ниже.
+    return `<div class="an2-body${busy ? ' is-loading' : ''} an2-fresh">${this._tabContent()}</div>`;
   }
 
   private _tabContent(): string {

@@ -6,6 +6,7 @@ import {
   Order, KPI, TimeseriesPoint, SkuPerformance, Mp,
   PeriodCost, PeriodCostKind, PERIOD_COST_LABEL, ManualEntry,
 } from '../types';
+import { mskDayKey } from '@/utils/mpDate';
 
 /**
  * Заказ участвует в денежном P&L?
@@ -205,29 +206,32 @@ export function computeTimeseries(
     const fees = o.commission + o.logistics + o.logistics_return + o.services;
     const isDelivered = o.status === 'delivered';
     bump(
-      o.date.slice(0, 10),
+      mskDayKey(o.date),
       isDelivered ? o.revenue : 0,
       fees + (isDelivered ? o.cogs + o.tax : 0),
     );
   }
 
-  const from = dateFrom.toISOString().slice(0, 10);
-  const to   = dateTo.toISOString().slice(0, 10);
+  // Сетка дней — тоже московская, иначе крайние дни периода не сойдутся
+  // с ключами заказов и суммы графика разъехались бы с KPI.
+  const from = mskDayKey(dateFrom.toISOString());
+  const to   = mskDayKey(dateTo.toISOString());
   const inRange = (day: string) => day >= from && day <= to;
 
   for (const c of periodCosts) {
-    const day = (c.date || '').slice(0, 10);
+    const day = mskDayKey(c.date);
     if (day && inRange(day)) bump(day, 0, c.amount);
   }
   for (const e of manualEntries) {
+    // Ручные записи пользователь вводит датой без времени — берём как есть.
     const day = (e.date || '').slice(0, 10);
     if (day && inRange(day)) bump(day, 0, e.type === 'other_income' ? -e.amount : e.amount);
   }
 
   // Дозаполнить пустые дни нулями
   const out: TimeseriesPoint[] = [];
-  const cursor = new Date(Date.UTC(dateFrom.getUTCFullYear(), dateFrom.getUTCMonth(), dateFrom.getUTCDate()));
-  const last = new Date(Date.UTC(dateTo.getUTCFullYear(), dateTo.getUTCMonth(), dateTo.getUTCDate()));
+  const cursor = new Date(`${from}T00:00:00.000Z`);
+  const last   = new Date(`${to}T00:00:00.000Z`);
   while (cursor.getTime() <= last.getTime()) {
     const day = cursor.toISOString().slice(0, 10);
     const v = byDay.get(day) ?? { revenue: 0, expenses: 0 };

@@ -7,6 +7,7 @@
 
 import { KPI, Order, Mp, MP_SHORT, MP_COLOR, TimeseriesPoint } from '../../types';
 import { fmtMoney, fmtNum, fmtFull, escapeHtml } from '../../components/format';
+import { mskDayKey } from '@/utils/mpDate';
 
 export type DetailKey =
   | 'revenue'    // Выручка
@@ -210,7 +211,7 @@ export function dailySeries(orders: Order[], pick: (o: Order) => number): Map<st
   const m = new Map<string, number>();
   for (const o of orders) {
     if (!o.date) continue;
-    const d = o.date.slice(0, 10);
+    const d = mskDayKey(o.date);
     m.set(d, (m.get(d) ?? 0) + pick(o));
   }
   return m;

@@ -1,3 +1,4 @@
+import { mskDayKey } from '@/utils/mpDate';
 import { Order, OrderStatus, STATUS_LABEL, STATUS_COLOR, MP_SHORT, MP_COLOR } from '../types';
 import { I } from '@/utils/icons';
 import { fmtMoney, fmtDate, fmtNum, escapeHtml } from '../components/format';
@@ -15,21 +16,24 @@ const INITIAL_ROWS = 150;
 let _queueId = 0;
 
 function isoToDay(iso: string): string {
-  if (!iso) return '';
-  return iso.slice(0, 10); // YYYY-MM-DD
+  // Тот же московский день, по которому группирует график и KPI.
+  // Со срезом UTC-строки ночные заказы попадали во вчерашнюю группу,
+  // и список расходился со «Сводкой».
+  return mskDayKey(iso);
 }
 
 function fmtDayHeader(day: string): string {
   if (!day) return '—';
-  const d = new Date(day + 'T12:00:00');
+  // Полдень UTC — безопасная точка: от неё формат даты не съезжает ни в одной зоне.
+  const d = new Date(day + 'T12:00:00.000Z');
   if (isNaN(d.getTime())) return day;
-  const today = new Date();
-  const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
-  const todayDay = today.toISOString().slice(0, 10);
-  const yDay     = yesterday.toISOString().slice(0, 10);
+  const todayDay = mskDayKey(new Date().toISOString());
+  const yDay     = mskDayKey(new Date(Date.now() - 86_400_000).toISOString());
   if (day === todayDay) return 'Сегодня';
   if (day === yDay)     return 'Вчера';
-  return d.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  return d.toLocaleDateString('ru-RU', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
+  });
 }
 
 // Кеш HTML: при body-only repaints (например, переключение табов туда-обратно)

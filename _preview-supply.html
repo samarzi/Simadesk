@@ -1,0 +1,147 @@
+<!doctype html><meta charset="utf-8"><title>Поставки — превью</title>
+<style>
+:root{--bg:#0c0d0f;--bg2:#111214;--bg3:#191b1e;--text:#f2f3f5;--text2:#a8adb5;--text3:#6e747d;--border:#25282d;--border2:#32363c;--green:#22c55e;--red:#f87171;--accent:#d4f000;--accent-dim:rgba(212,240,0,.15)}
+html.light{--bg:#f7f8fa;--bg2:#fff;--bg3:#eef0f3;--text:#14161a;--text2:#5b626c;--text3:#8b929c;--border:#e2e5ea;--border2:#cfd4db}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,system-ui,sans-serif;height:100vh;display:flex;flex-direction:column}
+#bar{padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;font-size:12px;flex-shrink:0}
+#bar button{padding:5px 11px;border-radius:7px;border:1px solid var(--border);background:var(--bg2);color:var(--text);cursor:pointer;font-size:12px;font-weight:600}
+#host{flex:1;min-height:0}
+</style>
+<div id="bar">
+  <b>Превью модуля «Поставки»</b>
+  <button id="t">Светлая / тёмная</button>
+  <span id="note" style="color:var(--text3)"></span>
+</div>
+<div id="host"></div>
+
+<script type="module">
+// ── Подставные данные вместо БД и сети ──────────────────────────────────
+const OZON_SUPPLIES = [
+  { supply_order_id: 501234, supply_order_number: 'FBO-501234', state: 'READY_TO_SUPPLY',
+    creation_date: '2026-08-14T09:12:00Z', can_cancel: true,
+    supplies: [{ bundle_id: 'bnd-1', storage_warehouse_id: 77 }],
+    timeslot: [{ from_in_timezone: '2026-08-24T10:00:00+03:00', to_in_timezone: '2026-08-24T14:00:00+03:00' }] },
+  { supply_order_id: 501190, supply_order_number: 'FBO-501190', state: 'IN_TRANSIT',
+    creation_date: '2026-08-09T11:40:00Z', can_cancel: false,
+    supplies: [{ bundle_id: 'bnd-2', storage_warehouse_id: 77 }], timeslot: [] },
+  { supply_order_id: 500821, supply_order_number: 'FBO-500821', state: 'COMPLETED',
+    creation_date: '2026-07-28T08:05:00Z', can_cancel: false,
+    supplies: [{ bundle_id: 'bnd-3', storage_warehouse_id: 78 }], timeslot: [] },
+  { supply_order_id: 500644, supply_order_number: 'FBO-500644', state: 'CANCELLED',
+    creation_date: '2026-07-19T15:22:00Z', can_cancel: false, supplies: [], timeslot: [] },
+];
+const WAREHOUSES = [{ warehouse_id: 77, name: 'Хоругвино' }, { warehouse_id: 78, name: 'Тверь' }];
+
+window.__stub = {
+  ozon: {
+    supplies: OZON_SUPPLIES, warehouses: WAREHOUSES,
+    bundle: [
+      { sku: 1234567890, contractor_item_code: 'ART-001', name: 'Кофемолка ручная EK-42', quantity: 24, barcode: '460001' },
+      { sku: 1234567891, contractor_item_code: 'ART-002', name: 'Турка медная 500 мл', quantity: 12, barcode: '460002' },
+      { sku: 1234567892, contractor_item_code: 'ART-003', name: 'Френч-пресс 1 л, стекло', quantity: 30, barcode: '460003' },
+    ],
+    draftInfo: {
+      status: 'CALCULATION_STATUS_SUCCESS', draft_id: 'draft-9911', errors: [],
+      clusters: [
+        { cluster_id: 1, cluster_name: 'Москва и МО', warehouses: [
+          { warehouse_id: 77, supply_warehouse: { warehouse_id: 77, name: 'Хоругвино', address: 'МО, Солнечногорск, Хоругвино' }, travel_time_days: 2, bundle_ids: [] },
+          { warehouse_id: 79, supply_warehouse: { warehouse_id: 79, name: 'Пушкино', address: 'МО, Пушкино, Индустриальная 1' }, travel_time_days: 3, bundle_ids: [] },
+        ]},
+        { cluster_id: 2, cluster_name: 'Центр', warehouses: [
+          { warehouse_id: 78, supply_warehouse: { warehouse_id: 78, name: 'Тверь', address: 'Тверь, Индустриальная 12' }, travel_time_days: 4, bundle_ids: [] },
+        ]},
+      ],
+    },
+    timeslots: [{ drop_off_warehouse_id: 77, warehouse_timezone: 'UTC+3', days: [
+      { date_in_timezone: '2026-08-24T00:00:00+03:00', timeslots: [
+        { from_in_timezone: '2026-08-24T08:00:00+03:00', to_in_timezone: '2026-08-24T12:00:00+03:00' },
+        { from_in_timezone: '2026-08-24T14:00:00+03:00', to_in_timezone: '2026-08-24T18:00:00+03:00' }]},
+      { date_in_timezone: '2026-08-25T00:00:00+03:00', timeslots: [
+        { from_in_timezone: '2026-08-25T09:00:00+03:00', to_in_timezone: '2026-08-25T13:00:00+03:00' }]},
+    ]}],
+  },
+  ym: {
+    requests: [
+      { id: '88120', externalId: 'ЯМ-88120', type: 'SUPPLY', status: 'TRANSFER_TO_WAREHOUSE',
+        warehouse: { name: 'Софьино' }, creationDate: '2026-08-12T10:00:00Z',
+        plannedIntervalFrom: '2026-08-22', plannedIntervalTo: '2026-08-23', itemsCount: 64 },
+      { id: '87990', externalId: 'ЯМ-87990', type: 'SUPPLY', status: 'ACCEPTED',
+        warehouse: { name: 'Софьино' }, creationDate: '2026-07-30T10:00:00Z',
+        plannedIntervalFrom: '2026-08-05', plannedIntervalTo: '2026-08-06', itemsCount: 40 },
+    ],
+    // Реальная форма ЯМ: количество лежит в counters, не плоским полем
+    items: [
+      { name: 'Кофемолка ручная EK-42', offerId: 'ART-001', counters: { planCount: 40, factCount: 40 } },
+      { name: 'Турка медная 500 мл', offerId: 'ART-002', counters: { planCount: 24, factCount: 22 } },
+    ],
+    documents: [{ type: 'Акт приёма-передачи', url: '#' }, { type: 'Транспортная накладная', url: '#' }],
+    // Реальная форма возвратов: товары массивом items
+    returns: [
+      { id: 9001, orderId: 55501, returnType: 'RETURN', refundStatus: 'STARTED_BY_USER',
+        creationDate: '2026-08-15T12:00:00+03:00',
+        items: [{ offerName: 'Турка медная 500 мл', offerId: 'ART-002', count: 2 }] },
+    ],
+  },
+};
+
+// Перехватываем сеть — модуль ходит через fetch, отвечаем подставными данными
+const realFetch = window.fetch.bind(window);
+window.fetch = async (url, opts = {}) => {
+  const u = String(url);
+  const S = window.__stub;
+  const json = (o) => new Response(JSON.stringify(o), { status: 200, headers: { 'content-type': 'application/json' } });
+  await new Promise(r => setTimeout(r, 220)); // видимая задержка, чтобы проверить скелетоны
+
+  if (u.includes('/v3/supply-order/list'))          return json({ supply_order_id: S.ozon.supplies.map(s => s.supply_order_id), last_supply_order_id: 0 });
+  if (u.includes('/v3/supply-order/get'))           return json({ orders: S.ozon.supplies, warehouses: S.ozon.warehouses });
+  // v2 отключён Ozon 11.12.2025 — воспроизводим реальный 404, чтобы поймать регресс
+  if (u.includes('/v2/supply-order/'))              return new Response('404 page not found', { status: 404 });
+  if (u.includes('/v1/supply-order/bundle'))        return json({ items: S.ozon.bundle, has_next: false, last_id: '' });
+  if (u.includes('/v1/draft/create/info'))          return json(S.ozon.draftInfo);
+  if (u.includes('/v1/draft/create'))               return json({ operation_id: 'op-draft-1' });
+  if (u.includes('/v1/draft/timeslot/info'))        return json({ drop_off_warehouse_timeslots: S.ozon.timeslots });
+  if (u.includes('/v1/draft/supply/create/status')) return json({ status: 'SUCCESS', result: [{ supply_order_id: 501234 }] });
+  if (u.includes('/v1/draft/supply/create'))        return json({ operation_id: 'op-supply-1' });
+  if (u.includes('/v1/supply-order/cancel'))        return json({ operation_id: 'op-cancel-1' });
+  // Яндекс требует requestId ЧИСЛОМ — строка даёт 400. Воспроизводим это.
+  const bodyOf = () => { try { return JSON.parse(opts.body ?? '{}'); } catch { return {}; } };
+  if (u.includes('supply-requests/documents')) {
+    if (typeof bodyOf().requestId !== 'number') return new Response('{"errors":[{"code":"BAD_REQUEST"}]}', { status: 400 });
+    return json({ result: { documents: S.ym.documents } });
+  }
+  if (u.includes('supply-requests/items')) {
+    if (typeof bodyOf().requestId !== 'number') return new Response('{"errors":[{"code":"BAD_REQUEST"}]}', { status: 400 });
+    return json({ result: { items: S.ym.items, paging: {} } });
+  }
+  if (u.includes('supply-requests'))                return json({ result: { requests: S.ym.requests } });
+  if (u.includes('/api/v3/supplies'))               return json({ supplies: [], next: 0 });
+  // Возвраты ЯМ: только GET на /returns; POST на /orders/returns отдавал 405
+  if (u.includes('/orders/returns'))                return new Response('method not allowed', { status: 405 });
+  if (/\/v2\/campaigns\/\d+\/returns/.test(u)) {
+    if ((opts.method ?? 'GET') !== 'GET') return new Response('method not allowed', { status: 405 });
+    return json({ result: { returns: S.ym.returns, paging: {} } });
+  }
+  if (u.includes('fbo/returns') || u.includes('returns/list')) return json({ returns: [], has_next: false });
+  return realFetch(url, opts);
+};
+
+// Подменяем слой БД до импорта модуля
+const stores = {
+  ozon:   [{ id: 'oz1', name: 'Мой Ozon', client_id: '111', api_key: 'k' }],
+  wb:     [{ id: 'wb1', name: 'Мой WB', api_key: 'k' }],
+  yandex: [{ id: 'ym1', name: 'Мой ЯМ', api_key: 'k', campaign_id: 12345, placement_type: 'FBY' }],
+};
+const { ozonDb } = await import('/src/services/ozonDb.ts');
+const { wbDb } = await import('/src/services/wbDb.ts');
+const { yandexDb } = await import('/src/services/yandexDb.ts');
+ozonDb.getStores   = async () => stores.ozon;
+ozonDb.getProducts = async () => [];
+wbDb.getStores     = async () => stores.wb;
+yandexDb.getStores = async () => stores.yandex;
+
+const { SupplyManagementModule } = await import('/src/modules/SupplyManagementModule.ts');
+const host = document.getElementById('host');
+window.sm = new SupplyManagementModule(host);
+document.getElementById('note').textContent = 'данные подставные, сеть перехвачена';
+document.getElementById('t').onclick = () => document.documentElement.classList.toggle('light');
+</script>

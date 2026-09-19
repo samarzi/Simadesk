@@ -1,6 +1,7 @@
 import { I } from '@/utils/icons';
 import { Order } from '../types';
 import { fmtFull } from '../components/format';
+import { mskHourAndDay } from '@/utils/mpDate';
 
 const DAYS_RU = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
@@ -27,15 +28,18 @@ function computeActivity(orders: Order[]): Activity {
     // Осиротевшие строки расходов и отменённые заказы — не события продажи,
     // в счётчике «Заказов» и в тепловой карте им не место.
     if (o.is_orphan || o.status === 'cancelled') continue;
-    const d = new Date(o.date);
-    if (isNaN(d.getTime())) continue;
+    // Час и день недели — по Москве, а не по часовому поясу браузера:
+    // «пик в 21:00» должен означать одно и то же независимо от того,
+    // где сейчас открыт кабинет.
+    const at = mskHourAndDay(o.date);
+    if (!at) continue;
     // Эта вкладка отвечает на вопрос «когда покупают», поэтому база здесь —
     // ЗАКАЗАННОЕ по дате оформления, а не выкупленное. Возврат тоже был спросом,
     // поэтому берём его исходную сумму. Из-за другой базы итог намеренно не
     // совпадает с «Выручкой» в Сводке — метрика подписана как «Заказано».
     const amount = o.revenue + (o.revenue_lost || 0);
-    const day  = d.getDay();
-    const hour = d.getHours();
+    const day  = at.day;
+    const hour = at.hour;
     heatmap[day][hour].revenue += amount;
     heatmap[day][hour].count  += 1;
     byDay[day]   += amount;
