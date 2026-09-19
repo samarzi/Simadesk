@@ -6989,18 +6989,26 @@ export class AssistantModule {
     };
 
     rec.onerror = (e: any) => {
-      // 'no-speech' is normal in hold mode — ignore it, don't stop
-      if (e.error === 'no-speech') return;
+      if (e.error === 'no-speech') return; // нормально в hold-режиме
       this.stopVoice();
       this.setStatus('Готова');
+      const msgs: Record<string, string> = {
+        'not-allowed':         'Нет доступа к микрофону — разреши его в настройках браузера',
+        'service-not-allowed': 'Голосовой ввод недоступен (нужен HTTPS или разрешение браузера)',
+        'audio-capture':       'Микрофон не найден — проверь подключение',
+        'network':             'Ошибка сети при распознавании речи',
+        'aborted':             '',
+      };
+      const msg = msgs[e.error as string];
+      if (msg) showToast(msg, 'error');
+      else if (msg === undefined) showToast('Ошибка микрофона: ' + e.error, 'error');
     };
 
     rec.onend = () => {
       // In toggle mode, if still listening (no 'стоп' said), restart to keep going
       if (mode === 'toggle' && this.isListening) {
-        // voicePrefix accumulates text so far
         this.voicePrefix = this.textareaEl?.value.trim() ?? '';
-        try { rec.start(); return; } catch { /* fall through */ }
+        try { rec.start(); return; } catch { /* fall through to stop */ }
       }
       this.isListening = false;
       const micBtn = this.panel?.querySelector<HTMLElement>('.sd-ap-mic-btn');
@@ -7011,8 +7019,9 @@ export class AssistantModule {
 
     try {
       rec.start();
-    } catch {
+    } catch (err: any) {
       this.stopVoice();
+      showToast('Не удалось запустить запись: ' + (err?.message ?? err), 'error');
     }
   }
 
