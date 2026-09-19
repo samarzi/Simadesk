@@ -137,9 +137,29 @@ ${g}`);
   async run(name: string, args: any): Promise<AiActionResult> {
     const action = this.cap?.actions.find(a => a.name === name)
       ?? this.globals.find(a => a.name === name);
-    if (!action) throw new Error(`Действие «${name}» недоступно`);
+    if (!action) throw new Error(this.unknownActionMsg(name));
     const res = await action.run(args ?? {});
     return typeof res === 'string' ? { summary: res } : res;
+  }
+
+  /**
+   * Сообщение о неизвестном действии. Модель иногда придумывает название по
+   * аналогии («excel_move_image», когда в сборке только вставка), и глухое
+   * «недоступно» превращает это в тупик: непонятно ни ей, ни пользователю.
+   * Поэтому подсказываем похожие по смыслу — по ним она попробует ещё раз.
+   */
+  private unknownActionMsg(name: string): string {
+    const all = [...(this.cap?.actions ?? []), ...this.globals].map(a => a.name);
+    const words = new Set(String(name).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+    const near = all
+      .map(n => ({ n, hits: n.toLowerCase().split(/[^a-z0-9]+/).filter(w => words.has(w)).length }))
+      .filter(x => x.hits > 0)
+      .sort((a, b) => b.hits - a.hits)
+      .slice(0, 6)
+      .map(x => x.n);
+    return `Действие «${name}» недоступно.`
+      + (near.length ? ` Похожие на этой странице: ${near.join(', ')}. Попробуй одно из них.` : '')
+      + ' Если действие только что появилось в системе — страницу надо перезагрузить.';
   }
 
   /** Есть ли такое действие (локальное или глобальное). */
