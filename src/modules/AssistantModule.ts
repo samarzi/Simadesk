@@ -89,6 +89,14 @@ interface ChatSession {
   updatedAt: number;
 }
 
+interface OrModel {
+  id: string;
+  name: string;
+  context_length?: number;
+  pricing?: { prompt?: string; completion?: string };
+  architecture?: { modality?: string };
+}
+
 const SESSION_MAX = 10;
 const SESSIONS_KEY = 'sd_sima_sessions_v2';
 const ACTIVE_SID_KEY = 'sd_sima_active_v2';
@@ -1481,6 +1489,7 @@ export class AssistantModule {
   private fileInputEl: HTMLInputElement | null = null;
   private aiKey = '';
   private aiModel = '';
+  private mpickDropEl: HTMLElement | null = null;
   /** Является ли текущий пользователь платформенным администратором (нет лимитов). */
   private isAdminUser = false;
   private aiEnabled = localStorage.getItem('sd_sima_ai_enabled') !== 'false';
@@ -1910,17 +1919,8 @@ export class AssistantModule {
       }
     });
 
-    // Model selector
-    const modelSelect = panel.querySelector<HTMLSelectElement>('#sd-ap-model-select');
-    if (modelSelect) {
-      // Init select with user's saved choice (takes priority over admin default)
-      const savedUserModel = localStorage.getItem('sd_user_ai_model') || localStorage.getItem('sd_ai_model');
-      if (savedUserModel) modelSelect.value = savedUserModel;
-      modelSelect.addEventListener('change', () => {
-        this.aiModel = modelSelect.value;
-        localStorage.setItem('sd_user_ai_model', this.aiModel);
-      });
-    }
+    // Model picker — async, loads all OpenRouter models
+    this.initModelPicker(panel);
 
     // Speed slider
     const speedSlider = panel.querySelector<HTMLInputElement>('.sd-ap-speed-slider');
@@ -2260,32 +2260,14 @@ export class AssistantModule {
           <div class="sd-ap-setting-divider">Модель AI</div>
           <div class="sd-ap-setting-row">
             <label class="sd-ap-setting-label">Модель</label>
-            <select class="sd-ap-model-select" id="sd-ap-model-select">
-              <optgroup label="— Anthropic Claude —">
-                <option value="anthropic/claude-haiku-4-5" ${(this.aiModel||'anthropic/claude-haiku-4-5')==='anthropic/claude-haiku-4-5'?'selected':''}>Claude Haiku 4.5 — быстрая</option>
-                <option value="anthropic/claude-sonnet-4-5" ${this.aiModel==='anthropic/claude-sonnet-4-5'?'selected':''}>Claude Sonnet 4.5 — умная</option>
-                <option value="anthropic/claude-sonnet-5" ${this.aiModel==='anthropic/claude-sonnet-5'?'selected':''}>Claude Sonnet 5 — новая умная</option>
-                <option value="anthropic/claude-opus-4-8" ${this.aiModel==='anthropic/claude-opus-4-8'?'selected':''}>Claude Opus 4.8 — мощная</option>
-              </optgroup>
-              <optgroup label="— DeepSeek —">
-                <option value="deepseek/deepseek-chat" ${this.aiModel==='deepseek/deepseek-chat'?'selected':''}>DeepSeek V3 — экономичная</option>
-                <option value="deepseek/deepseek-r1" ${this.aiModel==='deepseek/deepseek-r1'?'selected':''}>DeepSeek R1 — с рассуждениями</option>
-              </optgroup>
-              <optgroup label="— OpenAI —">
-                <option value="openai/gpt-4o-mini" ${this.aiModel==='openai/gpt-4o-mini'?'selected':''}>GPT-4o mini — быстрая</option>
-                <option value="openai/gpt-4o" ${this.aiModel==='openai/gpt-4o'?'selected':''}>GPT-4o — мощная</option>
-                <option value="openai/o4-mini" ${this.aiModel==='openai/o4-mini'?'selected':''}>o4-mini — с рассуждениями</option>
-              </optgroup>
-              <optgroup label="— Google —">
-                <option value="google/gemini-2.5-flash" ${this.aiModel==='google/gemini-2.5-flash'?'selected':''}>Gemini 2.5 Flash — быстрая</option>
-                <option value="google/gemini-2.5-pro" ${this.aiModel==='google/gemini-2.5-pro'?'selected':''}>Gemini 2.5 Pro — мощная</option>
-              </optgroup>
-              <optgroup label="— Meta / Open Source —">
-                <option value="meta-llama/llama-3.3-70b-instruct" ${this.aiModel==='meta-llama/llama-3.3-70b-instruct'?'selected':''}>Llama 3.3 70B — бесплатная</option>
-                <option value="qwen/qwen-2.5-72b-instruct" ${this.aiModel==='qwen/qwen-2.5-72b-instruct'?'selected':''}>Qwen 2.5 72B — экономичная</option>
-              </optgroup>
-            </select>
+            <div class="sd-ap-mpick" id="sd-ap-mpick">
+              <button class="sd-ap-mpick-btn" id="sd-ap-mpick-btn" type="button">
+                <span class="sd-ap-mpick-label" id="sd-ap-mpick-label">Загружаю…</span>
+                <svg class="sd-ap-mpick-chevron" width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              </button>
+            </div>
           </div>
+          <p class="sd-ap-setting-note" id="sd-ap-mpick-note">Загрузка списка моделей OpenRouter…</p>
           <div class="sd-ap-setting-divider">Голос и озвучка</div>
           <div class="sd-ap-setting-row">
             <label class="sd-ap-setting-label">Скорость озвучки</label>
@@ -3387,6 +3369,203 @@ export class AssistantModule {
        .replace(/Meta|Cmd/g, '⌘').replace(/Space/g, '␣')
        .replace(/Key([A-Z])/g, '$1').replace(/Digit(\d)/g, '$1');
    }
+
+  // ── OpenRouter model picker ───────────────────────────────────────────────────
+
+  private async fetchOpenRouterModels(): Promise<OrModel[]> {
+    const CACHE_KEY = 'sd_or_models_v2';
+    const CACHE_TTL = 6 * 3600 * 1000;
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const { ts, data } = JSON.parse(raw) as { ts: number; data: OrModel[] };
+        if (Date.now() - ts < CACHE_TTL) return data;
+      }
+    } catch { /* stale or corrupt cache — refetch */ }
+    const res = await fetch('https://openrouter.ai/api/v1/models');
+    if (!res.ok) throw new Error('OpenRouter /models ' + res.status);
+    const json = await res.json();
+    const models: OrModel[] = (json.data ?? [])
+      .filter((m: any) => m.id && typeof m.id === 'string')
+      .map((m: any): OrModel => ({
+        id: m.id,
+        name: m.name ?? m.id,
+        context_length: m.context_length,
+        pricing: { prompt: m.pricing?.prompt, completion: m.pricing?.completion },
+        architecture: { modality: m.architecture?.modality },
+      }));
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data: models }));
+    } catch { /* localStorage full — skip cache */ }
+    return models;
+  }
+
+  private initModelPicker(panel: HTMLElement): void {
+    const btn      = panel.querySelector<HTMLButtonElement>('#sd-ap-mpick-btn');
+    const labelEl  = panel.querySelector<HTMLElement>('#sd-ap-mpick-label');
+    const noteEl   = panel.querySelector<HTMLElement>('#sd-ap-mpick-note');
+    if (!btn || !labelEl) return;
+
+    const setLabel = (models: OrModel[]) => {
+      const cur = this.aiModel || 'anthropic/claude-haiku-4-5';
+      const m = models.find(x => x.id === cur);
+      labelEl.textContent = m ? m.name : (cur.split('/').pop() ?? cur);
+    };
+
+    const isReasoning = (m: OrModel) =>
+      /\b(r1|o1|o3|o4|thinking|reasoner|qwq)\b/i.test(m.id + ' ' + m.name);
+    const isFree = (m: OrModel) => parseFloat(m.pricing?.prompt ?? '1') === 0;
+
+    let models: OrModel[] = [];
+
+    this.fetchOpenRouterModels().then(list => {
+      models = list;
+      setLabel(list);
+      if (noteEl) noteEl.textContent = `${list.length} моделей OpenRouter`;
+    }).catch(() => {
+      if (noteEl) noteEl.textContent = 'Не удалось загрузить модели — проверьте соединение';
+      setLabel([]);
+    });
+
+    const closeDropdown = () => {
+      this.mpickDropEl?.remove();
+      this.mpickDropEl = null;
+      btn.classList.remove('open');
+      document.removeEventListener('click', outsideHandler, true);
+    };
+
+    const outsideHandler = (e: MouseEvent) => {
+      if (this.mpickDropEl && !this.mpickDropEl.contains(e.target as Node) && e.target !== btn) {
+        closeDropdown();
+      }
+    };
+
+    const openDropdown = () => {
+      if (this.mpickDropEl) { closeDropdown(); return; }
+      btn.classList.add('open');
+
+      const drop = document.createElement('div');
+      drop.className = 'sd-ap-mpick-drop';
+      this.mpickDropEl = drop;
+      document.body.appendChild(drop);
+
+      // Position below button
+      const r = btn.getBoundingClientRect();
+      drop.style.left  = r.left + 'px';
+      drop.style.width = Math.max(r.width, 300) + 'px';
+      drop.style.top   = (r.bottom + 4) + 'px';
+
+      // Build provider chips dynamically
+      const providers = [...new Set(models.map(m => m.id.split('/')[0]))].sort();
+      const providerChips = providers.map(p =>
+        `<button class="sd-ap-mpick-chip" data-filter="p:${p}">${p.charAt(0).toUpperCase() + p.slice(1)}</button>`
+      ).join('');
+
+      drop.innerHTML = `
+        <div class="sd-ap-mpick-search-row">
+          <input class="sd-ap-mpick-search" type="text" placeholder="Поиск модели…" autocomplete="off" spellcheck="false">
+          <span class="sd-ap-mpick-count"></span>
+        </div>
+        <div class="sd-ap-mpick-filters">
+          <button class="sd-ap-mpick-chip active" data-filter="all">Все</button>
+          <button class="sd-ap-mpick-chip" data-filter="free">Бесплатные</button>
+          <button class="sd-ap-mpick-chip" data-filter="reason">Рассуждение</button>
+          <button class="sd-ap-mpick-chip" data-filter="vision">Зрение</button>
+          ${providerChips}
+        </div>
+        <div class="sd-ap-mpick-list"></div>
+      `;
+
+      // Flip up if dropdown would overflow viewport bottom
+      requestAnimationFrame(() => {
+        if (!drop.isConnected) return;
+        const dRect = drop.getBoundingClientRect();
+        if (dRect.bottom > window.innerHeight - 8) {
+          drop.style.top = (r.top - dRect.height - 4) + 'px';
+        }
+      });
+
+      let activeFilter = 'all';
+      let searchQ = '';
+
+      const countEl = drop.querySelector<HTMLElement>('.sd-ap-mpick-count')!;
+      const listEl  = drop.querySelector<HTMLElement>('.sd-ap-mpick-list')!;
+
+      const renderList = () => {
+        const q = searchQ.toLowerCase();
+        const filtered = models.filter(m => {
+          if (q && !m.name.toLowerCase().includes(q) && !m.id.toLowerCase().includes(q)) return false;
+          if (activeFilter === 'free')   return isFree(m);
+          if (activeFilter === 'reason') return isReasoning(m);
+          if (activeFilter === 'vision') return /image|vision/i.test(m.architecture?.modality ?? '');
+          if (activeFilter.startsWith('p:')) return m.id.startsWith(activeFilter.slice(2) + '/');
+          return true;
+        });
+        countEl.textContent = String(filtered.length);
+        const cur = this.aiModel || 'anthropic/claude-haiku-4-5';
+        if (!filtered.length) {
+          listEl.innerHTML = '<div class="sd-ap-mpick-empty">Ничего не найдено</div>';
+          return;
+        }
+        listEl.innerHTML = filtered.map(m => {
+          const pPrompt = parseFloat(m.pricing?.prompt ?? '0');
+          const pCompl  = parseFloat(m.pricing?.completion ?? '0');
+          const priceTag = pPrompt === 0
+            ? '<span class="sd-ap-mpick-tag t-free">Бесплатно</span>'
+            : `<span class="sd-ap-mpick-tag t-price">$${(pPrompt * 1_000_000).toFixed(3)}/$${(pCompl * 1_000_000).toFixed(3)} за 1M</span>`;
+          const ctxTag  = m.context_length
+            ? `<span class="sd-ap-mpick-tag t-ctx">${Math.round(m.context_length / 1000)}K ctx</span>` : '';
+          const reasonTag = isReasoning(m) ? '<span class="sd-ap-mpick-tag t-reason">Reasoning</span>' : '';
+          const visionTag = /image|vision/i.test(m.architecture?.modality ?? '')
+            ? '<span class="sd-ap-mpick-tag t-vision">Vision</span>' : '';
+          const provider  = m.id.split('/')[0];
+          return `<div class="sd-ap-mpick-item${m.id === cur ? ' sel' : ''}" data-id="${m.id}">
+            <div class="sd-ap-mpick-item-name">${m.name}</div>
+            <div class="sd-ap-mpick-item-meta">
+              <span class="sd-ap-mpick-tag t-provider">${provider}</span>
+              ${ctxTag}${reasonTag}${visionTag}${priceTag}
+            </div>
+          </div>`;
+        }).join('');
+      };
+
+      renderList();
+
+      // Filter chips
+      drop.querySelector('.sd-ap-mpick-filters')!.addEventListener('click', e => {
+        const chip = (e.target as Element).closest<HTMLElement>('.sd-ap-mpick-chip');
+        if (!chip) return;
+        drop.querySelectorAll('.sd-ap-mpick-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        activeFilter = chip.dataset.filter!;
+        renderList();
+      });
+
+      // Search
+      const searchInput = drop.querySelector<HTMLInputElement>('.sd-ap-mpick-search')!;
+      searchInput.addEventListener('input', () => { searchQ = searchInput.value; renderList(); });
+      setTimeout(() => searchInput.focus(), 50);
+
+      // Select model
+      listEl.addEventListener('click', e => {
+        const item = (e.target as Element).closest<HTMLElement>('.sd-ap-mpick-item');
+        if (!item) return;
+        const id = item.dataset.id!;
+        this.aiModel = id;
+        localStorage.setItem('sd_user_ai_model', id);
+        const found = models.find(x => x.id === id);
+        labelEl.textContent = found ? found.name : (id.split('/').pop() ?? id);
+        closeDropdown();
+      });
+
+      // Close on outside click (defer one tick so this open-click doesn't trigger it)
+      setTimeout(() => document.addEventListener('click', outsideHandler, true), 0);
+    };
+
+    btn.addEventListener('click', e => { e.stopPropagation(); openDropdown(); });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
 
    captureHotkey(field: 'holdVoice' | 'quickVoice', badgeEl: HTMLElement): void {
      badgeEl.textContent = 'Нажми…';
