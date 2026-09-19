@@ -3447,6 +3447,19 @@ export class AssistantModule {
       const drop = document.createElement('div');
       drop.className = 'sd-ap-mpick-drop';
       this.mpickDropEl = drop;
+
+      // Copy CSS variables from the panel so they resolve correctly
+      // when the dropdown is appended to document.body (outside the panel)
+      const panelEl = document.querySelector<HTMLElement>('.sd-assistant-panel');
+      if (panelEl) {
+        const cs = getComputedStyle(panelEl);
+        for (const v of ['--ap-accent','--ap-accent-str','--ap-accent-soft','--ap-surface',
+          '--ap-surface-2','--ap-surface-3','--ap-line','--ap-line-str',
+          '--ap-txt','--ap-txt-2','--ap-txt-3']) {
+          drop.style.setProperty(v, cs.getPropertyValue(v).trim());
+        }
+      }
+
       document.body.appendChild(drop);
 
       // Position below button
