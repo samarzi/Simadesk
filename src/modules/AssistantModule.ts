@@ -5734,6 +5734,11 @@ export class AssistantModule {
     const typing = this.addTypingIndicator();
     this.setInputEnabled(false);
 
+    // Подсказка для пользователя: через 20 секунд сообщаем что можно нажать стоп
+    const slowHintTimer = setTimeout(() => {
+      if (this.isLoading) this.setStatus('Думаю… (■ для отмены)', 'thinking');
+    }, 20_000);
+
     // Streaming bubble — появится как только придёт первый чанк
     let streamMsgEl: HTMLElement | null = null;
     let streamBubble: HTMLElement | null = null;
@@ -5949,6 +5954,7 @@ export class AssistantModule {
       this.addAssistantMessage(msg);
       this.setStatus('Ошибка');
     } finally {
+      clearTimeout(slowHintTimer);
       this.isLoading = false;
       aiGlow(false);
       this.setInputEnabled(true);
@@ -5982,10 +5988,11 @@ export class AssistantModule {
 
     // DeepSeek и reasoning-модели требуют особого обращения:
     // stream_options не поддерживаются через OpenRouter для DeepSeek,
-    // а R1 долго «думает» перед первым токеном контента.
+    // а reasoning-модели долго «думают» перед первым токеном контента.
     const model = this.aiModel || 'anthropic/claude-haiku-4-5';
     const isDeepSeek = model.startsWith('deepseek/');
-    const isReasoningModel = isDeepSeek && model.includes('r1');
+    const isReasoningModel = isDeepSeek ||
+      /\b(r1|o1|o3|o4|thinking|reasoner|qwq|extended)\b/i.test(model);
     const stallMs = isReasoningModel ? 90_000 : AI_STALL_TIMEOUT_MS;
 
     this.abortController = new AbortController();
@@ -6052,8 +6059,6 @@ export class AssistantModule {
         while (!streamDone) {
           const { done, value } = await reader.read();
           if (done) break;
-          // Данные пошли — сдвигаем окно ожидания.
-          bumpStall();
           const chunk = decoder.decode(value, { stream: true });
           for (const line of chunk.split('\n')) {
             const trimmed = line.trim();
@@ -6067,6 +6072,9 @@ export class AssistantModule {
               if (delta) {
                 full += delta;
                 onChunk!(full);
+                // Сдвигаем окно ожидания только при реальном контенте —
+                // keepalive-события не должны сбрасывать таймер.
+                bumpStall();
               }
               if (parsed?.usage) lastChunkWithUsage = parsed;
             } catch { /* ignore malformed SSE line */ }
