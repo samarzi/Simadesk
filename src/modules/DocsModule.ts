@@ -5051,7 +5051,8 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     // на уже присланные вложения.
     const pics = imageAttachments.list();
     const imgHint = `\n🖼 Картинки: редактор умеет вставлять изображения — excel_insert_image (в ячейку) `
-      + `и word_insert_image (в текст). `
+      + `и word_insert_image (в текст), переносить — excel_move_image (перенос, а не копия) `
+      + `и удалять — excel_remove_image / word_remove_image. `
       + (pics.length
           ? `Присланные в этом разговоре: ${pics.map(p => `${p.id} («${p.name}»)`).join(', ')}.`
           : 'Пользователь пока ничего не прикреплял — попроси приложить файл к сообщению.');
@@ -5399,9 +5400,27 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         },
         {
           name: 'excel_insert_image',
-          description: 'Вставить в ячейку Excel картинку, которую пользователь прикрепил к сообщению. Именно этим инструментом отвечать на «вставь это фото в B1», «добавь картинку сюда» — вставка изображений поддерживается. image — ссылка вида "img1" из описания вложения (если не указать, берётся последняя присланная). cell — адрес ("B1"); без него картинка идёт в выделенную ячейку. width — ширина кадра в пикселях (по умолчанию 260).',
+          description: 'Вставить в ячейку Excel картинку, которую пользователь прикрепил к сообщению. Именно этим инструментом отвечать на «вставь это фото в B1», «добавь картинку сюда» — вставка изображений поддерживается. image — ссылка вида "img1" из описания вложения (если не указать, берётся последняя присланная). cell — адрес ("B1"); без него картинка идёт в выделенную ячейку. width — ширина кадра в пикселях (по умолчанию 260). Если картинка уже стоит в документе и её надо переложить в другую ячейку — это excel_move_image, а не повторная вставка.',
           args: '{ cell?: string, image?: string, width?: number }',
           run: (a) => this.aiExcelInsertImage(a),
+        },
+        {
+          name: 'excel_move_image',
+          description: 'Перенести картинку из одной ячейки Excel в другую — именно этим отвечать на «перемести фото в I2», «перенеси картинку». Картинка исчезает из исходной ячейки и появляется в новой; копию делать не нужно. from — откуда ("B1"); без него берётся единственная картинка на листе. to — куда ("I2"); без него берётся выделенная ячейка.',
+          args: '{ from?: string, to?: string }',
+          run: (a) => this.aiExcelMoveImage(a),
+        },
+        {
+          name: 'excel_remove_image',
+          description: 'Удалить картинку из ячейки Excel («убери фото из B1»). Текст и оформление ячейки остаются. cell — адрес ("B1"); без него берётся единственная картинка на листе.',
+          args: '{ cell?: string }',
+          run: (a) => this.aiExcelRemoveImage(a),
+        },
+        {
+          name: 'word_remove_image',
+          description: 'Удалить картинку из Word-документа. index — её номер сверху (1 = первая); если картинка одна, можно не указывать.',
+          args: '{ index?: number }',
+          run: (a) => this.aiWordRemoveImage(a),
         },
         {
           name: 'word_insert_image',
@@ -5946,18 +5965,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     if (!st) throw new Error('Сейчас открыт не Excel-документ');
     const { doc } = st;
 
-    let r: number, c: number;
-    const cellRef = String(a?.cell ?? '').trim();
-    if (cellRef) {
-      const m = cellRef.toUpperCase().match(/^([A-Z]+)(\d+)$/);
-      if (!m) throw new Error(`Неверный адрес ячейки: ${a?.cell}. Пример: "B1"`);
-      c = this.letterToCol(m[1]); r = parseInt(m[2], 10) - 1;
-    } else if (this.xlLastSel && this.xlLastSel.docId === doc.id) {
-      r = this.xlLastSel.r1; c = this.xlLastSel.c1;
-    } else {
-      throw new Error('Не указана ячейка. Передай cell вида "B1" либо попроси выделить ячейку в таблице.');
-    }
-    if (r < 0 || c < 0) throw new Error('Адрес ячейки за пределами листа');
+    const { r, c } = this.aiImageTarget(doc, a?.cell);
 
     const pic = imageAttachments.resolve(a?.image);
     if (!pic) {
@@ -5983,23 +5991,136 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     const sheet = ec.sheets[sheetIdx] ?? ec.sheets[0];
     if (!sheet) throw new Error('Лист не найден');
 
+    this.placeImage(sheet, r, c, pic);
+    this.aiPersist(doc, ec);
+    return `${this.colLetter(c)}${r + 1}`;
+  }
+
+  /** Адрес вида "B1" → индексы. */
+  private aiCellRef(ref: string): { r: number; c: number } {
+    const m = String(ref ?? '').trim().toUpperCase().match(/^([A-Z]+)(\d+)$/);
+    if (!m) throw new Error(`Неверный адрес ячейки: ${ref}. Пример: "B1"`);
+    const c = this.letterToCol(m[1]), r = parseInt(m[2], 10) - 1;
+    if (r < 0 || c < 0) throw new Error('Адрес ячейки за пределами листа');
+    return { r, c };
+  }
+
+  /** Ячейка назначения: явный адрес, иначе то, что выделено в таблице. */
+  private aiImageTarget(doc: DocItem, cell?: string): { r: number; c: number } {
+    const ref = String(cell ?? '').trim();
+    if (ref) return this.aiCellRef(ref);
+    if (this.xlLastSel && this.xlLastSel.docId === doc.id)
+      return { r: this.xlLastSel.r1, c: this.xlLastSel.c1 };
+    throw new Error('Не указана ячейка. Передай cell вида "B1" либо попроси выделить ячейку в таблице.');
+  }
+
+  /** Все ячейки листа с картинками — по порядку сверху вниз. */
+  private sheetImageCells(sheet: SheetData): { r: number; c: number; cell: CellData }[] {
+    const out: { r: number; c: number; cell: CellData }[] = [];
+    sheet.data.forEach((row, r) => row.forEach((cell, c) => { if (cell?.img) out.push({ r, c, cell }); }));
+    return out;
+  }
+
+  /**
+   * Ячейка, откуда берём картинку: явный адрес, иначе единственная картинка
+   * на листе. Если картинок несколько — просим уточнить, а не угадываем.
+   */
+  private aiImageSource(sheet: SheetData, cell?: string): { r: number; c: number; cell: CellData } {
+    const ref = String(cell ?? '').trim();
+    if (ref) {
+      const { r, c } = this.aiCellRef(ref);
+      const hit = sheet.data[r]?.[c];
+      if (!hit?.img) throw new Error(`В ячейке ${ref.toUpperCase()} картинки нет.`);
+      return { r, c, cell: hit };
+    }
+    const all = this.sheetImageCells(sheet);
+    if (!all.length) throw new Error('На листе нет ни одной картинки.');
+    if (all.length > 1) {
+      const addrs = all.map(x => `${this.colLetter(x.c)}${x.r + 1}`).join(', ');
+      throw new Error(`Картинок несколько (${addrs}) — укажи, какую именно, в поле from/cell.`);
+    }
+    return all[0];
+  }
+
+  /** Положить готовую картинку в ячейку и растянуть под неё столбец со строкой. */
+  private placeImage(sheet: SheetData, r: number, c: number,
+                     img: { dataUrl: string; w?: number; h?: number }): void {
     while (sheet.data.length <= r) sheet.data.push([]);
     const width = Math.max(...sheet.data.map(row => row.length), c + 1);
     for (const row of sheet.data) while (row.length < width) row.push({ v: '' });
     const cell = sheet.data[r][c] ?? { v: '' };
-    sheet.data[r][c] = { ...cell, img: pic.dataUrl, imgW: pic.w, imgH: pic.h };
+    sheet.data[r][c] = { ...cell, img: img.dataUrl, imgW: img.w, imgH: img.h };
 
     // Ячейку надо растянуть под картинку, иначе она окажется обрезанной
     // рамками столбца и строки.
-    if (pic.w && pic.h) {
+    if (img.w && img.h) {
       const colWidths = sheet.colWidths ?? (sheet.colWidths = []);
       const rowHeights = sheet.rowHeights ?? (sheet.rowHeights = []);
-      colWidths[c] = Math.max(colWidths[c] ?? 0, pic.w + 12);
-      rowHeights[r] = Math.max(rowHeights[r] ?? 0, pic.h + 10);
+      colWidths[c] = Math.max(colWidths[c] ?? 0, img.w + 12);
+      rowHeights[r] = Math.max(rowHeights[r] ?? 0, img.h + 10);
     }
+  }
 
+  /**
+   * Убрать картинку из ячейки. Текст и оформление остаются. Столбец со строкой
+   * возвращаем к обычному размеру — но только если растянули их мы сами под эту
+   * же картинку: ширину, которую выставил пользователь, трогать нельзя.
+   */
+  private removeImage(sheet: SheetData, r: number, c: number): void {
+    const cell = sheet.data[r]?.[c];
+    if (!cell?.img) return;
+    const { imgW, imgH } = cell;
+    const next: CellData = { ...cell };
+    delete next.img; delete next.imgW; delete next.imgH;
+    sheet.data[r][c] = next;
+    if (imgW && sheet.colWidths?.[c] === imgW + 12) sheet.colWidths[c] = null;
+    if (imgH && sheet.rowHeights?.[r] === imgH + 10) sheet.rowHeights[r] = null;
+  }
+
+  /** Перенести картинку из одной ячейки в другую. */
+  private aiExcelMoveImage(a: { from?: string; to?: string }): AiActionResult {
+    const st = this.aiSheet();
+    if (!st) throw new Error('Сейчас открыт не Excel-документ');
+    const { doc } = st;
+
+    const ec = this.parseExcelContent(doc.content);
+    const sheet = ec.sheets[this.activeSheetIdx] ?? ec.sheets[0];
+    if (!sheet) throw new Error('Лист не найден');
+
+    const src = this.aiImageSource(sheet, a?.from);
+    const dst = this.aiImageTarget(doc, a?.to);
+    const fromAddr = `${this.colLetter(src.c)}${src.r + 1}`;
+    const toAddr = `${this.colLetter(dst.c)}${dst.r + 1}`;
+    if (src.r === dst.r && src.c === dst.c)
+      throw new Error(`Картинка уже в ${fromAddr}.`);
+
+    // Картинка уже подготовлена при вставке — пережимать её второй раз незачем.
+    const img = { dataUrl: src.cell.img!, w: src.cell.imgW, h: src.cell.imgH };
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
+    const before = doc.content;
+    this.removeImage(sheet, src.r, src.c);
+    this.placeImage(sheet, dst.r, dst.c, img);
     this.aiPersist(doc, ec);
-    return `${this.colLetter(c)}${r + 1}`;
+    return this.docsResult(doc.id, before, `Картинка перенесена из ${fromAddr} в ${toAddr}.`, 'Вернуть обратно');
+  }
+
+  /** Удалить картинку из ячейки, оставив её содержимое. */
+  private aiExcelRemoveImage(a: { cell?: string }): AiActionResult {
+    const st = this.aiSheet();
+    if (!st) throw new Error('Сейчас открыт не Excel-документ');
+    const { doc } = st;
+
+    const ec = this.parseExcelContent(doc.content);
+    const sheet = ec.sheets[this.activeSheetIdx] ?? ec.sheets[0];
+    if (!sheet) throw new Error('Лист не найден');
+
+    const src = this.aiImageSource(sheet, a?.cell);
+    const addr = `${this.colLetter(src.c)}${src.r + 1}`;
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
+    const before = doc.content;
+    this.removeImage(sheet, src.r, src.c);
+    this.aiPersist(doc, ec);
+    return this.docsResult(doc.id, before, `Картинка из ячейки ${addr} удалена.`, 'Вернуть картинку');
   }
 
   /** Вставить картинку в Word-документ отдельным абзацем. */
@@ -6027,6 +6148,31 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
 
     const where = pos === 'start' ? 'в начало' : pos === 'after' ? `после абзаца ${a?.afterIndex}` : 'в конец';
     return this.aiWordSave(doc, body, before, `Картинка «${pic.name}» вставлена ${where}.`, 'Убрать картинку');
+  }
+
+  /** Убрать картинку из Word-документа. */
+  private aiWordRemoveImage(a: { index?: number }): AiActionResult {
+    const { doc, body, before } = this.aiWordDom();
+    const imgs = Array.from(body.querySelectorAll('img'));
+    if (!imgs.length) throw new Error('В документе нет ни одной картинки.');
+
+    let idx = Number(a?.index);
+    if (!Number.isFinite(idx)) {
+      if (imgs.length > 1)
+        throw new Error(`Картинок ${imgs.length} — укажи номер (index), считая сверху.`);
+      idx = 1;
+    }
+    const img = imgs[idx - 1];
+    if (!img) throw new Error(`Картинки №${idx} нет: всего их ${imgs.length}.`);
+
+    // Абзац, в котором кроме картинки ничего не было, тоже убираем —
+    // иначе на его месте останется пустая строка.
+    const host = img.closest('p,div');
+    img.remove();
+    if (host && host !== body && !(host.textContent ?? '').trim() && !host.querySelector('img,table'))
+      host.remove();
+
+    return this.aiWordSave(doc, body, before, 'Картинка удалена.', 'Вернуть картинку');
   }
 
   private aiWordDeleteParagraph(a: { index: number }): AiActionResult {

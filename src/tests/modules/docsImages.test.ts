@@ -193,3 +193,121 @@ describe('word_insert_image', () => {
     await expect(M.aiWordInsertImage({})).rejects.toThrow(/прикреп/i);
   });
 });
+
+describe('перенос и удаление картинки', () => {
+  it('переносит картинку, а не копирует её', async () => {
+    imageAttachments.add('фото.png', PNG);
+    await M.aiExcelInsertImage({ cell: 'B1' });
+    const res = M.aiExcelMoveImage({ from: 'B1', to: 'I2' });
+    expect(cellOf(0, 1).img).toBeUndefined();
+    expect(cellOf(1, 8).img).toBe(PNG);
+    expect(res.summary).toContain('B1');
+    expect(res.summary).toContain('I2');
+  });
+
+  it('без from берёт единственную картинку листа, без to — выделение', async () => {
+    imageAttachments.add('фото.png', PNG);
+    await M.aiExcelInsertImage({ cell: 'A1' });
+    M.xlLastSel = { r1: 2, c1: 2, r2: 2, c2: 2, docId: 'd1', sheetIdx: 0 };
+    M.aiExcelMoveImage({});
+    expect(cellOf(0, 0).img).toBeUndefined();
+    expect(cellOf(2, 2).img).toBe(PNG);
+  });
+
+  it('при нескольких картинках просит уточнить, какую переносить', async () => {
+    imageAttachments.add('a.png', PNG);
+    await M.aiExcelInsertImage({ cell: 'A1' });
+    imageAttachments.add('b.png', PNG2);
+    await M.aiExcelInsertImage({ cell: 'B2' });
+    expect(() => M.aiExcelMoveImage({ to: 'C3' })).toThrow(/A1, B2/);
+  });
+
+  it('перенос сохраняет текст и оформление обеих ячеек', async () => {
+    const ec = M.parseExcelContent(M.docs[0].content);
+    ec.sheets[0].data[0][1] = { v: 'подпись', s: 'color:#f00' };
+    ec.sheets[0].data[1][0] = { v: 'цель', s: 'font-weight:bold' };
+    M.docs[0].content = M.serializeExcel(ec);
+    imageAttachments.add('фото.png', PNG);
+    await M.aiExcelInsertImage({ cell: 'B1' });
+    M.aiExcelMoveImage({ from: 'B1', to: 'A2' });
+    expect(cellOf(0, 1).v).toBe('подпись');
+    expect(cellOf(0, 1).s).toBe('color:#f00');
+    expect(cellOf(1, 0).v).toBe('цель');
+    expect(cellOf(1, 0).img).toBe(PNG);
+  });
+
+  it('удаляет картинку, оставляя содержимое ячейки', async () => {
+    const ec = M.parseExcelContent(M.docs[0].content);
+    ec.sheets[0].data[0][1] = { v: 'подпись' };
+    M.docs[0].content = M.serializeExcel(ec);
+    imageAttachments.add('фото.png', PNG);
+    await M.aiExcelInsertImage({ cell: 'B1' });
+    const res = M.aiExcelRemoveImage({ cell: 'B1' });
+    expect(cellOf(0, 1).img).toBeUndefined();
+    expect(cellOf(0, 1).v).toBe('подпись');
+    expect(res.summary).toContain('B1');
+  });
+
+  it('после удаления столбец и строка возвращаются к обычному размеру', async () => {
+    imageAttachments.add('фото.png', PNG);
+    await M.aiExcelInsertImage({ cell: 'B1' });
+    M.aiExcelRemoveImage({ cell: 'B1' });
+    const sh = M.parseExcelContent(M.docs[0].content).sheets[0];
+    expect(sh.colWidths?.[1] ?? null).toBeNull();
+    expect(sh.rowHeights?.[0] ?? null).toBeNull();
+  });
+
+  it('ширину, выставленную пользователем, удаление не сбрасывает', async () => {
+    const ec = M.parseExcelContent(M.docs[0].content);
+    ec.sheets[0].colWidths = [null, 400, null];
+    M.docs[0].content = M.serializeExcel(ec);
+    imageAttachments.add('фото.png', PNG);
+    await M.aiExcelInsertImage({ cell: 'B1' });
+    M.aiExcelRemoveImage({ cell: 'B1' });
+    expect(M.parseExcelContent(M.docs[0].content).sheets[0].colWidths[1]).toBe(400);
+  });
+
+  it('перенос откатывается одним undo', async () => {
+    imageAttachments.add('фото.png', PNG);
+    await M.aiExcelInsertImage({ cell: 'B1' });
+    const res = M.aiExcelMoveImage({ from: 'B1', to: 'C3' });
+    M.aiUndoRestore(res.undo.payload);
+    expect(cellOf(0, 1).img).toBe(PNG);
+    expect(cellOf(2, 2).img).toBeUndefined();
+  });
+
+  it('из пустой ячейки переносить нечего', () => {
+    expect(() => M.aiExcelMoveImage({ from: 'B1', to: 'C1' })).toThrow(/картинки нет/i);
+  });
+});
+
+describe('word_remove_image', () => {
+  beforeEach(() => {
+    M.docs = [{ id: 'w1', type: 'word', title: 'Письмо', content: '<p>Привет</p>', updated_at: 1 }];
+    M.activeId = 'w1';
+  });
+
+  it('убирает картинку вместе с опустевшим абзацем', async () => {
+    imageAttachments.add('фото.png', PNG);
+    await M.aiWordInsertImage({});
+    M.aiWordRemoveImage({});
+    expect(M.docs[0].content).not.toContain('<img');
+    expect(M.docs[0].content).toContain('Привет');
+    expect(M.docs[0].content).not.toContain('<p></p>');
+  });
+
+  it('при нескольких картинках требует номер', async () => {
+    imageAttachments.add('a.png', PNG);
+    await M.aiWordInsertImage({});
+    imageAttachments.add('b.png', PNG2);
+    await M.aiWordInsertImage({});
+    expect(() => M.aiWordRemoveImage({})).toThrow(/номер/i);
+    M.aiWordRemoveImage({ index: 1 });
+    expect(M.docs[0].content).toContain(PNG2);
+    expect(M.docs[0].content).not.toContain(PNG);
+  });
+
+  it('без картинок говорит прямо', () => {
+    expect(() => M.aiWordRemoveImage({})).toThrow(/нет ни одной/i);
+  });
+});
