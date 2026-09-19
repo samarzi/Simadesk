@@ -17,6 +17,8 @@ import {
   type CellType,
 } from '@/utils/numFormat';
 import { createEvaluator, FUNCTION_NAMES, type Evaluator } from '@/utils/formula';
+import { prepareImage, isSafeImageSrc, fileToDataUrl } from '@/utils/docImage';
+import { imageAttachments } from '@/services/imageAttachments';
 
 type DocType = 'word' | 'excel';
 
@@ -30,6 +32,16 @@ interface CellData {
   s?: string;   // inline style cssText
   t?: CellType; // 'n' | 's' | 'd' | 'b'; отсутствие = текст
   nf?: string;  // код числового формата Excel («#,##0.00», «dd.mm.yyyy»)
+  /**
+   * Картинка в ячейке — data:URL (или https-ссылка).
+   * Хранится прямо в ячейке: содержимое документа и так едет одной строкой,
+   * а отдельного хранилища картинок у редактора нет. Перед вставкой
+   * изображение ужимается (см. utils/docImage), иначе документ перестанет
+   * помещаться и в кеш, и в запрос к БД.
+   */
+  img?: string;
+  imgW?: number; // размер кадра для показа, px
+  imgH?: number;
 }
 
 interface MergeRange { r1: number; c1: number; r2: number; c2: number; }
@@ -656,6 +668,11 @@ export class DocsModule {
         const out: any = { v: cell.v };
         if (cell.t) out.t = cell.t;
         if (cell.nf) out.nf = cell.nf;
+        if (cell.img) {
+          out.img = cell.img;
+          if (cell.imgW) out.imgW = cell.imgW;
+          if (cell.imgH) out.imgH = cell.imgH;
+        }
         if (cell.s) {
           let i = index.get(cell.s);
           if (i === undefined) { i = palette.length; palette.push(cell.s); index.set(cell.s, i); }
@@ -677,7 +694,8 @@ export class DocsModule {
     return (p || []).map(row => (row || []).map((cell: unknown) => {
       if (typeof cell === 'string') return { v: cell };
       if (cell && typeof cell === 'object' && 'v' in cell) {
-        const c = cell as { v?: unknown; s?: unknown; t?: unknown; nf?: unknown; si?: unknown };
+        const c = cell as { v?: unknown; s?: unknown; t?: unknown; nf?: unknown; si?: unknown;
+                            img?: unknown; imgW?: unknown; imgH?: unknown };
         const out: CellData = { v: String(c.v ?? '') };
         // Стиль приходит либо номером в палитре листа (новый формат), либо
         // строкой прямо в ячейке (старый) — понимаем оба.
@@ -688,6 +706,13 @@ export class DocsModule {
         // формат теряется — ровно та потеря, ради которой всё затевалось.
         if (typeof c.t === 'string' && TYPES.has(c.t)) out.t = c.t as CellType;
         if (typeof c.nf === 'string' && c.nf) out.nf = c.nf;
+        // Картинку пускаем только знакомого вида: документ приходит с сервера,
+        // и src вида javascript: в разметке нам не нужен.
+        if (typeof c.img === 'string' && isSafeImageSrc(c.img)) {
+          out.img = c.img;
+          if (typeof c.imgW === 'number' && c.imgW > 0) out.imgW = Math.round(c.imgW);
+          if (typeof c.imgH === 'number' && c.imgH > 0) out.imgH = Math.round(c.imgH);
+        }
         return out;
       }
       return { v: '' };
@@ -1197,6 +1222,10 @@ export class DocsModule {
     if (doc.type === 'excel') {
       const ec = this.parseExcelContent(doc.content);
       if (format === 'xlsx') {
+        // Картинки в ячейках живут только внутри SimaDesk: писать drawing-часть
+        // xlsx мы не умеем, и молча потерять их хуже, чем сказать об этом.
+        if (ec.sheets.some(sh => sh.data.some(row => row.some(c => c && c.img))))
+          showToast('Картинки в ячейках в .xlsx не переносятся — в редакторе они останутся', 'info');
         this.exportExcelXlsx(doc, ec).catch(e => showToast('Ошибка экспорта: ' + e.message, 'error'));
         return;
       } else if (format === 'csv') {
@@ -2163,6 +2192,9 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         <button class="dw-tool" data-link title="Добавить ссылку">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
         </button>
+        <button class="dw-tool" data-img title="Вставить картинку">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="2.5" width="14" height="11" rx="2"/><circle cx="5.5" cy="6.5" r="1.3"/><path d="M2 11.5l3.5-3.2 3 2.6 2.4-2 3.1 2.8"/></svg>
+        </button>
         <button class="dw-tool" data-cmd="removeFormat" title="Очистить форматирование">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><path d="M9.5 2.5h11l-3 6h-5"/><line x1="3" y1="22" x2="12" y2="22"/></svg>
         </button>
@@ -2269,9 +2301,50 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         } else if (btn.dataset.link !== undefined) {
           const url = prompt('URL ссылки:', 'https://');
           if (url) document.execCommand('createLink', false, url);
+        } else if (btn.dataset.img !== undefined) {
+          pickImage();
+          return; // вставка асинхронная, commit сделает она сама
         }
         commit();
       });
+    });
+
+    /**
+     * Вставить картинку в текст.
+     * Картинка ужимается и кладётся как data:URL: blob-ссылка из буфера живёт
+     * только до перезагрузки страницы, и документ после неё показывал бы
+     * битый значок.
+     */
+    const insertImage = async (src: string) => {
+      try {
+        const pic = await prepareImage(src, 1400, 420);
+        const size = pic.w && pic.h ? ` style="width:${pic.w}px;height:${pic.h}px"` : '';
+        getEd().focus();
+        document.execCommand('insertHTML', false, `<img src="${this.esc(pic.dataUrl)}" alt=""${size}>`);
+        commit();
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Не удалось вставить картинку', 'error');
+      }
+    };
+
+    const pickImage = () => {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'image/*';
+      inp.addEventListener('change', async () => {
+        const file = inp.files?.[0];
+        if (file) await insertImage(await fileToDataUrl(file));
+      });
+      inp.click();
+    };
+
+    // Вставка картинки из буфера (скриншот, «копировать изображение»)
+    pagesDiv.addEventListener('paste', e => {
+      const file = Array.from(e.clipboardData?.items ?? [])
+        .find(it => it.kind === 'file' && it.type.startsWith('image/'))?.getAsFile();
+      if (!file) return;
+      e.preventDefault();
+      fileToDataUrl(file).then(insertImage);
     });
 
     const blockSel = this.root.querySelector<HTMLSelectElement>('[data-block-sel]');
@@ -2458,6 +2531,9 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
       </div>
       <div class="dx-sep"></div>
       <div class="dx-group">
+        <button class="dx-btn" data-xa="insert-image" title="Вставить картинку в выделенную ячейку">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="2.5" width="14" height="11" rx="2"/><circle cx="5.5" cy="6.5" r="1.3"/><path d="M2 11.5l3.5-3.2 3 2.6 2.4-2 3.1 2.8"/></svg>
+        </button>
         <button class="dx-btn" data-xa="find" title="Найти / Заменить (Ctrl/⌘+F)">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="7" r="5"/><line x1="11" y1="11" x2="15" y2="15"/></svg>
         </button>
@@ -2681,6 +2757,13 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         // текст остаётся текстом. Формат ячейки при этом сохраняется.
         const parsed = this.interpretInput(td.innerText, editOrigCell.nf, editOrigCell.t);
         if (editOrigCell.s) parsed.s = editOrigCell.s;
+        // Картинку переносим только если она пережила правку: удалил её
+        // Backspace'ом — значит удалил, воскрешать не надо.
+        if (editOrigCell.img && td.querySelector('img.dx-cell-img')) {
+          parsed.img = editOrigCell.img;
+          parsed.imgW = editOrigCell.imgW;
+          parsed.imgH = editOrigCell.imgH;
+        }
         this.applyCellToTd(td, parsed, grid());
         if (doCommit) saveGrid(grid());
       }
@@ -3420,12 +3503,42 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     (this as any)._xlKeyHandler?.();
     (this as any)._xlKeyHandler = () => document.removeEventListener('keydown', onKey);
 
+    /** Выбрать картинку с диска и положить её в ячейку. */
+    const pickImage = (r: number, c: number) => {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'image/*';
+      inp.addEventListener('change', async () => {
+        const file = inp.files?.[0];
+        if (!file) return;
+        try {
+          pushUndo();
+          await this.setCellImage(doc, this.activeSheetIdx, r, c, await fileToDataUrl(file));
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : 'Не удалось вставить картинку', 'error');
+        }
+      });
+      inp.click();
+    };
+
     // Paste (document-level so it works even when no cell has focus)
     const onPaste = (e: ClipboardEvent) => {
       if (this.root.style.display === 'none') return;
       if (editMode) return;
       const active = document.activeElement as HTMLElement | null;
       if (active && !this.root.contains(active) && active !== document.body) return;
+      // Картинка в буфере (скриншот, «копировать изображение») — кладём в ячейку.
+      const imgFile = Array.from(e.clipboardData?.items ?? [])
+        .find(it => it.kind === 'file' && it.type.startsWith('image/'))?.getAsFile();
+      if (imgFile) {
+        e.preventDefault();
+        const r = curR, c = curC;
+        pushUndo();
+        fileToDataUrl(imgFile)
+          .then(url => this.setCellImage(doc, this.activeSheetIdx, r, c, url))
+          .catch(err => showToast(err instanceof Error ? err.message : 'Не удалось вставить картинку', 'error'));
+        return;
+      }
       const text = e.clipboardData?.getData('text/plain');
       if (!text) return;
       e.preventDefault();
@@ -3643,6 +3756,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
           return;
         }
         if(act==='find'){(this as any)._openFindPanel?.();return;}
+        if(act==='insert-image'){ pickImage(curR, curC); return; }
         if(act==='wrap'){
           const cells=selectedCells(); if(!cells.length) return;
           const first=cells[0];
@@ -4373,7 +4487,14 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
       // иначе grid() прочитает обратно уже отформатированный текст
       (!isFormula && display !== this.esc(v) ? ` data-raw="${this.esc(v)}"` : '');
 
-    return `<td data-r="${r}" data-c="${c}"${spanAttrs}${styleAttr}${meta}>${display}</td>`;
+    return `<td data-r="${r}" data-c="${c}"${spanAttrs}${styleAttr}${meta}>${this.cellImgHtml(cell)}${display}</td>`;
+  }
+
+  /** Разметка картинки внутри ячейки (пусто, если картинки нет). */
+  private cellImgHtml(cell: CellData): string {
+    if (!cell.img || !isSafeImageSrc(cell.img)) return '';
+    const size = cell.imgW && cell.imgH ? ` style="width:${cell.imgW}px;height:${cell.imgH}px"` : '';
+    return `<img class="dx-cell-img" src="${this.esc(cell.img)}" alt=""${size} draggable="false">`;
   }
 
   /** Пересчитать текст и мета-атрибуты ячейки в DOM из модели. */
@@ -4390,7 +4511,11 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     if (cell.t) td.dataset.t = cell.t; else delete td.dataset.t;
 
     const display = formatCellValue(raw, type, cell.nf);
+    // innerText сносит детей — картинку возвращаем следом, иначе она пропадёт
+    // от любой правки соседнего значения.
     td.innerText = display;
+    const imgHtml = this.cellImgHtml(cell);
+    if (imgHtml) td.insertAdjacentHTML('afterbegin', imgHtml);
     if (!isFormula && display !== v) td.dataset.raw = v; else delete td.dataset.raw;
   }
 
@@ -4446,6 +4571,16 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
     if (style) out.s = style;
     if (td.dataset.t) out.t = td.dataset.t as CellType;
     if (td.dataset.nf) out.nf = td.dataset.nf;
+    // Картинка хранится в самом <img>, отдельного дубля в data-атрибуте нет:
+    // data:URL весит сотни килобайт, и держать его в разметке дважды незачем.
+    const img = td.querySelector<HTMLImageElement>('img.dx-cell-img');
+    const src = img?.getAttribute('src') ?? '';
+    if (src && isSafeImageSrc(src)) {
+      out.img = src;
+      const w = parseInt(img!.style.width, 10), h = parseInt(img!.style.height, 10);
+      if (w > 0) out.imgW = w;
+      if (h > 0) out.imgH = h;
+    }
     return out;
   }
 
@@ -4911,8 +5046,18 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         }).join('\n')
       : '';
 
+    // Модель по умолчанию считает, что «в Excel картинку вставить нельзя», и
+    // отказывает пользователю. Говорим прямо, что умеем, и перечисляем ссылки
+    // на уже присланные вложения.
+    const pics = imageAttachments.list();
+    const imgHint = `\n🖼 Картинки: редактор умеет вставлять изображения — excel_insert_image (в ячейку) `
+      + `и word_insert_image (в текст). `
+      + (pics.length
+          ? `Присланные в этом разговоре: ${pics.map(p => `${p.id} («${p.name}»)`).join(', ')}.`
+          : 'Пользователь пока ничего не прикреплял — попроси приложить файл к сообщению.');
+
     const doc = this.aiDoc();
-    if (!doc) return fsFocus + 'Нет открытого документа. Пользователь может создать Word или Excel.' + docList;
+    if (!doc) return fsFocus + 'Нет открытого документа. Пользователь может создать Word или Excel.' + imgHint + docList;
 
     if (doc.type === 'word') {
       const text = doc.content.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
@@ -4924,11 +5069,12 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
         + (headings ? `\nЗаголовки:\n${headings}` : '')
         + `\nНачало: "${text.slice(0, 600)}"${text.length > 600 ? '…' : ''}`
         + `\nДля структуры вызови word_outline, для точечной правки — word_edit_paragraph.`
+        + imgHint
         + docList;
     }
 
     const s = this.aiSheet();
-    if (!s) return fsFocus + `Открыт документ «${doc.title}», но лист пуст.` + docList;
+    if (!s) return fsFocus + `Открыт документ «${doc.title}», но лист пуст.` + imgHint + docList;
     const { ec, sheet } = s;
     const artCols = this.aiArticleCols(sheet);
 
@@ -4951,6 +5097,7 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
       + `ВАЖНО: конкретных значений здесь нет. Чтобы ответить по данным — вызови `
       + `excel_query (отбор строк), excel_aggregate (суммы, средние, группировки), `
       + `excel_find (поиск) или excel_read_range. Не выдумывай цифры и не считай по памяти.`
+      + imgHint
       + docList;
   }
 
@@ -5249,6 +5396,18 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
           description: 'Вставить новый фрагмент. position: end (по умолчанию), start или after — тогда нужен afterIndex из word_outline. Использовать для «добавь абзац», «вставь раздел после второго».',
           args: '{ text?: string, html?: string, position?: string, afterIndex?: number }',
           run: (a) => this.aiWordInsert(a),
+        },
+        {
+          name: 'excel_insert_image',
+          description: 'Вставить в ячейку Excel картинку, которую пользователь прикрепил к сообщению. Именно этим инструментом отвечать на «вставь это фото в B1», «добавь картинку сюда» — вставка изображений поддерживается. image — ссылка вида "img1" из описания вложения (если не указать, берётся последняя присланная). cell — адрес ("B1"); без него картинка идёт в выделенную ячейку. width — ширина кадра в пикселях (по умолчанию 260).',
+          args: '{ cell?: string, image?: string, width?: number }',
+          run: (a) => this.aiExcelInsertImage(a),
+        },
+        {
+          name: 'word_insert_image',
+          description: 'Вставить в Word-документ картинку, которую пользователь прикрепил к сообщению. image — ссылка вида "img1" (по умолчанию последняя присланная). position: end (по умолчанию), start или after с afterIndex из word_outline. width — ширина в пикселях (по умолчанию 420).',
+          args: '{ image?: string, width?: number, position?: string, afterIndex?: number }',
+          run: (a) => this.aiWordInsertImage(a),
         },
         {
           name: 'word_delete_paragraph',
@@ -5773,6 +5932,101 @@ ${ec.sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxm
 
     const where = pos === 'start' ? 'в начало' : pos === 'after' ? `после абзаца ${a?.afterIndex}` : 'в конец';
     return this.aiWordSave(doc, body, before, `Фрагмент вставлен ${where}.`, 'Отменить вставку');
+  }
+
+  /**
+   * Вставить картинку в ячейку Excel.
+   *
+   * Источник — вложение, которое пользователь прислал ассистенту: модель видит
+   * изображение, но переслать его байты не может, поэтому ссылается на него
+   * коротким идентификатором (см. services/imageAttachments).
+   */
+  private async aiExcelInsertImage(a: { cell?: string; image?: string; width?: number }): Promise<AiActionResult> {
+    const st = this.aiSheet();
+    if (!st) throw new Error('Сейчас открыт не Excel-документ');
+    const { doc } = st;
+
+    let r: number, c: number;
+    const cellRef = String(a?.cell ?? '').trim();
+    if (cellRef) {
+      const m = cellRef.toUpperCase().match(/^([A-Z]+)(\d+)$/);
+      if (!m) throw new Error(`Неверный адрес ячейки: ${a?.cell}. Пример: "B1"`);
+      c = this.letterToCol(m[1]); r = parseInt(m[2], 10) - 1;
+    } else if (this.xlLastSel && this.xlLastSel.docId === doc.id) {
+      r = this.xlLastSel.r1; c = this.xlLastSel.c1;
+    } else {
+      throw new Error('Не указана ячейка. Передай cell вида "B1" либо попроси выделить ячейку в таблице.');
+    }
+    if (r < 0 || c < 0) throw new Error('Адрес ячейки за пределами листа');
+
+    const pic = imageAttachments.resolve(a?.image);
+    if (!pic) {
+      throw new Error('Картинки нет: пользователь ничего не прикреплял в этом разговоре. Попроси прикрепить изображение к сообщению — тогда вставлю.');
+    }
+    const maxDisplay = Math.min(Math.max(Number(a?.width) || 260, 40), 600);
+
+    this.pushXlUndo(doc.id, this.activeSheetIdx);
+    const before = doc.content;
+    const addr = await this.setCellImage(doc, this.activeSheetIdx, r, c, pic.dataUrl, maxDisplay);
+    return this.docsResult(doc.id, before, `Картинка «${pic.name}» вставлена в ячейку ${addr}.`, 'Убрать картинку');
+  }
+
+  /**
+   * Положить картинку в ячейку и растянуть под неё столбец со строкой.
+   * Общий путь для тулбара, вставки из буфера и ассистента.
+   * Возвращает адрес ячейки.
+   */
+  private async setCellImage(doc: DocItem, sheetIdx: number, r: number, c: number,
+                             src: string, maxDisplay = 260): Promise<string> {
+    const pic = await prepareImage(src, 1000, maxDisplay);
+    const ec = this.parseExcelContent(doc.content);
+    const sheet = ec.sheets[sheetIdx] ?? ec.sheets[0];
+    if (!sheet) throw new Error('Лист не найден');
+
+    while (sheet.data.length <= r) sheet.data.push([]);
+    const width = Math.max(...sheet.data.map(row => row.length), c + 1);
+    for (const row of sheet.data) while (row.length < width) row.push({ v: '' });
+    const cell = sheet.data[r][c] ?? { v: '' };
+    sheet.data[r][c] = { ...cell, img: pic.dataUrl, imgW: pic.w, imgH: pic.h };
+
+    // Ячейку надо растянуть под картинку, иначе она окажется обрезанной
+    // рамками столбца и строки.
+    if (pic.w && pic.h) {
+      const colWidths = sheet.colWidths ?? (sheet.colWidths = []);
+      const rowHeights = sheet.rowHeights ?? (sheet.rowHeights = []);
+      colWidths[c] = Math.max(colWidths[c] ?? 0, pic.w + 12);
+      rowHeights[r] = Math.max(rowHeights[r] ?? 0, pic.h + 10);
+    }
+
+    this.aiPersist(doc, ec);
+    return `${this.colLetter(c)}${r + 1}`;
+  }
+
+  /** Вставить картинку в Word-документ отдельным абзацем. */
+  private async aiWordInsertImage(a: { image?: string; width?: number; position?: string; afterIndex?: number }): Promise<AiActionResult> {
+    const pic = imageAttachments.resolve(a?.image);
+    if (!pic) {
+      throw new Error('Картинки нет: пользователь ничего не прикреплял в этом разговоре. Попроси прикрепить изображение к сообщению — тогда вставлю.');
+    }
+    const maxDisplay = Math.min(Math.max(Number(a?.width) || 420, 60), 780);
+    const pic2 = await prepareImage(pic.dataUrl, 1400, maxDisplay);
+
+    const { doc, body, before } = this.aiWordDom();
+    const size = pic2.w && pic2.h ? ` style="width:${pic2.w}px;height:${pic2.h}px"` : '';
+    const frag = `<p><img src="${this.esc(pic2.dataUrl)}" alt="${this.esc(pic.name)}"${size}></p>`;
+    const pos = (a?.position ?? 'end').toLowerCase();
+
+    if (pos === 'start') {
+      body.insertAdjacentHTML('afterbegin', frag);
+    } else if (pos === 'after') {
+      const blocks = this.aiWordBlocks(body);
+      this.aiWordBlockAt(blocks, a?.afterIndex).insertAdjacentHTML('afterend', frag);
+    } else {
+      body.insertAdjacentHTML('beforeend', frag);
+    }
+
+    const where = pos === 'start' ? 'в начало' : pos === 'after' ? `после абзаца ${a?.afterIndex}` : 'в конец';
+    return this.aiWordSave(doc, body, before, `Картинка «${pic.name}» вставлена ${where}.`, 'Убрать картинку');
   }
 
   private aiWordDeleteParagraph(a: { index: number }): AiActionResult {

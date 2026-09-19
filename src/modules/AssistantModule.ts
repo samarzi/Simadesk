@@ -1,6 +1,6 @@
 import '@/styles/assistant.css';
 import { showToast } from '@/utils/toast';
-import { edgeTtsSpeak, edgeTtsStop, edgeTtsUnlock } from '@/services/edgeTts';
+import { edgeTtsStop, edgeTtsUnlock } from '@/services/edgeTts';
 import { TtsStreamSession } from '@/services/ttsStream';
 import { CONFIRM_REQUIRED_ACTIONS, PREVIEW_REQUIRED_ACTIONS, describePendingAction } from '@/services/aiActionPolicy';
 import { aiPage, aiGlow } from '@/services/aiPageContext';
@@ -9,6 +9,7 @@ import { changeLog } from '@/modules/LogsModule';
 import { esc } from '@/utils/format';
 import { supportChatService, supportErrorText, SupportMessage, SupportAttachment, SUPPORT_REASONS } from '@/services/supportChatService';
 import { selectionCtx } from '@/services/selectionContext';
+import { imageAttachments } from '@/services/imageAttachments';
 import { reportAiUsage } from '@/services/aiUsage';
 import { SupportSpamGuard } from '@/services/supportSpamGuard';
 import { hasQuota, getQuotaInfo, recordDailyTokens, getDailyLimit, FREE_DAILY_TOKENS } from '@/services/aiTokenQuota';
@@ -1327,13 +1328,6 @@ function cleanForTTS(text: string): string {
     // Collapse spaces
     .replace(/\s{2,}/g, ' ')
     .trim();
-}
-
-function ttsSpeak(text: string, onEnd?: () => void, rate = 1.1, voice = 'ru-RU-SvetlanaNeural'): void {
-  const clean = cleanForTTS(text);
-  if (!clean) { onEnd?.(); return; }
-  edgeTtsUnlock();
-  edgeTtsSpeak(clean, onEnd, rate, voice).catch(() => { onEnd?.(); });
 }
 
 function ttsStop(): void {
@@ -3240,6 +3234,7 @@ export class AssistantModule {
 
   private startMsgTts(text: string, btn: HTMLElement): void {
     ttsStop();
+    edgeTtsUnlock(); // разблокировать AudioContext в контексте пользовательского жеста
     if (this.speakingBtn && this.speakingBtn !== btn) {
       this.speakingBtn.classList.remove('speaking');
     }
@@ -3247,14 +3242,23 @@ export class AssistantModule {
     this.btn?.classList.add('speaking');
     this.speakingBtn = btn;
     this.setStatus('Озвучиваю…', 'speaking');
-    ttsSpeak(text, () => {
-      btn.classList.remove('speaking');
-      if (this.speakingBtn === btn) {
-        this.speakingBtn = null;
-        this.btn?.classList.remove('speaking');
-        if (!this.isLoading) this.setStatus('Готова');
-      }
-    }, this.ttsRate, this.ttsVoiceName);
+    // Используем TtsStreamSession чтобы длинный текст резался на куски по
+    // предложениям — иначе один большой запрос к TTS-прокси обрывается на середине.
+    const session = new TtsStreamSession({
+      rate: this.ttsRate,
+      voice: this.ttsVoiceName,
+      clean: cleanForTTS,
+      onEnd: () => {
+        btn.classList.remove('speaking');
+        if (this.speakingBtn === btn) {
+          this.speakingBtn = null;
+          this.btn?.classList.remove('speaking');
+          if (!this.isLoading) this.setStatus('Готова');
+        }
+      },
+    });
+    session.feed(text);   // режет на куски по предложениям
+    session.finish(text); // доозвучивает остаток
   }
 
   private stopMsgTts(): void {
@@ -5000,10 +5004,15 @@ export class AssistantModule {
     this.addUserMessage(text, files);
     // For history: always store as string (text + file descriptions)
     const fileCtx = files.length
-      ? '\n\n' + files.map(f => f.kind === 'image'
-          ? `[Изображение: ${f.name}]`
-          : `[Файл: ${f.name}]\n${f.textContent ?? ''}`
-        ).join('\n\n')
+      ? '\n\n' + files.map(f => {
+          if (f.kind !== 'image') return `[Файл: ${f.name}]\n${f.textContent ?? ''}`;
+          // Модель видит картинку, но вернуть её байты не умеет. Чтобы она
+          // могла вставить это фото в документ, выдаём вложению короткую
+          // ссылку и называем её прямо в тексте сообщения.
+          if (!f.imageDataUrl) return `[Изображение: ${f.name}]`;
+          const reg = imageAttachments.add(f.name, f.imageDataUrl);
+          return `[Изображение: ${f.name} — ссылка для инструментов вставки: image="${reg.id}"]`;
+        }).join('\n\n')
       : '';
     this.history.push({ role: 'user', content: text + fileCtx });
     this.saveSession();

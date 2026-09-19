@@ -512,6 +512,14 @@ html.light .docs-word-page { box-shadow: 0 2px 8px rgba(0,0,0,.18), 0 0 0 1px rg
 .docs-word-page pre { background: #f5f5f5; border: 1px solid #ddd; border-radius: 3px; padding: 8px 12px; font-family: 'Courier New', monospace; font-size: 10pt; overflow-x: auto; }
 .docs-word-page table { border-collapse: collapse; width: 100%; margin: 6pt 0; }
 .docs-word-page td, .docs-word-page th { border: 1px solid #c0c0c0; padding: 4px 8px; }
+/* Картинки в документах: рамкой страницы ограничены всегда, даже если в
+   разметке остался width от другого масштаба. */
+.docs-word-page img { max-width: 100%; height: auto; border-radius: 2px; }
+.dx-cell-img {
+  display: block; max-width: 100%; max-height: 320px;
+  object-fit: contain; border-radius: 2px; margin: 1px auto;
+  -webkit-user-drag: none; user-select: none;
+}
 /* ── Explicit Word page-break marker ─────────────────────────────── */
 .docs-word-page .docx-page-break {
   display: block; height: 0; border: none;
