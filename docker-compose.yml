@@ -186,6 +186,8 @@ services:
       # SIMA Platform: ИИ с общими ключами (ключ OpenRouter в браузер больше не уходит)
       SIMA_PLATFORM_URL: ${SIMA_PLATFORM_URL:-}
       SIMA_PLATFORM_KEY: ${SIMA_PLATFORM_KEY:-}
+      # SIMA Connect: общий секрет с ядром SIMA OS
+      SIMA_CONNECT_SECRET: ${SIMA_CONNECT_SECRET:-}
       # Telegram и OpenRouter закрыты с российского сервера — через посредника SIMA.
       # Внутренние адреса — напрямую.
       HTTPS_PROXY: ${OUTBOUND_PROXY:-}

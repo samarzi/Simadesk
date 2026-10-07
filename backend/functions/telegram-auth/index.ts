@@ -7,6 +7,7 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { handleSimaConnect } from './sima-connect.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1267,6 +1268,15 @@ Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/+/, '');
   const sub = path.replace(/^telegram-auth\//, '');
+
+  // SIMA Connect: действия SimaDesk для ассистента SIMA OS (только внутренняя сеть)
+  if (sub.startsWith('api/sima/')) {
+    try { return await handleSimaConnect(req, sub); }
+    catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'error';
+      return new Response(JSON.stringify({ ok: false, error: message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
 
   // Route to ai-proxy handler (ИИ через SIMA Platform)
   if (sub === 'ai-proxy' || path === 'ai-proxy') {
