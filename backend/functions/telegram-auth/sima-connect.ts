@@ -93,23 +93,28 @@ async function lowStock(admin: Admin, companyIds: string[], args: Record<string,
   ]);
   const ozIds = (oz ?? []).map((s: { id: string }) => s.id);
   const wbIds = (wb ?? []).map((s: { id: string }) => s.id);
+  // «Заканчиваются» — остаток от 1 до порога. Нулевые считаем отдельно: среди них
+  // много давно неактивных карточек, и списком они только мешают.
   const out: { marketplace: string; name: string; article: string; stock: number }[] = [];
+  let outOfStock = 0;
   if (ozIds.length) {
     const { data } = await admin.from('ozon_products').select('name, offer_id, stock_fbs, stock_fbo, status').in('store_id', ozIds).limit(5000);
     for (const p of (data ?? []) as { name: string; offer_id: string; stock_fbs: number | null; stock_fbo: number | null }[]) {
       const stock = (p.stock_fbs ?? 0) + (p.stock_fbo ?? 0);
-      if (stock <= threshold) out.push({ marketplace: 'Ozon', name: p.name, article: p.offer_id, stock });
+      if (stock === 0) outOfStock++;
+      else if (stock <= threshold) out.push({ marketplace: 'Ozon', name: p.name, article: p.offer_id, stock });
     }
   }
   if (wbIds.length) {
     const { data } = await admin.from('wb_products').select('title, vendor_code, stock_total').in('store_id', wbIds).limit(5000);
     for (const p of (data ?? []) as { title: string; vendor_code: string; stock_total: number | null }[]) {
       const stock = p.stock_total ?? 0;
-      if (stock <= threshold) out.push({ marketplace: 'Wildberries', name: p.title, article: p.vendor_code, stock });
+      if (stock === 0) outOfStock++;
+      else if (stock <= threshold) out.push({ marketplace: 'Wildberries', name: p.title, article: p.vendor_code, stock });
     }
   }
   out.sort((a, b) => a.stock - b.stock);
-  return { threshold, total: out.length, items: out.slice(0, 20), open: SITE };
+  return { threshold, running_low: out.length, items: out.slice(0, 20), out_of_stock_count: outOfStock, open: SITE };
 }
 
 const noArgs = { type: 'object', properties: {}, additionalProperties: false };
@@ -124,7 +129,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'simadesk_low_stock',
-    description: 'Товары на Ozon и Wildberries, которые заканчиваются (остаток не больше порога).',
+    description: 'Товары на Ozon и Wildberries, которые заканчиваются (остаток от 1 до порога), и сколько карточек без остатка вовсе.',
     parameters: { type: 'object', properties: { threshold: { type: 'integer', minimum: 0, maximum: 100, description: 'Порог остатка, по умолчанию 3' } }, additionalProperties: false },
     confirm: false,
     run: lowStock,
@@ -136,7 +141,7 @@ const TOOLS: Tool[] = [
     confirm: false,
     run: async (admin, ids) => {
       const [s, l] = await Promise.all([sales(admin, ids, { days: 1 }), lowStock(admin, ids, { threshold: 3 })]);
-      return { yesterday_and_today: s.by_marketplace, data_synced_until: s.data_synced_until, low_stock_count: l.total };
+      return { yesterday_and_today: s.by_marketplace, data_synced_until: s.data_synced_until, running_low: l.running_low };
     },
   },
 ];
