@@ -183,6 +183,17 @@ services:
       MP_ENC_KEY: ${MP_ENC_KEY:-}
       OPENROUTER_KEY: ${OPENROUTER_KEY:-}
       CRON_SECRET: ${CRON_SECRET:-}
+      # SIMA Platform: ИИ с общими ключами (ключ OpenRouter в браузер больше не уходит)
+      SIMA_PLATFORM_URL: ${SIMA_PLATFORM_URL:-}
+      SIMA_PLATFORM_KEY: ${SIMA_PLATFORM_KEY:-}
+      # Telegram и OpenRouter закрыты с российского сервера — через посредника SIMA.
+      # Внутренние адреса — напрямую.
+      HTTPS_PROXY: ${OUTBOUND_PROXY:-}
+      NO_PROXY: nginx,db,rest,auth,storage,functions,imgproxy,tts-server,platform,localhost,127.0.0.1
+    networks:
+      default:
+      sima-edge:        # Платформа
+      sima-internal:    # посредник egress
     volumes:
       - ./backend/functions:/home/deno/functions:ro
     command:
@@ -239,4 +250,6 @@ volumes:
 
 networks:
   sima-edge:
+    external: true
+  sima-internal:
     external: true

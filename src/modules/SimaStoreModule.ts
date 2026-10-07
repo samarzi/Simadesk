@@ -1,4 +1,5 @@
 import { storefrontDb } from '../services/storefrontDb';
+import { aiFetch } from '@/services/aiProxy';
 import type { StorefrontSettings, StorefrontProduct, StorefrontBanner, StorefrontGroup, StorefrontVariantGroup } from '../services/storefrontDb';
 import { companyService } from '../services/companyService';
 import { showToast } from '../utils/toast';
@@ -991,11 +992,6 @@ export class SimaStoreModule {
   }
 
   private async runAISuggest(): Promise<void> {
-    const apiKey = sessionStorage.getItem('sd_ai_key');
-    if (!apiKey) {
-      showToast('Нет AI-ключа. Добавьте OpenRouter API Key в настройках профиля.', 'error');
-      return;
-    }
     const model = localStorage.getItem('sd_ai_model') || 'anthropic/claude-haiku-4-5';
 
     const aiBtn = document.getElementById('vs-var-ai') as HTMLButtonElement|null;
@@ -1032,11 +1028,7 @@ export class SimaStoreModule {
 Список артикулов:
 ${candidates.join('\n')}`;
 
-      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 2000 }),
-      });
+      const resp = await aiFetch({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 2000 });
       if (!resp.ok) throw new Error(`AI API error ${resp.status}`);
       const data = await resp.json();
       reportAiUsage('Витрина · группировка', data);

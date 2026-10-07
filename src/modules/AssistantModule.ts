@@ -1,4 +1,5 @@
 import '@/styles/assistant.css';
+import { aiFetch, SERVER_AI_KEY } from '@/services/aiProxy';
 import { showToast } from '@/utils/toast';
 import { edgeTtsStop, edgeTtsUnlock } from '@/services/edgeTts';
 import { TtsStreamSession } from '@/services/ttsStream';
@@ -1351,9 +1352,9 @@ function renderMarkdown(text: string): string {
 // ── Config helpers ────────────────────────────────────────────────────────────
 
 async function loadAiConfig(): Promise<{ key: string; model: string }> {
-  // Key is session-scoped (cleared on tab close); model is not sensitive → localStorage.
-  // The stale localStorage 'sd_ai_key' is ignored to avoid long-term plaintext exposure.
-  const key   = sessionStorage.getItem('sd_ai_key') || '';
+  // Ключ OpenRouter больше не приходит в браузер: запросы идут через сервер
+  // (aiFetch → ai-proxy → SIMA Platform). «Ключ» здесь — только признак, что ИИ есть.
+  const key   = SERVER_AI_KEY;
   const model = localStorage.getItem('sd_ai_model') || 'anthropic/claude-haiku-4-5';
 
   // After auth: refresh from Supabase site_content (source of truth, set by admin)
@@ -1366,12 +1367,14 @@ async function loadAiConfig(): Promise<{ key: string; model: string }> {
       const arr = Array.isArray(rows) ? rows : [];
       const remoteKey   = arr.find(r => r.key === 'ai_openrouter_key')?.content;
       const remoteModel = arr.find(r => r.key === 'ai_model')?.content;
-      if (remoteKey)   sessionStorage.setItem('sd_ai_key', remoteKey);
+      // Ключ из настроек (видят только админы) в браузере не храним
+      void remoteKey;
+      sessionStorage.removeItem('sd_ai_key');
       if (remoteModel) localStorage.setItem('sd_ai_model', remoteModel);
       // User's own choice takes priority over admin/remote default
       const userModel = localStorage.getItem('sd_user_ai_model');
       return {
-        key:   remoteKey   || key,
+        key,
         model: userModel || remoteModel || model,
       };
     } catch { /* unauthenticated or Supabase unavailable — use session-cached values */ }
@@ -6035,16 +6038,7 @@ export class AssistantModule {
 
     let res: Response;
     try {
-      res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      signal,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.aiKey}`,
-        'HTTP-Referer': window.location.origin,
-        'X-Title': 'SimaDesk Assistant',
-      },
-      body: JSON.stringify({
+      res = await aiFetch({
         model,
         messages: apiMessages,
         max_tokens: 1500,
@@ -6055,8 +6049,7 @@ export class AssistantModule {
         usage: { include: true },
         // stream_options не поддерживается DeepSeek через OpenRouter — не посылаем
         ...(useStream && !isDeepSeek ? { stream_options: { include_usage: true } } : {}),
-      }),
-      });
+      }, signal);
     } catch (e) {
       clearTimers();
       throw asTimeout(e);

@@ -6,6 +6,7 @@
  * – ИИ-подсказки через OpenRouter
  */
 import { dbFetch, dbFetchAll } from '../services/dbClient';
+import { aiFetch } from '@/services/aiProxy';
 import { companyService } from '../services/companyService';
 import { ozonApi } from '../services/ozonApi';
 import { wbApi } from '../services/wbApi';
@@ -961,15 +962,8 @@ export class MyAnalysisModule {
   }
 
   private async _callAi(prompt: string): Promise<string> {
-    const key   = (window as any).sdAssistantModule?.aiKey || sessionStorage.getItem('sd_ai_key') || '';
     const model = localStorage.getItem('sd_ai_model') || 'anthropic/claude-haiku-4-5';
-    if (!key) throw new Error('Нет AI-ключа. Добавьте его в настройках Ассистента.');
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${key}`,
-        'HTTP-Referer':window.location.origin, 'X-Title':'SimaDesk' },
-      body: JSON.stringify({ model, messages:[{role:'user',content:prompt}], max_tokens:800, temperature:0.7 }),
-    });
+    const r = await aiFetch({ model, messages:[{role:'user',content:prompt}], max_tokens:800, temperature:0.7 });
     const d = await r.json();
     reportAiUsage('Мой анализ', d);
     const t = d.choices?.[0]?.message?.content;

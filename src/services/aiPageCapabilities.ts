@@ -10,6 +10,7 @@
  */
 
 import { aiPage, type AiPageCapability, type AiSuggestion, type AiAction } from './aiPageContext';
+import { aiFetch } from '@/services/aiProxy';
 import { registerUndoHandler } from '@/modules/LogsModule';
 import { recordAiSpend } from './aiTokenQuota';
 import { parseUsage } from './aiUsage';
@@ -314,8 +315,8 @@ function describeSettings(): string {
   const ymConn = !!(w().yandexModule?.connected || stm?.ymKey);
   parts.push(`Маркетплейсы: WB ${wbConn ? '✅' : '❌'} | Ozon ${ozConn ? '✅' : '❌'} | ЯМ ${ymConn ? '✅' : '❌'}`);
 
-  const aiKey = sessionStorage.getItem('sd_ai_key') ?? stm?.aiKey ?? '';
-  parts.push(`AI-ассистент (Сима): ${aiKey ? '✅ ключ настроен' : '❌ ключ не настроен — без ключа Сима не работает. Настройки → AI → вставь OpenRouter API-ключ.'}`);
+  // Ключи ИИ теперь на сервере (SIMA Platform) — у человека ничего настраивать не нужно
+  parts.push('AI-ассистент (Сима): ✅ работает через сервер SimaDesk');
 
   const sub = stm?.subscription ?? stm?.plan ?? w().companyModule?.subscription;
   if (sub) parts.push(`Подписка: ${sub.name ?? sub.plan ?? sub.tier ?? 'активна'}`);
@@ -748,8 +749,6 @@ const TASKS_ACTIONS: AiAction[] = [
 // ── AI helper: генерация ответа на отзыв ──────────────────────────────────────
 
 async function generateAiReply(text: string, stars: number, productName: string): Promise<string> {
-  const key = sessionStorage.getItem('sd_ai_key') ?? '';
-  if (!key) throw new Error('AI-ключ не настроен. Перейди в Настройки → AI-ассистент.');
 
   const tone = stars <= 2
     ? 'Тон: сочувствующий, извиняющийся, предлагай решение.'
@@ -764,21 +763,12 @@ async function generateAiReply(text: string, stars: number, productName: string)
 ${tone}
 Требования: 2–4 предложения, максимум 300 символов, живой текст без шаблонных фраз, только текст ответа без кавычек и подписей.`;
 
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${key}`,
-      'HTTP-Referer': window.location.origin,
-      'X-Title': 'SimaDesk Reviews',
-    },
-    body: JSON.stringify({
-      model: 'anthropic/claude-haiku-4-5',
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 200,
-      temperature: 0.75,
-      usage: { include: true },
-    }),
+  const res = await aiFetch({
+    model: localStorage.getItem('sd_ai_model') || 'anthropic/claude-haiku-4-5',
+    messages: [{ role: 'user', content: prompt }],
+    max_tokens: 200,
+    temperature: 0.75,
+    usage: { include: true },
   });
   if (!res.ok) {
     const err = await res.text().catch(() => '');
@@ -1345,8 +1335,7 @@ const SETTINGS_ACTIONS: AiAction[] = [
       const ymm = w().yandexModule;
       if (ymm) results.push(`ЯМ: ${ymm.connected ? '✅ подключён' : '❌ ключ не задан или невалиден'}${ymm.shopName ? ' (' + ymm.shopName + ')' : ''}`);
       else results.push('ЯМ: ⚪ модуль не загружен');
-      const aiKey = sessionStorage.getItem('sd_ai_key') ?? '';
-      results.push(`AI (Сима): ${aiKey ? '✅ ключ настроен' : '❌ ключ не настроен — Настройки → AI → OpenRouter API-ключ'}`);
+      results.push('AI (Сима): ✅ работает через сервер SimaDesk (ключи на сервере)');
       return 'Статус API-ключей:\n' + results.join('\n');
     },
   },

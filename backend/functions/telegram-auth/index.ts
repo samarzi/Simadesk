@@ -1215,6 +1215,51 @@ ${SUPPORT_AI_KNOWLEDGE}
   return ok();
 }
 
+
+// ── ai-proxy: ИИ через SIMA Platform ──────────────────────────────────────────
+// Браузер присылает тот же запрос, что раньше слал в OpenRouter, но со своим
+// пропуском (JWT) вместо ключа. Ключи OpenRouter живут только в Платформе:
+// она подставляет их, переключается между ними и считает расход.
+async function handleAiProxy(req: Request): Promise<Response> {
+  if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405, headers: corsHeaders });
+  const platformUrl = Deno.env.get('SIMA_PLATFORM_URL');
+  const platformKey = Deno.env.get('SIMA_PLATFORM_KEY');
+  if (!platformUrl || !platformKey) {
+    return new Response(JSON.stringify({ error: { message: 'ИИ не настроен на сервере' } }), {
+      status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+  const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+  const { data: { user }, error: authErr } = await admin.auth.getUser(token);
+  if (authErr || !user) {
+    return new Response(JSON.stringify({ error: { message: 'Нужно войти заново' } }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  const body = await req.text();
+  if (body.length > 2_000_000) {
+    return new Response(JSON.stringify({ error: { message: 'Слишком большой запрос' } }), {
+      status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  const upstream = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/chat/completions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${platformKey}`, 'Content-Type': 'application/json' },
+    body,
+  });
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': upstream.headers.get('content-type') ?? 'application/json',
+      'Cache-Control': 'no-cache',
+    },
+  });
+}
+
 // ── Main handler (router) ─────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -1222,6 +1267,15 @@ Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/+/, '');
   const sub = path.replace(/^telegram-auth\//, '');
+
+  // Route to ai-proxy handler (ИИ через SIMA Platform)
+  if (sub === 'ai-proxy' || path === 'ai-proxy') {
+    try { return await handleAiProxy(req); }
+    catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'error';
+      return new Response(JSON.stringify({ error: { message } }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+  }
 
   // Route to mp-news-fetch handler
   if (sub === 'mp-news-fetch' || path === 'mp-news-fetch') {
