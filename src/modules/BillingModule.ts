@@ -461,7 +461,7 @@ export class BillingModule {
         <div class="bill-ai-pkg${isActive ? ' active' : ''}" data-pkg="${pkg.key}">
           <div class="bill-ai-pkg-badge">${pkg.badge}</div>
           <div class="bill-ai-pkg-name">${pkg.label}</div>
-          <div class="bill-ai-pkg-tokens">${dayK.toLocaleString('ru')}К токенов/день</div>
+          <div class="bill-ai-pkg-tokens">≈${dayK.toLocaleString('ru')}К токенов/день на Claude Haiku</div>
           <div class="bill-ai-pkg-price">${pkg.priceRub.toLocaleString('ru')} ₽/мес</div>
           <button class="bill-ai-pkg-btn${isActive ? ' active' : ''}" data-pkg-key="${pkg.key}">
             ${isActive ? '✓ Активен' : 'Подключить'}
@@ -473,17 +473,18 @@ export class BillingModule {
       <div class="bill-section">
         <div class="bill-section-title">Пакеты AI-токенов (Сима)</div>
         <div class="bill-section-sub">
-          Ежедневный лимит обновляется каждые сутки в 00:00.
+          Ежедневный лимит обновляется каждые сутки. Лимит считается по стоимости запросов:
+          дорогие модели (например, Claude Opus) расходуют его быстрее, дешёвые (DeepSeek, GPT-4o-mini) — медленнее.
           ${warn ? `<span style="color:#f59e0b">Использовано ${usedPct}% дневного лимита</span>` : ''}
         </div>
         <div class="bill-ai-quota-row">
-          <span class="bill-ai-quota-lbl">Сегодня: ${Math.round(q.used/1000)}К / ${Math.round(q.limit/1000)}К токенов</span>
+          <span class="bill-ai-quota-lbl">Сегодня: ${usedPct}% лимита · ${(q.tokens / 1000).toLocaleString('ru', { maximumFractionDigits: 1 })}К токенов</span>
           <div class="bill-ai-quota-track">
             <div class="bill-ai-quota-fill" style="width:${usedPct}%"></div>
           </div>
         </div>
         <div class="bill-ai-free-note">
-          🎁 Бесплатно: <b>${freeDayK}К токенов/день</b> (≈40–50 ответов Симы) — включено в любой тариф
+          🎁 Бесплатно: <b>${freeDayK}К токенов/день</b> на Claude Haiku — включено в любой тариф
         </div>
         <div class="bill-ai-pkgs">${cards}</div>
         ${active ? `<div class="bill-ai-deactivate"><button class="bill-link-btn" id="bill-ai-deactivate">Отключить пакет</button></div>` : ''}

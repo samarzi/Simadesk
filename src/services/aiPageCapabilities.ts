@@ -11,7 +11,8 @@
 
 import { aiPage, type AiPageCapability, type AiSuggestion, type AiAction } from './aiPageContext';
 import { registerUndoHandler } from '@/modules/LogsModule';
-import { recordDailyTokens } from './aiTokenQuota';
+import { recordAiSpend } from './aiTokenQuota';
+import { parseUsage } from './aiUsage';
 
 const w = () => window as any;
 const fmtRub = (n: number) =>
@@ -776,6 +777,7 @@ ${tone}
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 200,
       temperature: 0.75,
+      usage: { include: true },
     }),
   });
   if (!res.ok) {
@@ -785,8 +787,8 @@ ${tone}
   const data = await res.json();
   const reply = data.choices?.[0]?.message?.content?.trim() ?? '';
   if (!reply) throw new Error('AI вернул пустой ответ');
-  const tokens = data.usage?.total_tokens;
-  if (tokens) recordDailyTokens(tokens);
+  const usage = parseUsage(data);
+  if (usage) recordAiSpend(usage, 'anthropic/claude-haiku-4-5');
   return reply;
 }
 

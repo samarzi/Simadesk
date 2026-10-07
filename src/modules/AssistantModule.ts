@@ -12,7 +12,7 @@ import { selectionCtx } from '@/services/selectionContext';
 import { imageAttachments } from '@/services/imageAttachments';
 import { reportAiUsage } from '@/services/aiUsage';
 import { SupportSpamGuard } from '@/services/supportSpamGuard';
-import { hasQuota, getQuotaInfo, recordDailyTokens, getDailyLimit, FREE_DAILY_TOKENS } from '@/services/aiTokenQuota';
+import { hasQuota, getQuotaInfo, recordAiSpend, getDailyLimit, modelLimitMultiplier, FREE_DAILY_TOKENS, type AiSpend } from '@/services/aiTokenQuota';
 import { loadRecentNews, countUnread, markAllRead, formatNewsForContext, type MpNews } from '@/services/mpNewsService';
 import { loadSimaMemory, searchMemory, formatMemoryForPrompt, type SimaMemoryEntry } from '@/services/simaMemoryService';
 import { loadSimaConfig, getConfigValue, type SimaConfigEntry } from '@/services/simaConfigService';
@@ -3581,6 +3581,7 @@ export class AssistantModule {
         const found = models.find(x => x.id === id);
         labelEl.textContent = found ? found.name : (id.split('/').pop() ?? id);
         closeDropdown();
+        this.renderQuotaBar(); // множитель расхода лимита зависит от модели
       });
 
       // Close on outside click (defer one tick so this open-click doesn't trigger it)
@@ -4952,22 +4953,25 @@ export class AssistantModule {
     const bar = this.panel?.querySelector<HTMLElement>('#sd-ap-quota-bar');
     if (!bar) return;
     const q = getQuotaInfo();
-    const usedK  = Math.round(q.used / 1000);
-    const limitK = Math.round(q.limit / 1000);
+    const tokensK = (q.tokens / 1000).toLocaleString('ru', { maximumFractionDigits: 1 });
     const freeLimitK = Math.round(FREE_DAILY_TOKENS / 1000);
     const warn = q.pct >= 80;
     const critical = q.pct >= 95;
     const isFree = getDailyLimit() === FREE_DAILY_TOKENS;
+    const mult = modelLimitMultiplier(this.aiModel);
+    const multNote = mult && (mult > 1.5 || mult < 0.67)
+      ? ` · модель ×${mult >= 10 ? Math.round(mult) : mult.toFixed(1).replace(/\.0$/, '')}`
+      : '';
     bar.innerHTML = `
       <div class="sd-ap-quota${warn ? ' warn' : ''}${critical ? ' crit' : ''}">
         <div class="sd-ap-quota-row">
-          <span class="sd-ap-quota-lbl">AI токены сегодня</span>
-          <span class="sd-ap-quota-nums">${usedK}К / ${limitK}К</span>
+          <span class="sd-ap-quota-lbl" title="Лимит считается по стоимости запросов: дорогие модели расходуют его быстрее, дешёвые — медленнее">Лимит AI сегодня: ${q.pct}%</span>
+          <span class="sd-ap-quota-nums">${tokensK}К токенов${multNote}</span>
         </div>
         <div class="sd-ap-quota-track">
           <div class="sd-ap-quota-fill" style="width:${q.pct}%"></div>
         </div>
-        ${isFree && q.pct >= 50 ? `<div class="sd-ap-quota-hint">Нужно больше? <a class="sd-ap-quota-link" data-nav="billing">Пакеты AI</a> (от 290 ₽/мес · ${freeLimitK}К → ${freeLimitK * 5}К–${freeLimitK * 20}К токенов/день)</div>` : ''}
+        ${isFree && q.pct >= 50 ? `<div class="sd-ap-quota-hint">Нужно больше? <a class="sd-ap-quota-link" data-nav="billing">Пакеты AI</a> (от 290 ₽/мес · лимит ×5–×20: ${freeLimitK}К → ${freeLimitK * 5}К–${freeLimitK * 20}К токенов/день на Claude Haiku)</div>` : ''}
       </div>`;
     bar.querySelector<HTMLElement>('.sd-ap-quota-link')?.addEventListener('click', () => {
       (window as any).app?.navigateTo?.('billing');
@@ -5718,10 +5722,13 @@ export class AssistantModule {
     // Daily token quota check
     if (!this.isAdminUser && !hasQuota()) {
       const q = getQuotaInfo();
-      const limitK = Math.round(q.limit / 1000);
+      const tokensK = Math.round(q.tokens / 1000);
+      const mult = modelLimitMultiplier(this.aiModel);
       this.addAssistantMessage(
-        `Ежедневный лимит токенов исчерпан (${limitK}К токенов). ` +
-        `Лимит обновится завтра в 00:00. ` +
+        `Дневной лимит AI исчерпан (сегодня потрачено ${tokensK}К токенов). ` +
+        `Лимит считается по стоимости запросов: дорогие модели расходуют его быстрее` +
+        (mult && mult > 1.5 ? ` — текущая модель примерно в ${Math.round(mult)} раз(а) дороже базовой` : '') +
+        `. Лимит обновится завтра. ` +
         (q.boostPackage
           ? `Ваш пакет ${q.boostPackage.label} уже активен.`
           : `Увеличьте лимит — перейдите в **Тариф и оплата → Пакеты AI**.`)
@@ -5963,6 +5970,17 @@ export class AssistantModule {
     }
   }
 
+  /**
+   * Грубая оценка токенов, если провайдер не прислал usage: иначе такой
+   * запрос прошёл бы мимо лимита бесплатно. ~3 символа на токен для русского.
+   */
+  private roughUsage(messages: ChatMessage[], reply: string): AiSpend {
+    const promptChars = messages.reduce((n, m) => n + (typeof m.content === 'string' ? m.content.length : 0), 0);
+    const prompt = Math.ceil(promptChars / 3);
+    const completion = Math.ceil(reply.length / 3);
+    return { prompt, completion, total: prompt + completion };
+  }
+
   /** Один запрос к OpenRouter со стримингом. Возвращает текст ответа модели. */
   private async callAi(
     messages: ChatMessage[],
@@ -6032,6 +6050,9 @@ export class AssistantModule {
         max_tokens: 1500,
         temperature: 0.7,
         stream: useStream,
+        // Учёт OpenRouter: в usage приходит реальная стоимость запроса ($),
+        // по ней списывается дневной лимит
+        usage: { include: true },
         // stream_options не поддерживается DeepSeek через OpenRouter — не посылаем
         ...(useStream && !isDeepSeek ? { stream_options: { include_usage: true } } : {}),
       }),
@@ -6082,7 +6103,7 @@ export class AssistantModule {
         }
 
         const streamUsage = reportAiUsage('Сима', lastChunkWithUsage);
-        if (streamUsage && !this.isAdminUser) recordDailyTokens(streamUsage.total);
+        if (!this.isAdminUser) recordAiSpend(streamUsage ?? this.roughUsage(messages, full), model);
         // DeepSeek R1 иногда пропускает теги рассуждений в поток контента — убираем
         return isReasoningModel ? full.replace(/<think>[\s\S]*?<\/think>/g, '').trimStart() : full;
       }
@@ -6090,8 +6111,9 @@ export class AssistantModule {
       // ── Non-streaming fallback ────────────────────────────────────────────────
       const data = await res.json();
       const usage2 = reportAiUsage('Сима', data);
-      if (usage2 && !this.isAdminUser) recordDailyTokens(usage2.total);
-      return data?.choices?.[0]?.message?.content ?? '';
+      const content: string = data?.choices?.[0]?.message?.content ?? '';
+      if (!this.isAdminUser) recordAiSpend(usage2 ?? this.roughUsage(messages, content), model);
+      return content;
     } catch (e) {
       throw asTimeout(e);
     } finally {

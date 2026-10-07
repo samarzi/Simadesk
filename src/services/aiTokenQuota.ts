@@ -1,23 +1,37 @@
 /**
- * Ежедневные лимиты токенов на AI-ассистента Сима.
+ * Дневные лимиты на AI-ассистента Сима.
  *
- * Экономика:
- *  - Модель Claude Haiku 4.5: ~$0.80/1M input + $4/1M output ≈ $1.76/1M blended
- *  - По курсу 90 ₽/$ → ~0.158 ₽ за 1 000 токенов
- *  - Бесплатно: 250 ₽/мес → 50 000 токенов/день (≈40–50 запросов)
- *  - Пакеты продаются с маржой ~2.5×
+ * Лимит — это бюджет в долларах, а не число токенов: пользователь может выбрать
+ * любую модель OpenRouter, а токен Opus в 5 раз дороже токена Haiku и в 20 раз
+ * дороже DeepSeek. По каждому запросу записываем реальные токены и реальную
+ * стоимость (её отдаёт OpenRouter, иначе считаем по прайсу модели) — дорогая
+ * модель выбирает бюджет быстрее, дешёвая медленнее.
+ *
+ * Пакеты по-прежнему описываются «токенами в день», но это токены базовой
+ * модели (Claude Haiku 4.5): бюджет = токены × BASE_USD_PER_TOKEN.
  */
+
+/** Цена базовой модели (Claude Haiku 4.5), $ за токен. */
+export const BASE_MODEL_ID = 'anthropic/claude-haiku-4.5';
+const BASE_PROMPT_USD = 1 / 1_000_000;
+const BASE_COMPLETION_USD = 5 / 1_000_000;
+/**
+ * Средняя цена токена базовой модели для запроса Симы: ~97% токенов — вход
+ * (системный промпт + контекст страницы), ~3% — ответ.
+ */
+export const BASE_USD_PER_TOKEN = 0.97 * BASE_PROMPT_USD + 0.03 * BASE_COMPLETION_USD;
 
 export interface AiBoostPackage {
   key: string;
   label: string;
   multiplier: number;   // relative to FREE_DAILY_TOKENS
   priceRub: number;     // monthly price
+  /** Токенов в день в пересчёте на базовую модель. */
   tokensPerDay: number;
   badge: string;
 }
 
-/** Базовый ежедневный лимит (FREE). */
+/** Базовый ежедневный лимит (FREE), в токенах базовой модели. */
 export const FREE_DAILY_TOKENS = 50_000;
 
 /** Базовые (дефолтные) пакеты — цены могут быть переопределены через platform_settings. */
@@ -66,31 +80,94 @@ export function getAiBoostPackages(): AiBoostPackage[] {
   }));
 }
 
+// ── Стоимость запроса ─────────────────────────────────────────────────────────
+
+interface ModelPrice { prompt: number; completion: number }
+
+/** Прайс модели из кеша списка моделей OpenRouter (его заполняет пикер моделей). */
+function lookupModelPrice(model: string): ModelPrice | null {
+  try {
+    const raw = localStorage.getItem('sd_or_models_v2');
+    if (!raw) return null;
+    const list = (JSON.parse(raw)?.data ?? []) as Array<{ id: string; pricing?: { prompt?: string; completion?: string } }>;
+    // «claude-haiku-4-5» и «claude-haiku-4.5» — одна и та же модель
+    const alt = model.replace(/(\d)-(\d)/g, '$1.$2');
+    const m = list.find(x => x.id === model) ?? list.find(x => x.id === alt);
+    if (!m?.pricing) return null;
+    const prompt = Number(m.pricing.prompt);
+    const completion = Number(m.pricing.completion);
+    if (!Number.isFinite(prompt) || !Number.isFinite(completion)) return null;
+    return { prompt, completion };
+  } catch {
+    return null;
+  }
+}
+
+/** Стоимость запроса в $, если OpenRouter её не вернул. */
+export function estimateCostUsd(model: string, promptTokens: number, completionTokens: number): number {
+  const price = lookupModelPrice(model) ?? { prompt: BASE_PROMPT_USD, completion: BASE_COMPLETION_USD };
+  return promptTokens * price.prompt + completionTokens * price.completion;
+}
+
+/** Во сколько раз модель расходует лимит быстрее базовой (для подсказок в UI). */
+export function modelLimitMultiplier(model: string): number | null {
+  const price = lookupModelPrice(model);
+  if (!price) return null;
+  return (0.97 * price.prompt + 0.03 * price.completion) / BASE_USD_PER_TOKEN;
+}
+
 // ── Хранение в localStorage ────────────────────────────────────────────────────
 
-function todayKey(): string {
-  return 'sd_ai_daily_' + new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+const TOKENS_PREFIX = 'sd_ai_daily_';
+const COST_PREFIX = 'sd_ai_cost_';
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-/** Токены, израсходованные сегодня. */
+/** Реальные токены, израсходованные сегодня. */
 export function getDailyTokensUsed(): number {
-  return Number(localStorage.getItem(todayKey()) ?? 0);
+  return Number(localStorage.getItem(TOKENS_PREFIX + today()) ?? 0) || 0;
 }
 
-/** Записать расход токенов (прибавить к дневному счётчику). */
-export function recordDailyTokens(count: number): void {
-  if (count <= 0) return;
-  const key = todayKey();
-  const cur = Number(localStorage.getItem(key) ?? 0);
-  localStorage.setItem(key, String(cur + count));
-  // Чистим счётчики старше 3 дней, чтобы не засорять localStorage
+/** Реальная стоимость запросов за сегодня, $. */
+export function getDailyCostUsed(): number {
+  const raw = localStorage.getItem(COST_PREFIX + today());
+  if (raw !== null) return Number(raw) || 0;
+  // Расход, записанный до перехода на учёт стоимости, — по цене базовой модели
+  return getDailyTokensUsed() * BASE_USD_PER_TOKEN;
+}
+
+export interface AiSpend {
+  prompt: number;
+  completion: number;
+  total: number;
+  /** Стоимость от OpenRouter, $. */
+  cost?: number;
+}
+
+/**
+ * Записать расход запроса: токены и стоимость.
+ * Возвращает стоимость, которая ушла в лимит, $.
+ */
+export function recordAiSpend(usage: AiSpend, model: string): number {
+  const tokens = usage.total || usage.prompt + usage.completion;
+  const cost = usage.cost !== undefined && usage.cost > 0
+    ? usage.cost
+    : estimateCostUsd(model, usage.prompt, usage.completion);
+  if (tokens <= 0 && cost <= 0) return 0;
+  const costBefore = getDailyCostUsed();
+  const d = today();
+  localStorage.setItem(TOKENS_PREFIX + d, String(getDailyTokensUsed() + Math.max(0, tokens)));
+  localStorage.setItem(COST_PREFIX + d, String(costBefore + Math.max(0, cost)));
   cleanOldKeys();
+  return cost;
 }
 
 function cleanOldKeys(): void {
-  const today = todayKey();
+  const d = today();
   Object.keys(localStorage)
-    .filter(k => k.startsWith('sd_ai_daily_') && k !== today)
+    .filter(k => (k.startsWith(TOKENS_PREFIX) || k.startsWith(COST_PREFIX)) && !k.endsWith(d))
     .forEach(k => localStorage.removeItem(k));
 }
 
@@ -109,43 +186,53 @@ export function setActiveBoostPackage(key: string | null): void {
 
 // ── Лимиты ────────────────────────────────────────────────────────────────────
 
-/** Ежедневный лимит токенов для текущего пользователя. */
+/** Дневной лимит в токенах базовой модели. */
 export function getDailyLimit(): number {
   const boost = getActiveBoostPackage();
   if (boost) return boost.tokensPerDay;
   return FREE_DAILY_TOKENS;
 }
 
-/** Остаток токенов на сегодня. */
-export function getDailyRemaining(): number {
-  return Math.max(0, getDailyLimit() - getDailyTokensUsed());
+/** Дневной бюджет, $. */
+export function getDailyBudgetUsd(): number {
+  return getDailyLimit() * BASE_USD_PER_TOKEN;
 }
 
 /** Информация о квоте для отображения. */
 export interface QuotaInfo {
-  used: number;
+  /** Реальные токены за сегодня (любых моделей). */
+  tokens: number;
+  /** Реальная стоимость за сегодня, $. */
+  costUsd: number;
+  /** Дневной бюджет, $. */
+  budgetUsd: number;
+  /** Лимит в токенах базовой модели. */
   limit: number;
+  /** Сколько ещё токенов базовой модели можно потратить сегодня. */
   remaining: number;
-  pct: number;         // 0–100
+  pct: number;         // 0–100, доля израсходованного бюджета
   exhausted: boolean;
   boostPackage: AiBoostPackage | null;
 }
 
 export function getQuotaInfo(): QuotaInfo {
   const limit = getDailyLimit();
-  const used  = getDailyTokensUsed();
-  const remaining = Math.max(0, limit - used);
+  const budgetUsd = limit * BASE_USD_PER_TOKEN;
+  const costUsd = getDailyCostUsed();
+  const remainingUsd = Math.max(0, budgetUsd - costUsd);
   return {
-    used,
+    tokens: getDailyTokensUsed(),
+    costUsd,
+    budgetUsd,
     limit,
-    remaining,
-    pct: limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 100,
-    exhausted: remaining === 0,
+    remaining: Math.floor(remainingUsd / BASE_USD_PER_TOKEN),
+    pct: budgetUsd > 0 ? Math.min(100, Math.round((costUsd / budgetUsd) * 100)) : 100,
+    exhausted: remainingUsd <= 0,
     boostPackage: getActiveBoostPackage(),
   };
 }
 
 /** Можно ли сделать ещё один запрос (есть хоть что-то в запасе). */
 export function hasQuota(): boolean {
-  return getDailyRemaining() > 0;
+  return !getQuotaInfo().exhausted;
 }
