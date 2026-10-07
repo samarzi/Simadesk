@@ -9,6 +9,19 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { handleSimaConnect } from './sima-connect.ts';
 
+
+// ИИ на сервере: через SIMA Platform (общие ключи с переключением), а если она
+// не настроена — напрямую в OpenRouter своим ключом.
+function aiEndpoint(fallbackKey?: string | null): { url: string; key: string } | null {
+  const platformUrl = Deno.env.get('SIMA_PLATFORM_URL');
+  const platformKey = Deno.env.get('SIMA_PLATFORM_KEY');
+  if (platformUrl && platformKey) {
+    return { url: `${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/chat/completions`, key: platformKey };
+  }
+  const key = fallbackKey || Deno.env.get('OPENROUTER_KEY');
+  return key ? { url: 'https://openrouter.ai/api/v1/chat/completions', key } : null;
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -803,9 +816,10 @@ function extractTgMessages(html: string, channelSlug: string): Array<{ text: str
 
 async function aiSummarize(text: string, mp: string, orKey: string): Promise<{ title: string; summary: string; is_important: boolean } | null> {
   try {
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const ai = aiEndpoint(orKey)!;
+    const res = await fetch(ai.url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${orKey}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.key}` },
       body: JSON.stringify({
         model: 'google/gemini-flash-1.5',
         max_tokens: 250,
@@ -859,9 +873,10 @@ async function runBrainUpdate(db: ReturnType<typeof createClient>, orKey: string
     ? (existing as any[]).map((e: any) => `mp=${e.mp} cat=${e.category} title="${e.title}" kw=[${(e.keywords ?? []).join(',')}] upd=${e.updated_at?.slice(0, 10)}`).join('\n')
     : '(пусто)';
 
-  const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const ai = aiEndpoint(orKey)!;
+  const aiRes = await fetch(ai.url, {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${orKey}`, 'Content-Type': 'application/json' },
+    headers: { 'Authorization': `Bearer ${ai.key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'google/gemini-flash-1.5',
       max_tokens: 6000,
@@ -924,8 +939,8 @@ async function handleSimaBrainUpdate(req: Request): Promise<Response> {
   const authHeader = req.headers.get('authorization') || '';
   if (!authHeader.startsWith('Bearer ') || authHeader.length < 20) return jsonRes({ error: 'Unauthorized' }, 401);
 
-  const orKey = Deno.env.get('OPENROUTER_KEY');
-  if (!orKey) return jsonRes({ error: 'OPENROUTER_KEY not configured' }, 503);
+  const orKey = aiEndpoint()?.key;
+  if (!orKey) return jsonRes({ error: 'ИИ не настроен на сервере' }, 503);
 
   const body = await req.json().catch(() => ({}));
   const sinceDays: number = Math.min(Number(body.since_days ?? 30), 90);
@@ -954,8 +969,8 @@ async function handleMpNewsFetch(req: Request): Promise<Response> {
     return jsonRes({ error: 'Unauthorized' }, 401);
   }
 
-  const orKey = Deno.env.get('OPENROUTER_KEY');
-  if (!orKey) return jsonRes({ error: 'OPENROUTER_KEY not configured' }, 503);
+  const orKey = aiEndpoint()?.key;
+  if (!orKey) return jsonRes({ error: 'ИИ не настроен на сервере' }, 503);
 
   const db = createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -1147,7 +1162,9 @@ async function handleSupportAi(req: Request): Promise<Response> {
   const greetedAt = Date.now();
 
   // 7. No API key — send bridge and stop
-  if (!apiKey) {
+  // Сервер ходит в ИИ через Платформу; свой ключ — только если её нет
+  const ai = aiEndpoint(apiKey);
+  if (!ai) {
     await delay(Math.max(0, 5_000 - (Date.now() - greetedAt)));
     await db.from('support_chat_messages').insert({
       chat_id: chatId, sender_role: 'admin',
@@ -1177,11 +1194,11 @@ ${SUPPORT_AI_KNOWLEDGE}
   let aiReply = '';
   let confident = false;
   try {
-    const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const aiRes = await fetch(ai.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${ai.key}`,
         'HTTP-Referer': 'https://simadesk.ru',
         'X-Title': 'SimaDesk Support AI',
       },

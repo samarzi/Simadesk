@@ -10,7 +10,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const SITE = 'https://simadesk.ru';
 const MP: Record<string, string> = { ozon: 'Ozon', wb: 'Wildberries', yandex: 'Яндекс Маркет' };
 
-type Admin = ReturnType<typeof createClient>;
+// deno-lint-ignore no-explicit-any
+type Admin = ReturnType<typeof createClient<any, any, any>>;
 type Tool = {
   name: string;
   description: string;
