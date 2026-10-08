@@ -22,5 +22,18 @@ export function aiFetch(body: unknown, signal?: AbortSignal): Promise<Response> 
   });
 }
 
+/** Правка общего «разума» Симы: характер и «обо мне» (общие для всех продуктов SIMA). */
+export async function simaMindPatch(patch: { character_add?: string; character_remove?: number[]; about_add?: string }): Promise<boolean> {
+  const res = await fetch(`${API_URL}/functions/v1/sima-mind`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authService.getAccessToken() ?? ''}`,
+    },
+    body: JSON.stringify(patch),
+  }).catch(() => null);
+  return Boolean(res?.ok);
+}
+
 /** Ключ ИИ теперь на сервере: этим значением код помечает «ИИ настроен». */
 export const SERVER_AI_KEY = 'server';

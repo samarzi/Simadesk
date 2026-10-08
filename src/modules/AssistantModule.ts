@@ -6039,6 +6039,8 @@ export class AssistantModule {
     let res: Response;
     try {
       res = await aiFetch({
+        // Сервер подставит общий характер Симы и «обо мне» (SIMA Platform)
+        sima_mind: true,
         model,
         messages: apiMessages,
         max_tokens: 1500,

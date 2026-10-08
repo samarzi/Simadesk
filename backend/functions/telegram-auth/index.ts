@@ -1234,6 +1234,80 @@ ${SUPPORT_AI_KNOWLEDGE}
 }
 
 
+// ── Разум Симы: общий характер и «обо мне» (SIMA Platform) ────────────────────
+// Сима одна во всех продуктах SIMA: её характер (с правками человека) и что она
+// о нём знает живут на Платформе. Здесь — найти человека в SIMA по его Telegram
+// или Яндексу и прочитать/дополнить этот «разум».
+
+type SimaMind = { character: string[]; about: string; prompt: string };
+const mindCache = new Map<string, { at: number; simaId: string; mind: SimaMind | null }>();
+
+// deno-lint-ignore no-explicit-any
+async function simaIdFor(admin: any, userId: string): Promise<string | null> {
+  const cached = mindCache.get(userId);
+  if (cached) return cached.simaId;
+  const platformUrl = Deno.env.get('SIMA_PLATFORM_URL')!.replace(/\/$/, '');
+  const platformKey = Deno.env.get('SIMA_PLATFORM_KEY')!;
+  const { data } = await admin.from('users').select('telegram_id, yandex_id').eq('id', userId).maybeSingle();
+  const provider = data?.telegram_id ? 'telegram' : data?.yandex_id ? 'yandex' : null;
+  if (!provider) return null;
+  const res = await fetch(`${platformUrl}/api/v1/users/resolve`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${platformKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, provider_user_id: String(provider === 'telegram' ? data.telegram_id : data.yandex_id) }),
+    signal: AbortSignal.timeout(4000),
+  });
+  if (!res.ok) return null;
+  return ((await res.json()) as { user_id: string }).user_id;
+}
+
+// deno-lint-ignore no-explicit-any
+async function simaMind(admin: any, userId: string): Promise<SimaMind | null> {
+  const cached = mindCache.get(userId);
+  if (cached && Date.now() - cached.at < 60_000) return cached.mind;
+  try {
+    const simaId = await simaIdFor(admin, userId);
+    if (!simaId) return null;
+    const platformUrl = Deno.env.get('SIMA_PLATFORM_URL')!.replace(/\/$/, '');
+    const res = await fetch(`${platformUrl}/api/v1/users/${simaId}/mind`, {
+      headers: { Authorization: `Bearer ${Deno.env.get('SIMA_PLATFORM_KEY')}` },
+      signal: AbortSignal.timeout(4000),
+    });
+    const mind = res.ok ? (await res.json()) as SimaMind : cached?.mind ?? null;
+    mindCache.set(userId, { at: Date.now(), simaId, mind });
+    return mind;
+  } catch {
+    return cached?.mind ?? null;
+  }
+}
+
+/** Действия Симы в SimaDesk: «не пиши длинно» → характер, «мне 30» → «обо мне». */
+async function handleSimaMind(req: Request): Promise<Response> {
+  const headers = { ...corsHeaders, 'Content-Type': 'application/json' };
+  if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405, headers: corsHeaders });
+  const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+  const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+  const { data: { user } } = await admin.auth.getUser(token);
+  if (!user) return new Response(JSON.stringify({ ok: false, error: 'Нужно войти заново' }), { status: 401, headers });
+  const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+  const patch: Record<string, unknown> = {};
+  if (typeof body.character_add === 'string' && body.character_add.trim()) patch.character_add = body.character_add.trim().slice(0, 200);
+  if (Array.isArray(body.character_remove)) patch.character_remove = body.character_remove.filter((n) => Number.isInteger(n)).slice(0, 30);
+  if (typeof body.about_add === 'string' && body.about_add.trim()) patch.about_add = body.about_add.trim().slice(0, 300);
+  if (!Object.keys(patch).length) return new Response(JSON.stringify({ ok: false, error: 'Нечего менять' }), { status: 400, headers });
+  const simaId = await simaIdFor(admin, user.id);
+  if (!simaId) return new Response(JSON.stringify({ ok: false, error: 'Аккаунт SIMA не найден' }), { status: 404, headers });
+  const res = await fetch(`${Deno.env.get('SIMA_PLATFORM_URL')!.replace(/\/$/, '')}/api/v1/users/${simaId}/mind`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${Deno.env.get('SIMA_PLATFORM_KEY')}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) return new Response(JSON.stringify({ ok: false, error: 'Платформа недоступна' }), { status: 502, headers });
+  const mind = await res.json() as SimaMind;
+  mindCache.set(user.id, { at: Date.now(), simaId, mind });
+  return new Response(JSON.stringify({ ok: true, character: mind.character }), { headers });
+}
+
 // ── ai-proxy: ИИ через SIMA Platform ──────────────────────────────────────────
 // Браузер присылает тот же запрос, что раньше слал в OpenRouter, но со своим
 // пропуском (JWT) вместо ключа. Ключи OpenRouter живут только в Платформе:
@@ -1257,11 +1331,24 @@ async function handleAiProxy(req: Request): Promise<Response> {
     });
   }
 
-  const body = await req.text();
+  let body = await req.text();
   if (body.length > 2_000_000) {
     return new Response(JSON.stringify({ error: { message: 'Слишком большой запрос' } }), {
       status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
+  }
+  // Ассистент SimaDesk — это Сима: её общий характер и «обо мне» идут первыми
+  if (body.includes('"sima_mind"')) {
+    try {
+      const parsed = JSON.parse(body) as { sima_mind?: boolean; messages?: { role: string; content: unknown }[] };
+      const wants = parsed.sima_mind === true;
+      delete parsed.sima_mind;
+      if (wants && Array.isArray(parsed.messages)) {
+        const mind = await simaMind(admin, user.id);
+        if (mind) parsed.messages.unshift({ role: 'system', content: mind.prompt });
+      }
+      body = JSON.stringify(parsed);
+    } catch { /* не JSON — отдаём как есть */ }
   }
   const upstream = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/chat/completions`, {
     method: 'POST',
@@ -1292,6 +1379,14 @@ Deno.serve(async (req: Request) => {
     catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'error';
       return new Response(JSON.stringify({ ok: false, error: message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
+  if (sub === 'sima-mind' || path === 'sima-mind') {
+    try { return await handleSimaMind(req); }
+    catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'error';
+      return new Response(JSON.stringify({ ok: false, error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
   }
 

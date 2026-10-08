@@ -10,7 +10,7 @@
  */
 
 import { aiPage, type AiPageCapability, type AiSuggestion, type AiAction } from './aiPageContext';
-import { aiFetch } from '@/services/aiProxy';
+import { aiFetch, simaMindPatch } from '@/services/aiProxy';
 import { registerUndoHandler } from '@/modules/LogsModule';
 import { recordAiSpend } from './aiTokenQuota';
 import { parseUsage } from './aiUsage';
@@ -1797,6 +1797,27 @@ export function installGlobalAiActions(): void {
     },
   };
   aiPage.registerGlobal(createDoc);
+
+  // Общий характер Симы и «обо мне» — одни во всех продуктах SIMA
+  aiPage.registerGlobal({
+    name: 'sima_character',
+    description: 'Запомнить, КАК общаться с человеком: «матерись иногда», «не пиши длинно», «зови меня Шеф». add — новое правило короткой фразой («Отвечай коротко»), remove — номера правил, которые человек отменил. Действует во всех продуктах SIMA.',
+    args: '{ add?: string, remove?: number[] }',
+    run: async (a: { add?: string; remove?: number[] }) => {
+      const ok = await simaMindPatch({ character_add: a?.add, character_remove: a?.remove });
+      return ok ? 'Запомнила — так и буду общаться во всех продуктах SIMA.' : 'Не получилось сохранить: аккаунт SIMA сейчас недоступен.';
+    },
+  });
+  aiPage.registerGlobal({
+    name: 'sima_remember',
+    description: 'Запомнить важный долгий факт о человеке в общее «обо мне» (имя, возраст, работа, семья, увлечения). Его знают все ассистенты SIMA. fact — одна мысль от третьего лица.',
+    args: '{ fact: string }',
+    run: async (a: { fact: string }) => {
+      if (!a?.fact) throw new Error('Нечего запоминать');
+      const ok = await simaMindPatch({ about_add: a.fact });
+      return ok ? 'Запомнила.' : 'Не получилось сохранить: аккаунт SIMA сейчас недоступен.';
+    },
+  });
 
   // Тема и перезагрузка — для команды из чата Симы
   aiPage.registerGlobal({
