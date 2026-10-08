@@ -36,6 +36,7 @@ import {
 import { debug } from '@/utils/debug';
 import { supportChatService, supportErrorText, AdminSupportChat, SupportAttachment } from '@/services/supportChatService';
 import { reportAiUsage } from '@/services/aiUsage';
+import { aiFetch, SERVER_AI_KEY } from '@/services/aiProxy';
 import { AI_BOOST_PACKAGES, setAiBoostPriceOverrides } from '@/services/aiTokenQuota';
 import { icon } from './admin/icons';
 import { areaChart, groupedBars, hBars, donut } from './admin/charts';
@@ -1773,7 +1774,8 @@ Q: Где скачать / установить расширение для бр
         if (greeting?.content) this.supGreetingText = greeting.content;
       } catch { /* ignore */ }
     }
-    return key;
+    // Ключ OpenRouter больше не нужен браузеру: ИИ идёт через сервер (aiFetch)
+    return key || SERVER_AI_KEY;
   }
 
   async loadSupportGreeting(): Promise<void> {
@@ -1818,20 +1820,12 @@ ${this.SIMADESK_KNOWLEDGE}
 3. В конце ВСЕГДА добавь на отдельной строке: [УВЕРЕН:да] или [УВЕРЕН:нет]
 4. Не добавляй лишних извинений и вводных фраз. Начинай сразу с ответа.`;
 
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': window.location.origin,
-          'X-Title': 'SimaDesk Support AI',
-        },
-        body: JSON.stringify({
-          model: this.supAiModel,
-          messages: [{ role: 'system', content: systemPrompt }, ...history],
-          max_tokens: 600,
-          temperature: 0.3,
-        }),
+      // Через сервер SimaDesk → SIMA Platform (ключи только на сервере, модели бесплатные)
+      const res = await aiFetch({
+        model: this.supAiModel,
+        messages: [{ role: 'system', content: systemPrompt }, ...history],
+        max_tokens: 600,
+        temperature: 0.3,
       });
 
       if (!res.ok) return;
@@ -3859,11 +3853,9 @@ ${this.SIMADESK_KNOWLEDGE}
       if (!instruction) { showToast('Введите что нужно добавить или изменить', 'error'); return; }
       const currentPrompt = ta.value.trim();
       if (!currentPrompt) { showToast('Сначала загрузите дефолтный промт или введите его вручную', 'error'); return; }
-      const aiKey = sessionStorage.getItem('sd_ai_key') || '';
-      if (!aiKey) { showToast('Нет OpenRouter ключа — настройте в разделе Настройки → AI', 'error'); return; }
       const model = (el.querySelector<HTMLSelectElement>('#sima-ai-model'))?.value
         ?? localStorage.getItem('sd_prompt_editor_model')
-        ?? 'anthropic/claude-3.5-sonnet';
+        ?? '';
 
       if (submitBtn) { submitBtn.disabled = true; }
       if (statusEl) { statusEl.textContent = '⏳ ИИ обрабатывает…'; }
@@ -3874,21 +3866,13 @@ ${this.SIMADESK_KNOWLEDGE}
 Встраивай изменения профессионально: соблюдай стиль, структуру и тон оригинала.`;
         const userMsg = `ТЕКУЩИЙ СИСТЕМНЫЙ ПРОМТ:\n${currentPrompt}\n\n---\nИНСТРУКЦИЯ ПО ИЗМЕНЕНИЮ:\n${instruction}\n\n---\nВерни полный обновлённый промт:`;
 
-        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${aiKey}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': location.origin,
-          },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: 'system', content: systemMsg },
-              { role: 'user', content: userMsg },
-            ],
-            max_tokens: 4096,
-          }),
+        const res = await aiFetch({
+          model,
+          messages: [
+            { role: 'system', content: systemMsg },
+            { role: 'user', content: userMsg },
+          ],
+          max_tokens: 4096,
         });
 
         if (!res.ok) {
