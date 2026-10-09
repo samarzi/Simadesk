@@ -24,6 +24,7 @@ vi.mock('@/utils/docImage', async (orig) => {
   };
 });
 
+import { renderBook } from './sheetHarness';
 import { DocsModule } from '@/modules/DocsModule';
 import { imageAttachments } from '@/services/imageAttachments';
 
@@ -40,6 +41,7 @@ beforeEach(() => {
   localStorage.clear();
   imageAttachments.clear();
   M = Object.create(DocsModule.prototype);
+  Object.assign(M, { dirty: new Set(), serverKnown: new Set(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: false, pendingContent: new Set(), warnedNoPersist: new Set(), recent: [] });
   M.root = document.createElement('div');
   document.body.innerHTML = '';
   document.body.appendChild(M.root);
@@ -133,11 +135,11 @@ describe('картинка переживает хранение и отрисо
     imageAttachments.add('фото.png', PNG);
     await M.aiExcelInsertImage({ cell: 'B1' });
     const ec = M.parseExcelContent(M.docs[0].content);
-    ec.sheets[0].data[0][1].s = 'background:#ff0000';
+    ec.sheets[0].data[0][1].s = 'background-color:#ff0000';
     const again = M.parseExcelContent(M.serializeExcel(ec)).sheets[0].data[0][1];
     expect(again.img).toBe(PNG);
     expect(again.imgW).toBe(120);
-    expect(again.s).toBe('background:#ff0000');
+    expect(again.s).toBe('background-color:#ff0000');
   });
 
   it('опасный src в содержимом документа не доезжает до разметки', () => {
@@ -146,25 +148,11 @@ describe('картинка переживает хранение и отрисо
   });
 
   it('рисуется тегом img внутри ячейки', () => {
-    const html = M.renderCell([[{ v: '', img: PNG, imgW: 120, imgH: 90 }]], 0, 0, { v: '', img: PNG, imgW: 120, imgH: 90 });
-    expect(html).toContain('class="dx-cell-img"');
-    expect(html).toContain(PNG);
-  });
-
-  it('читается обратно из DOM — правка соседней ячейки её не стирает', () => {
-    const td = document.createElement('td');
-    td.innerHTML = `<img class="dx-cell-img" src="${PNG}" style="width:120px;height:90px">Цена`;
-    const cell = M.cellFromTd(td);
-    expect(cell.img).toBe(PNG);
-    expect(cell.imgW).toBe(120);
-    expect(cell.imgH).toBe(90);
-  });
-
-  it('applyCellToTd возвращает картинку после перерисовки текста', () => {
-    const td = document.createElement('td') as HTMLTableCellElement;
-    M.applyCellToTd(td, { v: '10', img: PNG, imgW: 120, imgH: 90 }, [[{ v: '10' }]]);
-    expect(td.querySelector('img.dx-cell-img')).toBeTruthy();
-    expect(td.innerText).toContain('10');
+    const { root, editor } = renderBook({ sheets: [{ name: 'Л', data: [[{ v: 'Цена', img: PNG, imgW: 120, imgH: 90 }]] }] });
+    const td = root.querySelector('td[data-r="0"][data-c="0"]')!;
+    expect(td.querySelector('img.xl-cimg')?.getAttribute('src')).toBe(PNG);
+    expect(td.textContent).toContain('Цена');
+    editor.destroy();
   });
 });
 
@@ -224,14 +212,14 @@ describe('перенос и удаление картинки', () => {
 
   it('перенос сохраняет текст и оформление обеих ячеек', async () => {
     const ec = M.parseExcelContent(M.docs[0].content);
-    ec.sheets[0].data[0][1] = { v: 'подпись', s: 'color:#f00' };
+    ec.sheets[0].data[0][1] = { v: 'подпись', s: 'color:#ff0000' };
     ec.sheets[0].data[1][0] = { v: 'цель', s: 'font-weight:bold' };
     M.docs[0].content = M.serializeExcel(ec);
     imageAttachments.add('фото.png', PNG);
     await M.aiExcelInsertImage({ cell: 'B1' });
     M.aiExcelMoveImage({ from: 'B1', to: 'A2' });
     expect(cellOf(0, 1).v).toBe('подпись');
-    expect(cellOf(0, 1).s).toBe('color:#f00');
+    expect(cellOf(0, 1).s).toBe('color:#ff0000');
     expect(cellOf(1, 0).v).toBe('цель');
     expect(cellOf(1, 0).img).toBe(PNG);
   });

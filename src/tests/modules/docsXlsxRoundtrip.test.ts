@@ -8,6 +8,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as XLSX from 'xlsx';
 import { DocsModule } from '@/modules/DocsModule';
+import ExcelJS from 'exceljs';
+import { readXlsx } from '@/modules/docs/xlsxIO';
 import { formatCellValue } from '@/utils/numFormat';
 
 const HDR = 'background-color:#4472C4;color:#FFFFFF;font-weight:bold;text-align:center';
@@ -40,6 +42,9 @@ const ec = {
 
 let ws: XLSX.WorkSheet;
 let M: any;
+let xw: ExcelJS.Workbook;
+let back: any;
+const xc = (a: string) => xw.worksheets[0].getCell(a);
 
 // Разобранный styles.xml и карта «адрес ячейки → индекс стиля» из sheet1.xml
 let fonts: string[] = [];
@@ -60,6 +65,7 @@ function blocks(xml: string, tag: string): string[] {
 
 beforeAll(async () => {
   M = Object.create(DocsModule.prototype);
+  Object.assign(M, { dirty: new Set(), serverKnown: new Set(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: false, pendingContent: new Set(), warnedNoPersist: new Set(), recent: [] });
   let blob: Blob | null = null;
   M.download = (_n: string, b: Blob) => { blob = b; };
 
@@ -67,6 +73,9 @@ beforeAll(async () => {
   expect(blob).toBeTruthy();
 
   const buf = Buffer.from(await blob!.arrayBuffer());
+  xw = new ExcelJS.Workbook();
+  await xw.xlsx.load(buf as any);
+  back = await readXlsx(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
   const wb = XLSX.read(buf, {
     type: 'buffer', cellStyles: true, bookFiles: true,
     cellNF: true, cellFormula: true, cellDates: false,
@@ -134,39 +143,35 @@ describe('типы значений переживают экспорт', () => 
 });
 
 describe('оформление переживает экспорт', () => {
-  // SheetJS CE не отдаёт индекс стиля ячейки на чтение (cell.s — это объект
-  // только с заливкой), поэтому сверяем сгенерированный styles.xml напрямую.
   it('заливка, цвет и жирность шапки', () => {
-    const xf = xfOf('A1');
-    expect(fills[xf.fillId]).toContain('FF4472C4');
-    expect(fonts[xf.fontId]).toContain('<b/>');
-    expect(fonts[xf.fontId]).toContain('FFFFFFFF');
-    expect(xf.raw).toContain('horizontal="center"');
+    const c = xc('A1');
+    expect((c.fill as any).fgColor.argb).toBe('FF4472C4');
+    expect(c.font).toMatchObject({ bold: true, color: { argb: 'FFFFFFFF' } });
+    expect(c.alignment).toMatchObject({ horizontal: 'center' });
   });
 
   it('жирный + курсив + подчёркнутый не вытесняют друг друга', () => {
-    const f = fonts[xfOf('A4').fontId];
-    expect(f).toContain('<b/>');
-    expect(f).toContain('<i/>');
-    expect(f).toContain('<u/>');
+    expect(xc('A4').font).toMatchObject({ bold: true, italic: true });
+    expect([true, 'single']).toContain(xc('A4').font.underline);
   });
 
   it('границы ячейки сохраняются', () => {
-    const xf = xfOf('A3');
-    expect(fonts[xf.fontId]).toContain('<i/>');
-    expect(borders[xf.borderId]).toMatch(/<bottom style="thin"><color rgb="FFFF0000"\/><\/bottom>/);
+    expect(xc('A3').font).toMatchObject({ italic: true });
+    expect(xc('A3').border.bottom).toMatchObject({ style: 'thin', color: { argb: 'FFFF0000' } });
   });
 
   it('ширины колонок и высоты строк переживают круг без дрейфа', () => {
-    expect(Math.round((ws['!cols']?.[0] as any)?.width * 7)).toBe(140);
-    expect(Math.round((ws['!rows']?.[0] as any)?.hpt * 4 / 3)).toBe(28);
+    expect(back.sheets[0].colWidths[0]).toBe(140);
+    expect(back.sheets[0].rowHeights[0]).toBe(28);
   });
 
   it('числовой формат попадает в numFmts и привязан к ячейке', () => {
     expect(numFmtCodes).toContain('#,##0.00\\ "₽"');
     expect(numFmtCodes).toContain('dd.mm.yyyy');
-    expect(numFmtCodes).toContain('0.00%');
-    expect(xfOf('B2').numFmtId).toBeGreaterThanOrEqual(164);
+    // 0.00% — встроенный формат Excel (id 10), в numFmts его не пишут
+    expect(xc('B4').numFmt).toBe('0.00%');
+    // ExcelJS при чтении отдаёт «\ » как пробел — это тот же формат
+    expect(xc('B2').numFmt.replace(/\\ /g, ' ')).toBe('#,##0.00 "₽"');
   });
 });
 

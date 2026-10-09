@@ -7,10 +7,14 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { DocsModule } from '@/modules/DocsModule';
+import { normalizeCss } from '@/modules/docs/xlStyle';
 
 const CSS = 'background-color:#ffff00;font-weight:bold;font-size:15px;font-family:"Calibri",sans-serif;color:#ff0000';
+/** При чтении старый CSS приводится к канонической записи — без потери свойств. */
+const CANON = normalizeCss(CSS);
 let M: any;
-beforeEach(() => { M = Object.create(DocsModule.prototype); });
+beforeEach(() => { M = Object.create(DocsModule.prototype);
+  Object.assign(M, { dirty: new Set(), serverKnown: new Set(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: false, pendingContent: new Set(), warnedNoPersist: new Set(), recent: [] }); });
 
 const grid = (rows: number, cols = 26, css: string | null = CSS) =>
   Array.from({ length: rows }, () =>
@@ -20,8 +24,9 @@ describe('цвета переживают сохранение и загрузк
   it('заливка и цвет шрифта возвращаются в точности', () => {
     const ec = { sheets: [{ name: 'Лист1', data: grid(3) }] };
     const back = M.parseExcelContent(M.serializeExcel(ec));
-    expect(back.sheets[0].data[0][0].s).toBe(CSS);
-    expect(back.sheets[0].data[2][25].s).toBe(CSS);
+    expect(back.sheets[0].data[0][0].s).toBe(CANON);
+    expect(back.sheets[0].data[2][25].s).toBe(CANON);
+    expect(CANON).toBe('font-family:"Calibri";font-size:11pt;font-weight:bold;color:#ff0000;background-color:#ffff00');
   });
 
   it('разные стили не путаются между собой', () => {
@@ -67,7 +72,7 @@ describe('старый формат продолжает читаться', () =
   it('стиль строкой прямо в ячейке', () => {
     const old = JSON.stringify({ sheets: [{ name: 'S', data: [[{ v: '1', s: CSS, t: 'n' }]] }] });
     const back = M.parseExcelContent(old);
-    expect(back.sheets[0].data[0][0].s).toBe(CSS);
+    expect(back.sheets[0].data[0][0].s).toBe(CANON);
     expect(back.sheets[0].data[0][0].t).toBe('n');
   });
 
@@ -75,7 +80,7 @@ describe('старый формат продолжает читаться', () =
     const raw = JSON.stringify({ sheets: [{ name: 'S', styles: [CSS], data: [[{ v: '1', si: 99 }, { v: '2', si: 0 }]] }] });
     const row = M.parseExcelContent(raw).sheets[0].data[0];
     expect(row[0].s).toBeUndefined();
-    expect(row[1].s).toBe(CSS);
+    expect(row[1].s).toBe(CANON);
   });
 });
 

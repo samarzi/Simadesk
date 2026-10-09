@@ -72,7 +72,7 @@ describe('картинки', () => {
 
 describe('гиперссылки', () => {
   it('сохраняют адрес, а не только текст', () => {
-    const rid = docXml.match(/<w:hyperlink r:id="(rId\d+)">/)?.[1];
+    const rid = docXml.match(/<w:hyperlink r:id="(rId\d+)"[^>]*>/)?.[1];
     expect(rid).toBeTruthy();
     expect(relsXml).toContain('Target="https://example.com/a?x=1&amp;y=2"');
     expect(relsXml).toContain('TargetMode="External"');

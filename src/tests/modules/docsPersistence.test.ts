@@ -72,6 +72,7 @@ function boot() {
   const root = document.createElement('div');
   document.body.appendChild(root);
   const M: any = Object.create(DocsModule.prototype);
+  Object.assign(M, { dirty: new Set(), serverKnown: new Set(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: null });
   M.root = root; M.docs = []; M.recent = []; M.activeId = null;
   M.loadedCompanyId = 'CO'; M.saveTimer = null; M.activeSheetIdx = 0;
   M.xlUndoStack = []; M.xlRedoStack = []; M.xlSheetScroll = {};
@@ -190,37 +191,41 @@ describe('история отмен ограничена по памяти', () 
   it('на большом листе стек не растёт до OOM', () => {
     installQuotaStorage(5_000_000);
     const M: any = boot();
-    // Лист 5000×26 — один снимок это 130 000 ячеек.
-    const big = Array.from({ length: 5000 }, () =>
-      Array.from({ length: 26 }, () => ({ v: 'x' })));
+    // Снимок — содержимое документа; на листе 5000×26 это мегабайты
+    const big = bigExcel(5000);
     for (let i = 0; i < 100; i++) {
-      M.xlUndoStack.push({ data: M.snapshotGrid(big), docId: 'd', sheetIdx: 0, r: 0, c: 0 });
+      M.xlUndoStack.push({ docId: 'd', content: big + i, sheetIdx: 0 });
       M.trimUndoStack(M.xlUndoStack);
     }
-    const cells = M.xlUndoStack.reduce((n: number, s: any) => n + M.snapCells(s.data), 0);
-    expect(cells).toBeLessThanOrEqual(400_000);
+    const chars = M.xlUndoStack.reduce((n: number, s: any) => n + s.content.length, 0);
+    expect(chars).toBeLessThanOrEqual(40_000_000 + big.length);
+    expect(M.xlUndoStack.length).toBeLessThan(100);
     expect(M.xlUndoStack.length, 'хотя бы один шаг отмены обязан остаться').toBeGreaterThanOrEqual(1);
   });
 
   it('на мелком листе глубина истории сохраняется', () => {
     installQuotaStorage(5_000_000);
     const M: any = boot();
-    const small = Array.from({ length: 10 }, () =>
-      Array.from({ length: 5 }, () => ({ v: 'x' })));
     for (let i = 0; i < 100; i++) {
-      M.xlUndoStack.push({ data: M.snapshotGrid(small), docId: 'd', sheetIdx: 0, r: 0, c: 0 });
+      M.xlUndoStack.push({ docId: 'd', content: bigExcel(3) + i, sheetIdx: 0 });
       M.trimUndoStack(M.xlUndoStack);
     }
     expect(M.xlUndoStack.length).toBe(100);
   });
 
-  it('снимок не разделяет ссылки с исходным листом', () => {
+  it('Ctrl+Z возвращает документ к снимку, Ctrl+Y — обратно', () => {
     installQuotaStorage(5_000_000);
     const M: any = boot();
-    const src = [[{ v: '1' }, { v: '2' }]];
-    const snap = M.snapshotGrid(src);
-    src[0][0].v = 'изменено';
-    expect(snap[0][0].v, 'снимок мутировал вместе с оригиналом').toBe('1');
+    M.render = () => {};
+    const v1 = bigExcel(2), v2 = bigExcel(3);
+    M.docs = [{ id: 'd1', type: 'excel', title: 'Т', content: v1, updated_at: 1 }];
+    M.activeId = 'd1';
+    M.pushXlUndo('d1', 0);
+    M.updateContent('d1', v2);
+    M.xlUndo();
+    expect(M.docs[0].content).toBe(v1);
+    M.xlRedo();
+    expect(M.docs[0].content).toBe(v2);
   });
 });
 
@@ -275,10 +280,12 @@ describe('отрисовка после переделки хранения', ()
       ] }] }),
     }];
     M.activeId = 'd1';
-    const html: string = M.renderExcel(M.docs[0]);
+    M.render();
+    const html: string = M.root.innerHTML;
     expect(html).toContain('Кофе');
     expect(html).toContain('100,00');          // формат применён при отрисовке
     expect(html).not.toContain('docs-loading');
+    M.hide();
   });
 
   it('документ, ждущий загрузки, показывает спиннер вместо пустой таблицы', () => {
@@ -287,11 +294,11 @@ describe('отрисовка после переделки хранения', ()
     M.docs = [{ id: 'd1', type: 'excel', title: 'Прайс', content: '', updated_at: 1 }];
     M.activeId = 'd1';
     M.pendingContent.add('d1');
-    const html: string = M.renderEditor(M.docs[0]);
+    const html: string = M.renderEditorShell(M.docs[0]);
     expect(html).toContain('docs-loading');
     expect(html).toContain('Загружаем «Прайс»');
     // Пустой сетки в DOM быть не должно — иначе первая правка затрёт документ.
-    expect(html).not.toContain('docs-excel-body');
+    expect(html).not.toContain('docs-editor-host');
   });
 });
 

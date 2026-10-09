@@ -14,6 +14,7 @@ vi.mock('@/services/aiPageContext', () => ({ aiPage: { register: () => {}, unreg
 vi.mock('@/services/selectionContext', () => ({ selectionCtx: { set: () => {}, clear: () => {} } }));
 vi.mock('@/utils/toast', () => ({ showToast: () => {} }));
 
+import { renderBook } from './sheetHarness';
 import { DocsModule } from '@/modules/DocsModule';
 
 /** xlsx как его пишет Excel: жёлтая заливка + красный жирный шрифт в A1/B1. */
@@ -70,6 +71,7 @@ beforeEach(() => {
   localStorage.clear();
   added = [];
   M = Object.create(DocsModule.prototype);
+  Object.assign(M, { dirty: new Set(), serverKnown: new Set(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: false, pendingContent: new Set(), warnedNoPersist: new Set(), recent: [] });
   M.root = document.createElement('div');
   M.docs = []; M.recent = []; M.activeId = null; M.loadedCompanyId = 'CO';
   M.saveTimer = null; M.activeSheetIdx = 0;
@@ -101,7 +103,9 @@ describe('цвет доживает от файла до экрана', () => {
   it('отрисованная ячейка несёт цвет в инлайновом стиле', async () => {
     await M.importFile(fakeFile(await xlsxWithColors()));
     const sheet = M.parseExcelContent(added[0].content).sheets[0];
-    const html: string = M.renderCell(sheet.data, 0, 0, sheet.data[0][0]);
+    const { root, editor } = renderBook({ sheets: [sheet] });
+    const html: string = root.querySelector('td[data-r="0"][data-c="0"]')!.outerHTML;
+    editor.destroy();
     expect(html).toContain('background-color:#ffff00');
     expect(html).toContain('color:#ff0000');
   });

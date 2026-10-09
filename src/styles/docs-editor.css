@@ -1,0 +1,288 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Редактор документов: таблица (xl-*), лента (xr-*), меню/диалоги (xm-*, xd-*)
+   и Word (dw-*). Лист и страница всегда светлые — как бумага в Office,
+   независимо от темы приложения: в тёмной теме цвета файла иначе
+   неотличимы от фона, и «дизайн» документа просто не виден.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.xl-app, .dw-app, .xm-menu, .xd-back {
+  --xl-accent: #217346;
+  --xl-accent-2: #185c37;
+  --xl-sel: rgba(33, 115, 70, .12);
+  --xl-grid: #e1e1e1;
+  --xl-hdr: #f3f3f3;
+  --xl-hdr-text: #444;
+  --xl-hdr-sel: #d3f0e0;
+  --xl-ui: #fbfbfb;
+  --xl-ui-border: #d6d6d6;
+  --xl-text: #1f1f1f;
+}
+
+.xl-app { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: #fff; color: var(--xl-text); font-family: 'Segoe UI', -apple-system, system-ui, Arial, sans-serif; font-size: 12px; }
+
+/* ── Лента ── */
+.xl-ribbon { background: var(--xl-ui); border-bottom: 1px solid var(--xl-ui-border); flex-shrink: 0; user-select: none; }
+.xr-tabs { display: flex; align-items: flex-end; gap: 2px; padding: 4px 8px 0; background: var(--xl-accent); }
+.xr-tab { padding: 5px 12px 6px; color: #fff; cursor: pointer; border-radius: 4px 4px 0 0; font-size: 12px; opacity: .92; }
+.xr-tab:hover { background: rgba(255,255,255,.12); }
+.xr-tab.on { background: var(--xl-ui); color: var(--xl-accent); font-weight: 600; opacity: 1; }
+.xr-tabs-right { margin-left: auto; display: flex; gap: 2px; padding-bottom: 3px; }
+.xr-tabs-right .xr-btn { color: #fff; }
+.xr-tabs-right .xr-btn:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+.xr-tabs-right .xr-btn:disabled { opacity: .45; }
+.xr-panel { display: flex; align-items: stretch; gap: 0; padding: 4px 4px 0; overflow-x: auto; scrollbar-width: thin; min-height: 86px; }
+.xr-group { display: flex; flex-direction: column; padding: 0 6px; border-right: 1px solid #e3e3e3; flex-shrink: 0; }
+.xr-items { flex: 1; display: flex; align-items: center; gap: 2px; }
+.xr-glabel { text-align: center; font-size: 10.5px; color: #6b6b6b; padding: 2px 0 3px; white-space: nowrap; }
+.xr-col { display: flex; flex-direction: column; gap: 1px; }
+.xr-col2 { display: flex; flex-direction: column; gap: 3px; }
+.xr-row { display: flex; align-items: center; gap: 1px; }
+.xr-sep { width: 1px; height: 18px; background: #e1e1e1; margin: 0 3px; }
+.xr-btn { min-width: 26px; height: 26px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  border: 1px solid transparent; border-radius: 4px; background: transparent; color: #262626; cursor: pointer; font: inherit; position: relative; }
+.xr-btn:hover:not(:disabled) { background: #e8eff0; border-color: #d0d7d8; }
+.xr-btn.on { background: #c8e6d4; border-color: #9fd0b3; }
+.xr-btn:disabled { opacity: .4; cursor: default; }
+.xr-btn svg { flex-shrink: 0; }
+.xr-lbl { flex-direction: column; height: auto; min-height: 58px; padding: 4px 6px; gap: 3px; font-size: 11px; line-height: 1.15; max-width: 86px; text-align: center; white-space: normal; }
+.xr-lbl svg { width: 22px; height: 22px; }
+.xr-row .xr-lbl { flex-direction: row; min-height: 26px; height: 26px; max-width: none; white-space: nowrap; }
+.xr-row .xr-lbl svg { width: 16px; height: 16px; }
+.xr-dd svg:last-child { width: 8px; height: 8px; opacity: .7; }
+.xr-split { display: inline-flex; align-items: stretch; border-radius: 4px; }
+.xr-split .xr-btn:first-child { border-radius: 4px 0 0 4px; padding-right: 3px; flex-direction: column; gap: 0; }
+.xr-split .xr-arrow { min-width: 14px; padding: 0 2px; border-radius: 0 4px 4px 0; }
+.xr-bar { display: block; width: 16px; height: 3px; margin-top: -1px; border-radius: 1px; }
+.xr-sel { height: 24px; border: 1px solid #c8c8c8; border-radius: 3px; background: #fff; color: #222; font: inherit; padding: 0 4px; outline: none; }
+.xr-sel:focus { border-color: var(--xl-accent); }
+.xr-font { width: 128px; }
+.xr-size { width: 52px; }
+.xr-nf { width: 150px; }
+.xr-check { display: flex; align-items: center; gap: 5px; padding: 0 6px; font-size: 12px; color: #333; cursor: pointer; }
+
+/* ── Строка формул ── */
+.xl-fbar { display: flex; align-items: flex-start; gap: 0; border-bottom: 1px solid var(--xl-ui-border); background: #fff; flex-shrink: 0; }
+.xl-name { width: 96px; height: 26px; border: 0; border-right: 1px solid var(--xl-ui-border); padding: 0 8px; font: 12px 'Segoe UI', Arial, sans-serif; color: #222; outline: none; background: #fff; }
+.xl-name:focus { box-shadow: inset 0 0 0 2px var(--xl-accent); }
+.xl-fbar-btns { display: flex; align-items: center; height: 26px; border-right: 1px solid var(--xl-ui-border); padding: 0 4px; }
+.xl-fx { width: 30px; height: 22px; border: 0; background: transparent; color: #555; cursor: pointer; border-radius: 3px; }
+.xl-fx:hover { background: #e8eff0; }
+.xl-fx-inp { flex: 1; min-height: 26px; height: 26px; border: 0; resize: none; padding: 4px 8px; font: 13px Consolas, 'Segoe UI', monospace; color: #222; outline: none; background: #fff; line-height: 18px; }
+.xl-fx-inp:focus { background: #fcfffd; }
+
+/* ── Сетка ── */
+.xl-scroll { flex: 1; overflow: auto; position: relative; background: #fff; outline: none; min-height: 0; overscroll-behavior: contain; }
+.xl-zoom { position: relative; width: max-content; min-width: 100%; }
+.xl-grid { border-collapse: collapse; table-layout: fixed; background: #fff; color: #000; cursor: cell; user-select: none; }
+.xl-grid th, .xl-grid td { padding: 0 3px; overflow: hidden; white-space: nowrap; line-height: 1.25; vertical-align: bottom; }
+.xl-grid td { border: none; box-shadow: inset -1px -1px 0 var(--xl-grid), var(--sbt, 0 0 #0000), var(--sbb, 0 0 #0000), var(--sbl, 0 0 #0000), var(--sbr, 0 0 #0000); position: relative; }
+.xl-nogrid .xl-grid td { box-shadow: var(--sbt, 0 0 #0000), var(--sbb, 0 0 #0000), var(--sbl, 0 0 #0000), var(--sbr, 0 0 #0000); }
+.xl-grid thead th { position: sticky; top: 0; z-index: 4; height: 22px; background: var(--xl-hdr); color: var(--xl-hdr-text); font: 11px 'Segoe UI', Arial, sans-serif; text-align: center; vertical-align: middle;
+  box-shadow: inset -1px -1px 0 #d4d4d4; cursor: s-resize; }
+.xl-grid thead th.xl-fc { z-index: 6; }
+.xl-grid .xl-corner { position: sticky; left: 0; top: 0; z-index: 8 !important; cursor: se-resize !important; background: var(--xl-hdr) linear-gradient(135deg, transparent 60%, #b5b5b5 60%, #b5b5b5 76%, transparent 76%) no-repeat right 3px bottom 3px / 10px 10px; }
+.xl-grid th.xl-rh { position: sticky; left: 0; z-index: 3; background: var(--xl-hdr); color: var(--xl-hdr-text); font: 11px 'Segoe UI', Arial, sans-serif; text-align: center; vertical-align: middle;
+  box-shadow: inset -1px -1px 0 #d4d4d4; cursor: e-resize; padding: 0 2px; }
+.xl-grid th.xl-rh.xl-fr { z-index: 5; }
+.xl-grid td.xl-fr { position: sticky; z-index: 2; background-color: #fff; }
+.xl-grid td.xl-fc { position: sticky; z-index: 2; background-color: #fff; }
+.xl-grid td.xl-fr.xl-fc { z-index: 3; }
+.xl-grid th.xl-ch.xl-fc { position: sticky; }
+.xl-grid th.xl-hsel { background: var(--xl-hdr-sel); color: var(--xl-accent-2); box-shadow: inset -1px -1px 0 #d4d4d4, inset 0 -2px 0 var(--xl-accent); }
+.xl-grid th.xl-rh.xl-hsel { box-shadow: inset -1px -1px 0 #d4d4d4, inset -2px 0 0 var(--xl-accent); }
+.xl-grid th.xl-hfull { background: var(--xl-accent); color: #fff; }
+.xl-grid th.xl-hid-after { box-shadow: inset -1px -1px 0 #d4d4d4, inset -3px 0 0 #9a9a9a; }
+.xl-grid th.xl-rh.xl-hid-after { box-shadow: inset -1px -1px 0 #d4d4d4, inset 0 -3px 0 #9a9a9a; }
+.xl-rs-c { position: absolute; right: -3px; top: 0; width: 7px; height: 100%; cursor: col-resize; z-index: 2; }
+.xl-rs-r { position: absolute; left: 0; bottom: -3px; height: 7px; width: 100%; cursor: row-resize; z-index: 2; }
+.xl-grid tr.xl-sp td { padding: 0; box-shadow: none; }
+.xl-grid td.xl-num { text-align: right; }
+.xl-grid td.xl-ctr { text-align: center; }
+.xl-grid td.xl-ovf { overflow: visible; z-index: 1; }
+.xl-grid td.xl-ovf.xl-fr, .xl-grid td.xl-ovf.xl-fc { z-index: 2; }
+.xl-clip { overflow: hidden; }
+.xl-grid td.xl-sel { background-image: linear-gradient(var(--xl-sel), var(--xl-sel)); }
+.xl-grid td.xl-act { outline: none; }
+.xl-grid td.xl-sbt { --sbt: inset 0 2px 0 var(--xl-accent); }
+.xl-grid td.xl-sbb { --sbb: inset 0 -2px 0 var(--xl-accent); }
+.xl-grid td.xl-sbl { --sbl: inset 2px 0 0 var(--xl-accent); }
+.xl-grid td.xl-sbr { --sbr: inset -2px 0 0 var(--xl-accent); }
+.xl-cutting td.xl-sbt { --sbt: inset 0 2px 0 #1a73e8; } .xl-cutting td.xl-sbb { --sbb: inset 0 -2px 0 #1a73e8; }
+.xl-cutting td.xl-sbl { --sbl: inset 2px 0 0 #1a73e8; } .xl-cutting td.xl-sbr { --sbr: inset -2px 0 0 #1a73e8; }
+.xl-grid td.xl-has-note::after { content: ''; position: absolute; right: 0; top: 0; border: 4px solid transparent; border-top-color: #e2412f; border-right-color: #e2412f; }
+.xl-link { color: #0563c1; text-decoration: underline; cursor: pointer; }
+.xl-cimg { display: block; max-width: 100%; object-fit: contain; margin: 1px auto; pointer-events: none; }
+.xl-grid td.xl-has-fbtn { padding-right: 20px; }
+.xl-fbtn { position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px; padding: 0; border: 1px solid #b9b9b9; border-radius: 2px; background: #fff; color: #444; font-size: 10px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 2; }
+.xl-fbtn svg { width: 11px; height: 11px; }
+.xl-fbtn.on { background: #dff0e7; border-color: var(--xl-accent); color: var(--xl-accent); }
+
+/* ── Слой поверх сетки ── */
+.xl-layer { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 9; }
+.xl-sink { position: absolute; width: 2px; height: 2px; padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden; z-index: -1; pointer-events: none; }
+.xl-fillh { position: absolute; width: 7px; height: 7px; background: var(--xl-accent); border: 1px solid #fff; cursor: crosshair; z-index: 12; }
+.xl-fill-preview { position: absolute; border: 1px dashed #6b6b6b; pointer-events: none; z-index: 11; }
+.xl-editor { position: absolute; z-index: 20; resize: none; border: 2px solid var(--xl-accent); padding: 1px 2px; margin: 0; outline: none; background: #fff; color: #000;
+  box-shadow: 0 2px 8px rgba(0,0,0,.18); line-height: 1.25; overflow: hidden; white-space: pre; box-sizing: border-box; }
+.xl-guide-v { position: absolute; top: 0; width: 0; height: 100000px; border-left: 1px dashed #333; z-index: 15; pointer-events: none; }
+.xl-guide-h { position: absolute; left: 0; height: 0; width: 100000px; border-top: 1px dashed #333; z-index: 15; pointer-events: none; }
+.xl-tip { position: fixed; z-index: 100000; background: #fff; border: 1px solid #c6c6c6; padding: 3px 7px; font: 11px 'Segoe UI', Arial, sans-serif; color: #222; box-shadow: 0 2px 6px rgba(0,0,0,.15); pointer-events: none; }
+.xl-obj { position: absolute; z-index: 10; background: #fff; cursor: move; user-select: none; }
+.xl-obj svg, .xl-obj img { display: block; width: 100%; height: 100%; pointer-events: none; }
+.xl-obj.on { outline: 2px solid var(--xl-accent); outline-offset: 0; }
+.xl-obj-h { position: absolute; right: -5px; bottom: -5px; width: 10px; height: 10px; background: #fff; border: 1.5px solid var(--xl-accent); border-radius: 50%; cursor: nwse-resize; }
+.xl-chart-err { display: flex; align-items: center; justify-content: center; height: 100%; color: #999; font-size: 12px; border: 1px dashed #ccc; }
+
+/* ── Нижняя панель: листы и статус ── */
+.xl-bottom { display: flex; align-items: stretch; height: 30px; border-top: 1px solid var(--xl-ui-border); background: var(--xl-ui); flex-shrink: 0; }
+.xl-tabs { display: flex; align-items: stretch; flex: 1; min-width: 0; }
+.xl-tab-add { width: 30px; border: 0; background: transparent; font-size: 18px; color: #555; cursor: pointer; flex-shrink: 0; }
+.xl-tab-add:hover { background: #e6e6e6; color: var(--xl-accent); }
+.xl-tab-list { display: flex; align-items: stretch; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.xl-tab-list::-webkit-scrollbar { display: none; }
+.xl-tab { display: flex; align-items: center; padding: 0 14px; font-size: 12px; color: #444; cursor: pointer; border-right: 1px solid #e0e0e0; white-space: nowrap; position: relative; user-select: none; }
+.xl-tab::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--tab, transparent); }
+.xl-tab:hover { background: #ececec; }
+.xl-tab.on { background: #fff; color: var(--xl-accent); font-weight: 600; box-shadow: inset 0 -2px 0 var(--xl-accent); }
+.xl-tab-name { outline: none; padding: 2px 0; }
+.xl-tab-name[contenteditable="true"] { background: #fff; padding: 2px 4px; box-shadow: 0 0 0 1px var(--xl-accent); cursor: text; color: #222; }
+.xl-status { display: flex; align-items: center; gap: 12px; padding: 0 10px; font-size: 11.5px; color: #444; white-space: nowrap; }
+.xl-st-info i { display: inline-block; width: 14px; }
+.xl-zoomctl { display: flex; align-items: center; gap: 2px; }
+.xl-zoomctl button { border: 0; background: transparent; cursor: pointer; color: #444; font: inherit; padding: 2px 6px; border-radius: 3px; }
+.xl-zoomctl button:hover { background: #e6e6e6; }
+
+/* ── Автодополнение формул ── */
+.xl-ac { position: fixed; z-index: 100001; background: #fff; border: 1px solid #c6c6c6; box-shadow: 0 6px 18px rgba(0,0,0,.18); min-width: 260px; max-width: 460px; padding: 3px 0; font: 12px 'Segoe UI', Arial, sans-serif; color: #222; }
+.xl-ac-i { display: flex; gap: 10px; align-items: baseline; padding: 4px 10px; cursor: pointer; }
+.xl-ac-i span { color: #777; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xl-ac-i.on, .xl-ac-i:hover { background: #dff0e7; }
+
+/* ── Меню ── */
+.xm-menu { position: fixed; z-index: 100002; min-width: 200px; max-width: 360px; background: #fff; border: 1px solid #c6c6c6; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 4px 0; font: 12.5px 'Segoe UI', -apple-system, Arial, sans-serif; color: #222; user-select: none; }
+.xm-item { display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px; cursor: pointer; white-space: nowrap; }
+.xm-item:hover { background: #e9f3ee; }
+.xm-item.xm-danger { color: #c42b1c; }
+.xm-item.xm-disabled { opacity: .45; pointer-events: none; }
+.xm-ic { width: 18px; display: inline-flex; justify-content: center; color: #555; flex-shrink: 0; }
+.xm-ic svg { width: 14px; height: 14px; }
+.xm-lbl { flex: 1; }
+.xm-hint { color: #888; font-size: 11px; margin-left: 18px; }
+.xm-arrow { color: #888; }
+.xm-sep { height: 1px; background: #e6e6e6; margin: 4px 0; }
+.xm-colors { padding: 8px; min-width: 0; }
+.xm-color-none { padding: 5px 6px; cursor: pointer; border-radius: 3px; margin-bottom: 4px; }
+.xm-color-none:hover { background: #e9f3ee; }
+.xm-color-title { font-size: 11px; color: #666; margin: 6px 0 4px; }
+.xm-color-row { display: flex; gap: 3px; margin-bottom: 3px; }
+.xm-sw { width: 18px; height: 18px; border: 1px solid rgba(0,0,0,.15); border-radius: 2px; cursor: pointer; padding: 0; }
+.xm-sw:hover { outline: 2px solid #f1a33b; outline-offset: 0; }
+.xm-color-more { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; padding: 4px 6px; cursor: pointer; border-radius: 3px; }
+.xm-color-more:hover { background: #e9f3ee; }
+.xm-color-more input { width: 28px; height: 20px; border: 0; padding: 0; background: none; cursor: pointer; }
+.xl-filter { width: 260px; padding: 4px 0 8px; }
+.xl-filter-q { margin: 6px 10px; width: calc(100% - 20px); height: 26px; border: 1px solid #c6c6c6; border-radius: 3px; padding: 0 8px; font: inherit; outline: none; box-sizing: border-box; }
+.xl-filter-list { max-height: 220px; overflow: auto; margin: 0 10px; border: 1px solid #e0e0e0; padding: 4px 6px; }
+.xl-filter-list label { display: flex; align-items: center; gap: 6px; padding: 2px 0; white-space: nowrap; cursor: pointer; }
+.xl-filter-foot { display: flex; justify-content: flex-end; gap: 6px; padding: 8px 10px 0; }
+
+/* ── Диалоги ── */
+.xd-back { position: fixed; inset: 0; z-index: 100003; background: rgba(0,0,0,.28); display: flex; align-items: center; justify-content: center; }
+.xd-dlg { width: 420px; max-width: calc(100vw - 32px); max-height: calc(100vh - 40px); display: flex; flex-direction: column; background: #fff; border-radius: 8px; box-shadow: 0 18px 48px rgba(0,0,0,.3); font: 13px 'Segoe UI', -apple-system, Arial, sans-serif; color: #222; }
+.xd-wide { width: 640px; }
+.xd-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #ececec; font-weight: 600; font-size: 14px; }
+.xd-x { border: 0; background: transparent; font-size: 14px; cursor: pointer; color: #666; width: 28px; height: 28px; border-radius: 4px; }
+.xd-x:hover { background: #f0f0f0; }
+.xd-body { padding: 14px 16px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.xd-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px 14px; }
+.xd-btn { height: 30px; padding: 0 16px; border: 1px solid #c6c6c6; border-radius: 4px; background: #fff; color: #222; cursor: pointer; font: inherit; }
+.xd-btn:hover { background: #f3f3f3; }
+.xd-primary { background: var(--xl-accent); border-color: var(--xl-accent); color: #fff; }
+.xd-primary:hover { background: var(--xl-accent-2); }
+.xd-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #444; }
+.xd-inp { height: 30px; border: 1px solid #c6c6c6; border-radius: 4px; padding: 0 8px; font: 13px inherit; color: #222; background: #fff; outline: none; box-sizing: border-box; }
+.xd-inp:focus { border-color: var(--xl-accent); box-shadow: 0 0 0 2px rgba(33,115,70,.15); }
+select.xd-inp[size] { height: auto; padding: 4px; }
+.xd-area { height: auto; padding: 8px; resize: vertical; font-family: inherit; }
+.xd-check { display: flex; align-items: center; gap: 6px; font-size: 12.5px; cursor: pointer; }
+.xd-checks { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow: auto; }
+.xd-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.xd-col { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 200px; }
+.xd-lbl { width: 110px; font-size: 12px; color: #555; }
+.xd-p { margin: 0; line-height: 1.5; color: #333; }
+.xd-sub { font-weight: 600; font-size: 12px; margin-top: 6px; }
+.xd-opts { gap: 14px; }
+.xd-sample { padding: 8px 10px; border: 1px solid #e0e0e0; border-radius: 4px; background: #fafafa; font-size: 12px; }
+.xd-tabs { display: flex; gap: 2px; border-bottom: 1px solid #e0e0e0; }
+.xd-tabs span { padding: 6px 12px; cursor: pointer; border-bottom: 2px solid transparent; color: #555; }
+.xd-tabs span.on { border-bottom-color: var(--xl-accent); color: var(--xl-accent); font-weight: 600; }
+.xd-found { max-height: 220px; overflow: auto; border-top: 1px solid #eee; }
+.xd-found-head { padding: 6px 2px; color: #555; font-size: 12px; }
+.xd-found-row { display: flex; gap: 10px; padding: 4px 6px; cursor: pointer; border-radius: 3px; font-size: 12px; }
+.xd-found-row:hover { background: #e9f3ee; }
+.xd-found-row b { min-width: 110px; font-weight: 600; color: var(--xl-accent-2); }
+.xd-fn { display: flex; gap: 10px; height: 260px; }
+.xd-fn-cats { width: 180px; border: 1px solid #e0e0e0; border-radius: 4px; overflow: auto; padding: 4px; }
+.xd-fn-cat { padding: 5px 8px; border-radius: 3px; cursor: pointer; font-size: 12.5px; }
+.xd-fn-cat.on, .xd-fn-cat:hover { background: #e9f3ee; }
+.xd-fn-list { flex: 1; border: 1px solid #e0e0e0; border-radius: 4px; overflow: auto; padding: 4px; }
+.xd-fn-i { display: flex; justify-content: space-between; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 12.5px; }
+.xd-fn-i span { color: #777; font-size: 11.5px; }
+.xd-fn-i.on, .xd-fn-i:hover { background: #dff0e7; }
+.xd-fn-desc { min-height: 34px; font-size: 12px; color: #444; background: #fafafa; border-radius: 4px; padding: 8px 10px; }
+
+/* ══════════════════════ Word ══════════════════════ */
+.dw-app { flex: 1; display: flex; flex-direction: column; min-height: 0; background: #e6e6e6; color: #1f1f1f; font-family: 'Segoe UI', -apple-system, system-ui, Arial, sans-serif; font-size: 12px; --xl-accent: #2b579a; --xl-accent-2: #1e3f73; }
+.dw-ribbon { background: var(--xl-ui, #fbfbfb); border-bottom: 1px solid #d6d6d6; flex-shrink: 0; user-select: none; }
+.dw-ribbon .xr-tabs { background: #2b579a; }
+.dw-ribbon .xr-tab.on { color: #2b579a; }
+.dw-ribbon .xr-btn.on { background: #cfdcf0; border-color: #a9bfe3; }
+.dw-scroll { flex: 1; overflow: auto; padding: 24px 0 60px; background: #e6e6e6; }
+.dw-pagewrap { margin: 0 auto; position: relative; }
+.dw-page { background-color: #fff; color: #000; box-shadow: 0 1px 4px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.05); outline: none; box-sizing: border-box; caret-color: #000;
+  font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; line-height: 1.08; position: relative; overflow-wrap: break-word; white-space: pre-wrap; tab-size: 4;
+  /* Граница каждой страницы — пунктиром: текст течёт непрерывно, как в режиме «Веб-документ», но видно, где закончится лист */
+  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--pg-h, 1123px) - 1px), #b9b9b9 calc(var(--pg-h, 1123px) - 1px), #b9b9b9 var(--pg-h, 1123px)); }
+.dw-page p { margin: 0 0 8pt; }
+.dw-page p:empty::before, .dw-page p > br:only-child { content: ''; }
+.dw-page h1 { font-size: 16pt; font-weight: 400; color: #2f5496; margin: 12pt 0 0; line-height: 1.08; }
+.dw-page h2 { font-size: 13pt; font-weight: 400; color: #2f5496; margin: 2pt 0 0; line-height: 1.08; }
+.dw-page h3 { font-size: 12pt; font-weight: 400; color: #1f3763; margin: 2pt 0 0; line-height: 1.08; }
+.dw-page h4 { font-size: 11pt; font-weight: 400; font-style: italic; color: #2f5496; margin: 2pt 0 0; }
+.dw-page h5, .dw-page h6 { font-size: 11pt; font-weight: 400; color: #2f5496; margin: 2pt 0 0; }
+.dw-page h1.doc-title, .dw-page .doc-title { font-size: 28pt; font-weight: 400; color: #000; margin: 0; line-height: 1; letter-spacing: -.5pt; }
+.dw-page ul, .dw-page ol { margin: 0 0 8pt; padding-left: 36pt; }
+.dw-page li { margin: 0; }
+.dw-page li > p { margin: 0; }
+.dw-page blockquote { margin: 10pt 43pt 8pt; font-style: italic; color: #404040; text-align: center; }
+.dw-page pre { font-family: Consolas, 'Courier New', monospace; font-size: 10pt; background: #f5f5f5; padding: 6pt 8pt; margin: 0 0 8pt; white-space: pre-wrap; }
+.dw-page table { border-collapse: collapse; margin: 0 0 8pt; }
+.dw-page td, .dw-page th { border: 1px solid #000; padding: 0 5.4pt; vertical-align: top; min-width: 20px; }
+.dw-page table.dw-noborder td, .dw-page table.dw-noborder th { border-color: transparent; }
+.dw-page img { max-width: 100%; height: auto; }
+.dw-page a { color: #0563c1; text-decoration: underline; }
+.dw-page hr.dw-pb, .dw-page .docx-page-break { border: 0; border-top: 1px dashed #9a9a9a; margin: 12pt 0; height: 0; position: relative; break-after: page; }
+.dw-page hr.dw-pb::after, .dw-page .docx-page-break::after { content: 'Разрыв страницы'; position: absolute; left: 50%; top: -8px; transform: translateX(-50%); background: #fff; padding: 0 8px; font: 10px Arial; color: #8a8a8a; }
+.dw-page:empty::before { content: attr(data-placeholder); color: #a0a0a0; }
+.dw-statusbar { height: 24px; display: flex; align-items: center; gap: 18px; padding: 0 12px; background: #2b579a; color: #fff; font: 11.5px 'Segoe UI', Arial, sans-serif; flex-shrink: 0; }
+.dw-statusbar .dw-st-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.dw-statusbar button { border: 0; background: transparent; color: #fff; cursor: pointer; font: inherit; padding: 1px 6px; border-radius: 3px; }
+.dw-statusbar button:hover { background: rgba(255,255,255,.18); }
+.dw-ruler { height: 18px; background: #f3f3f3; border-bottom: 1px solid #ddd; flex-shrink: 0; position: relative; overflow: hidden; }
+
+/* ══════════════════════ Обзор документов ══════════════════════ */
+.docs-access { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); font: 12px inherit; cursor: pointer; }
+.docs-access:hover { background: var(--hover); }
+.docs-access.private { color: #e0a100; border-color: rgba(224,161,0,.4); }
+.docs-browser { width: 100%; max-width: 720px; margin-top: 24px; }
+.docs-browser-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+.docs-browser-tabs button { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text2, var(--muted)); font: 12px inherit; cursor: pointer; }
+.docs-browser-tabs button.on { background: var(--hover); color: var(--text); border-color: var(--accent); }
+.docs-recent-owner { font-size: 10px; padding: 2px 6px; border-radius: 5px; background: rgba(255,255,255,.06); color: var(--muted); flex-shrink: 0; }
+.docs-recent-owner.private { color: #e0a100; background: rgba(224,161,0,.12); }
+.docs-search { width: 100%; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); padding: 0 10px; font: 13px inherit; margin-bottom: 8px; outline: none; box-sizing: border-box; }
+.docs-search:focus { border-color: var(--accent); }
+.docs-sync-dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; display: inline-block; }
+.docs-sync-dot.saving { background: #e0a100; }
+.docs-sync-dot.error { background: #f85149; }
+.docs-saved { font-size: 11px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }

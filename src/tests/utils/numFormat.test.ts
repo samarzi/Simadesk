@@ -18,9 +18,11 @@ describe('formatCellValue — числа', () => {
     expect(formatCellValue(raw, 'n', fmt)).toBe(want);
   });
 
-  it('General и пустой формат оставляют значение машинным', () => {
-    expect(formatCellValue('1234.5', 'n', 'General')).toBe('1234.5');
-    expect(formatCellValue('1234.5', 'n', undefined)).toBe('1234.5');
+  it('General у числа — как в русском Excel: запятая, без хвостов плавающей точки', () => {
+    expect(formatCellValue('1234.5', 'n', 'General')).toBe('1234,5');
+    expect(formatCellValue('1234.5', 'n', undefined)).toBe('1234,5');
+    expect(formatCellValue(String(0.1 + 0.2), 'n', undefined)).toBe('0,3');
+    expect(formatCellValue('1234.5', undefined, undefined)).toBe('1234.5');   // текст не трогаем
   });
 
   it('секции разделяют положительное / отрицательное / ноль', () => {

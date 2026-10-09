@@ -35,7 +35,29 @@ const ERR = {
 // ─────────────────────────── Токенизатор ─────────────────────────────────
 
 type TokKind = 'num' | 'str' | 'ref' | 'range' | 'name' | 'op' | 'lparen' | 'rparen' | 'sep';
-interface Tok { kind: TokKind; text: string }
+/** sheet — имя листа у ссылок вида «'Лист 1'!A1» и «Итоги!B2:B9». */
+interface Tok { kind: TokKind; text: string; sheet?: string }
+
+const CELL_RE = /^\$?([A-Za-z]{1,3})\$?([0-9]{1,7})$/;
+const COL_RE = /^\$?([A-Za-z]{1,3})$/;
+
+/**
+ * Прочитать адресную часть после «Лист!»: A1, A1:B5 или A:C.
+ * Возвращает токен и позицию после него, либо null.
+ */
+function readAddress(src: string, i: number): { tok: Tok; end: number } | null {
+  let j = i, a = '';
+  while (j < src.length && /[A-Za-z0-9$]/.test(src[j])) a += src[j++];
+  if (!a) return null;
+  if (src[j] === ':') {
+    let k = j + 1, b = '';
+    while (k < src.length && /[A-Za-z0-9$]/.test(src[k])) b += src[k++];
+    if ((CELL_RE.test(a) && CELL_RE.test(b)) || (COL_RE.test(a) && COL_RE.test(b)))
+      return { tok: { kind: 'range', text: a + ':' + b }, end: k };
+  }
+  if (CELL_RE.test(a)) return { tok: { kind: 'ref', text: a }, end: j };
+  return null;
+}
 
 const OPS2 = ['<=', '>=', '<>'];
 // ':' нужен отдельным оператором для диапазонов, записанных с пробелами
@@ -74,9 +96,9 @@ function tokenize(src: string): Tok[] {
           if (src[i] === '.') { s += '.'; i++; while (i < src.length && /[0-9]/.test(src[i])) s += src[i++]; }
         }
       }
-      if (/[eE]/.test(src[i] ?? '') && /[0-9+\-]/.test(src[i + 1] ?? '')) {
+      if (/[eE]/.test(src[i] ?? '') && /[0-9+-]/.test(src[i + 1] ?? '')) {
         s += src[i++];
-        if (/[+\-]/.test(src[i])) s += src[i++];
+        if (/[+-]/.test(src[i])) s += src[i++];
         while (i < src.length && /[0-9]/.test(src[i])) s += src[i++];
       }
       out.push({ kind: 'num', text: s });
@@ -90,12 +112,51 @@ function tokenize(src: string): Tok[] {
       continue;
     }
 
-    // Ссылка, диапазон или имя функции. $ в адресах допускается и игнорируется.
-    if (/[A-Za-zА-Яа-я_$]/.test(ch)) {
-      let s = '';
-      while (i < src.length && /[A-Za-zА-Яа-я0-9_.$]/.test(src[i])) s += src[i++];
+    // Литерал ошибки (#REF! и т.п.) — появляется после удаления строк
+    if (ch === '#') {
+      const m = src.slice(i).match(/^#(REF!|DIV\/0!|VALUE!|NAME\?|N\/A|NUM!|NULL!|ЦИКЛ!)/i);
+      if (m) { out.push({ kind: 'name', text: m[0].toUpperCase() }); i += m[0].length; continue; }
+    }
 
-      const refRe = /^\$?([A-Za-z]{1,3})\$?([0-9]{1,7})$/;
+    // Ссылка на другой лист с именем в кавычках: 'Лист 1'!A1:B5
+    if (ch === "'") {
+      let name = '', j = i + 1;
+      while (j < src.length) {
+        if (src[j] === "'") {
+          if (src[j + 1] === "'") { name += "'"; j += 2; continue; }
+          j++; break;
+        }
+        name += src[j++];
+      }
+      if (src[j] === '!') {
+        const addr = readAddress(src, j + 1);
+        if (addr) { out.push({ ...addr.tok, sheet: name }); i = addr.end; continue; }
+      }
+      i = j;
+      continue;
+    }
+
+    // Ссылка, диапазон или имя функции. $ в адресах допускается и игнорируется.
+    if (/[A-Za-zА-Яа-яЁё_$]/.test(ch)) {
+      let s = '';
+      while (i < src.length && /[A-Za-zА-Яа-яЁё0-9_.$]/.test(src[i])) s += src[i++];
+
+      // Лист без кавычек: Итоги!B2
+      if (src[i] === '!') {
+        const addr = readAddress(src, i + 1);
+        if (addr) { out.push({ ...addr.tok, sheet: s }); i = addr.end; continue; }
+      }
+
+      // Колонки целиком: A:A, B:D
+      if (COL_RE.test(s) && src[i] === ':') {
+        let j = i + 1, t = '';
+        while (j < src.length && /[A-Za-z$]/.test(src[j])) t += src[j++];
+        if (COL_RE.test(t) && !/[0-9]/.test(src[j] ?? '')) {
+          out.push({ kind: 'range', text: s + ':' + t }); i = j; continue;
+        }
+      }
+
+      const refRe = CELL_RE;
       if (refRe.test(s)) {
         // Диапазон A1:B10 — двоеточие сразу за адресом
         if (src[i] === ':') {
@@ -125,11 +186,16 @@ function tokenize(src: string): Tok[] {
 
 // ─────────────────────────── AST и парсер ────────────────────────────────
 
+/**
+ * sh — лист, на который указывает ссылка (нет — текущий).
+ * У диапазона колонок целиком (A:C) r2 = OPEN_END: конец берётся по
+ * фактическому размеру листа в момент вычисления.
+ */
 type Node =
   | { k: 'num'; v: number }
   | { k: 'str'; v: string }
-  | { k: 'ref'; r: number; c: number }
-  | { k: 'range'; r1: number; c1: number; r2: number; c2: number }
+  | { k: 'ref'; r: number; c: number; sh?: string }
+  | { k: 'range'; r1: number; c1: number; r2: number; c2: number; sh?: string }
   | { k: 'call'; name: string; args: Node[] }
   | { k: 'bin'; op: string; l: Node; r: Node }
   | { k: 'un'; op: string; v: Node }
@@ -152,6 +218,65 @@ function parseRef(text: string): { r: number; c: number } | null {
   const m = text.match(/^\$?([A-Za-z]{1,3})\$?([0-9]{1,7})$/);
   if (!m) return null;
   return { r: +m[2] - 1, c: letterToCol(m[1]) };
+}
+
+const OPEN_END = Number.MAX_SAFE_INTEGER;
+
+/** «A1:B5» или «A:C» → границы диапазона (r2 = OPEN_END для колонок целиком). */
+function parseRangeText(text: string): { r1: number; c1: number; r2: number; c2: number } | null {
+  const [a, b] = text.split(':');
+  const ra = parseRef(a), rb = parseRef(b);
+  if (ra && rb) {
+    return { r1: Math.min(ra.r, rb.r), c1: Math.min(ra.c, rb.c), r2: Math.max(ra.r, rb.r), c2: Math.max(ra.c, rb.c) };
+  }
+  const ca = a?.match(COL_RE), cb = b?.match(COL_RE);
+  if (ca && cb) {
+    const x = letterToCol(ca[1]), y = letterToCol(cb[1]);
+    return { r1: 0, c1: Math.min(x, y), r2: OPEN_END, c2: Math.max(x, y) };
+  }
+  return null;
+}
+
+/**
+ * Русские имена функций → английские. Пользователи и ассистент пишут
+ * «=СУММ(A1:A5)» — раньше такая формула давала #NAME?, а в выгрузку .xlsx
+ * уходила в виде, который Excel не открывает.
+ */
+export const RU_FUNCTIONS: Record<string, string> = {
+  'СУММ': 'SUM', 'СРЗНАЧ': 'AVERAGE', 'МИН': 'MIN', 'МАКС': 'MAX', 'СЧЁТ': 'COUNT', 'СЧЕТ': 'COUNT',
+  'СЧЁТЗ': 'COUNTA', 'СЧЕТЗ': 'COUNTA', 'СЧИТАТЬПУСТОТЫ': 'COUNTBLANK', 'ПРОИЗВЕД': 'PRODUCT',
+  'МЕДИАНА': 'MEDIAN', 'СТАНДОТКЛОН': 'STDEV', 'СТАНДОТКЛОН.В': 'STDEV.S', 'СТАНДОТКЛОН.Г': 'STDEV.P',
+  'СУММПРОИЗВ': 'SUMPRODUCT', 'СЧЁТЕСЛИ': 'COUNTIF', 'СЧЕТЕСЛИ': 'COUNTIF', 'СЧЁТЕСЛИМН': 'COUNTIFS',
+  'СЧЕТЕСЛИМН': 'COUNTIFS', 'СУММЕСЛИ': 'SUMIF', 'СУММЕСЛИМН': 'SUMIFS', 'СРЗНАЧЕСЛИ': 'AVERAGEIF',
+  'СРЗНАЧЕСЛИМН': 'AVERAGEIFS', 'МАКСЕСЛИ': 'MAXIFS', 'МИНЕСЛИ': 'MINIFS',
+  'ЕСЛИ': 'IF', 'ЕСЛИМН': 'IFS', 'ЕСЛИОШИБКА': 'IFERROR', 'ЕСНД': 'IFNA', 'И': 'AND', 'ИЛИ': 'OR',
+  'НЕ': 'NOT', 'ИСКЛИЛИ': 'XOR', 'ВПР': 'VLOOKUP', 'ГПР': 'HLOOKUP', 'ПРОСМОТРX': 'XLOOKUP',
+  'ИНДЕКС': 'INDEX', 'ПОИСКПОЗ': 'MATCH', 'ВЫБОР': 'CHOOSE', 'ABS': 'ABS', 'ОКРУГЛ': 'ROUND',
+  'ОКРУГЛВВЕРХ': 'ROUNDUP', 'ОКРУГЛВНИЗ': 'ROUNDDOWN', 'ОКРВВЕРХ': 'CEILING', 'ОКРВНИЗ': 'FLOOR',
+  'ЦЕЛОЕ': 'INT', 'ОТБР': 'TRUNC', 'КОРЕНЬ': 'SQRT', 'СТЕПЕНЬ': 'POWER', 'ОСТАТ': 'MOD', 'ЗНАК': 'SIGN',
+  'EXP': 'EXP', 'LN': 'LN', 'LOG': 'LOG', 'LOG10': 'LOG10', 'ПИ': 'PI', 'СЛЧИС': 'RAND',
+  'СЛУЧМЕЖДУ': 'RANDBETWEEN', 'СЦЕПИТЬ': 'CONCATENATE', 'СЦЕП': 'CONCAT', 'ОБЪЕДИНИТЬ': 'TEXTJOIN',
+  'ДЛСТР': 'LEN', 'ЛЕВСИМВ': 'LEFT', 'ПРАВСИМВ': 'RIGHT', 'ПСТР': 'MID', 'СЖПРОБЕЛЫ': 'TRIM',
+  'ПРОПИСН': 'UPPER', 'СТРОЧН': 'LOWER', 'ПРОПНАЧ': 'PROPER', 'ПОДСТАВИТЬ': 'SUBSTITUTE',
+  'ЗАМЕНИТЬ': 'REPLACE', 'НАЙТИ': 'FIND', 'ПОИСК': 'SEARCH', 'СОВПАД': 'EXACT', 'ПОВТОР': 'REPT',
+  'ТЕКСТ': 'TEXT', 'ЗНАЧЕН': 'VALUE', 'СЕГОДНЯ': 'TODAY', 'ТДАТА': 'NOW', 'ДАТА': 'DATE', 'ГОД': 'YEAR',
+  'МЕСЯЦ': 'MONTH', 'ДЕНЬ': 'DAY', 'ЧАС': 'HOUR', 'МИНУТЫ': 'MINUTE', 'СЕКУНДЫ': 'SECOND',
+  'ДЕНЬНЕД': 'WEEKDAY', 'ДНИ': 'DAYS', 'ДАТАМЕС': 'EDATE', 'КОНМЕСЯЦА': 'EOMONTH', 'РАЗНДАТ': 'DATEDIF',
+  'ЕПУСТО': 'ISBLANK', 'ЕЧИСЛО': 'ISNUMBER', 'ЕТЕКСТ': 'ISTEXT', 'ЕОШИБКА': 'ISERROR', 'ЕНД': 'ISNA',
+  'НД': 'NA', 'Ч': 'N', 'Т': 'T', 'ПРОМЕЖУТОЧНЫЕ.ИТОГИ': 'SUBTOTAL', 'НАИБОЛЬШИЙ': 'LARGE',
+  'НАИМЕНЬШИЙ': 'SMALL', 'РАНГ': 'RANK', 'РАНГ.РВ': 'RANK.EQ', 'ЕЧЁТН': 'ISEVEN', 'ЕНЕЧЁТ': 'ISODD',
+  'ЧАСТНОЕ': 'QUOTIENT', 'НОМНЕДЕЛИ': 'WEEKNUM', 'ЧИСТРАБДНИ': 'NETWORKDAYS', 'СИМВОЛ': 'CHAR',
+  'КОДСИМВ': 'CODE', 'ПЕЧСИМВ': 'CLEAN', 'СТРОКА': 'ROW', 'СТОЛБЕЦ': 'COLUMN', 'ЧСТРОК': 'ROWS',
+  'ЧИСЛСТОЛБ': 'COLUMNS', 'ДИСП': 'VAR', 'ДИСП.В': 'VAR.S', 'ДИСП.Г': 'VAR.P', 'СУММКВ': 'SUMSQ',
+  'ОКРУГЛТ': 'MROUND', 'ЕЛОГИЧ': 'ISLOGICAL', 'ГИПЕРССЫЛКА': 'HYPERLINK', 'СРЗНАЧА': 'AVERAGEA',
+  'ПРОЦЕНТИЛЬ': 'PERCENTILE', 'КВАРТИЛЬ': 'QUARTILE', 'МОДА': 'MODE', 'ЧЁТН': 'EVEN', 'НЕЧЁТ': 'ODD',
+  'ЧЕТН': 'EVEN', 'НЕЧЕТ': 'ODD', 'ИСТИНА': 'TRUE', 'ЛОЖЬ': 'FALSE',
+};
+
+/** Имя функции в каноническом (английском) виде. */
+export function canonicalFn(name: string): string {
+  const up = name.toUpperCase();
+  return RU_FUNCTIONS[up] ?? up;
 }
 
 /** Приоритеты бинарных операторов; больше — крепче связывает. */
@@ -213,6 +338,7 @@ class Parser {
             k: 'range',
             r1: Math.min(n.r, rhs.r), c1: Math.min(n.c, rhs.c),
             r2: Math.max(n.r, rhs.r), c2: Math.max(n.c, rhs.c),
+            ...(n.sh ? { sh: n.sh } : {}),
           };
           continue;
         }
@@ -233,17 +359,12 @@ class Parser {
       case 'str': return { k: 'str', v: t.text };
       case 'ref': {
         const r = parseRef(t.text);
-        return r ? { k: 'ref', ...r } : { k: 'err', v: ERR.ref };
+        return r ? { k: 'ref', ...r, ...(t.sheet ? { sh: t.sheet } : {}) } : { k: 'err', v: ERR.ref };
       }
       case 'range': {
-        const [a, b] = t.text.split(':');
-        const ra = parseRef(a), rb = parseRef(b);
-        if (!ra || !rb) return { k: 'err', v: ERR.ref };
-        return {
-          k: 'range',
-          r1: Math.min(ra.r, rb.r), c1: Math.min(ra.c, rb.c),
-          r2: Math.max(ra.r, rb.r), c2: Math.max(ra.c, rb.c),
-        };
+        const rg = parseRangeText(t.text);
+        if (!rg) return { k: 'err', v: ERR.ref };
+        return { k: 'range', ...rg, ...(t.sheet ? { sh: t.sheet } : {}) };
       }
       case 'lparen': {
         const n = this.expr(0);
@@ -251,9 +372,13 @@ class Parser {
         return n;
       }
       case 'name': {
-        // Логические литералы
-        if (t.text === 'TRUE' || t.text === 'ИСТИНА') return { k: 'num', v: 1 };
-        if (t.text === 'FALSE' || t.text === 'ЛОЖЬ') return { k: 'num', v: 0 };
+        if (t.text.startsWith('#')) return { k: 'err', v: { err: t.text } };
+        // Логические литералы (TRUE() / ИСТИНА() тоже допустимы)
+        const fn = canonicalFn(t.text);
+        if (fn === 'TRUE' || fn === 'FALSE') {
+          if (this.peek()?.kind === 'lparen') { this.next(); if (this.peek()?.kind === 'rparen') this.next(); }
+          return { k: 'num', v: fn === 'TRUE' ? 1 : 0 };
+        }
         if (this.peek()?.kind !== 'lparen') return { k: 'err', v: ERR.name };
         this.next(); // (
         const args: Node[] = [];
@@ -266,7 +391,7 @@ class Parser {
           }
         }
         if (this.peek()?.kind === 'rparen') this.next();
-        return { k: 'call', name: t.text, args };
+        return { k: 'call', name: fn, args };
       }
       default:
         return { k: 'err', v: ERR.value };
@@ -399,6 +524,14 @@ export interface GridAccess {
   raw(r: number, c: number): string;
   /** Число ли это по типу ячейки (когда таблица знает тип явно). */
   isNumeric?(r: number, c: number): boolean;
+  /** Сколько строк реально занято — граница для диапазонов вида A:A. */
+  rowCount?(): number;
+  /**
+   * Другой лист книги по имени (без учёта регистра) — для ссылок «Лист!A1».
+   * Должен возвращать один и тот же объект для одного листа: по нему
+   * вычислители листов делят общий кэш и общую защиту от циклов.
+   */
+  sheet?(name: string): GridAccess | null;
 }
 
 export interface Evaluator {
@@ -412,9 +545,34 @@ export interface Evaluator {
 
 const MAX_DEPTH = 64;
 
+/** Вычислитель листа + служебный доступ для соседних листов той же книги. */
+interface SheetEval extends Evaluator {
+  rows(): number;
+}
+
 export function createEvaluator(grid: GridAccess): Evaluator {
+  return makeEvaluator(grid, new Map());
+}
+
+function makeEvaluator(grid: GridAccess, registry: Map<GridAccess, SheetEval>): SheetEval {
   const cache = new Map<string, Scalar>();
   const visiting = new Set<string>();
+  /** Ячейка, которая сейчас вычисляется, — для ROW()/COLUMN() без аргументов. */
+  const stack: Array<{ r: number; c: number }> = [];
+
+  /** Вычислитель листа, на который указывает ссылка; null — листа нет. */
+  function target(sh?: string): SheetEval | null {
+    if (!sh) return self;
+    const g = grid.sheet?.(sh);
+    if (!g) return null;
+    if (g === grid) return self;
+    return registry.get(g) ?? makeEvaluator(g, registry);
+  }
+
+  function rows(): number {
+    if (grid.rowCount) return grid.rowCount();
+    return 0;
+  }
 
   function cellValue(r: number, c: number): Scalar {
     if (r < 0 || c < 0) return ERR.ref;
@@ -428,6 +586,7 @@ export function createEvaluator(grid: GridAccess): Evaluator {
 
     if (raw.startsWith('=')) {
       visiting.add(key);
+      stack.push({ r, c });
       let val: Scalar;
       try {
         val = first(evalNode(parse(raw.slice(1)), 0));
@@ -435,6 +594,7 @@ export function createEvaluator(grid: GridAccess): Evaluator {
         val = ERR.value;
       } finally {
         visiting.delete(key);
+        stack.pop();
       }
       cache.set(key, val);
       return val;
@@ -454,11 +614,25 @@ export function createEvaluator(grid: GridAccess): Evaluator {
     return val;
   }
 
-  function rangeValues(n: Extract<Node, { k: 'range' }>): Scalar[] {
+  /** Нижняя граница диапазона: у «A:A» — последняя занятая строка листа. */
+  function lastRow(n: Extract<Node, { k: 'range' }>, ev: SheetEval): number {
+    return n.r2 === OPEN_END ? Math.max(n.r1, ev.rows() - 1) : n.r2;
+  }
+
+  function rangeValues(n: Extract<Node, { k: 'range' }>): Scalar[] | FErr {
+    const ev = target(n.sh);
+    if (!ev) return ERR.ref;
     const out: Scalar[] = [];
-    for (let r = n.r1; r <= n.r2; r++)
-      for (let c = n.c1; c <= n.c2; c++) out.push(cellValue(r, c));
+    const r2 = lastRow(n, ev);
+    for (let r = n.r1; r <= r2; r++)
+      for (let c = n.c1; c <= n.c2; c++) out.push(ev.cellValue(r, c));
     return out;
+  }
+
+  /** Значение ячейки диапазона с учётом листа, на который он ссылается. */
+  function at(n: Extract<Node, { k: 'range' }>, r: number, c: number): Scalar {
+    const ev = target(n.sh);
+    return ev ? ev.cellValue(r, c) : ERR.ref;
   }
 
   function parse(src: string): Node {
@@ -472,7 +646,10 @@ export function createEvaluator(grid: GridAccess): Evaluator {
       case 'num': return n.v;
       case 'str': return n.v;
       case 'err': return n.v;
-      case 'ref': return cellValue(n.r, n.c);
+      case 'ref': {
+        const ev = target(n.sh);
+        return ev ? ev.cellValue(n.r, n.c) : ERR.ref;
+      }
       case 'range': return rangeValues(n);
       case 'pct': {
         const v = toNum(evalNode(n.v, depth + 1));
@@ -690,24 +867,32 @@ export function createEvaluator(grid: GridAccess): Evaluator {
         const rangeNode = n.args[1];
         if (!rangeNode || rangeNode.k !== 'range') return ERR.ref;
         const idx = toNum(a2); if (isErr(idx)) return idx;
-        const exact = n.args[3] === undefined ? true : !toBool(evalNode(n.args[3], depth + 1));
-        const pred = makeCriteria(first(a0));
-        const { r1, c1, r2, c2 } = rangeNode;
-
-        if (name === 'VLOOKUP') {
-          for (let r = r1; r <= r2; r++) {
-            if (!pred(cellValue(r, c1))) continue;
-            const col = c1 + idx - 1;
-            return col > c2 ? ERR.ref : cellValue(r, col);
+        // Четвёртый аргумент: ЛОЖЬ/0 — точное совпадение, ИСТИНА/пусто — приблизительное
+        // (как в Excel: последняя строка, где ключ ≤ искомого, при сортировке по возрастанию).
+        const approx = n.args[3] === undefined ? false : toBool(evalNode(n.args[3], depth + 1)) === true;
+        const key = first(a0);
+        const pred = makeCriteria(typeof key === 'string' ? key.replace(/^([<>=])/, '=$1') : key);
+        const ev = target(rangeNode.sh);
+        if (!ev) return ERR.ref;
+        const { r1, c1, c2 } = rangeNode;
+        const r2 = lastRow(rangeNode, ev);
+        const vert = name === 'VLOOKUP';
+        const len = vert ? r2 - r1 + 1 : c2 - c1 + 1;
+        const keyAt = (i: number) => vert ? ev.cellValue(r1 + i, c1) : ev.cellValue(r1, c1 + i);
+        const resultAt = (i: number) => {
+          if (vert) { const col = c1 + idx - 1; return col > c2 ? ERR.ref : ev.cellValue(r1 + i, col); }
+          const row = r1 + idx - 1; return row > r2 ? ERR.ref : ev.cellValue(row, c1 + i);
+        };
+        if (approx && typeof key === 'number') {
+          let hit = -1;
+          for (let i = 0; i < len; i++) {
+            const k = keyAt(i);
+            if (typeof k === 'number' && k <= key) hit = i;
+            else if (typeof k === 'number' && k > key) break;
           }
-        } else {
-          for (let c = c1; c <= c2; c++) {
-            if (!pred(cellValue(r1, c))) continue;
-            const row = r1 + idx - 1;
-            return row > r2 ? ERR.ref : cellValue(row, c);
-          }
+          return hit < 0 ? ERR.na : resultAt(hit);
         }
-        void exact;
+        for (let i = 0; i < len; i++) if (pred(keyAt(i))) return resultAt(i);
         return ERR.na;
       }
       case 'MATCH': {
@@ -722,12 +907,15 @@ export function createEvaluator(grid: GridAccess): Evaluator {
         if (rangeNode?.k === 'range') {
           const colN = a2 !== undefined ? toNum(a2) : 1;
           if (isErr(colN)) return colN;
-          const { r1, c1, r2, c2 } = rangeNode;
+          const ev = target(rangeNode.sh);
+          if (!ev) return ERR.ref;
+          const { r1, c1, c2 } = rangeNode;
+          const r2 = lastRow(rangeNode, ev);
           // Одномерный диапазон адресуется одним индексом
-          if (r1 === r2 && a2 === undefined) return cellValue(r1, c1 + rowN - 1);
-          if (c1 === c2 && a2 === undefined) return cellValue(r1 + rowN - 1, c1);
+          if (r1 === r2 && a2 === undefined) return at(rangeNode, r1, c1 + rowN - 1);
+          if (c1 === c2 && a2 === undefined) return at(rangeNode, r1 + rowN - 1, c1);
           const r = r1 + rowN - 1, c = c1 + colN - 1;
-          return (r > r2 || c > c2) ? ERR.ref : cellValue(r, c);
+          return (r > r2 || c > c2) ? ERR.ref : at(rangeNode, r, c);
         }
         const list = flat(a0);
         return list[rowN - 1] ?? ERR.ref;
@@ -918,6 +1106,143 @@ export function createEvaluator(grid: GridAccess): Evaluator {
       case 'NA':       return ERR.na;
       case 'N':        { const x = toNum(a0); return isErr(x) ? 0 : x; }
       case 'T':        { const s = first(a0); return typeof s === 'string' ? s : ''; }
+      case 'ISLOGICAL': return typeof first(a0) === 'boolean';
+      case 'ISEVEN': case 'ISODD': {
+        const x = toNum(a0); if (isErr(x)) return x;
+        const even = Math.trunc(x) % 2 === 0;
+        return name === 'ISEVEN' ? even : !even;
+      }
+
+      // ── Позиция и размер ──────────────────────────────────────────────
+      case 'ROW': case 'COLUMN': {
+        const nd = n.args[0];
+        if (!nd) { const cur = stack[stack.length - 1]; return cur ? (name === 'ROW' ? cur.r + 1 : cur.c + 1) : ERR.value; }
+        if (nd.k === 'ref') return name === 'ROW' ? nd.r + 1 : nd.c + 1;
+        if (nd.k === 'range') return name === 'ROW' ? nd.r1 + 1 : nd.c1 + 1;
+        return ERR.value;
+      }
+      case 'ROWS': case 'COLUMNS': {
+        const nd = n.args[0];
+        if (nd?.k === 'ref') return 1;
+        if (nd?.k === 'range') {
+          const ev = target(nd.sh); if (!ev) return ERR.ref;
+          return name === 'ROWS' ? lastRow(nd, ev) - nd.r1 + 1 : nd.c2 - nd.c1 + 1;
+        }
+        return Array.isArray(a0) ? (name === 'ROWS' ? a0.length : 1) : 1;
+      }
+
+      // ── Статистика ────────────────────────────────────────────────────
+      case 'LARGE': case 'SMALL': {
+        const list = nums([a0]); if (isErr(list)) return list;
+        const k = toNum(a1); if (isErr(k)) return k;
+        const s = [...list].sort((x, y) => name === 'LARGE' ? y - x : x - y);
+        return k >= 1 && k <= s.length ? s[Math.floor(k) - 1] : ERR.num;
+      }
+      case 'RANK': case 'RANK.EQ': {
+        const x = toNum(a0); if (isErr(x)) return x;
+        const list = nums([a1]); if (isErr(list)) return list;
+        const asc = a2 !== undefined && toBool(a2) === true;
+        if (!list.includes(x)) return ERR.na;
+        return 1 + list.filter(v => asc ? v < x : v > x).length;
+      }
+      case 'VAR': case 'VAR.S': case 'VAR.P': case 'STDEV.S': case 'STDEV.P': case 'STDEVP': {
+        const list = nums(args); if (isErr(list)) return list;
+        const pop = name.endsWith('.P') || name === 'STDEVP';
+        if (list.length < (pop ? 1 : 2)) return ERR.div0;
+        const m = list.reduce((s, v) => s + v, 0) / list.length;
+        const v = list.reduce((s, x) => s + (x - m) ** 2, 0) / (list.length - (pop ? 0 : 1));
+        return name.startsWith('VAR') ? v : Math.sqrt(v);
+      }
+      case 'SUMSQ': return agg(l => l.reduce((s, v) => s + v * v, 0));
+      case 'AVERAGEA': {
+        let s = 0, cnt = 0;
+        for (const v of args) for (const x of flat(v)) {
+          if (isErr(x)) return x;
+          if (typeof x === 'string' && x.trim() === '') continue;
+          s += typeof x === 'number' ? x : typeof x === 'boolean' ? (x ? 1 : 0) : 0; cnt++;
+        }
+        return cnt ? s / cnt : ERR.div0;
+      }
+      case 'MODE': {
+        const list = nums(args); if (isErr(list)) return list;
+        const cnt = new Map<number, number>();
+        let best = NaN, bestN = 1;
+        for (const v of list) { const k = (cnt.get(v) ?? 0) + 1; cnt.set(v, k); if (k > bestN) { bestN = k; best = v; } }
+        return isNaN(best) ? ERR.na : best;
+      }
+      case 'PERCENTILE': case 'QUARTILE': {
+        const list = nums([a0]); if (isErr(list)) return list;
+        let p = toNum(a1); if (isErr(p)) return p;
+        if (name === 'QUARTILE') p = p / 4;
+        if (!list.length || p < 0 || p > 1) return ERR.num;
+        const s = [...list].sort((x, y) => x - y);
+        const pos = p * (s.length - 1), lo = Math.floor(pos), hi = Math.ceil(pos);
+        return s[lo] + (s[hi] - s[lo]) * (pos - lo);
+      }
+      case 'SUBTOTAL': {
+        const fnum = toNum(a0); if (isErr(fnum)) return fnum;
+        const code = Math.trunc(fnum) % 100;
+        const rest = args.slice(1);
+        const list = nums(rest); if (isErr(list)) return list;
+        const sum = list.reduce((s, v) => s + v, 0);
+        switch (code) {
+          case 1: return list.length ? sum / list.length : ERR.div0;
+          case 2: return list.length;
+          case 3: return rest.reduce<number>((acc, v) => acc + flat(v).filter(s => !(typeof s === 'string' && s.trim() === '')).length, 0);
+          case 4: return list.length ? Math.max(...list) : 0;
+          case 5: return list.length ? Math.min(...list) : 0;
+          case 6: return list.reduce((s, v) => s * v, 1);
+          case 9: return sum;
+          default: return ERR.value;
+        }
+      }
+
+      // ── Математика (дополнение) ───────────────────────────────────────
+      case 'QUOTIENT': {
+        const x = toNum(a0), y = toNum(a1); if (isErr(x)) return x; if (isErr(y)) return y;
+        return y === 0 ? ERR.div0 : Math.trunc(x / y);
+      }
+      case 'MROUND': {
+        const x = toNum(a0), m = toNum(a1); if (isErr(x)) return x; if (isErr(m)) return m;
+        return m === 0 ? 0 : Math.round(x / m) * m;
+      }
+      case 'EVEN': case 'ODD': {
+        const x = toNum(a0); if (isErr(x)) return x;
+        const sgn = x < 0 ? -1 : 1; let v = Math.ceil(Math.abs(x));
+        if (name === 'EVEN' && v % 2) v++;
+        if (name === 'ODD' && v % 2 === 0) v++;
+        return sgn * v;
+      }
+
+      // ── Текст (дополнение) ────────────────────────────────────────────
+      case 'CHAR': { const x = toNum(a0); return isErr(x) ? x : String.fromCharCode(x); }
+      case 'CODE': { const s = toStr(a0); return isErr(s) ? s : (s.length ? s.charCodeAt(0) : ERR.value); }
+      // eslint-disable-next-line no-control-regex
+      case 'CLEAN': { const s = toStr(a0); return isErr(s) ? s : s.replace(/[\x00-\x1f]/g, ''); }
+      case 'HYPERLINK': { const s = toStr(a1 !== undefined ? a1 : a0); return s; }
+
+      // ── Даты (дополнение) ─────────────────────────────────────────────
+      case 'WEEKNUM': {
+        const x = toNum(a0); if (isErr(x)) return x;
+        const d = serialToDate(x);
+        const jan1 = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+        const type = a1 !== undefined ? toNum(a1) : 1; if (isErr(type)) return type;
+        const startDow = type === 2 ? 1 : 0;
+        const offset = (jan1.getUTCDay() - startDow + 7) % 7;
+        const dayOfYear = Math.floor((d.getTime() - jan1.getTime()) / 86400000);
+        return Math.floor((dayOfYear + offset) / 7) + 1;
+      }
+      case 'NETWORKDAYS': {
+        const s = toNum(a0), e = toNum(a1); if (isErr(s)) return s; if (isErr(e)) return e;
+        const holidays = new Set((a2 !== undefined ? flat(a2) : []).filter(v => typeof v === 'number').map(v => Math.floor(v as number)));
+        const from = Math.floor(Math.min(s, e)), to = Math.floor(Math.max(s, e));
+        let cnt = 0;
+        for (let x = from; x <= to; x++) {
+          const dow = serialToDate(x).getUTCDay();
+          if (dow !== 0 && dow !== 6 && !holidays.has(x)) cnt++;
+        }
+        return s <= e ? cnt : -cnt;
+      }
 
       default: return ERR.name;
     }
@@ -940,7 +1265,9 @@ export function createEvaluator(grid: GridAccess): Evaluator {
     return v;
   }
 
-  return { evaluate, evalToString, cellValue };
+  const self: SheetEval = { evaluate, evalToString, cellValue, rows };
+  registry.set(grid, self);
+  return self;
 }
 
 /** Список функций для автодополнения в строке формул. */
@@ -955,4 +1282,144 @@ export const FUNCTION_NAMES = [
   'SUBSTITUTE','REPLACE','FIND','SEARCH','EXACT','REPT','TEXT','VALUE',
   'TODAY','NOW','DATE','YEAR','MONTH','DAY','HOUR','MINUTE','SECOND','WEEKDAY','DAYS','EDATE','EOMONTH','DATEDIF',
   'ISBLANK','ISNUMBER','ISTEXT','ISERROR','ISNA','NA','N','T',
+  'ISLOGICAL','ISEVEN','ISODD','ROW','COLUMN','ROWS','COLUMNS','LARGE','SMALL','RANK','RANK.EQ',
+  'VAR','VAR.S','VAR.P','STDEV.S','STDEV.P','SUMSQ','AVERAGEA','MODE','PERCENTILE','QUARTILE','SUBTOTAL',
+  'QUOTIENT','MROUND','EVEN','ODD','CHAR','CODE','CLEAN','HYPERLINK','WEEKNUM','NETWORKDAYS',
 ];
+
+// ─────────────────────────── Перезапись формул ───────────────────────────
+//
+// Формула хранится текстом. Вставка/удаление строк, автозаполнение,
+// копирование и выгрузка в .xlsx требуют переписать в ней ссылки или имена —
+// делаем это по токенам, а не регулярками по тексту, чтобы не задеть
+// строки в кавычках и имена функций.
+
+/** Имя листа в виде, пригодном для формулы: кавычки, если есть пробелы и т.п. */
+export function quoteSheet(name: string): string {
+  return /^[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_.]*$/.test(name) && !CELL_RE.test(name)
+    ? name : `'${name.replace(/'/g, "''")}'`;
+}
+
+function emitTokens(toks: Tok[], mapRef: (t: Tok) => string, sep?: string): string {
+  let out = '';
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    switch (t.kind) {
+      case 'str': out += '"' + t.text.replace(/"/g, '""') + '"'; break;
+      case 'ref': case 'range': out += mapRef(t); break;
+      case 'sep': out += sep ?? t.text; break;
+      case 'name': out += t.text; break;
+      default: out += t.text;
+    }
+  }
+  return out;
+}
+
+/**
+ * Формула в виде, который понимает файл .xlsx: английские имена функций,
+ * запятая между аргументами, без ведущего «=».
+ */
+export function toExcelFormula(formula: string): string {
+  const src = formula.startsWith('=') ? formula.slice(1) : formula;
+  const toks = tokenize(src);
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (t.kind === 'name') {
+      const fn = canonicalFn(t.text);
+      // Литералы ИСТИНА/ЛОЖЬ без скобок — тоже по-английски
+      t.text = fn;
+    }
+  }
+  return emitTokens(toks, t => (t.sheet ? quoteSheet(t.sheet) + '!' : '') + t.text, ',');
+}
+
+/** Сдвинуть одну адресную часть «$A$1» на dr/dc, уважая знаки $. */
+function shiftAddr(addr: string, f: (r: number | null, c: number, absR: boolean, absC: boolean) => { r: number | null; c: number } | null): string | null {
+  const cell = addr.match(/^(\$?)([A-Za-z]{1,3})(\$?)([0-9]{1,7})$/);
+  if (cell) {
+    const res = f(+cell[4] - 1, letterToCol(cell[2]), cell[3] === '$', cell[1] === '$');
+    if (!res || res.r === null || res.r < 0 || res.c < 0) return null;
+    return `${cell[1]}${colToLetter(res.c)}${cell[3]}${res.r + 1}`;
+  }
+  const col = addr.match(/^(\$?)([A-Za-z]{1,3})$/);
+  if (col) {
+    const res = f(null, letterToCol(col[2]), false, col[1] === '$');
+    if (!res || res.c < 0) return null;
+    return `${col[1]}${colToLetter(res.c)}`;
+  }
+  return addr;
+}
+
+/**
+ * Относительный сдвиг формулы при копировании/автозаполнении: =A1+$B$1,
+ * скопированная на строку ниже, становится =A2+$B$1 — как в Excel.
+ */
+export function offsetFormula(formula: string, dr: number, dc: number): string {
+  if (!formula.startsWith('=') || (!dr && !dc)) return formula;
+  const toks = tokenize(formula.slice(1));
+  const body = emitTokens(toks, t => {
+    const parts = t.text.split(':').map(p => shiftAddr(p, (r, c, absR, absC) => ({
+      r: r === null ? null : absR ? r : r + dr,
+      c: absC ? c : c + dc,
+    })));
+    if (parts.some(p => p === null)) return '#REF!';
+    return (t.sheet ? quoteSheet(t.sheet) + '!' : '') + parts.join(':');
+  });
+  return '=' + body;
+}
+
+/**
+ * Вставка/удаление строк или колонок: ссылки, указывающие за точку вставки,
+ * сдвигаются (и абсолютные тоже — Excel поступает так же). Ссылка на
+ * удалённую ячейку превращается в #REF!.
+ *
+ * onSheet — сравнение имени листа ссылки с изменяемым листом; ссылки без
+ * имени листа относятся к листу формулы (formulaOnSheet).
+ */
+export function shiftFormulaRefs(
+  formula: string,
+  op: { axis: 'row' | 'col'; at: number; count: number },
+  formulaOnSheet: boolean,
+  onSheet: (name: string) => boolean,
+): string {
+  if (!formula.startsWith('=')) return formula;
+  const toks = tokenize(formula.slice(1));
+  let changed = false;
+  const body = emitTokens(toks, t => {
+    const affected = t.sheet ? onSheet(t.sheet) : formulaOnSheet;
+    const prefix = t.sheet ? quoteSheet(t.sheet) + '!' : '';
+    if (!affected) return prefix + t.text;
+    const ends = t.text.split(':');
+    const isRange = ends.length === 2;
+    const mapped = ends.map((p, idx) => shiftAddr(p, (r, c) => {
+      const v = op.axis === 'row' ? r : c;
+      if (v === null) return { r, c };                      // колонка целиком при сдвиге строк
+      let nv = v;
+      if (op.count > 0) { if (v >= op.at) nv = v + op.count; }
+      else {
+        const del = -op.count;
+        if (v >= op.at + del) nv = v - del;
+        else if (v >= op.at) {
+          // Конец диапазона внутри удалённого куска стягиваем, одиночная ссылка — #REF!
+          if (!isRange) return null;
+          nv = idx === 0 ? op.at : op.at - 1;
+        }
+      }
+      if (nv !== v) changed = true;
+      return op.axis === 'row' ? { r: nv, c } : { r, c: nv };
+    }));
+    if (mapped.some(p => p === null)) { changed = true; return '#REF!'; }
+    return prefix + mapped.join(':');
+  });
+  return changed ? '=' + body : formula;
+}
+
+/** Переименование листа: «'Старое имя'!A1» → «Новое!A1». */
+export function renameSheetInFormula(formula: string, from: string, to: string): string {
+  if (!formula.startsWith('=')) return formula;
+  const toks = tokenize(formula.slice(1));
+  const low = from.toLowerCase();
+  if (!toks.some(t => t.sheet && t.sheet.toLowerCase() === low)) return formula;
+  return '=' + emitTokens(toks, t =>
+    (t.sheet ? quoteSheet(t.sheet.toLowerCase() === low ? to : t.sheet) + '!' : '') + t.text);
+}

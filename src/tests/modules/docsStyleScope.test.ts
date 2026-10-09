@@ -18,6 +18,7 @@ const sheetOf = () => M.parseExcelContent(doc.content).sheets[0];
 
 beforeEach(() => {
   M = Object.create(DocsModule.prototype);
+  Object.assign(M, { dirty: new Set(), serverKnown: new Set(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: false, pendingContent: new Set(), warnedNoPersist: new Set(), recent: [] });
   const data = Array.from({ length: 5 }, (_, r) =>
     Array.from({ length: 4 }, (_, c) => ({ v: `r${r}c${c}` })));
   doc = { id: 'd1', type: 'excel', title: 'T', content: JSON.stringify({ sheets: [{ name: 'Лист1', data }] }) };
@@ -41,7 +42,7 @@ describe('excel_style_range не трогает лишнего', () => {
   it('одна ячейка — красится ровно одна', () => {
     M.aiStyleRange({ range: 'B2', bg: '#ff0000' });
     const d = sheetOf().data;
-    expect(d[1][1].s).toContain('background:#ff0000');
+    expect(d[1][1].s).toContain('background-color:#ff0000');
     const painted = d.flat().filter((c: any) => c.s).length;
     expect(painted).toBe(1);
   });
@@ -59,7 +60,7 @@ describe('excel_style_range не трогает лишнего', () => {
 
   it('"all" по-прежнему красит весь лист', () => {
     M.aiStyleRange({ range: 'all', bg: '#0000ff' });
-    expect(sheetOf().data.flat().every((c: any) => c.s?.includes('background:#0000ff'))).toBe(true);
+    expect(sheetOf().data.flat().every((c: any) => c.s?.includes('background-color:#0000ff'))).toBe(true);
   });
 });
 
@@ -88,8 +89,8 @@ describe('строка стиля не растёт от повторных пр
   it('десять смен заливки оставляют одно свойство background', () => {
     for (let i = 0; i < 10; i++) M.aiStyleRange({ range: 'A1', bg: `#ff00${i}${i}` });
     const s: string = sheetOf().data[0][0].s;
-    expect(s.match(/background:/g)).toHaveLength(1);
-    expect(s).toContain('background:#ff0099');
+    expect(s.match(/background-color:/g)).toHaveLength(1);
+    expect(s).toContain('background-color:#ff0099');
     expect(s.length).toBeLessThan(40);
   });
 
@@ -106,13 +107,13 @@ describe('строка стиля не растёт от повторных пр
     M.aiStyleRange({ range: 'A1', bg: '#0000ff' });
     const s: string = sheetOf().data[0][0].s;
     expect(s).toContain('font-weight:bold');
-    expect(s).toContain('background:#0000ff');
+    expect(s).toContain('background-color:#0000ff');
     expect(s).not.toContain('#ff0000');
   });
 
   it('background-color из импорта xlsx перекрывается заливкой из тулбара', () => {
     expect(M.mergeCellCss('background-color:#ffff00;font-weight:bold', 'background:#ff0000;'))
-      .toBe('background:#ff0000;font-weight:bold');
+      .toBe('font-weight:bold;background-color:#ff0000');
   });
 
   it('одинаково оформленные ячейки дают одинаковую строку — палитра их схлопывает', () => {

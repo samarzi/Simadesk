@@ -27,6 +27,7 @@ let M: any;
 
 beforeEach(() => {
   M = Object.create(DocsModule.prototype);
+  Object.assign(M, { dirty: new Set(), serverKnown: new Set(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: false, pendingContent: new Set(), warnedNoPersist: new Set(), recent: [] });
   const doc = {
     id: 'd1', type: 'excel', title: 'Прайс', updated_at: 0,
     content: JSON.stringify({ sheets: [{ name: 'Лист1', data: ROWS }] }),

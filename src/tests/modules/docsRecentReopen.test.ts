@@ -24,6 +24,7 @@ beforeEach(() => {
   db.rows = [];
   localStorage.clear();
   M = Object.create(DocsModule.prototype);
+  Object.assign(M, { dirty: new Set(), serverKnown: new Set(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: false, pendingContent: new Set(), warnedNoPersist: new Set(), recent: [] });
   M.root = document.createElement('div');
   // Корни предыдущих тестов надо убирать: иначе в документе остаётся несколько
   // элементов с id="docs-recent-wrap", и селектор «#docs-recent-wrap .row»

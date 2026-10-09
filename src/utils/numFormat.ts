@@ -151,6 +151,16 @@ function formatNumberSpec(n: number, spec: NumSpec, sep: { group: string; decima
 
 function pad2(n: number): string { return String(n).padStart(2, '0'); }
 
+/** Число в «Общем» формате: до 15 значащих цифр, экспонента для огромных. */
+export function generalNumber(n: number, decimal = ','): string {
+  if (n === 0) return '0';
+  const abs = Math.abs(n);
+  let s: string;
+  if (abs >= 1e15 || abs < 1e-9) s = n.toExponential(5).replace(/\.?0+e/, 'E').replace('E+', 'E+');
+  else s = String(parseFloat(n.toPrecision(15)));
+  return s.replace('.', decimal);
+}
+
 /** Применить формат даты/времени к JS-дате. */
 function formatDate(d: Date, fmt: string, hasTime: boolean): string {
   const Y = d.getUTCFullYear(), Mo = d.getUTCMonth(), D = d.getUTCDate();
@@ -239,6 +249,12 @@ export function formatCellValue(
     if (type === 'd') {
       const d = new Date(raw);
       return isNaN(d.getTime()) ? raw : formatDate(d, 'dd.mm.yyyy', false);
+    }
+    // Общий формат у числа — как в русском Excel: десятичная запятая и без
+    // хвостов плавающей точки (0,1+0,2 → «0,3», а не «0.30000000000000004»).
+    if (type === 'n' && fmt !== '@') {
+      const n = Number(raw);
+      if (raw.trim() !== '' && isFinite(n)) return generalNumber(n, sep.decimal);
     }
     return raw;
   }

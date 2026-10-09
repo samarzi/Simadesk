@@ -121,7 +121,7 @@ const DATA_FETCH_ACTIONS = new Set([
  * прежде чем обязана ответить текстом. Защита от зацикливания и от расхода
  * токенов, если модель начнёт ходить по кругу.
  */
-const MAX_AGENT_STEPS = 4;
+const MAX_AGENT_STEPS = 8;
 
 /** Предел на один запрос к модели и на паузу между чанками стрима. */
 const AI_REQUEST_TIMEOUT_MS = 90_000;
@@ -6485,8 +6485,10 @@ export class AssistantModule {
       // редактор: замена выполнена — карточка с результатом достаточна, AI follow-up только путает
       'word_replace', 'excel_replace', 'multi_replace',
       'word_clear_formatting', 'word_heading',
-      'excel_set_cell', 'excel_style_column', 'excel_sort_sheet',
-      'excel_add_sheet', 'excel_insert_column', 'excel_delete_rows', 'excel_add_to_column',
+      // Действия, после которых обычно нужен следующий шаг (добавить лист →
+      // заполнить его → построить график), сюда НЕ входят: раньше
+      // excel_add_sheet был «финальным», и Сима останавливалась на пустом листе.
+      'excel_style_column', 'excel_sort_sheet', 'excel_delete_rows', 'excel_add_to_column',
       'excel_clear_cells',
       'set_price', 'mp_update_stock', 'mp_update_price',
       'filter_products',

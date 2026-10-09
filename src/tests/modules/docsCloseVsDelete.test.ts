@@ -41,6 +41,7 @@ beforeEach(() => {
   db.rows = []; db.deletes = []; db.posts = [];
   localStorage.clear();
   M = Object.create(DocsModule.prototype);
+  Object.assign(M, { dirty: new Set(), serverKnown: new Set(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: false, pendingContent: new Set(), warnedNoPersist: new Set(), recent: [] });
   M.root = document.createElement('div');
   M.docs = [{ id: 'd1', type: 'excel', title: 'Прайс', content: CONTENT, updated_at: 1000 }];
   M.recent = []; M.activeId = 'd1'; M.loadedCompanyId = 'CO';
