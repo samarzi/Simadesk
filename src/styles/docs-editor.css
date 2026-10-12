@@ -75,7 +75,9 @@
 .xl-zoom { position: relative; width: max-content; min-width: 100%; }
 .xl-grid { border-collapse: collapse; table-layout: fixed; background: #fff; color: #000; cursor: cell; user-select: none; }
 .xl-grid th, .xl-grid td { padding: 0 3px; overflow: hidden; white-space: nowrap; line-height: 1.25; vertical-align: bottom; }
-.xl-grid td { border: none; box-shadow: inset -1px -1px 0 var(--xl-grid), var(--sbt, 0 0 #0000), var(--sbb, 0 0 #0000), var(--sbl, 0 0 #0000), var(--sbr, 0 0 #0000); position: relative; }
+.xl-grid td { border: none; background-color: #fff; box-shadow: inset -1px -1px 0 var(--xl-grid), var(--sbt, 0 0 #0000), var(--sbb, 0 0 #0000), var(--sbl, 0 0 #0000), var(--sbr, 0 0 #0000); position: relative; }
+.xl-grid tbody tr:hover { background: #fff; }
+.xl-grid tbody tr:hover > td:not(.xl-sel):not(.xl-act) { background-color: #f3faf6; }
 .xl-nogrid .xl-grid td { box-shadow: var(--sbt, 0 0 #0000), var(--sbb, 0 0 #0000), var(--sbl, 0 0 #0000), var(--sbr, 0 0 #0000); }
 .xl-grid thead th { position: sticky; top: 0; z-index: 4; height: 22px; background: var(--xl-hdr); color: var(--xl-hdr-text); font: 11px 'Segoe UI', Arial, sans-serif; text-align: center; vertical-align: middle;
   box-shadow: inset -1px -1px 0 #d4d4d4; cursor: s-resize; }
