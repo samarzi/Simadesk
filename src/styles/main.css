@@ -797,6 +797,17 @@ html:not(.light) .docs-excel-wrap { --xl-cell: #ffffff; --xl-cell-txt: #111111; 
 .docs-excel td.dx-col-hover:not(.dx-selected):not(.dx-cur) {
   background: color-mix(in srgb, var(--accent) 6%, var(--xl-cell));
 }
+
+/* Excel-style data validation list trigger. Kept inside the cell so imported
+   dropdowns remain usable even when the cell itself is empty. */
+.xl-grid td.xl-has-dv { padding-right: 22px; }
+.xl-dv-btn {
+  position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+  width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px;
+  background: #e8edf8; color: #53627a; cursor: pointer; line-height: 16px;
+  font-size: 12px; z-index: 3; opacity: .72;
+}
+.xl-dv-btn:hover, .xl-dv-btn:focus-visible { opacity: 1; background: color-mix(in srgb, var(--accent) 18%, #e8edf8); color: var(--accent); outline: none; }
 /* Selected header highlight */
 .docs-excel th.dx-hdr-selected {
   background: color-mix(in srgb, var(--accent) 22%, #f0f2f5) !important;

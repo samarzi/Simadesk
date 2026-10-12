@@ -528,8 +528,58 @@ export class SheetEditor {
       content += `<button class="xl-fbtn${active ? ' on' : ''}" data-fbtn="${c}" title="Фильтр">${active ? IC.filter : '▾'}</button>`;
       cls.push('xl-has-fbtn');
     }
+    const validation = this.validationAt(sh, r, c);
+    if (validation?.type === 'list') {
+      content += `<button class="xl-dv-btn" data-dv="${r},${c}" title="Открыть список">▾</button>`;
+      cls.push('xl-has-dv');
+    }
     const spanA = (o.rs && o.rs > 1 ? ` rowspan="${o.rs}"` : '') + (o.cs && o.cs > 1 ? ` colspan="${o.cs}"` : '');
     return `<td data-r="${r}" data-c="${c}"${spanA}${cls.length ? ` class="${cls.join(' ')}"` : ''}${style ? ` style="${esc(style)}"` : ''}${title ? ` title="${esc(title)}"` : ''}>${content}</td>`;
+  }
+
+  /** Правило проверки данных для ячейки. ExcelJS хранит dv по адресу диапазона. */
+  private validationAt(sh: SheetData, r: number, c: number): any | null {
+    const dv = (sh.xl as any)?.dv;
+    if (!dv || typeof dv !== 'object') return null;
+    for (const [sqref, rule] of Object.entries(dv)) {
+      for (const part of String(sqref).split(/\s+/)) {
+        const ref = part.includes('!') ? part.slice(part.lastIndexOf('!') + 1) : part;
+        const rg = parseRangeRef(ref.replace(/\$/g, ''));
+        if (rg && r >= rg.r1 && r <= rg.r2 && c >= rg.c1 && c <= rg.c2) return rule;
+      }
+    }
+    return null;
+  }
+
+  private validationValues(rule: any): string[] {
+    const formula = String(rule?.formulae?.[0] ?? '').trim();
+    if (!formula) return [];
+    if ((formula.startsWith('"') && formula.endsWith('"')) || (formula.startsWith("'") && formula.endsWith("'"))) {
+      return formula.slice(1, -1).split(/[,;\n]/).map(v => v.trim()).filter(Boolean);
+    }
+    // Список может быть ссылкой на диапазон другого листа: Лист1!$A$1:$A$20.
+    const bang = formula.lastIndexOf('!');
+    const sheetName = bang >= 0 ? formula.slice(0, bang).replace(/^'|'$/g, '') : this.sheet().name;
+    const ref = (bang >= 0 ? formula.slice(bang + 1) : formula).replace(/\$/g, '');
+    const rg = parseRangeRef(ref);
+    const target = this.book().sheets.find(s => s.name === sheetName) ?? this.sheet();
+    if (!rg || !target) return [formula.replace(/^=/, '')].filter(Boolean);
+    const values: string[] = [];
+    for (let r = rg.r1; r <= rg.r2; r++) for (let c = rg.c1; c <= rg.c2; c++) {
+      const value = target.data[r]?.[c]?.v?.trim();
+      if (value && !values.includes(value)) values.push(value);
+    }
+    return values;
+  }
+
+  private openValidationMenu(r: number, c: number, anchor: HTMLElement): void {
+    const rule = this.validationAt(this.sheet(), r, c);
+    const values = rule ? this.validationValues(rule) : [];
+    if (!values.length) return;
+    showMenu([
+      ...(this.cell(r, c)?.v ? [{ label: 'Очистить значение', action: () => this.change(() => { this.sheet().data[r][c] = interpretInput('', this.cell(r, c)); }) }] : []),
+      ...values.map(value => ({ label: value, checked: this.cell(r, c)?.v === value, action: () => this.change(() => { this.sheet().data[r][c] = interpretInput(value, this.cell(r, c)); }) })),
+    ], anchor);
   }
 
   // ═══════════════════════════ Выделение ═══════════════════════════
@@ -1166,6 +1216,15 @@ export class SheetEditor {
     if (this.selObj) { this.selObj = null; this.renderObjects(); }
 
     if (t.closest('.xl-fillh')) return;
+    const dvBtn = t.closest<HTMLElement>('[data-dv]');
+    if (dvBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const [r, c] = dvBtn.dataset.dv!.split(',').map(Number);
+      this.selectCell(r, c);
+      this.openValidationMenu(r, c, dvBtn);
+      return;
+    }
     const fbtn = t.closest<HTMLElement>('[data-fbtn]');
     if (fbtn) { e.preventDefault(); e.stopPropagation(); this.openFilterMenu(+fbtn.dataset.fbtn!, fbtn); return; }
 
