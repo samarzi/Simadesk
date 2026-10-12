@@ -78,6 +78,10 @@
 .xl-grid td { border: none; background-color: #fff; box-shadow: inset -1px -1px 0 var(--xl-grid), var(--sbt, 0 0 #0000), var(--sbb, 0 0 #0000), var(--sbl, 0 0 #0000), var(--sbr, 0 0 #0000); position: relative; }
 .xl-grid tbody tr:hover { background: #fff; }
 .xl-grid tbody tr:hover > td:not(.xl-sel):not(.xl-act) { background-color: #f3faf6; }
+/* Automatic font color belongs to the workbook, not the dashboard theme.
+   Explicit colors and sizes imported on each cell still take precedence. */
+.xl-app .xl-grid td { color: #000; font-size: inherit; }
+.xl-app .xl-grid tbody tr { cursor: cell; border-bottom: 0; }
 .xl-nogrid .xl-grid td { box-shadow: var(--sbt, 0 0 #0000), var(--sbb, 0 0 #0000), var(--sbl, 0 0 #0000), var(--sbr, 0 0 #0000); }
 .xl-grid thead th { position: sticky; top: 0; z-index: 4; height: 22px; background: var(--xl-hdr); color: var(--xl-hdr-text); font: 11px 'Segoe UI', Arial, sans-serif; text-align: center; vertical-align: middle;
   box-shadow: inset -1px -1px 0 #d4d4d4; cursor: s-resize; }
@@ -288,3 +292,33 @@ select.xd-inp[size] { height: auto; padding: 4px; }
 .docs-sync-dot.saving { background: #e0a100; }
 .docs-sync-dot.error { background: #f85149; }
 .docs-saved { font-size: 11px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+
+/* A light, bounded toolbar with comfortable controls and quiet accents. */
+.xl-ribbon, .dw-ribbon { background: #f4f7f5; padding: 6px 8px 8px; }
+.xl-ribbon .xr-tabs, .dw-ribbon .xr-tabs { background: transparent; align-items: center; padding: 0 0 5px; gap: 4px; max-width: 980px; }
+.xr-tab { color: #526159; border-radius: 6px; padding: 6px 11px; font-weight: 500; opacity: 1; }
+.xr-tab:hover { background: #e5eee8; }
+.xr-tab.on { background: #e0eee5; color: #22613d; box-shadow: inset 0 -2px 0 #409768; }
+.dw-ribbon .xr-tab.on { background: #e3ebf8; box-shadow: inset 0 -2px 0 #5278ae; }
+.xr-tabs-right { padding: 0; gap: 4px; }
+.xr-tabs-right .xr-btn { color: #526159; }
+.xr-tabs-right .xr-btn:hover:not(:disabled) { background: #e0eae4; }
+.xr-panel { width: fit-content; max-width: 100%; min-height: 82px; gap: 0; padding: 6px; border: 1px solid #dde5df; border-radius: 10px; background: #fff; box-shadow: 0 2px 4px #243d2c05; }
+.xr-group { padding: 0 8px; border-color: #e5ebe7; }
+.xr-group:last-child { border-right: 0; }
+.xr-items { gap: 4px; }
+.xr-col, .xr-col2 { gap: 5px; }
+.xr-row { gap: 3px; }
+.xr-btn { height: 28px; min-width: 28px; border-radius: 5px; }
+.xr-btn:hover:not(:disabled) { background: #edf5ef; border-color: #cbded0; }
+.xr-glabel { font-size: 10px; color: #78837c; padding: 6px 0 0; }
+.xr-sel { height: 28px; border-color: #d6dfd8; border-radius: 5px; }
+.xr-font { width: 108px; }
+.xr-size { width: 46px; }
+.xr-nf { width: 142px; }
+.xr-lbl { min-height: 58px; padding: 4px; }
+.xr-stack { display: flex; flex-direction: column; gap: 3px; }
+.xr-stack .xr-lbl { flex-direction: row; justify-content: flex-start; min-height: 24px; height: 24px; max-width: none; padding: 2px 5px; white-space: nowrap; }
+.xr-stack .xr-lbl svg { width: 15px; height: 15px; }
+.xr-stack .xr-dd svg:last-child { width: 8px; height: 8px; margin-left: auto; }
+.xr-stack .xr-glabel { padding-top: 3px; }

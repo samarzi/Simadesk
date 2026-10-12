@@ -267,7 +267,7 @@ html, body {
 /* ── DocsModule ──────────────────────────────────────────────────────────── */
 .docs-shell { display: flex; flex-direction: column; height: 100vh; padding-bottom: 90px; box-sizing: border-box; width: 100%; background: var(--bg); }
 .docs-shell.docs-fullscreen { position: fixed !important; inset: 0 !important; z-index: 5000 !important; height: 100vh !important; padding-bottom: 0 !important; }
-.docs-fullscreen .docs-topbar { display: none !important; }
+.docs-fullscreen .docs-topbar { display: flex; }
 .docs-fs-bar {
   display: none; align-items: center; gap: 8px;
   padding: 6px 12px; border-bottom: 1px solid var(--border);
@@ -318,21 +318,47 @@ html, body {
 .dx-row-resize:hover::after, .dx-row-resize.active::after { background: var(--accent); }
 .docs-excel .dx-rowhdr { position: sticky; left: 0; }
 .docs-topbar {
-  display: flex; align-items: center; gap: 12px;
-  padding: 6px 12px; border-bottom: 1px solid var(--border);
-  background: var(--bg2, var(--bg)); flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+  height: 46px; padding: 6px 10px; border-bottom: 1px solid var(--border2);
+  background: var(--bg4); flex-shrink: 0; position: relative; z-index: 30;
+}
+.docs-topbar .docs-fs-back-btn, .docs-topbar .docs-fs-sima-btn { display: none; }
+.docs-fullscreen .docs-topbar .docs-fs-back-btn,
+.docs-fullscreen .docs-topbar .docs-fs-sima-btn { display: inline-flex; }
+.docs-topbar .docs-editor-actions { flex-shrink: 0; gap: 6px; }
+.docs-topbar .docs-export-sel { width: 104px; height: 30px; background: var(--bg2); }
+.docs-topbar .docs-access { height: 30px; }
+.docs-topbar .docs-saved { padding: 0 6px; color: var(--text2); }
+.docs-file-menu { position: relative; order: -1; flex-shrink: 0; }
+.docs-file-menu > summary { list-style: none; display: flex; align-items: center; gap: 12px; padding: 7px 10px; border-radius: 7px; cursor: pointer; color: var(--text); font-size: 12px; font-weight: 600; }
+.docs-file-menu > summary::-webkit-details-marker { display: none; }
+.docs-file-menu > summary:hover, .docs-file-menu[open] > summary { background: var(--hover); }
+.docs-file-menu .docs-newbtns { position: absolute; top: calc(100% + 8px); left: 0; width: 270px; max-width: calc(100vw - 24px); padding: 10px; display: flex; flex-direction: column; gap: 4px; background: var(--bg2); border: 1px solid var(--border3); border-radius: 12px; box-shadow: var(--shadow); }
+.docs-file-menu .docs-newbtn { width: 100%; justify-content: flex-start; border: 0; min-height: 34px; }
+.docs-file-menu .docs-recent-popup { left: 0; right: auto; min-width: 248px; max-width: calc(100vw - 40px); }
+.docs-name-label { display: flex; flex-direction: column; gap: 6px; padding: 4px 4px 12px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text2); }
+.docs-name-label .docs-title-inp { width: 100%; min-width: 0; padding: 7px 8px; border: 1px solid var(--border2); border-radius: 6px; font-size: 13px; font-weight: 500; }
+.docs-file-menu .docs-delete { color: var(--red); border-top: 1px solid var(--border); border-radius: 0 0 6px 6px; margin-top: 6px; }
+@media (max-width: 820px) {
+  .docs-topbar .docs-saved { display: none; }
+  .docs-topbar .docs-access { max-width: 110px; overflow: hidden; white-space: nowrap; }
+}
+@media (max-width: 560px) {
+  .docs-topbar { gap: 4px; }
+  .docs-topbar .docs-access, .docs-fullscreen .docs-topbar .docs-fs-sima-btn { display: none; }
+  .docs-topbar .docs-export-sel { width: 84px; }
 }
 .docs-tabs { flex: 1; display: flex; gap: 4px; overflow-x: auto; min-width: 0; }
 .docs-hint { color: var(--muted); font-size: 12px; padding: 6px 4px; }
 .docs-tab {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 8px 6px 10px; border-radius: 8px;
-  background: var(--hover); color: var(--text2); font-size: 12px;
+  background: transparent; color: var(--text2); font-size: 12px;
   cursor: pointer; user-select: none; white-space: nowrap; max-width: 200px;
   border: 1px solid transparent; transition: background .12s, color .12s, border-color .12s;
 }
-.docs-tab:hover { color: var(--text); }
-.docs-tab.active { background: var(--accent); color: #000; border-color: var(--accent); }
+.docs-tab:hover { color: var(--text); background: var(--hover); }
+.docs-tab.active { background: var(--bg2); color: var(--text); border-color: var(--border3); box-shadow: inset 0 -2px 0 #57ae83; }
 .docs-tab-ic { display: flex; flex-shrink: 0; opacity: .8; }
 .docs-tab-title { overflow: hidden; text-overflow: ellipsis; }
 .docs-tab-close {

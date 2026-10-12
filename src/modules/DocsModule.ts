@@ -1325,18 +1325,16 @@ export class DocsModule {
     const active = this.activeDoc();
     this.root.innerHTML = `
       <div class="docs-shell${this.isFullscreen ? ' docs-fullscreen' : ''}">
-        <div class="docs-fs-bar">
+        <div class="docs-topbar">
           <button class="docs-fs-back-btn" id="docs-fs-back">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
             Назад
           </button>
-          <div class="docs-fs-tabs-wrap">${this.renderTabs()}</div>
-          <div class="docs-fs-spacer"></div>
-          <button class="docs-fs-sima-btn" id="docs-fs-sima">Сима</button>
-        </div>
-        <div class="docs-topbar">
           <div class="docs-tabs" id="docs-tabs">${this.renderTabs()}</div>
+          <details class="docs-file-menu">
+          <summary>Файл <span aria-hidden="true">⌄</span></summary>
           <div class="docs-newbtns">
+            ${active ? `<label class="docs-name-label">Название документа<input class="docs-title-inp" id="docs-title-inp" aria-label="Название документа" value="${this.esc(active.title)}" data-id="${active.id}"></label>` : ''}
             <div class="docs-recent-wrap" id="docs-recent-wrap">
               <button class="docs-newbtn" id="docs-recent-toggle" title="Недавние и все документы кабинета">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -1361,7 +1359,11 @@ export class DocsModule {
               Excel
             </button>
             <input type="file" id="docs-file-input" accept=".xlsx,.xlsm,.xls,.ods,.csv,.tsv,.docx,.doc,.html,.htm,.txt,.md,.rtf" style="display:none">
+            ${active ? '<button class="docs-newbtn docs-delete" id="docs-delete-btn">Удалить документ…</button>' : ''}
           </div>
+          </details>
+          ${active ? this.renderEditorActions(active) : ''}
+          <button class="docs-fs-sima-btn" id="docs-fs-sima">Сима</button>
         </div>
         <div class="docs-body" id="docs-body">
           ${active ? this.renderEditorShell(active) : this.renderEmpty()}
@@ -1448,6 +1450,13 @@ export class DocsModule {
   }
 
   private renderEditorShell(doc: DocItem): string {
+    const body = this.pendingContent.has(doc.id)
+      ? `<div class="docs-loading"><div class="docs-loading-spin"></div><div class="docs-loading-txt">Загружаем «${this.esc(doc.title)}»…</div><div class="docs-loading-sub">Забираем документ с сервера.</div></div>`
+      : '<div class="docs-editor-host" id="docs-editor-host" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>';
+    return `<div class="docs-editor-wrap">${body}</div>`;
+  }
+
+  private renderEditorActions(doc: DocItem): string {
     const exportMenu = doc.type === 'word'
       ? `<option value="docx">Word (.docx)</option><option value="pdf">PDF / печать</option><option value="html">HTML</option><option value="txt">Текст (.txt)</option>`
       : `<option value="xlsx">Excel (.xlsx)</option><option value="csv">CSV (текущий лист)</option><option value="pdf">PDF / печать (текущий лист)</option>`;
@@ -1455,31 +1464,26 @@ export class DocsModule {
     const isOwner = !doc.owner_id || doc.owner_id === me;
     const priv = doc.visibility === 'private';
     const access = `<button class="docs-access${priv ? ' private' : ''}" id="docs-access-btn" title="${isOwner ? 'Кто видит документ — нажмите, чтобы изменить' : 'Доступ меняет владелец документа'}"${isOwner ? '' : ' disabled'}>${priv ? '🔒 Только я' : '👥 Все в кабинете'}</button>`;
-    const body = this.pendingContent.has(doc.id)
-      ? `<div class="docs-loading"><div class="docs-loading-spin"></div><div class="docs-loading-txt">Загружаем «${this.esc(doc.title)}»…</div><div class="docs-loading-sub">Забираем документ с сервера.</div></div>`
-      : '<div class="docs-editor-host" id="docs-editor-host" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>';
-    return `<div class="docs-editor-wrap">
-      <div class="docs-editor-head">
-        <input class="docs-title-inp" id="docs-title-inp" value="${this.esc(doc.title)}" data-id="${doc.id}">
-        <div class="docs-editor-actions">
+    return `<div class="docs-editor-actions">
           <span class="docs-saved" data-save-state>${this.saveStateHtml()}</span>
           ${access}
-          <select class="docs-export-sel" id="docs-export-sel"><option value="">Скачать…</option>${exportMenu}</select>
+          <select class="docs-export-sel" id="docs-export-sel" aria-label="Скачать документ"><option value="">Скачать</option>${exportMenu}</select>
           <button class="docs-fs-expand-btn" id="docs-fs-btn" title="Полный экран">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M21 16v3a2 2 0 01-2 2h-3M3 16v3a2 2 0 002 2h3"/></svg>
           </button>
-          <button class="docs-icon-btn" id="docs-delete-btn" title="Удалить документ навсегда">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
-          </button>
-        </div>
-      </div>
-      ${body}
-    </div>`;
+        </div>`;
   }
 
   // ── Привязка оболочки ─────────────────────────────────────────────────
 
   private bindTopbar(): void {
+    const fileMenu = this.root.querySelector<HTMLDetailsElement>('.docs-file-menu');
+    this.root.onclick = e => {
+      if (fileMenu && !fileMenu.contains(e.target as Node)) fileMenu.open = false;
+    };
+    fileMenu?.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { fileMenu.open = false; fileMenu.querySelector('summary')?.focus(); }
+    });
     this.root.querySelector('#docs-new-word')?.addEventListener('click', () => this.createDoc('word'));
     this.root.querySelector('#docs-new-excel')?.addEventListener('click', () => this.createDoc('excel'));
     const fileInp = this.root.querySelector<HTMLInputElement>('#docs-file-input');

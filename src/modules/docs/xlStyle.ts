@@ -289,6 +289,23 @@ export function editCss(css: string | undefined, mutate: (x: XStyle) => void): s
 const renderCache = new Map<string, string>();
 
 /**
+ * Imported workbooks often contain several equivalent neutral theme colors
+ * (for example #808080 and #a6a6a6). They make otherwise identical rows look
+ * inconsistent on the light editor surface. Keep intentional colors intact,
+ * but render medium neutral grays with the same readable ink color.
+ */
+function displayTextColor(color: string): string {
+  const m = color.match(/^#([0-9a-f]{6})$/i);
+  if (!m) return color;
+  const value = m[1];
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  if (r === g && g === b && r >= 64 && r <= 224) return '#151a17';
+  return color;
+}
+
+/**
  * CSS для показа ячейки. Отличается от хранимого тем, что `--xl-*` здесь
  * превращаются в видимые свойства: отступ — в padding, вертикальный текст —
  * в writing-mode, узорная заливка — в близкий сплошной цвет.
@@ -308,7 +325,7 @@ export function renderCss(css: string | undefined): string {
     const deco = [f.underline ? 'underline' : '', f.strike ? 'line-through' : ''].filter(Boolean).join(' ');
     if (deco) out.push(`text-decoration:${deco}`);
     if (f.underline === 'double' || f.underline === 'doubleAccounting') out.push('text-decoration-style:double');
-    if (f.color) out.push(`color:${f.color}`);
+    if (f.color) out.push(`color:${displayTextColor(f.color)}`);
   }
   const bg = x.fill ?? x.pattern?.fg ?? x.pattern?.bg;
   if (bg) out.push(`background-color:${bg}`);

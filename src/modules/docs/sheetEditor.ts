@@ -3121,17 +3121,18 @@ export class SheetEditor {
           G('Шрифт', `<div class="xr-col2">
               <div class="xr-row"><select class="xr-sel xr-font" data-sel="font" title="Шрифт">${DEF_FONTS.map(f => `<option value="${f}">${f}</option>`).join('')}</select>
               <select class="xr-sel xr-size" data-sel="size" title="Размер шрифта">${FONT_SIZES.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
-              ${B('grow', IC.growFont, 'Увеличить размер шрифта')}${B('shrink', IC.shrinkFont, 'Уменьшить размер шрифта')}</div>
+              </div>
               <div class="xr-row">${B('bold', IC.bold, 'Полужирный (Ctrl+B)')}${B('italic', IC.italic, 'Курсив (Ctrl+I)')}${B('underline', IC.underline, 'Подчёркнутый (Ctrl+U)')}${B('strike', IC.strike, 'Зачёркнутый (Ctrl+5)')}
-              <span class="xr-sep"></span>${SPLIT('borders', IC.borders, 'Границы')}${SPLIT('fill', IC.fill, 'Цвет заливки', `<i class="xr-bar" style="background:${this.lastFill}"></i>`)}${SPLIT('color', IC.fontColor, 'Цвет шрифта', `<i class="xr-bar" style="background:${this.lastColor}"></i>`)}</div></div>`) +
-          G('Выравнивание', `<div class="xr-col2"><div class="xr-row">${B('alTop', IC.alTop, 'По верхнему краю')}${B('alMid', IC.alMid, 'По середине')}${B('alBot', IC.alBot, 'По нижнему краю')}<span class="xr-sep"></span>${BL('wrap', IC.wrap, 'Перенос текста')}</div>
+              ${B('grow', IC.growFont, 'Увеличить размер шрифта')}${B('shrink', IC.shrinkFont, 'Уменьшить размер шрифта')}</div></div>`) +
+          G('Оформление', `<div class="xr-col2"><div class="xr-row">${SPLIT('fill', IC.fill, 'Цвет заливки', `<i class="xr-bar" style="background:${this.lastFill}"></i>`)}${SPLIT('color', IC.fontColor, 'Цвет шрифта', `<i class="xr-bar" style="background:${this.lastColor}"></i>`)}</div><div class="xr-row">${SPLIT('borders', IC.borders, 'Границы')}</div></div>`) +
+          G('Выравнивание', `<div class="xr-col2"><div class="xr-row">${B('alTop', IC.alTop, 'По верхнему краю')}${B('alMid', IC.alMid, 'По середине')}${B('alBot', IC.alBot, 'По нижнему краю')}<span class="xr-sep"></span>${B('wrap', IC.wrap, 'Перенос текста')}</div>
               <div class="xr-row">${B('alLeft', IC.alLeft, 'По левому краю')}${B('alCenter', IC.alCenter, 'По центру')}${B('alRight', IC.alRight, 'По правому краю')}${B('indDec', IC.indentDec, 'Уменьшить отступ')}${B('indInc', IC.indentInc, 'Увеличить отступ')}<span class="xr-sep"></span>${SPLIT('merge', IC.merge, 'Объединить и поместить в центре')}</div></div>`) +
           G('Число', `<div class="xr-col2"><div class="xr-row"><select class="xr-sel xr-nf" data-sel="nf" title="Числовой формат">
               <option value="General">Общий</option><option value="#,##0.00">Числовой</option><option value="#,##0.00\\ &quot;₽&quot;">Денежный</option>
               <option value="dd.mm.yyyy">Краткая дата</option><option value="d mmmm yyyy">Длинная дата</option><option value="hh:mm:ss">Время</option>
               <option value="0.00%">Процентный</option><option value="@">Текстовый</option><option value="__more">Другие форматы…</option></select></div>
               <div class="xr-row">${B('rub', IC.rub, 'Денежный формат (₽)')}${B('pct', IC.pct, 'Процентный формат')}${B('thousands', IC.thousands, 'Формат с разделителями')}${B('decInc', IC.decInc, 'Увеличить разрядность')}${B('decDec', IC.decDec, 'Уменьшить разрядность')}</div></div>`) +
-          G('Ячейки', `${DD('insCells', IC.insRow, 'Вставить строки или столбцы', 'Вставить')}${DD('delCells', IC.delRow, 'Удалить строки или столбцы', 'Удалить')}${DD('formatCells', IC.format, 'Формат: размеры, скрытие, лист', 'Формат')}`) +
+          G('Ячейки', `<div class="xr-stack">${DD('insCells', IC.insRow, 'Вставить строки или столбцы', 'Вставить')}${DD('delCells', IC.delRow, 'Удалить строки или столбцы', 'Удалить')}${DD('formatCells', IC.format, 'Формат: размеры, скрытие, лист', 'Формат')}</div>`) +
           G('Редактирование', `<div class="xr-col2"><div class="xr-row">${SPLIT('sum', IC.sum, 'Автосумма (Alt+=)')}${DD('clear', IC.clear, 'Очистить')}</div><div class="xr-row">${DD('sort', IC.sortAsc, 'Сортировка и фильтр')}${B('find', IC.find, 'Найти и заменить (Ctrl+F)')}</div></div>`);
         break;
       case 'insert':
