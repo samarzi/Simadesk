@@ -47,6 +47,10 @@ export interface AggregateInput {
   stores: StoreInfo[];
   products: ProductMap;
   cogs: CogsResolver;
+  /** Диапазон отчёта. Нужен, чтобы расширенный диапазон транзакций не создавал
+   * orphan-заказы и расходы за пределами выбранного периода. */
+  periodStart?: Date;
+  periodEnd?: Date;
 }
 
 // ── Status mapping ──────────────────────────────────────────────────────────
@@ -86,7 +90,7 @@ function mapWbStatus(s: string): OrderStatus {
   switch (s) {
     case 'new':         return 'processing';
     case 'confirm':     return 'processing';
-    case 'complete':    return 'delivered';
+    case 'complete':    return 'in_delivery';
     case 'cancel':      return 'cancelled';
     case 'arbitration': return 'processing';
     default:            return 'unknown';
@@ -208,7 +212,7 @@ function buildItems(
 // ── Главная сборка ──────────────────────────────────────────────────────────
 
 export function aggregateOrders(input: AggregateInput): AggregateResult {
-  const { ozonPostings, yandexOrders, wbOrders, transactions, stores, products, cogs } = input;
+  const { ozonPostings, yandexOrders, wbOrders, transactions, stores, products, cogs, periodStart, periodEnd } = input;
 
   const storeMap = new Map(stores.map(s => [s.id, s]));
   const txByOrder = groupTxByOrder(transactions);
@@ -231,7 +235,7 @@ export function aggregateOrders(input: AggregateInput): AggregateResult {
     orders.push(makeOrder({
       orderId, mp: 'ozon', store, date: normalizeMpDate(p.created_at || p.in_process_at),
       status, status_raw: p.status, items,
-      txs: txByOrder.get(orderId) ?? [],
+      txs: txByOrder.get(makeOrderKey('ozon', store.id, orderId)) ?? [],
     }));
   }
 
@@ -252,7 +256,7 @@ export function aggregateOrders(input: AggregateInput): AggregateResult {
       // заказы выпадали из графика, тепловой карты и сортировались по числу месяца.
       orderId, mp: 'yandex', store, date: normalizeMpDate(o.creation_date),
       status: mapYandexStatus(o.status), status_raw: o.status, items,
-      txs: txByOrder.get(orderId) ?? [],
+      txs: txByOrder.get(makeOrderKey('yandex', store.id, orderId)) ?? [],
     }));
   }
 
@@ -272,21 +276,27 @@ export function aggregateOrders(input: AggregateInput): AggregateResult {
     orders.push(makeOrder({
       orderId, mp: 'wb', store, date: normalizeMpDate(o.created_at),
       status: mapWbStatus(o.status), status_raw: o.status, items,
-      txs: txByOrder.get(orderId) ?? [],
+      txs: txByOrder.get(makeOrderKey('wb', store.id, orderId)) ?? [],
     }));
   }
 
   // ── Orphan-транзакции: posting в БД есть, а заказа не дотянуло (период не совпал
   //    или live-API не вернул). Создаём заказ-«скелет» чтобы расходы не пропали. ──
-  const seen = new Set(orders.map(o => o.order_id));
+  const seen = new Set(orders.map(o => o.order_key ?? makeOrderKey(o.mp, o.store_id, o.order_id)));
   const byOrphan = new Map<string, MpTransaction[]>();
   for (const tx of transactions) {
-    if (!tx.posting_number || seen.has(tx.posting_number)) continue;
-    const list = byOrphan.get(tx.posting_number) ?? [];
+    if (!tx.posting_number) continue;
+    const key = makeOrderKey(tx.marketplace, tx.store_id, tx.posting_number);
+    if (seen.has(key)) continue;
+    if (periodStart && periodEnd) {
+      const ts = Date.parse(tx.operation_date);
+      if (!Number.isFinite(ts) || ts < periodStart.getTime() || ts > periodEnd.getTime()) continue;
+    }
+    const list = byOrphan.get(key) ?? [];
     list.push(tx);
-    byOrphan.set(tx.posting_number, list);
+    byOrphan.set(key, list);
   }
-  for (const [orderId, txs] of byOrphan) {
+  for (const [, txs] of byOrphan) {
     const tx0 = txs[0];
     const store = storeMap.get(tx0.store_id);
     if (!store) continue;
@@ -315,7 +325,7 @@ export function aggregateOrders(input: AggregateInput): AggregateResult {
     const isReturn = txs.some(isReturnTx);
     const isCancel = txs.some(isCancelTx);
     orders.push(makeOrder({
-      orderId, mp: store.mp, store, date: normalizeMpDate(tx0.operation_date),
+      orderId: tx0.posting_number!, mp: store.mp, store, date: normalizeMpDate(tx0.operation_date),
       status: isCancel ? 'cancelled' : isReturn ? 'returned' : 'delivered',
       status_raw: tx0.operation_type_name ?? tx0.operation_type ?? '',
       items, txs, is_orphan: true,
@@ -324,7 +334,7 @@ export function aggregateOrders(input: AggregateInput): AggregateResult {
 
   return {
     orders: orders.sort((a, b) => (b.date || '').localeCompare(a.date || '')),
-    periodCosts: collectPeriodCosts(transactions, storeMap),
+    periodCosts: collectPeriodCosts(transactions, storeMap, periodStart, periodEnd),
   };
 }
 
@@ -367,10 +377,20 @@ function periodCostAmountOf(tx: MpTransaction): number {
  * эквайринг. Для продавца это реальные списанные деньги, поэтому «Расходы» были
  * систематически занижены, а прибыль и маржа — завышены.
  */
-function collectPeriodCosts(transactions: MpTransaction[], storeMap: Map<string, StoreInfo>): PeriodCost[] {
+function collectPeriodCosts(transactions: MpTransaction[], storeMap: Map<string, StoreInfo>, periodStart?: Date, periodEnd?: Date): PeriodCost[] {
   const out: PeriodCost[] = [];
   for (const tx of transactions) {
     if (tx.posting_number) continue;
+    if (periodStart && periodEnd) {
+      const ts = Date.parse(tx.operation_date);
+      if (!Number.isFinite(ts) || ts < periodStart.getTime() || ts > periodEnd.getTime()) continue;
+    }
+    // Продажа/выплата без posting не является расходом периода. Иначе amount
+    // превращал обычную выплату продавцу в искусственный расход.
+    const opText = `${tx.operation_type ?? ''} ${tx.operation_type_name ?? ''}`.toLowerCase();
+    if (tx.tx_kind === 'sale' || tx.tx_kind === 'payout' || tx.tx_kind === 'transfer'
+      || Math.abs(tx.accruals_for_sale || 0) > 0.01
+      || opText.includes('реализац') || opText.includes('продаж') || opText.includes('выплат')) continue;
     const store = storeMap.get(tx.store_id);
     if (!store) continue;
     const amount = periodCostAmountOf(tx);
@@ -393,11 +413,15 @@ function groupTxByOrder(transactions: MpTransaction[]): Map<string, MpTransactio
   const map = new Map<string, MpTransaction[]>();
   for (const tx of transactions) {
     if (!tx.posting_number) continue;
-    const list = map.get(tx.posting_number) ?? [];
+    const list = map.get(makeOrderKey(tx.marketplace, tx.store_id, tx.posting_number)) ?? [];
     list.push(tx);
-    map.set(tx.posting_number, list);
+    map.set(makeOrderKey(tx.marketplace, tx.store_id, tx.posting_number), list);
   }
   return map;
+}
+
+function makeOrderKey(mp: Mp, storeId: string, orderId: string): string {
+  return `${mp}:${storeId}:${orderId}`;
 }
 
 interface MakeOrderInput {
@@ -418,7 +442,9 @@ function makeOrder(p: MakeOrderInput): Order {
   const fee_breakdown: FeeBreakdown[] = [];
 
   const hasReal = p.txs.length > 0;
-  let source: SourceQuality = hasReal ? 'real' : 'estimated';
+  const hasSettlement = p.txs.some(tx => tx.tx_kind === 'sale' || tx.tx_kind === 'return' || tx.tx_kind === 'cancel'
+    || Math.abs(tx.accruals_for_sale || 0) > 0.01);
+  const source: SourceQuality = hasSettlement ? 'real' : 'estimated';
   let isReturnByTx = false;
   let isCancelByTx = false;
 
@@ -452,7 +478,7 @@ function makeOrder(p: MakeOrderInput): Order {
   let status = p.status;
   if (isCancelByTx) status = 'cancelled';
   else if (isReturnByTx) status = 'returned';
-  else if (hasReal && status !== 'returned' && status !== 'cancelled') status = 'delivered';
+  else if (hasSettlement && status !== 'returned' && status !== 'cancelled') status = 'delivered';
 
   // Cancel / Return: revenue зануляем. Возврат — покупатель вернул товар,
   // значит нет чистой продажи. Себес при этом тоже не списываем (уже в cogsTotal ниже).
@@ -475,7 +501,12 @@ function makeOrder(p: MakeOrderInput): Order {
     : p.items.reduce((s, it) => s + it.cogs, 0);
 
   // Налог по заказу (используем настройки магазина)
-  const taxOv = settingsDb.taxFor(p.store.id);
+  // Настройка магазина из API — источник по умолчанию. Локальное override имеет
+  // приоритет, но глобальный USN6 больше не подменяет налоговую модель магазина.
+  const taxOv = settingsDb.get().store_tax[p.store.id] ?? {
+    model: p.store.tax_model,
+    rate: p.store.tax_rate,
+  };
   const tax = calcTax(revenue, commission + logistics + logistics_return + services + cogsTotal, taxOv.model, taxOv.rate);
 
   const totalExpenses = commission + logistics + logistics_return + services + cogsTotal + tax;
@@ -498,10 +529,11 @@ function makeOrder(p: MakeOrderInput): Order {
 
   // Финотчёта по заказу ещё нет вообще — комиссия/логистика неизвестны,
   // а заказ ещё может быть отменён на ПВЗ. Cancel/return уже занулены явно выше.
-  const pending_settlement = !hasReal && status !== 'cancelled' && status !== 'returned';
+  const pending_settlement = !hasSettlement && status !== 'cancelled' && status !== 'returned';
 
   return {
     order_id: p.orderId,
+    order_key: makeOrderKey(p.mp, p.store.id, p.orderId),
     date: p.date,
     mp: p.mp,
     store_id: p.store.id,

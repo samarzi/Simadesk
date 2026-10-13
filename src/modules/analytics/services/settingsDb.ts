@@ -13,8 +13,11 @@ const DEFAULT: AnalyticsSettings = {
   base_currency: 'RUB',
   fx_rates: { RUB: 1, USD: 95, EUR: 103, CNY: 13 },
   store_tax: {},
-  default_tax_model: 'usn6',
-  default_tax_rate: 0.06,
+  // Налог нельзя молча считать по USN6 для каждого нового магазина: ставка и
+  // режим берутся из карточки магазина, а это поле используется только как
+  // явный fallback для магазинов без налоговых настроек.
+  default_tax_model: 'none',
+  default_tax_rate: 0,
 };
 
 function load<T>(k: string, fb: T): T {

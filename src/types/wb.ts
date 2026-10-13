@@ -49,7 +49,7 @@ export interface WbProduct {
 export type WbOrderStatus =
   | 'new'         // 0 — новый
   | 'confirm'     // 1 — на сборке
-  | 'complete'    // 2 — в доставке
+  | 'complete'    // 2 — в доставке; выкуп подтверждается финотчётом
   | 'cancel'      // 3 — отменён
   | 'arbitration' // 4 — арбитраж
   | 'unknown';

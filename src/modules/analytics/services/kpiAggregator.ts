@@ -101,7 +101,9 @@ export function computeKPI(
   for (const o of orders) {
     if (!o.is_orphan) ordersTotal++;
 
-    switch (o.status) {
+    // Orphan-строки нужны для сверки денег, но не должны притворяться
+    // дополнительными заказами в счётчиках и покрытии финотчётом.
+    if (!o.is_orphan) switch (o.status) {
       case 'delivered':   delivered++;  break;
       case 'processing':
       case 'in_delivery': processing++; break;
@@ -110,7 +112,7 @@ export function computeKPI(
     }
 
     // Объём заказов — по дате заказа, включая ещё не доехавшие.
-    ordered_revenue += o.revenue + (o.revenue_lost || 0);
+    if (!o.is_orphan) ordered_revenue += o.revenue + (o.revenue_lost || 0);
     if (o.status === 'processing' || o.status === 'in_delivery') {
       in_transit_revenue += o.revenue;
       continue; // денег по ним ещё нет — в P&L не участвуют
@@ -119,7 +121,7 @@ export function computeKPI(
     if (o.missing_cogs_count > 0) missingCogsOrders++;
 
     if (o.status === 'delivered') {
-      deliveredCount++;
+      if (!o.is_orphan) deliveredCount++;
       // В P&L идут только заказы, по которым маркетплейс прислал расчёт.
       // Без этого пришлось бы либо выдумывать комиссию, либо показывать выручку
       // с нулевыми удержаниями — и то и другое завышает прибыль.
@@ -132,11 +134,11 @@ export function computeKPI(
       revenue += o.revenue;
       cogs    += o.cogs;
       tax     += o.tax;
-      for (const it of o.items) units_sold += it.quantity;
+      if (!o.is_orphan) for (const it of o.items) units_sold += it.quantity;
     } else if (o.status === 'returned') {
-      returns_revenue += o.revenue_lost || 0;
+      if (!o.is_orphan) returns_revenue += o.revenue_lost || 0;
     } else {
-      cancelled_revenue += o.revenue_lost || 0;
+      if (!o.is_orphan) cancelled_revenue += o.revenue_lost || 0;
     }
 
     // Удержания списываются и по возвратам, и по отменам — это реальные потери.
@@ -170,7 +172,7 @@ export function computeKPI(
     // Покрытие финотчётом считаем только по выкупленным заказам: только у них
     // отчёт вообще должен быть. Раньше в числитель попадали orphan-строки,
     // а в знаменатель — нет, из-за чего доля могла превысить 100%.
-    source_real_pct: deliveredCount > 0 ? (realCount / deliveredCount) * 100 : 100,
+    source_real_pct: deliveredCount > 0 ? Math.min(100, (realCount / deliveredCount) * 100) : 100,
     missing_cogs_orders: missingCogsOrders,
     awaiting_orders: awaitingOrders,
     awaiting_revenue: awaitingRevenue,
@@ -202,7 +204,7 @@ export function computeTimeseries(
   };
 
   for (const o of orders) {
-    if (!o.date || !isSettled(o)) continue;
+    if (!o.date || !isSettled(o) || o.is_orphan) continue;
     const fees = o.commission + o.logistics + o.logistics_return + o.services;
     const isDelivered = o.status === 'delivered';
     bump(
@@ -249,6 +251,7 @@ export function computeSkuPerformance(orders: Order[]): SkuPerformance[] {
   };
   const map = new Map<string, Acc>();
   for (const o of orders) {
+    if (o.is_orphan) continue;
     // Та же база, что и в KPI: заказы в пути денег ещё не принесли.
     if (!isSettled(o) || o.status === 'cancelled') continue;
     const isReturn = o.status === 'returned';

@@ -21,6 +21,7 @@ export const SETTLED_DAYS = 14;
 const SETTLED_MS = SETTLED_DAYS * 86400_000;
 
 interface CacheRow {
+  mp?: string;
   chunk_from: string; // YYYY-MM-DD (1-е число месяца)
   chunk_to:   string; // YYYY-MM-DD (последнее число месяца)
   data: any[];
@@ -86,7 +87,7 @@ export const analyticsOrderCache = {
    * Загрузить все закэшированные месяцы для магазина в диапазоне дат.
    * Возвращает Map<"YYYY-MM-DD|YYYY-MM-DD", orders[]>.
    */
-  async loadRange(storeId: string, start: Date, end: Date): Promise<Map<string, any[]>> {
+  async loadRange(storeId: string, mp: string, start: Date, end: Date): Promise<Map<string, any[]>> {
     const result = new Map<string, any[]>();
     try {
       const from = toStr(monthStart(start));
@@ -94,6 +95,7 @@ export const analyticsOrderCache = {
       const rows = await dbFetch<CacheRow[]>(
         `analytics_orders_cache` +
         `?store_id=eq.${encodeURIComponent(storeId)}` +
+        `&mp=eq.${encodeURIComponent(mp)}` +
         `&chunk_from=gte.${from}&chunk_to=lte.${to}` +
         `&select=chunk_from,chunk_to,data,cached_at`,
       );
@@ -108,7 +110,7 @@ export const analyticsOrderCache = {
   },
 
   /** Загрузить только ключи закэшированных месяцев (без данных — быстро). */
-  async loadCachedKeys(storeId: string, start: Date, end: Date): Promise<Set<string>> {
+  async loadCachedKeys(storeId: string, mp: string, start: Date, end: Date): Promise<Set<string>> {
     const keys = new Set<string>();
     try {
       const from = toStr(monthStart(start));
@@ -116,6 +118,7 @@ export const analyticsOrderCache = {
       const rows = await dbFetch<CacheRow[]>(
         `analytics_orders_cache` +
         `?store_id=eq.${encodeURIComponent(storeId)}` +
+        `&mp=eq.${encodeURIComponent(mp)}` +
         `&chunk_from=gte.${from}&chunk_to=lte.${to}` +
         `&select=chunk_from,chunk_to,cached_at`,
       );
@@ -134,7 +137,7 @@ export const analyticsOrderCache = {
     const s = monthStart(monthDate);
     const e = monthEnd(monthDate);
     try {
-      await dbFetch<any>('analytics_orders_cache', {
+      await dbFetch<any>('analytics_orders_cache?on_conflict=store_id,mp,chunk_from,chunk_to', {
         method: 'POST',
         headers: { 'Prefer': 'resolution=merge-duplicates' },
         body: JSON.stringify({
@@ -152,13 +155,14 @@ export const analyticsOrderCache = {
   },
 
   /** Инвалидировать конкретный диапазон дат (для инкрементального обновления). */
-  async invalidateRange(storeId: string, start: Date, end: Date): Promise<void> {
+  async invalidateRange(storeId: string, mp: string, start: Date, end: Date): Promise<void> {
     try {
       const from = toStr(monthStart(start));
       const to   = toStr(monthEnd(end));
       await dbFetch<any>(
         `analytics_orders_cache` +
         `?store_id=eq.${encodeURIComponent(storeId)}` +
+        `&mp=eq.${encodeURIComponent(mp)}` +
         `&chunk_from=gte.${from}&chunk_to=lte.${to}`,
         { method: 'DELETE' },
       );

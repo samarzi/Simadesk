@@ -28,7 +28,7 @@ export type Marketplace = 'ozon' | 'yandex' | 'wb';
  * service    — прочие сервисные операции без выручки
  * unknown    — не классифицировано (старые данные, будет обновлено при следующем синке)
  */
-export type TxKind = 'sale' | 'return' | 'cancel' | 'return_svc' | 'advertising' | 'storage' | 'penalty' | 'service' | 'unknown';
+export type TxKind = 'sale' | 'return' | 'cancel' | 'return_svc' | 'advertising' | 'storage' | 'penalty' | 'service' | 'payout' | 'transfer' | 'unknown';
 
 export interface MpTransaction {
   id?: string;

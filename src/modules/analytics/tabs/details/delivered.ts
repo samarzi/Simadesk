@@ -135,7 +135,7 @@ function ordersTable(orders: Order[]): string {
           const margin = o.revenue > 0 ? (o.net_profit / o.revenue) * 100 : 0;
           const names = o.items.map(it => it.name || it.vendor_code).join(', ');
           return `
-            <tr onclick="window.analyticsModule?.openOrder('${escapeHtml(o.order_id).replace(/'/g, "\\'")}')">
+            <tr onclick="window.analyticsModule?.openOrder('${escapeHtml(o.order_key ?? o.order_id).replace(/'/g, "\\'")}')">
               <td style="color:var(--text3);white-space:nowrap">${fmtDay(o.date)}</td>
               <td style="font-family:ui-monospace,monospace;font-size:10.5px">${escapeHtml(o.order_id)}</td>
               <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(names)}">${escapeHtml(names)}</td>

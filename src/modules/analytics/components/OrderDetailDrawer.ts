@@ -157,7 +157,7 @@ export function renderOrderDrawer(o: Order, onClose = 'window.analyticsModule?.c
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M7 7h10v10"/></svg>
           </a>
           ${o.tx_ids.length > 0 ? `
-            <button class="an2-btn ghost" onclick="window.analyticsModule?.showOrderTxJson('${escapeHtml(o.order_id)}')"
+            <button class="an2-btn ghost" onclick="window.analyticsModule?.showOrderTxJson('${escapeHtml(o.order_key ?? o.order_id).replace(/'/g, "\\'")}')"
               style="display:inline-flex;align-items:center;gap:6px">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
               JSON транзакций (${o.tx_ids.length})

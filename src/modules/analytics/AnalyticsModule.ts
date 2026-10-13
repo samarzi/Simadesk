@@ -132,6 +132,7 @@ export class AnalyticsModule {
     this.container.style.flexDirection = 'column';
     if (!this.dataLoaded) {
       this.stores = await loadAllStores();
+      this.ensureStoreSelection();
       this.render();
       this.refresh();
     } else {
@@ -234,6 +235,21 @@ export class AnalyticsModule {
     return new Set(pool.map(s => s.id));
   }
 
+  private ensureStoreSelection(): void {
+    const mpStores = this.stores.filter(s => s.mp === this.selectedMp);
+    if (mpStores.length > 1 && (!this.selectedStore || !mpStores.some(s => s.id === this.selectedStore))) {
+      this.selectedStore = mpStores[0].id;
+    }
+  }
+
+  /** Финотчёт часто появляется через несколько дней после даты заказа. Берём
+   * запас вокруг периода, а агрегатор сам отсекает orphan-расходы за его
+   * пределами. Это устраняет ложные «ожидание расчёта» на границах месяца. */
+  private getSettlementRange(start: Date, end: Date): { start: Date; end: Date } {
+    const pad = 45 * 86400_000;
+    return { start: new Date(start.getTime() - pad), end: new Date(end.getTime() + pad) };
+  }
+
   // ── Загрузка данных ──────────────────────────────────────────────────
   async refresh(): Promise<void> {
     if (this.loading) return;
@@ -254,7 +270,7 @@ export class AnalyticsModule {
       // Без await — кэш может быть пустым если аналитика открыта сразу после входа.
       await costPriceDb.refresh();
       const cogs = buildCogsResolver();
-      const products = await buildProductMap();
+      const products = await buildProductMap(storeIds);
 
       // Колбэк прогресса: дебаунс через rAF чтобы не флудить ре-рендерами
       let _rafProgress = 0;
@@ -268,9 +284,10 @@ export class AnalyticsModule {
         }
       };
 
+      const txRange = this.getSettlementRange(start, end);
       const [liveOrders, txs] = await Promise.all([
         loadOrders(start, end, storeIds, undefined, onProgress),
-        loadTransactions([...storeIds], start, end),
+        loadTransactions([...storeIds], txRange.start, txRange.end),
       ]);
 
       const filteredStores = this.stores.filter(s => storeIds.has(s.id));
@@ -282,6 +299,8 @@ export class AnalyticsModule {
         stores: filteredStores,
         products,
         cogs,
+        periodStart: start,
+        periodEnd: end,
       });
       this.orders      = agg.orders;
       this.periodCosts = agg.periodCosts;
@@ -339,15 +358,16 @@ export class AnalyticsModule {
     try {
       const { start, end } = this.getPrevRange();
       const storeIds = new Set(stores.map(s => s.id));
+      const txRange = this.getSettlementRange(start, end);
       const [liveOrders, txs] = await Promise.all([
         loadOrders(start, end, storeIds),
-        loadTransactions([...storeIds], start, end),
+        loadTransactions([...storeIds], txRange.start, txRange.end),
       ]);
       const agg = aggregateOrders({
         ozonPostings: liveOrders.ozonPostings,
         yandexOrders: liveOrders.yandexOrders,
         wbOrders: liveOrders.wbOrders,
-        transactions: txs, stores, products, cogs,
+        transactions: txs, stores, products, cogs, periodStart: start, periodEnd: end,
       });
       this.prevOrders = agg.orders;
       this.prevKpi = computeKPI(agg.orders, agg.periodCosts, this._manualFor(start, end, storeIds));
@@ -657,6 +677,7 @@ export class AnalyticsModule {
     this.selectedMp = mp;
     try { localStorage.setItem('an2_selected_mp', mp); } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
     this.selectedStore = null;
+    this.ensureStoreSelection();
     this.selectedStores.clear();
     this._allState = 'idle';
     this._allFrom  = null;
@@ -671,6 +692,7 @@ export class AnalyticsModule {
       this.selectedMp = mp;
       try { localStorage.setItem('an2_selected_mp', mp); } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
       this.selectedStore = null;
+      this.ensureStoreSelection();
       this.selectedStores.clear();
       this._allState = 'idle';
       this._allFrom  = null;
@@ -788,18 +810,18 @@ export class AnalyticsModule {
 
   /** Показать JSON всех финансовых транзакций по заказу — для диагностики. */
   async showOrderTxJson(orderId: string): Promise<void> {
-    const order = this.orders.find(o => o.order_id === orderId);
+    const order = this.orders.find(o => (o.order_key ?? o.order_id) === orderId);
     if (!order) return;
     try {
       const { dbFetch } = await import('@/services/dbClient');
       const txs = await dbFetch<any[]>(
-        `mp_transactions?posting_number=eq.${encodeURIComponent(orderId)}&order=operation_date.asc`,
+        `mp_transactions?store_id=eq.${encodeURIComponent(order.store_id)}&posting_number=eq.${encodeURIComponent(order.order_id)}&order=operation_date.asc`,
       );
       // Открываем во всплывающем окне
       const w = window.open('', '_blank', 'width=900,height=700');
       if (!w) { alert('Разрешите всплывающие окна для просмотра JSON'); return; }
       const summary = {
-        order_id: orderId,
+        order_id: order.order_id,
         marketplace: order.mp,
         status: order.status,
         tx_count: txs.length,
@@ -872,15 +894,21 @@ export class AnalyticsModule {
         if (it.vendor_code === vendorCode && it.cost_price == null) {
           const itemCogs = price * it.quantity;
           cogsDelta += itemCogs;
-          return { ...it, cost_price: price, cogs: itemCogs, net_profit: it.revenue - itemCogs };
+          return { ...it, cost_price: price, cogs: itemCogs };
         }
         return it;
       });
       if (cogsDelta === 0) return o;
       const newCogs = o.cogs + cogsDelta;
+      const fixedExpenses = o.commission + o.logistics + o.logistics_return + o.services + o.tax;
+      const revenueDenom = newItems.reduce((s, it) => s + Math.max(0, it.revenue), 0);
+      const itemsWithProfit = newItems.map(it => {
+        const share = revenueDenom > 0 ? Math.max(0, it.revenue) / revenueDenom : 1 / Math.max(1, newItems.length);
+        return { ...it, net_profit: it.revenue - it.cogs - fixedExpenses * share };
+      });
       return {
         ...o,
-        items: newItems,
+        items: itemsWithProfit,
         cogs: newCogs,
         net_profit: o.revenue - (o.commission + o.logistics + o.logistics_return + o.services + newCogs + o.tax),
       };
@@ -1153,15 +1181,6 @@ export class AnalyticsModule {
   private _renderStoreSelector(): string {
     const mpStores = this.stores.filter(s => s.mp === this.selectedMp);
     if (mpStores.length <= 1) return ''; // 0 или 1 магазин — фильтр не нужен
-    // Авто-выбор первого магазина если ничего не выбрано
-    if (!this.selectedStore || !mpStores.find(s => s.id === this.selectedStore)) {
-      Promise.resolve().then(() => {
-        if (!this.selectedStore || !this.stores.find(s => s.id === this.selectedStore && s.mp === this.selectedMp)) {
-          this.selectedStore = mpStores[0].id;
-          this.refresh();
-        }
-      });
-    }
     return `
       <div class="an2-store-selector" title="Выберите магазин для анализа">
         ${mpStores.map(s => `
@@ -1359,8 +1378,8 @@ export class AnalyticsModule {
   }
 
   private renderOpenOrder(): string {
-    const o = this.orders.find(x => x.order_id === this.openedOrderId)
-           ?? this.prevOrders.find(x => x.order_id === this.openedOrderId);
+    const o = this.orders.find(x => (x.order_key ?? x.order_id) === this.openedOrderId)
+           ?? this.prevOrders.find(x => (x.order_key ?? x.order_id) === this.openedOrderId);
     if (!o) {
       this.openedOrderId = null;
       return '';

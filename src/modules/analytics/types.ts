@@ -69,6 +69,10 @@ export interface FeeBreakdown {
 export interface Order {
   /** Уникальный ключ: posting_number для Ozon/WB, id для ЯМ. */
   order_id: string;
+  /** Внутренний ключ заказа с учётом МП и магазина. Нужен, потому что один и тот же
+   * posting/id может встречаться у разных магазинов. Для старых тестовых данных
+   * может отсутствовать — тогда используется order_id. */
+  order_key?: string;
   /** Дата заказа (ISO). */
   date: string;
   mp: Mp;

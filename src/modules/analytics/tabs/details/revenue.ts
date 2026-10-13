@@ -16,8 +16,9 @@ export function renderRevenueDetail(c: DetailCtx): string {
   // Выручка в разрезе статусов — считаем прямо по заказам, а не восстанавливаем из KPI.
   let revDelivered = 0, revInWork = 0;
   for (const o of c.orders) {
-    if (o.status === 'delivered') revDelivered += o.revenue;
-    else if (o.status === 'processing' || o.status === 'in_delivery') revInWork += o.revenue;
+    if (o.is_orphan) continue;
+    if (o.status === 'delivered' && o.source === 'real') revDelivered += o.revenue;
+    else if (o.status === 'processing' || o.status === 'in_delivery' || (o.status === 'delivered' && o.source !== 'real')) revInWork += o.revenue;
   }
 
   const skus = computeSkuPerformance(c.orders).filter(s => s.revenue > 0).slice(0, 10);

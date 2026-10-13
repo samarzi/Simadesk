@@ -47,10 +47,13 @@ function toStr(d: Date): string { return d.toISOString().slice(0, 10); }
  * в кэше, и одна и та же выборка давала разные суммы в зависимости от того,
  * прогрет кэш или нет. WB вдобавок грузился без верхней границы — до «сегодня».
  *
- * Заказ без разбираемой даты не выбрасываем: решение о нём принимает аналитика.
+ * Заказ без разбираемой даты не может честно попасть в календарный период.
+ * Раньше такие записи проходили фильтр, но исчезали из временного ряда.
  */
 export function isWithinRange(raw: string | null | undefined, start: Date, end: Date): boolean {
   const iso = normalizeMpDate(raw);
+  // Записи без даты синхронизации нельзя отбрасывать: иначе заказ исчезает
+  // из выдачи и его финансовые строки становятся недоступны пользователю.
   if (!iso) return true;
   const t = Date.parse(iso);
   if (isNaN(t)) return true;
@@ -293,9 +296,9 @@ class OrderSyncService {
     const ymCache = new Map<string, Map<string, any[]>>();
     const wbCache = new Map<string, Map<string, any[]>>();
     await Promise.all([
-      ...oz.map(async s => { ozCache.set(s.id, await analyticsOrderCache.loadRange(s.id, start, end)); }),
-      ...ym.map(async s => { ymCache.set(s.id, await analyticsOrderCache.loadRange(s.id, start, end)); }),
-      ...wb.map(async s => { wbCache.set(s.id, await analyticsOrderCache.loadRange(s.id, start, end)); }),
+      ...oz.map(async s => { ozCache.set(s.id, await analyticsOrderCache.loadRange(s.id, 'ozon', start, end)); }),
+      ...ym.map(async s => { ymCache.set(s.id, await analyticsOrderCache.loadRange(s.id, 'yandex', start, end)); }),
+      ...wb.map(async s => { wbCache.set(s.id, await analyticsOrderCache.loadRange(s.id, 'wb', start, end)); }),
     ]);
 
     await Promise.all([
@@ -332,7 +335,7 @@ class OrderSyncService {
           const flightKey = `ozon:${store.id}:${key}`;
           if (isMonthSettled(monthDate) && this._inFlight.has(flightKey)) {
             await this._inFlight.get(flightKey)!.catch(() => {});
-            const fresh = await analyticsOrderCache.loadRange(store.id, mStart, mEnd);
+            const fresh = await analyticsOrderCache.loadRange(store.id, 'ozon', mStart, mEnd);
             if (fresh.has(key)) {
               for (const p of fresh.get(key) as OzonPosting[]) {
                 if (!seen.has(p.posting_number)) {
@@ -410,7 +413,7 @@ class OrderSyncService {
           const flightKey = `yandex:${store.id}:${key}`;
           if (isMonthSettled(monthDate) && this._inFlight.has(flightKey)) {
             await this._inFlight.get(flightKey)!.catch(() => {});
-            const fresh = await analyticsOrderCache.loadRange(store.id, mStart, mEnd);
+            const fresh = await analyticsOrderCache.loadRange(store.id, 'yandex', mStart, mEnd);
             if (fresh.has(key)) {
               yandexOrders.push(...(fresh.get(key) as YandexOrder[]));
               tick(true, false, label);
@@ -456,7 +459,7 @@ class OrderSyncService {
         }
         if (wbFlightPromises.length > 0) {
           await Promise.all(wbFlightPromises);
-          const fresh = await analyticsOrderCache.loadRange(store.id, start, end);
+          const fresh = await analyticsOrderCache.loadRange(store.id, 'wb', start, end);
           for (const monthDate of months) {
             const k = monthCacheKey(monthDate);
             const label = `${mLabel(monthDate)} · ${store.name}`;
@@ -535,10 +538,10 @@ class OrderSyncService {
 
     if (needsIncremental) {
       const rollingStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - ROLLING_MONTHS, 1));
-      await analyticsOrderCache.invalidateRange(store.id, rollingStart, now);
+      await analyticsOrderCache.invalidateRange(store.id, 'ozon', rollingStart, now);
     }
 
-    const cachedKeys = await analyticsOrderCache.loadCachedKeys(store.id, earliest, now);
+    const cachedKeys = await analyticsOrderCache.loadCachedKeys(store.id, 'ozon', earliest, now);
     const months     = monthsInRange(earliest, now);
     const creds      = { client_id: store.client_id, api_key: store.api_key };
     const seen       = new Set<string>();
@@ -597,10 +600,10 @@ class OrderSyncService {
 
     if (needsIncremental) {
       const rollingStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - ROLLING_MONTHS, 1));
-      await analyticsOrderCache.invalidateRange(store.id, rollingStart, now);
+      await analyticsOrderCache.invalidateRange(store.id, 'yandex', rollingStart, now);
     }
 
-    const cachedKeys = await analyticsOrderCache.loadCachedKeys(store.id, earliest, now);
+    const cachedKeys = await analyticsOrderCache.loadCachedKeys(store.id, 'yandex', earliest, now);
     const months     = monthsInRange(earliest, now);
 
     for (const monthDate of months) {
@@ -637,10 +640,10 @@ class OrderSyncService {
 
     if (needsIncremental) {
       const rollingStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - ROLLING_MONTHS, 1));
-      await analyticsOrderCache.invalidateRange(store.id, rollingStart, now);
+      await analyticsOrderCache.invalidateRange(store.id, 'wb', rollingStart, now);
     }
 
-    const cachedKeys = await analyticsOrderCache.loadCachedKeys(store.id, earliest, now);
+    const cachedKeys = await analyticsOrderCache.loadCachedKeys(store.id, 'wb', earliest, now);
     const months     = monthsInRange(earliest, now);
 
     let fetchFrom: Date | null = null;

@@ -71,11 +71,12 @@ export async function loadAllStores(): Promise<StoreInfo[]> {
   ];
 }
 
-export async function buildProductMap(): Promise<ProductMap> {
+export async function buildProductMap(storeIds?: Set<string>): Promise<ProductMap> {
   const map: ProductMap = new Map();
   try {
     const ps = await ozonDb.getProducts();
     for (const p of ps) {
+      if (storeIds && !storeIds.has(p.store_id)) continue;
       const info = { name: p.name, image: p.images?.[0], vendor_code: p.offer_id, mp_sku: p.sku ? String(p.sku) : undefined };
       map.set(`ozon|${p.offer_id}`, info);
       if (p.sku) map.set(`ozon|sku:${p.sku}`, info);
@@ -84,6 +85,7 @@ export async function buildProductMap(): Promise<ProductMap> {
   try {
     const ps = await yandexDb.getProducts();
     for (const p of ps) {
+      if (storeIds && !storeIds.has(p.store_id)) continue;
       const info = { name: p.name, image: p.pictures?.[0], vendor_code: p.offer_id, mp_sku: p.market_sku ? String(p.market_sku) : undefined };
       map.set(`yandex|${p.offer_id}`, info);
       if (p.market_sku) map.set(`yandex|sku:${p.market_sku}`, info);
@@ -92,6 +94,7 @@ export async function buildProductMap(): Promise<ProductMap> {
   try {
     const ps = await wbDb.getProducts();
     for (const p of ps) {
+      if (storeIds && !storeIds.has(p.store_id)) continue;
       const info = { name: p.title, image: p.pictures?.[0], vendor_code: p.vendor_code, mp_sku: String(p.nm_id) };
       map.set(`wb|${p.vendor_code}`, info);
       map.set(`wb|sku:${p.nm_id}`, info);
@@ -115,5 +118,8 @@ export async function loadTransactions(
 ): Promise<MpTransaction[]> {
   if (!storeIds.length) return [];
   try { return await mpTransactionsDb.getByStores(storeIds, start.toISOString(), end.toISOString()); }
-  catch (e) { console.warn('[Analytics] transactions:', e); return []; }
+  catch (e) {
+    console.error('[Analytics] transactions load failed:', e);
+    throw e;
+  }
 }

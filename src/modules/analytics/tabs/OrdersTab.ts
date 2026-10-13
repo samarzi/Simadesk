@@ -107,6 +107,7 @@ function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
     const expensesMp = o.commission + o.logistics + o.logistics_return + o.services;
     const goods = o.items.map(it => `<span style="display:inline-flex;align-items:center;gap:2px">${escapeHtml(it.vendor_code)}×${it.quantity}${copyButton(it.vendor_code, 'Копировать артикул')}</span>`).join(', ');
     const safeId = escapeHtml(o.order_id);
+    const safeKey = escapeHtml(o.order_key ?? o.order_id).replace(/'/g, "\\'");
     // Пока финотчёт не пришёл, удержания по заказу неизвестны. Показывать
     // «прибыль» как выручку минус себестоимость нельзя — это завышенное число,
     // из которого не вычтены комиссия и логистика.
@@ -114,7 +115,7 @@ function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
     const pendingCls = pending ? ' an2-pending' : '';
     const pendingTitle = pending ? ' title="Финотчёт МП ещё не пришёл — комиссия и логистика по заказу неизвестны, поэтому он не участвует в выручке и прибыли"' : '';
     rowsArr.push(`
-      <tr onclick="window.analyticsModule?.openOrder('${safeId}')">
+      <tr onclick="window.analyticsModule?.openOrder('${safeKey}')">
         <td class="an2-col-date">${fmtDate(o.date)}</td>
         <td>
           <div class="an2-order-id-cell">
