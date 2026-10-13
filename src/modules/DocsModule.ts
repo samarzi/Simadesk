@@ -79,6 +79,8 @@ export class DocsModule {
   private warnedNoPersist = new Set<string>();
   /** Изменены локально и ещё не подтверждены сервером. */
   private dirty = new Set<string>();
+  private deletingDocs = new Set<string>();
+  private deletedDocs = new Set<string>();
   /** Документы, которые сервер уже видел (значит, их исчезновение — удаление или закрытие доступа). */
   private serverKnown = new Set<string>();
   private xlLastSel: { r1: number; c1: number; r2: number; c2: number; docId: string; sheetIdx: number } | null = null;
@@ -559,7 +561,7 @@ export class DocsModule {
   private saveDocToDb(doc: DocItem, done?: (ok: boolean) => void): void {
     const companyId = companyService.getActiveId();
     if (!companyId) { done?.(false); return; }
-    if (this.pendingContent.has(doc.id)) { done?.(false); return; }
+    if (this.pendingContent.has(doc.id) || this.deletingDocs.has(doc.id) || this.deletedDocs.has(doc.id)) { done?.(false); return; }
     // Пустую заготовку Excel в БД не пишем, если документ там уже есть — затрёт настоящий
     if (doc.type === 'excel' && !doc.content) { done?.(false); return; }
     this.setSaveState('saving');
@@ -577,6 +579,7 @@ export class DocsModule {
       body: JSON.stringify(body),
       headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
     }).then(() => {
+      if (this.deletingDocs.has(doc.id) || this.deletedDocs.has(doc.id)) { done?.(false); return; }
       const first = !this.serverKnown.has(doc.id);
       this.serverKnown.add(doc.id);
       this.dirty.delete(doc.id);
@@ -591,22 +594,22 @@ export class DocsModule {
     });
   }
 
-  private deleteDocFromDb(id: string): void {
-    const companyId = companyService.getActiveId();
-    if (!companyId) return;
-    dbFetch<unknown>(`docs_documents?id=eq.${encodeURIComponent(id)}&company_id=eq.${companyId}`, { method: 'DELETE' })
-      .catch(e => { debug.warn('[DocsModule] deleteDocFromDb failed', e); showToast('Не удалось удалить документ на сервере: ' + (e as Error).message, 'error'); });
-    if (this.srvV2) dbFetch<unknown>(`docs_recent?doc_id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => { /* ignore */ });
+  private async deleteDocFromDb(id: string, companyId: string): Promise<void> {
+    const result = await dbFetch<{ deleted: boolean }>('rpc/docs_delete_permanently', {
+      method: 'POST', body: JSON.stringify({ p_id: id, p_company_id: companyId }),
+    });
+    if (result?.deleted !== true) throw new Error('Сервер не подтвердил удаление документа');
   }
 
   /** «Недавние» и открытые вкладки — на аккаунт (с задержкой, чтобы не спамить). */
   private syncRecentToServer(id: string, open: boolean): void {
     const companyId = companyService.getActiveId();
-    if (!companyId || this.srvV2 === false) return;
+    if (!companyId || this.srvV2 === false || this.deletingDocs.has(id) || this.deletedDocs.has(id)) return;
     const t = this.recentSyncTimers.get(id);
     if (t) clearTimeout(t);
     this.recentSyncTimers.set(id, setTimeout(() => {
       this.recentSyncTimers.delete(id);
+      if (this.deletingDocs.has(id) || this.deletedDocs.has(id)) return;
       if (!this.serverKnown.has(id) && !this.docs.some(d => d.id === id && d.content)) return;
       dbFetch<unknown>('docs_recent', {
         method: 'POST',
@@ -760,23 +763,52 @@ export class DocsModule {
   }
 
   /** Удалить документ насовсем — из кеша и с сервера. Необратимо. */
-  private deleteDoc(id: string, skipConfirm = false): void {
-    const idx = this.docs.findIndex(d => d.id === id);
-    const doc = idx >= 0 ? this.docs[idx] : null;
+  private async deleteDoc(id: string, skipConfirm = false): Promise<boolean> {
+    if (this.deletingDocs.has(id)) return false;
+    const companyId = companyService.getActiveId();
+    const doc = this.docs.find(d => d.id === id);
     const title = doc?.title ?? this.recent.find(r => r.id === id)?.title ?? this.allDocs?.find(d => d.id === id)?.title ?? 'документ';
-    if (!skipConfirm && !confirm(`Удалить «${title}» навсегда?\nДокумент исчезнет с сервера у всех участников кабинета. Отменить будет нельзя.`)) return;
-    if (idx >= 0) this.docs.splice(idx, 1);
-    this.pendingContent.delete(id);
-    this.dirty.delete(id);
-    this.serverKnown.delete(id);
-    this.dropDocContent(id);
-    this.recent = this.recent.filter(r => r.id !== id);
-    this.saveRecent();
-    if (this.allDocs) this.allDocs = this.allDocs.filter(d => d.id !== id);
-    if (this.activeId === id) { this.activeId = this.docs[0]?.id ?? null; this.activeSheetIdx = 0; }
-    this.save();
-    this.deleteDocFromDb(id);
-    this.render();
+    if (!skipConfirm && !confirm(`Удалить «${title}» навсегда?\nДокумент и его содержимое будут удалены из БД и из «Недавних» у всех участников. Отменить будет нельзя.`)) return false;
+    if (!companyId) { showToast('Выберите кабинет перед удалением', 'error'); return false; }
+    this.deletingDocs.add(id);
+    const recentTimer = this.recentSyncTimers.get(id);
+    if (recentTimer) { clearTimeout(recentTimer); this.recentSyncTimers.delete(id); }
+    try {
+      await this.deleteDocFromDb(id, companyId);
+      this.deletedDocs.add(id);
+      if (companyService.getActiveId() !== companyId) return true;
+      if (this.activeId === id) this.destroyEditors();
+      this.docs = this.docs.filter(d => d.id !== id);
+      this.pendingContent.delete(id);
+      this.dirty.delete(id);
+      this.serverKnown.delete(id);
+      this.dropDocContent(id);
+      // Удаляем также старые кеши до привязки к кабинету, иначе документ
+      // мог открыться из восстановленного содержимого при следующем входе.
+      const keys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith(STORAGE_KEY) && key.endsWith(`__doc_${id}`)) keys.push(key);
+      }
+      for (const key of keys) localStorage.removeItem(key);
+      this.recent = this.recent.filter(r => r.id !== id);
+      this.saveRecent();
+      if (this.allDocs) this.allDocs = this.allDocs.filter(d => d.id !== id);
+      this.xlUndoStack = this.xlUndoStack.filter(snap => snap.docId !== id);
+      this.xlRedoStack = this.xlRedoStack.filter(snap => snap.docId !== id);
+      for (const key of Object.keys(this.xlSelMemo)) if (key.startsWith(id + ':')) delete this.xlSelMemo[key];
+      delete this.xlSheetScroll[id];
+      if (this.bookCache?.docId === id) { this.bookCache = null; this.wbEval = null; }
+      if (this.activeId === id) { this.activeId = this.docs[0]?.id ?? null; this.activeSheetIdx = 0; }
+      if (!this.activeId) localStorage.removeItem(this.ak());
+      this.save();
+      this.render();
+      showToast(`«${title}» удалён навсегда`, 'success');
+      return true;
+    } catch (e) {
+      showToast('Документ не удалён: ' + (e as Error).message, 'error');
+      return false;
+    } finally { this.deletingDocs.delete(id); }
   }
 
   private renameDoc(id: string, title: string): void {
@@ -1398,7 +1430,7 @@ export class DocsModule {
     return `<span class="docs-recent-owner" title="Владелец">${this.esc(this.memberNames.get(owner) ?? 'участник')}</span>`;
   }
 
-  private docRow(r: { id: string; title: string; type: DocType; updated_at: number; owner_id?: string | null; visibility?: string }, opts: { removable?: boolean } = {}): string {
+  private docRow(r: { id: string; title: string; type: DocType; updated_at: number; owner_id?: string | null; visibility?: string }, opts: { removable?: boolean; deletable?: boolean } = {}): string {
     const alreadyOpen = this.docs.some(d => d.id === r.id);
     const icon = r.type === 'word'
       ? '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>'
@@ -1409,8 +1441,15 @@ export class DocsModule {
       <span class="docs-recent-info"><span class="docs-recent-title">${this.esc(r.title)}</span><span class="docs-recent-date">${date}</span></span>
       ${this.ownerLabel(r.owner_id, r.visibility)}
       ${alreadyOpen ? '<span class="docs-recent-badge">открыт</span>' : ''}
+      ${opts.deletable && this.canDeleteDoc(r) ? `<button class="docs-document-delete" data-delete-doc="${this.esc(r.id)}" aria-label="Удалить ${this.esc(r.title)} навсегда" title="Удалить навсегда"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>` : ''}
       ${opts.removable ? `<button class="docs-recent-del" data-del-recent="${r.id}" title="Убрать из недавних">×</button>` : ''}
     </div>`;
+  }
+
+  private canDeleteDoc(doc: { owner_id?: string | null; visibility?: string }): boolean {
+    const role = companyService.getActive()?.role;
+    return !doc.owner_id || doc.owner_id === this.me() ||
+      (doc.visibility !== 'private' && (role === 'owner' || role === 'admin'));
   }
 
   private renderRecentRows(): string {
@@ -1439,7 +1478,7 @@ export class DocsModule {
       ? '<div class="docs-hint">Загружаю документы кабинета…</div>'
       : `<div class="docs-browser-tabs">${tab('all', 'Все')}${tab('mine', 'Мои')}${tab('shared', 'Общие')}${tab('private', 'Личные')}</div>
          <input class="docs-search" id="docs-browse-q" placeholder="Поиск по названию" value="${this.esc(this.browseQuery)}">
-         <div class="docs-recent-list">${list.length ? list.map(d => this.docRow(d)).join('') : '<div class="docs-hint">Нет документов</div>'}</div>`;
+         <div class="docs-recent-list">${list.length ? list.map(d => this.docRow(d, { deletable: true })).join('') : '<div class="docs-hint">Нет документов</div>'}</div>`;
     return `<div class="docs-empty" style="overflow:auto;justify-content:flex-start;padding:32px 16px">
       <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.3;margin-top:16px"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
       <div class="docs-empty-title">Нет открытых документов</div>
@@ -1529,6 +1568,8 @@ export class DocsModule {
 
     // Строки «Недавних» и «Всех документов» — делегирование
     const onRowClick = (e: Event) => {
+      const deleteButton = (e.target as HTMLElement).closest<HTMLElement>('[data-delete-doc]');
+      if (deleteButton) { e.preventDefault(); e.stopPropagation(); void this.deleteDoc(deleteButton.dataset.deleteDoc!); return; }
       const del = (e.target as HTMLElement).closest<HTMLElement>('.docs-recent-del');
       if (del) { e.stopPropagation(); this.removeRecent(del.dataset.delRecent!); return; }
       const row = (e.target as HTMLElement).closest<HTMLElement>('.docs-recent-row');
@@ -4292,12 +4333,14 @@ export class DocsModule {
 
   // ── Документы ───────────────────────────────────────────────────────────
 
-  private aiDocsDelete(a: { docIds?: string[] | 'all'; names?: string[] }): AiActionResult {
+  private async aiDocsDelete(a: { docIds?: string[] | 'all'; names?: string[] }): Promise<AiActionResult> {
     const targets = this.aiResolveDocs(a);
     if (!targets.length) throw new Error('Документы не найдены. Проверь id или названия через describe().');
     const names = targets.map(d => `«${d.title}»`).join(', ');
     // Подтверждение уже получено карточкой ассистента — удаляем по-настоящему
-    for (const doc of targets) this.deleteDoc(doc.id, true);
+    for (const doc of targets) {
+      if (!await this.deleteDoc(doc.id, true)) throw new Error(`Не удалось удалить «${doc.title}»`);
+    }
     return { summary: `Удалено документов: ${targets.length} — ${names}.` };
   }
 

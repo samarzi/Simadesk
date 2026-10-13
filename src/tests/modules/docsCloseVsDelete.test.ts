@@ -11,6 +11,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const db: { rows: any[]; deletes: string[]; posts: string[] } = { rows: [], deletes: [], posts: [] };
 vi.mock('@/services/dbClient', () => ({
   dbFetch: vi.fn(async (endpoint: string, opts?: any) => {
+    if (endpoint === 'rpc/docs_delete_permanently') {
+      const { p_id } = JSON.parse(opts.body);
+      db.deletes.push(p_id); db.rows = db.rows.filter(r => r.id !== p_id);
+      return { deleted: true };
+    }
     if (opts?.method === 'DELETE') {
       const id = /id=eq\.([^&]+)/.exec(endpoint)?.[1] ?? '';
       db.deletes.push(id);
@@ -32,6 +37,7 @@ vi.mock('@/services/aiPageContext', () => ({ aiPage: { register: () => {}, unreg
 vi.mock('@/services/selectionContext', () => ({ selectionCtx: { set: () => {}, clear: () => {} } }));
 vi.mock('@/utils/toast', () => ({ showToast: () => {} }));
 
+import { dbFetch } from '@/services/dbClient';
 import { DocsModule } from '@/modules/DocsModule';
 
 const CONTENT = JSON.stringify({ sheets: [{ name: 'Лист1', data: [[{ v: 'важные данные' }]] }] });
@@ -41,7 +47,7 @@ beforeEach(() => {
   db.rows = []; db.deletes = []; db.posts = [];
   localStorage.clear();
   M = Object.create(DocsModule.prototype);
-  Object.assign(M, { dirty: new Set(), serverKnown: new Set(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: false, pendingContent: new Set(), warnedNoPersist: new Set(), recent: [] });
+  Object.assign(M, { deletingDocs: new Set(), deletedDocs: new Set(), dirty: new Set(), serverKnown: new Set(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: false, pendingContent: new Set(), warnedNoPersist: new Set(), recent: [] });
   M.root = document.createElement('div');
   M.docs = [{ id: 'd1', type: 'excel', title: 'Прайс', content: CONTENT, updated_at: 1000 }];
   M.recent = []; M.activeId = 'd1'; M.loadedCompanyId = 'CO';
@@ -80,16 +86,16 @@ describe('закрытие вкладки обратимо', () => {
 });
 
 describe('удаление необратимо и честно об этом говорит', () => {
-  it('стирает и кеш, и запись на сервере', () => {
+  it('стирает и кеш, и запись на сервере', async () => {
     db.rows = [{ id: 'd1', content: CONTENT }];
-    M.deleteDoc('d1', true);
+    await M.deleteDoc('d1', true);
     expect(db.deletes).toEqual(['d1']);
     expect(localStorage.getItem('docs_v2_CO__doc_d1')).toBeNull();
   });
 
-  it('убирает документ из «Недавних», чтобы не осталось мёртвой записи', () => {
+  it('убирает документ из «Недавних», чтобы не осталось мёртвой записи', async () => {
     M.recent = [{ id: 'd1', title: 'Прайс', type: 'excel', updated_at: 1000 }];
-    M.deleteDoc('d1', true);
+    await M.deleteDoc('d1', true);
     expect(M.recent.some((r: any) => r.id === 'd1'), 'мёртвая запись осталась в недавних').toBe(false);
   });
 
@@ -109,4 +115,28 @@ describe('удаление необратимо и честно об этом г
     expect(text, 'диалог удаления не должен обещать простое закрытие').not.toMatch(/будет закрыт/i);
     spy.mockRestore();
   });
+  it('оставляет документ и кеш при отказе сервера', async () => {
+    localStorage.setItem('docs_v2_CO__doc_d1', CONTENT);
+    vi.mocked(dbFetch).mockRejectedValueOnce(new Error('Удаление запрещено'));
+    expect(await M.deleteDoc('d1', true)).toBe(false);
+    expect(M.docs).toHaveLength(1);
+    expect(localStorage.getItem('docs_v2_CO__doc_d1')).toBe(CONTENT);
+  });
+
+  it('не сообщает об успехе без подтверждения удаления от сервера', async () => {
+    vi.mocked(dbFetch).mockResolvedValueOnce({ deleted: false });
+    expect(await M.deleteDoc('d1', true)).toBe(false);
+    expect(M.docs).toHaveLength(1);
+  });
+
+  it('удаляет документ из полного списка без открытия вкладки', async () => {
+    M.allDocs = [{ id: 'd2', title: 'Архив', type: 'word', updated_at: 1000 }];
+    db.rows = [{ id: 'd2', content: 'текст' }];
+    localStorage.setItem('docs_v2_CO__doc_d2', 'текст');
+    expect(await M.deleteDoc('d2', true)).toBe(true);
+    expect(db.deletes).toEqual(['d2']);
+    expect(M.allDocs).toEqual([]);
+    expect(localStorage.getItem('docs_v2_CO__doc_d2')).toBeNull();
+  });
+
 });

@@ -4826,3 +4826,13 @@ html:not(.light) .docs-excel-wrap.dx-freeze-row .docs-excel tbody tr[data-row="0
 @keyframes docs-loading-spin { to { transform: rotate(360deg); } }
 .docs-loading-txt { font-size: 14px; font-weight: 500; color: var(--text); }
 .docs-loading-sub { font-size: 12px; color: var(--muted); }
+
+.docs-document-delete {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; width: 28px; height: 28px; padding: 0;
+  border: 1px solid var(--border); border-radius: 7px;
+  background: transparent; color: var(--text2); cursor: pointer;
+}
+.docs-document-delete:hover, .docs-document-delete:focus-visible {
+  color: #dc4545; background: rgba(220,69,69,.1); border-color: rgba(220,69,69,.3);
+}
