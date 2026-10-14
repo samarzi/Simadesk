@@ -136,24 +136,25 @@ describe('Ozon Performance', () => {
   });
 });
 
-import { renderUnitTab, unitReportText, unitSheets } from '@/modules/analytics/tabs/UnitTab';
+import { renderUnit } from '@/modules/analytics/ui/views/unit';
+import { unitReportText, unitSheets } from '@/modules/analytics/services/unitReport';
 
 describe('вкладка «Юнит-экономика»', () => {
   const state = (result: ReturnType<typeof computeUnitEconomics> | null) => ({
-    result, loading: false, error: '', settings: DEFAULT_UNIT_SETTINGS, periodLabel: 'Ozon · сегодня',
-    updatedAt: new Date(), sort: { key: 'orderedRevenue' as const, dir: -1 as const },
-    perfConnected: false, isOzon: true, historyLabel: 'за 60 дней',
+    result, loading: false, error: '', settings: DEFAULT_UNIT_SETTINGS,
+    sort: { key: 'orderedRevenue' as const, dir: -1 as const }, isOzon: true, historyLabel: 'за 60 дней',
   });
 
   it('рендерится с данными и без', () => {
     const r = computeUnitEconomics(input({ fbs: { postings: 3, units: 4, revenue: 4000 } }));
-    const html = renderUnitTab(state(r));
+    const html = renderUnit(state(r));
     expect(html).toContain('Выкуп 60%');
     expect(html).toContain('Расходы на выкупленную штуку');
-    expect(html).toContain('FBS передано');
+    expect(html).toContain('Из чего состоит цена');
+    expect(html).toContain('Передано в доставку FBS');
     expect(html).toContain('Футболка');
-    expect(renderUnitTab(state(null))).toContain('Считаем юнит-экономику');
-    expect(renderUnitTab(state(computeUnitEconomics(input({ orders: [] }))))).toContain('нет заказов');
+    expect(renderUnit(state(null))).toContain('Считаем');
+    expect(renderUnit(state(computeUnitEconomics(input({ orders: [] }))))).toContain('нет заказов');
   });
 
   it('текстовый отчёт содержит ключевые строки', () => {

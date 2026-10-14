@@ -159,7 +159,7 @@ export const FEE_LABEL: Record<FeeKind, string> = {
 export function classifyServiceName(name: string): FeeKind {
   const n = (name || '').toLowerCase();
   if (n.includes('delivtocustomer') || n.includes('последняя миля') || n.includes('last mile')) return 'last_mile';
-  if (n.includes('acquiring') || n.includes('эквайр')) return 'acquiring';
+  if (n.includes('acquiring') || n.includes('эквайр') || n.includes('приём платеж') || n.includes('прием платеж')) return 'acquiring';
   if (n.includes('return') || n.includes('возврат') || n.includes('невыкуп') || n.includes('обратн')) return 'logistics_return';
   if (n.includes('storage') || n.includes('хранен') || n.includes('размещени')) return 'storage';
   if (n.includes('penalty') || n.includes('штраф') || n.includes('defect') || n.includes('нарушен')) return 'penalty';

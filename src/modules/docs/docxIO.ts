@@ -48,6 +48,9 @@ function wattr(el: Element | null | undefined, name: string): string | null {
   if (!el) return null;
   return el.getAttributeNS(W_NS, name) ?? el.getAttribute('w:' + name) ?? el.getAttribute(name);
 }
+function safeHref(href: string | undefined): string | undefined {
+  return href && /^(https?:|mailto:|tel:|#)/i.test(href) ? href : undefined;
+}
 /** Логическое свойство: <w:b/> = да, <w:b w:val="0"/> = нет. */
 function onOff(el: Element | null): boolean | undefined {
   if (!el) return undefined;
@@ -367,7 +370,7 @@ export async function readDocx(buf: ArrayBuffer): Promise<DocxReadResult> {
         else if (n === 'hyperlink') {
           const rid = el.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id') ?? el.getAttribute('r:id');
           const anchor = wattr(el, 'anchor');
-          const href = rid ? rels.get(rid)?.target : anchor ? '#' + anchor : undefined;
+          const href = safeHref(rid ? rels.get(rid)?.target : anchor ? '#' + anchor : undefined);
           await walk(el, href);
         }
         else if (n === 'ins' || n === 'smartTag' || n === 'customXml' || n === 'fldSimple' || n === 'bdo' || n === 'dir') await walk(el, link);

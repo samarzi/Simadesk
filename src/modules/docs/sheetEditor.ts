@@ -3108,7 +3108,7 @@ export class SheetEditor {
         ...(cell?.note ? [{ label: 'Удалить примечание', action: () => { const sh = this.sheet(); this.change(() => { delete sh.data[this.cur.r][this.cur.c].note; }); } }] : []),
         { label: 'Формат ячеек…', icon: IC.format, hint: 'Ctrl+1', action: () => this.openFormatDialog() },
         { label: cell?.link ? 'Изменить ссылку' : 'Ссылка', icon: IC.link, hint: 'Ctrl+K', action: () => this.editLink() },
-        ...(cell?.link ? [{ label: 'Открыть ссылку', action: () => window.open(cell.link, '_blank', 'noopener') }, { label: 'Удалить ссылку', action: () => { const sh = this.sheet(); this.change(() => { delete sh.data[this.cur.r][this.cur.c].link; }); } }] : []),
+        ...(cell?.link ? [{ label: 'Открыть ссылку', action: () => { const href = cell.link; if (href && /^(https?:|mailto:|tel:)/i.test(href)) window.open(href, '_blank', 'noopener'); } }, { label: 'Удалить ссылку', action: () => { const sh = this.sheet(); this.change(() => { delete sh.data[this.cur.r][this.cur.c].link; }); } }] : []),
       ];
     }
     showMenu(items, { x: e.clientX, y: e.clientY });

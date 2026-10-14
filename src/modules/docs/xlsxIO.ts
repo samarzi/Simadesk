@@ -24,6 +24,11 @@ import { toExcelFormula } from '@/utils/formula';
 import { isSafeImageSrc } from '@/utils/docImage';
 
 export const MAX_IMPORT_ROWS = 20000;
+/** Защита от файлов, где одна случайная ячейка создаёт 16 тысяч колонок. */
+export const MAX_IMPORT_COLS = 512;
+function safeCellLink(link: string): string | undefined {
+  return /^(https?:|mailto:|tel:|#)/i.test(link) ? link : undefined;
+}
 const EMU_PER_PX = 9525;
 
 // ── Палитры ─────────────────────────────────────────────────────────────────
@@ -273,7 +278,8 @@ function cellFromExcel(cell: any, colorOf: ColorResolver, defFont?: { name: stri
     } else if ('hyperlink' in v) {
       out.v = typeof v.text === 'object' && v.text?.richText
         ? v.text.richText.map((r: any) => r.text).join('') : String(v.text ?? v.hyperlink ?? '');
-      out.link = String(v.hyperlink);
+      const link = safeCellLink(String(v.hyperlink));
+      if (link) out.link = link;
     } else if ('error' in v) {
       out.v = String(v.error);
       delete out.nf;
@@ -341,10 +347,12 @@ export async function readXlsx(buf: ArrayBuffer, opts: { maxRows?: number } = {}
     // объединение или своя ширина. Пустые строки и колонки в начале
     // сохраняются: раньше лист сдвигался к первой непустой ячейке.
     let rows = Math.max(ws.rowCount || 0, ...merges.map(m => m.r2 + 1), 1);
-    let cols = Math.max(ws.columnCount || 0, ...merges.map(m => m.c2 + 1), 1);
+    const rawCols = Math.max(ws.columnCount || 0, ...merges.map(m => m.c2 + 1), 1);
+    const truncatedCols = rawCols > MAX_IMPORT_COLS;
+    let cols = rawCols;
     const truncated = rows > maxRows;
     if (truncated) rows = maxRows;
-    cols = Math.min(cols, 16384);
+    cols = Math.min(cols, MAX_IMPORT_COLS);
 
     const data: CellData[][] = [];
     for (let r = 1; r <= rows; r++) {
@@ -375,6 +383,7 @@ export async function readXlsx(buf: ArrayBuffer, opts: { maxRows?: number } = {}
     const sheet: SheetData = { name: ws.name, data, colWidths, rowHeights };
     if (merges.length) sheet.merges = merges;
     if (truncated) sheet.truncated = true;
+    if (truncatedCols) sheet.truncatedCols = true;
     if (hiddenRows.length) sheet.hiddenRows = hiddenRows;
     if (hiddenCols.length) sheet.hiddenCols = hiddenCols;
     if (ws.state && ws.state !== 'visible') sheet.hidden = true;

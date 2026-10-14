@@ -84,6 +84,8 @@ export interface SheetData {
   rowHeights?: (number | null)[];
   merges?: MergeRange[];
   truncated?: boolean;
+  /** Импорт ограничил число колонок защитным лимитом. */
+  truncatedCols?: boolean;
   hidden?: boolean;
   hiddenRows?: number[];
   hiddenCols?: number[];

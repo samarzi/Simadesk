@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { computeKPI, computeTimeseries } from '@/modules/analytics/services/kpiAggregator';
-import { renderSummaryTab, clearSummaryCache } from '@/modules/analytics/tabs/SummaryTab';
-import { renderActivityTab } from '@/modules/analytics/tabs/ActivityTab';
-import { renderDetail, DETAIL_KEYS } from '@/modules/analytics/tabs/details';
+import { computeSkuPerformance } from '@/modules/analytics/services/kpiAggregator';
+import { renderOverview, chartSpec, OverviewInput } from '@/modules/analytics/ui/views/overview';
+import { renderProducts } from '@/modules/analytics/ui/views/products';
+import { renderOrders, renderOrderDrawer } from '@/modules/analytics/ui/views/orders';
+import { renderSettings } from '@/modules/analytics/ui/views/settings';
+import { drawTimeChart, Tooltip, niceTicks } from '@/modules/analytics/ui/charts';
 import { Order, OrderItem, OrderStatus, PeriodCost } from '@/modules/analytics/types';
 import { mskRange } from '@/utils/mpDate';
 
@@ -49,76 +52,98 @@ const costs: PeriodCost[] = [
   { date: '2026-09-17T09:00:00.000Z', kind: 'storage', label: 'Хранение', amount: 120, store_id: 'S1', mp: 'ozon' },
 ];
 
-describe('дашборды рендерятся на всех периодах', () => {
-  const periods: Array<[string, number]> = [
-    ['Сегодня', 1], ['7 дней', 7], ['30 дней', 30],
-    ['90 дней', 90], ['6 месяцев', 180], ['12 месяцев', 365],
-  ];
 
-  for (const [label, days] of periods) {
-    it(`«${label}» — сводка строится и график сходится с KPI`, () => {
-      const { start, end } = mskRange(days, now);
-      const kpi = computeKPI(orders, costs);
-      const ts  = computeTimeseries(orders, start, end, costs);
-
-      clearSummaryCache();
-      const html = renderSummaryTab(kpi, orders, ts, null);
-
-      expect(html).toContain('Выручка');
-      expect(html).toContain('Возвраты и отмены');
-      expect(html.length).toBeGreaterThan(500);
-      // Сетка дней соответствует периоду
-      expect(ts).toHaveLength(days);
-    });
-  }
-
-  it('«Сегодня» показывает ровно один день и ловит ночной заказ', () => {
-    const { start, end } = mskRange(1, now);
-    const ts = computeTimeseries(orders, start, end, costs);
-    expect(ts).toHaveLength(1);
-    expect(ts[0].date).toBe('2026-09-18');
-    // Заказ A (01:00 МСК 18-го) и F (09:00 МСК 18-го) — оба сегодня
-    expect(ts[0].revenue).toBe(2000);
-  });
-});
-
-describe('все детальные страницы открываются', () => {
-  const { start, end } = mskRange(30, now);
-  const kpi = computeKPI(orders, costs);
-  const ts  = computeTimeseries(orders, start, end, costs);
-  const ctx = {
-    kpi, prevKpi: null, orders, ts,
-    periodLabel: '30 дней', mp: 'ozon' as const, storeName: 'Все магазины',
+function overview(days: number, metric: OverviewInput['metric'] = 'revenue', list = orders, pc = costs): OverviewInput {
+  const { start, end } = mskRange(days, now);
+  const inRange = list.filter(o => o.date >= start.toISOString() && o.date <= end.toISOString());
+  const pcs = pc.filter(c => c.date >= start.toISOString() && c.date <= end.toISOString());
+  return {
+    kpi: computeKPI(inRange, pcs), prevKpi: null,
+    ts: computeTimeseries(inRange, start, end, pcs), prevTs: null,
+    orders: inRange, prevOrders: null, skus: computeSkuPerformance(inRange, pcs),
+    metric, allMp: true, byMp: [],
   };
+}
 
-  for (const key of DETAIL_KEYS) {
-    it(`страница «${key}» рендерится без ошибок`, () => {
-      const html = renderDetail(key, ctx);
-      expect(html).toContain('an2-detail');
-      expect(html).toContain('closeDetail');   // кнопка «Назад» на месте
-      expect(html.length).toBeGreaterThan(300);
+describe('«Обзор» на всех периодах', () => {
+  const periods: Array<[string, number]> = [['Сегодня', 1], ['7 дней', 7], ['30 дней', 30], ['90 дней', 90], ['6 месяцев', 180], ['12 месяцев', 365]];
+  for (const [label, days] of periods) {
+    it(`«${label}»: страница строится, график сходится с плитками`, () => {
+      const inp = overview(days);
+      const html = renderOverview(inp);
+      expect(html).toContain('Динамика');
+      expect(html).toContain('Куда уходят деньги');
+      const rev = chartSpec(inp).points.reduce((s, p) => s + p.y, 0);
+      expect(rev).toBeCloseTo(inp.kpi.revenue, 2);
+      const profit = chartSpec({ ...inp, metric: 'profit' }).points.reduce((s, p) => s + p.y, 0);
+      expect(profit).toBeCloseTo(inp.kpi.net_profit, 2);
     });
   }
 
-  it('пустые данные не роняют ни одну страницу', () => {
-    const emptyKpi = computeKPI([], []);
-    const emptyCtx = { ...ctx, kpi: emptyKpi, orders: [], ts: computeTimeseries([], start, end) };
-    for (const key of DETAIL_KEYS) {
-      expect(() => renderDetail(key, emptyCtx)).not.toThrow();
+  it('длинный период группируется по неделям, сумма не теряется', () => {
+    const inp = overview(180);
+    const spec = chartSpec(inp);
+    expect(spec.points.length).toBeLessThanOrEqual(27);
+    expect(spec.points.reduce((s, p) => s + p.y, 0)).toBeCloseTo(inp.kpi.revenue, 2);
+  });
+
+  it('график заказов считает заказы по дате заказа', () => {
+    const inp = overview(7, 'orders');
+    expect(chartSpec(inp).points.reduce((s, p) => s + p.y, 0)).toBe(inp.orders.length);
+  });
+
+  it('пустые данные не роняют ни одну вкладку', () => {
+    const inp = overview(30, 'revenue', [], []);
+    expect(renderOverview(inp)).toContain('Нет выкупленной выручки');
+    expect(renderProducts([], { search: '', sort: 'profit', dir: -1, limit: 100 })).toContain('Нет товаров');
+    expect(renderOrders([], { status: 'all', search: '', limit: 100 })).toContain('Заказов не найдено');
+  });
+});
+
+describe('вкладки «Товары», «Заказы», настройки', () => {
+  it('товары: поиск, сортировка, ABC', () => {
+    const skus = computeSkuPerformance(orders, costs);
+    const html = renderProducts(skus, { search: 'art', sort: 'revenue', dir: -1, limit: 100 });
+    expect(html).toContain('ART-1');
+    expect(html).toMatch(/an-abc A/);
+    expect(renderProducts(skus, { search: 'нет-такого', sort: 'profit', dir: -1, limit: 100 })).toContain('Нет товаров');
+  });
+
+  it('заказы: фильтр по статусу и карточка заказа', () => {
+    const html = renderOrders(orders, { status: 'returned', search: '', limit: 100 });
+    expect(html).toContain('>C<');
+    expect(html).not.toContain('>A<');
+    const drawer = renderOrderDrawer(orders[0]);
+    expect(drawer).toContain('Деньги по заказу');
+  });
+
+  it('настройки открываются на каждой секции', () => {
+    const base = { stores: [{ id: 'S1', name: 'Магазин', mp: 'ozon' as const, tax_model: 'usn6' as const, tax_rate: 0.06, fulfillment: null }],
+      manual: [], missingCogs: [], ozon: [{ id: 'S1', name: 'Магазин', perf: false }], perfStatus: new Map() };
+    for (const section of ['tax', 'cogs', 'ads', 'manual'] as const) {
+      expect(renderSettings({ ...base, section })).toContain('Настройки аналитики');
     }
   });
 });
 
-describe('вкладка Активность', () => {
-  it('рендерится на всех подвкладках', () => {
-    for (const sub of ['heatmap', 'days', 'hours', 'tips'] as const) {
-      expect(() => renderActivityTab(orders, sub)).not.toThrow();
-    }
+describe('график времени', () => {
+  it('рисует столбец на каждый день и подписи оси', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const tip = new Tooltip(document.body);
+    const spec = chartSpec(overview(7));
+    drawTimeChart(host, spec, tip);
+    expect(host.querySelectorAll('.an-col')).toHaveLength(spec.points.length);
+    expect(host.querySelectorAll('.an-hit')).toHaveLength(spec.points.length);
+    expect(host.querySelectorAll('.an-tick').length).toBeGreaterThan(2);
+    tip.destroy();
   });
 
-  it('не падает на пустых данных', () => {
-    for (const sub of ['heatmap', 'days', 'hours', 'tips'] as const) {
-      expect(() => renderActivityTab([], sub)).not.toThrow();
-    }
+  it('деления оси круглые и покрывают диапазон', () => {
+    expect(niceTicks(0, 87000)).toEqual([0, 25000, 50000, 75000, 100000]);
+    const t = niceTicks(-1200, 3400);
+    expect(t[0]).toBeLessThanOrEqual(-1200);
+    expect(t[t.length - 1]).toBeGreaterThanOrEqual(3400);
+    expect(t).toContain(0);
   });
 });

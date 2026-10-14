@@ -153,10 +153,17 @@ export class WordEditor {
 
   /** Обновить содержимое после внешней правки (ассистент, отмена). */
   refresh(): void {
-    this.page.innerHTML = this.host.html() || '<p><br></p>';
-    normalizeWhitespace(this.page);
+    this.loadHtml();
     this.applyPage();
     this.updateStatus();
+  }
+
+  private loadHtml(): void {
+    const raw = this.host.html() || '<p><br></p>';
+    const safe = sanitizeHtml(raw) || '<p><br></p>';
+    this.page.innerHTML = safe;
+    normalizeWhitespace(this.page);
+    if (safe !== raw) this.host.setHtml(safe);
   }
 
   private meta(): Required<Pick<WordMeta, 'page' | 'font'>> {
@@ -178,8 +185,7 @@ export class WordEditor {
     this.ribbon = this.root.querySelector('[data-ribbon]')!;
     this.wrap = this.root.querySelector('[data-wrap]')!;
     this.page = this.root.querySelector('[data-page]')!;
-    this.page.innerHTML = this.host.html() || '<p><br></p>';
-    normalizeWhitespace(this.page);
+    this.loadHtml();
     this.applyPage();
     this.renderRibbon();
     this.bind();
@@ -219,7 +225,8 @@ export class WordEditor {
     p.addEventListener('contextmenu', e => this.onContextMenu(e));
     p.addEventListener('click', e => {
       const a = (e.target as HTMLElement).closest('a');
-      if (a && (e.ctrlKey || e.metaKey)) { e.preventDefault(); window.open(a.getAttribute('href') ?? '', '_blank', 'noopener'); }
+      const href = a?.getAttribute('href') ?? '';
+      if (a && (e.ctrlKey || e.metaKey) && /^(https?:|mailto:|tel:)/i.test(href)) { e.preventDefault(); window.open(href, '_blank', 'noopener'); }
     });
     const sel = () => {
       const s = window.getSelection();
@@ -240,7 +247,8 @@ export class WordEditor {
   /** HTML для хранения: без служебных отметок редактора. */
   private cleanHtml(): string {
     const h = this.page.innerHTML;
-    return h === '<p><br></p>' ? '' : h;
+    if (h === '<p><br></p>') return '';
+    return sanitizeHtml(h);
   }
 
   /** Записать правку, сделанную напрямую в DOM. */
@@ -985,7 +993,7 @@ export class WordEditor {
         { label: 'Границы вкл/выкл', action: () => this.tableOp('borders') },
         { sep: true },
       ] as MenuItem[] : []),
-      ...(a ? [{ label: 'Открыть ссылку', action: () => window.open(a.getAttribute('href') ?? '', '_blank', 'noopener') }, { label: 'Удалить ссылку', action: () => { this.pushUndo(); a.replaceWith(...Array.from(a.childNodes)); this.commit(); } }] : [{ label: 'Ссылка…', icon: IC.link, action: () => this.insertLink() }]),
+      ...(a ? [{ label: 'Открыть ссылку', action: () => { const href = a.getAttribute('href') ?? ''; if (/^(https?:|mailto:|tel:)/i.test(href)) window.open(href, '_blank', 'noopener'); } }, { label: 'Удалить ссылку', action: () => { this.pushUndo(); a.replaceWith(...Array.from(a.childNodes)); this.commit(); } }] : [{ label: 'Ссылка…', icon: IC.link, action: () => this.insertLink() }]),
       { label: 'Абзац: интервал 1,5', action: () => this.setBlockStyle({ 'line-height': '1.5' }) },
       { label: 'Очистить форматирование', action: () => this.exec('removeFormat') },
     ];

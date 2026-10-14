@@ -72,7 +72,7 @@ function boot() {
   const root = document.createElement('div');
   document.body.appendChild(root);
   const M: any = Object.create(DocsModule.prototype);
-  Object.assign(M, { dirty: new Set(), serverKnown: new Set(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: null });
+  Object.assign(M, { dirty: new Set(), serverKnown: new Set(), deletingDocs: new Set(), deletedDocs: new Set(), contentLoadError: new Set(), saveChains: new Map(), recentSyncTimers: new Map(), memberNames: new Map(), xlSelMemo: {}, bookCache: null, wbEval: null, srvV2: null, srvV2CheckedAt: 0 });
   M.root = root; M.docs = []; M.recent = []; M.activeId = null;
   M.loadedCompanyId = 'CO'; M.saveTimer = null; M.activeSheetIdx = 0;
   M.xlUndoStack = []; M.xlRedoStack = []; M.xlSheetScroll = {};
@@ -303,7 +303,7 @@ describe('отрисовка после переделки хранения', ()
 });
 
 describe('сервер недоступен — редактор не должен зависать и терять данные', () => {
-  it('при 400 от БД документ не остаётся вечно в состоянии загрузки', async () => {
+  it('при 400 от БД документ остаётся защищённым от перезаписи', async () => {
     installQuotaStorage(5_000_000);
     dbState.failReads = true;              // ровно то, что было в проде: 400
     const M: any = boot();
@@ -314,8 +314,9 @@ describe('сервер недоступен — редактор не долже
 
     await M.syncFromDb();
 
-    expect(M.pendingContent.has('d1'), 'спиннер завис бы навсегда').toBe(false);
-    expect(M.docs[0].content, 'должен подставиться пустой лист, а не остаться пустая строка').not.toBe('');
+    expect(M.pendingContent.has('d1'), 'при сетевой ошибке содержимое нельзя считать потерянным').toBe(true);
+    expect(M.contentLoadError.has('d1')).toBe(true);
+    expect(M.docs[0].content).toBe('');
   });
 
   it('пустой ответ БД тоже снимает состояние загрузки', async () => {
@@ -388,5 +389,39 @@ describe('восстановление содержимого из ключа ч
     const M: any = boot();
     expect(M.pendingContent.has('d1')).toBe(true);
     expect(M.docs[0].content).toBe('');
+  });
+});
+
+describe('сохранение не тормозит редактор', () => {
+  it('РЕГРЕССИЯ: save() пишет в кеш только изменившийся документ', () => {
+    installQuotaStorage(10_000_000);
+    const A = boot();
+    A.docs = [
+      { id: 'd1', type: 'excel', title: 'Прайс', content: bigExcel(200), updated_at: 1000 },
+      { id: 'd2', type: 'excel', title: 'Остатки', content: bigExcel(200), updated_at: 1000 },
+      { id: 'd3', type: 'excel', title: 'Заказы', content: bigExcel(200), updated_at: 1000 },
+    ];
+    A.activeId = 'd1';
+    A.save();
+
+    const spy = vi.spyOn(localStorage, 'setItem');
+    A.docs[0].content = bigExcel(201);
+    A.save();
+    const contentWrites = spy.mock.calls.filter(([k]) => String(k).includes('__doc_'));
+    expect(contentWrites.map(([k]) => k)).toEqual(['docs_v2_CO__doc_d1']);
+    spy.mockClear();
+    A.save();
+    expect(spy.mock.calls.filter(([k]) => String(k).includes('__doc_'))).toHaveLength(0);
+  });
+
+  it('РЕГРЕССИЯ: не влезший документ не перезаписывается на каждом сохранении', () => {
+    installQuotaStorage(60_000);
+    const A = boot();
+    A.docs = [{ id: 'd1', type: 'excel', title: 'Прайс', content: bigExcel(300), updated_at: 1000 }];
+    A.activeId = 'd1';
+    A.save();
+    const spy = vi.spyOn(localStorage, 'setItem');
+    A.save(); A.save();
+    expect(spy.mock.calls.filter(([k]) => String(k).includes('__doc_'))).toHaveLength(0);
   });
 });

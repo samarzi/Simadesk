@@ -1,7 +1,11 @@
 /**
  * Ozon Finance API — реальные финансовые операции (комиссии, логистика, выплаты).
  *
- * Эндпоинт: POST /v3/finance/transaction/list
+ * Финансовые операции теперь грузит ozonAccruals.ts (/v1/finance/accrual/by-day):
+ * метод /v3/finance/transaction/list Ozon отключил 8.09.2026. Здесь остались
+ * баланс кошелька и тип OzonTransaction — форма, в которую переводятся начисления.
+ *
+ * Было: POST /v3/finance/transaction/list
  * https://docs.ozon.ru/api/seller/#operation/FinanceAPI_FinanceTransactionListV3
  *
  * Возвращает per-operation:
@@ -37,14 +41,6 @@ export interface OzonTransaction {
     warehouse_id?: number;
   };
   type: string;
-}
-
-interface TransactionListResponse {
-  result: {
-    operations: OzonTransaction[];
-    page_count: number;
-    row_count: number;
-  };
 }
 
 export interface OzonTreasuryTotals {
@@ -97,65 +93,5 @@ export const ozonFinanceApi = {
       lock:    Number(r?.lock ?? r?.locked_amount ?? 0),
       reward:  Number(r?.reward ?? r?.pending_amount ?? 0),
     };
-  },
-
-  /**
-   * Получить финансовые операции за период.
-   * Пагинация: page=1..page_count, до 1000 операций на страницу.
-   */
-  async fetchTransactions(
-    creds: Creds,
-    dateFrom: string, // ISO 8601
-    dateTo: string,   // ISO 8601
-    onProgress?: (loaded: number, total: number) => void,
-    signal?: AbortSignal,
-  ): Promise<OzonTransaction[]> {
-    const all: OzonTransaction[] = [];
-    let page = 1;
-    let totalPages = 1;
-    const pageSize = 1000;
-
-    while (page <= totalPages) {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-
-      const res = await fetch('/ozon-api/v3/finance/transaction/list', {
-        method: 'POST',
-        headers: {
-          'Client-Id': creds.client_id,
-          'Api-Key': creds.api_key,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          filter: {
-            date: { from: dateFrom, to: dateTo },
-            operation_type: [],
-            posting_number: '',
-            transaction_type: 'all',
-          },
-          page,
-          page_size: pageSize,
-        }),
-        signal,
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Ozon Finance ${res.status}: ${text.slice(0, 300)}`);
-      }
-
-      const data: TransactionListResponse = await res.json();
-      // Ozon иногда возвращает 200 OK с error-телом: { "message": "...", "result": null }
-      if (!data.result) {
-        const msg = (data as any)?.message ?? (data as any)?.description ?? JSON.stringify(data).slice(0, 200);
-        throw new Error(`Ozon Finance API error: ${msg}`);
-      }
-      const ops = data.result.operations ?? [];
-      all.push(...ops);
-      totalPages = data.result.page_count ?? 1;
-      onProgress?.(all.length, data.result.row_count ?? all.length);
-      page++;
-    }
-
-    return all;
   },
 };

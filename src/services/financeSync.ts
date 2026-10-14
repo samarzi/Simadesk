@@ -8,7 +8,8 @@ import { debug } from '../utils/debug';
 import { ozonDb } from './ozonDb';
 import { wbDb } from './wbDb';
 import { yandexDb } from './yandexDb';
-import { ozonFinanceApi, OzonTransaction } from './ozonFinanceApi';
+import { OzonTransaction } from './ozonFinanceApi';
+import { fetchAccrualTypes, fetchAccrualsByDay, accrualToTransaction, daysToSync, markDaySynced } from './ozonAccruals';
 import { wbFinanceApi, WbFinanceRow } from './wbFinanceApi';
 import { yandexFinanceApi, YmStatsOrder } from './yandexFinanceApi';
 import { mpTransactionsDb, MpTransaction, TxKind } from './mpTransactionsDb';
@@ -323,71 +324,51 @@ export const financeSync = {
     const result: Record<string, number> = {};
     let total = 0;
 
-    // Ozon /v3/finance/transaction/list принимает не более 1 месяца за запрос.
-    // Превышение лимита → HTTP 400 "too long period, only one month allowed".
-    // Разбиваем на чанки по 28 дней — гарантированно меньше любого календарного месяца.
-    const CHUNK_MS = 28 * 24 * 3600 * 1000;
-    const periodStart = new Date(dateFrom);
-    const periodEnd   = new Date(dateTo);
-    const chunks: Array<{ from: string; to: string }> = [];
-    let cs = periodStart;
-    while (cs < periodEnd) {
-      const ce = new Date(Math.min(cs.getTime() + CHUNK_MS, periodEnd.getTime()));
-      chunks.push({ from: cs.toISOString(), to: ce.toISOString() });
-      cs = new Date(ce.getTime() + 1);
+    // С 8 сентября 2026 Ozon отдаёт финансы только по дням (/v1/finance/accrual/by-day).
+    // Дни — московские; уже окончательные дни повторно не грузим.
+    const mskDay = (d: Date) => new Date(d.getTime() + 3 * 3600_000).toISOString().slice(0, 10);
+    const today = mskDay(new Date());
+    const allDays: string[] = [];
+    for (let t = Date.parse(`${mskDay(new Date(dateFrom))}T00:00:00Z`); ; t += 86_400_000) {
+      const d = new Date(t).toISOString().slice(0, 10);
+      if (d > mskDay(new Date(dateTo)) || d > today) break;
+      allDays.push(d);
     }
+    const errors: string[] = [];
 
     for (const store of stores) {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       try {
-        onProgress?.({ storeName: store.name, storeId: store.id, loaded: 0, total: 0, done: false });
         const creds = { client_id: store.client_id, api_key: store.api_key };
-        const allOps: OzonTransaction[] = [];
-        for (const { from, to } of chunks) {
+        const days = daysToSync(store.id, allDays, today);
+        onProgress?.({ storeName: store.name, storeId: store.id, loaded: 0, total: days.length, done: false });
+        const types = days.length ? await fetchAccrualTypes(creds, signal) : new Map<string, string>();
+        const typeName = (id: unknown) => (id == null ? '' : types.get(String(id)) ?? '');
+        let count = 0;
+        for (let i = 0; i < days.length; i++) {
           if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-          const ops = await ozonFinanceApi.fetchTransactions(
-            creds, from, to,
-            (loaded) => onProgress?.({
-              storeName: store.name, storeId: store.id,
-              loaded: allOps.length + loaded, total: 0, done: false,
-            }),
-            signal,
-          );
-          allOps.push(...ops);
+          const raw = await fetchAccrualsByDay(creds, days[i], signal);
+          const txs = raw.map(a => accrualToTransaction(a, typeName, store.id)).filter((t): t is MpTransaction => !!t);
+          if (txs.length) await mpTransactionsDb.upsertBatch(txs);
+          markDaySynced(store.id, days[i], today);
+          count += txs.length;
+          onProgress?.({ storeName: store.name, storeId: store.id, loaded: i + 1, total: days.length, done: false });
         }
-        // Дедупликация по operation_id — Ozon может вернуть одну операцию
-        // в двух соседних чанках (граница 28 дней совпадает с датой операции).
-        const seenOps = new Set<string>();
-        const uniqueOps = allOps.filter(op => {
-          const key = String(op.operation_id);
-          if (seenOps.has(key)) return false;
-          seenOps.add(key);
-          return true;
-        });
-        if (uniqueOps.length < allOps.length) {
-          console.warn(`[Ozon Sync] ${store.name}: дедуплицировано ${allOps.length - uniqueOps.length} операций из ${allOps.length}`);
-        }
-        const txs = uniqueOps.map(op => ozonOpToTransaction(op, store.id));
-        await mpTransactionsDb.upsertBatch(txs);
-        result[store.id] = txs.length;
-        total += txs.length;
-        onProgress?.({ storeName: store.name, storeId: store.id, loaded: txs.length, total: txs.length, done: true });
+        result[store.id] = count;
+        total += count;
+        onProgress?.({ storeName: store.name, storeId: store.id, loaded: count, total: count, done: true });
       } catch (e: unknown) {
         if (e instanceof DOMException && e.name === 'AbortError') throw e;
         const errMsg = (e instanceof Error ? e.message : String(e)) ?? String(e);
         console.error(`[Ozon Sync] ${store.name}: ${errMsg}`);
-        // Диагностика: частые причины ошибок Ozon Finance API
-        if (errMsg.includes('401') || errMsg.includes('Unauthorized')) {
-          console.error('[Ozon Sync] Причина: неверный Client-Id или Api-Key, либо ключ не имеет доступа к Finance API. Создайте новый ключ с разрешением "Финансы".');
-        } else if (errMsg.includes('403')) {
-          console.error('[Ozon Sync] Причина: API ключ не имеет прав на финансовые операции. Проверьте разрешения ключа в ЛК Ozon.');
-        } else if (errMsg.includes('400')) {
-          console.error('[Ozon Sync] Причина: неверный формат запроса (возможно, неверный диапазон дат или формат client_id).');
-        }
+        errors.push(`${store.name}: ${errMsg}`);
         result[store.id] = 0;
         onProgress?.({ storeName: store.name, storeId: store.id, loaded: 0, total: 0, done: true, error: errMsg });
       }
     }
+    // Раньше ошибки только писались в консоль — аналитика неделю молча
+    // показывала пустые цифры. Теперь их видно на экране.
+    if (errors.length) throw new Error(`Финотчёт Ozon не загружен — ${errors.join('; ')}`);
 
     return { total, perStore: result };
   },

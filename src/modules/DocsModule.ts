@@ -30,7 +30,7 @@ import {
   parseRangeRef, rangeToRef,
 } from './docs/model';
 import { normalizeCss, editCss, type XStyle } from './docs/xlStyle';
-import { readXlsx, writeXlsx, MAX_IMPORT_ROWS } from './docs/xlsxIO';
+import { readXlsx, writeXlsx, MAX_IMPORT_ROWS, MAX_IMPORT_COLS } from './docs/xlsxIO';
 import { readDocx, writeDocx } from './docs/docxIO';
 import { SheetEditor, interpretInput, buildChartFromRange, type SheetHost } from './docs/sheetEditor';
 import { WordEditor, normalizeWhitespace, sanitizeHtml, type WordHost } from './docs/wordEditor';
@@ -75,12 +75,28 @@ export class DocsModule {
   private recent: RecentItem[] = [];
   /** Документы, чьё содержимое ещё не пришло из БД — их нельзя перезаписывать. */
   private pendingContent = new Set<string>();
+  /** Документы, для которых последняя загрузка содержимого завершилась ошибкой. */
+  private contentLoadError = new Set<string>();
   /** Документы, о непрохождении сохранения которых пользователь уже предупреждён. */
   private warnedNoPersist = new Set<string>();
   /** Изменены локально и ещё не подтверждены сервером. */
   private dirty = new Set<string>();
   private deletingDocs = new Set<string>();
   private deletedDocs = new Set<string>();
+  /** Сохраняем версии одного документа строго по порядку вызовов. */
+  private saveChains = new Map<string, Promise<void>>();
+  /**
+   * Что уже лежит в кеше браузера: id → записанная строка. save() пишет
+   * только изменившиеся документы. Раньше каждое сохранение (раз в 0,8 с
+   * при редактировании и ещё раз после ответа сервера) синхронно переписывало
+   * содержимое ВСЕХ открытых документов — с несколькими большими таблицами
+   * это десятки мегабайт записи в главном потоке и «лютые» подвисания.
+   */
+  private _cachedContent?: Map<string, string>;
+  /** Документы, не поместившиеся в кеш, с длиной, на которой это случилось. */
+  private _cacheTooBig?: Map<string, number>;
+  private get cachedContent(): Map<string, string> { return this._cachedContent ??= new Map(); }
+  private get cacheTooBig(): Map<string, number> { return this._cacheTooBig ??= new Map(); }
   /** Документы, которые сервер уже видел (значит, их исчезновение — удаление или закрытие доступа). */
   private serverKnown = new Set<string>();
   private xlLastSel: { r1: number; c1: number; r2: number; c2: number; docId: string; sheetIdx: number } | null = null;
@@ -100,6 +116,7 @@ export class DocsModule {
   private wordEditor: WordEditor | null = null;
   /** Есть ли на сервере колонки доступа (миграция 20261009_docs_access). */
   private srvV2: boolean | null = null;
+  private srvV2CheckedAt = 0;
   private allDocs: DocMeta[] | null = null;
   private browseTab: 'all' | 'mine' | 'shared' | 'private' = 'all';
   private browseQuery = '';
@@ -125,8 +142,13 @@ export class DocsModule {
       this.docs = [];
       this.recent = [];
       this.pendingContent.clear();
+      this.contentLoadError.clear();
+      this.cachedContent.clear();
+      this.cacheTooBig.clear();
       this.serverKnown.clear();
       this.dirty.clear();
+      this.srvV2 = null;
+      this.srvV2CheckedAt = 0;
       this.allDocs = null;
       this.activeId = null;
       this.activeSheetIdx = 0;
@@ -194,6 +216,8 @@ export class DocsModule {
       if (meta.dirty) this.dirty.add(doc.id);
       let content: string | null = null;
       try { content = localStorage.getItem(this.ck(meta.id)); } catch { /* ignore */ }
+      // Уже лежит в своём ключе — переписывать при сохранении не нужно.
+      if (content !== null) this.cachedContent.set(doc.id, content);
       if (content === null && typeof meta.content === 'string') content = meta.content;
       if (content === null) content = this.findOrphanContent(meta.id);
       if (content === null) { doc.content = ''; this.pendingContent.add(doc.id); }
@@ -222,6 +246,10 @@ export class DocsModule {
   private save(): void {
     for (const doc of this.docs) {
       if (this.pendingContent.has(doc.id)) continue;
+      if (this.cachedContent.get(doc.id) === doc.content) continue;   // не менялся — не пишем
+      // Уже не влез в кеш и с тех пор не уменьшился — не пытаемся снова на каждом сохранении.
+      const tooBig = this.cacheTooBig.get(doc.id);
+      if (tooBig !== undefined && doc.content.length >= tooBig) continue;
       this.saveDocContent(doc);
     }
     try {
@@ -247,24 +275,33 @@ export class DocsModule {
 
   private saveDocContent(doc: DocItem): void {
     const key = this.ck(doc.id);
-    if (this.trySet(key, doc.content)) return;
-    // Освобождаем место за счёт кеша неоткрытых документов, от самых старых.
-    // Свой ключ НЕ трогаем: старая копия — единственное, что переживёт перезагрузку.
+    const stored = () => { this.cachedContent.set(doc.id, doc.content); this.cacheTooBig.delete(doc.id); };
+    if (this.trySet(key, doc.content)) { stored(); return; }
+    // Освобождаем место за счёт кеша других документов, которые уже есть на
+    // сервере, от самых старых. Свой ключ НЕ трогаем: старая копия —
+    // единственное, что переживёт перезагрузку. Раньше вытесненные копии
+    // возвращались обратно даже после успешной записи — место не освобождалось,
+    // и на каждом сохранении повторялся цикл из многомегабайтных записей.
     const victims = this.docs
-      .filter(d => d.id !== doc.id && d.id !== this.activeId && !this.pendingContent.has(d.id) && !this.dirty.has(d.id))
+      .filter(d => d.id !== doc.id && d.id !== this.activeId && this.serverKnown.has(d.id)
+        && !this.pendingContent.has(d.id) && !this.dirty.has(d.id) && this.cachedContent.has(d.id))
       .sort((a, b) => a.updated_at - b.updated_at);
-    const evicted: Array<{ key: string; value: string }> = [];
-    let stored = false;
+    const evicted: Array<{ id: string; key: string; value: string }> = [];
     for (const v of victims) {
       const vk = this.ck(v.id);
-      const prev = localStorage.getItem(vk);
-      if (prev === null) continue;
+      const prev = this.cachedContent.get(v.id)!;
       try { localStorage.removeItem(vk); } catch { continue; }
-      evicted.push({ key: vk, value: prev });
-      if (this.trySet(key, doc.content)) { stored = true; break; }
+      evicted.push({ id: v.id, key: vk, value: prev });
+      if (this.trySet(key, doc.content)) {
+        // Вытесненные документы есть на сервере — их кеш больше не держим.
+        for (const e of evicted) this.cachedContent.delete(e.id);
+        stored();
+        return;
+      }
     }
+    // Не поместился даже так — возвращаем чужие копии как были.
     for (const e of evicted) this.trySet(e.key, e.value);
-    if (stored) return;
+    this.cacheTooBig.set(doc.id, doc.content.length);
     debug.warn('[DocsModule] doc content does not fit localStorage', doc.id);
     this.saveDocToDb(doc, (ok) => {
       if (ok) { this.warnedNoPersist.delete(doc.id); return; }
@@ -275,6 +312,8 @@ export class DocsModule {
   }
 
   private dropDocContent(id: string): void {
+    this.cachedContent.delete(id);
+    this.cacheTooBig.delete(id);
     try { localStorage.removeItem(this.ck(id)); } catch { /* ignore */ }
   }
 
@@ -365,11 +404,12 @@ export class DocsModule {
 
   /** Есть ли на сервере колонки доступа — проверяем один раз. */
   private async probeServer(companyId: string): Promise<boolean> {
-    if (this.srvV2 !== null) return this.srvV2;
+    if (this.srvV2 === true) return true;
+    if (this.srvV2 === false && Date.now() - this.srvV2CheckedAt < 30_000) return false;
     try {
       await dbFetch<unknown[]>(`docs_documents?company_id=eq.${companyId}&select=id,owner_id,visibility,meta&limit=1`);
       this.srvV2 = true;
-    } catch { this.srvV2 = false; }
+    } catch { this.srvV2 = false; this.srvV2CheckedAt = Date.now(); }
     return this.srvV2;
   }
 
@@ -384,7 +424,7 @@ export class DocsModule {
    */
   private async syncFromDb(): Promise<void> {
     const companyId = companyService.getActiveId();
-    if (!companyId) { this.resolvePending(); return; }
+    if (!companyId) { this.markContentLoadError(); return; }
     try {
       const v2 = await this.probeServer(companyId);
 
@@ -471,6 +511,7 @@ export class DocsModule {
             local.updated_at = row.updated_at;
             local.title = row.title || local.title;
             this.pendingContent.delete(row.id);
+            this.contentLoadError.delete(row.id);
             changed = true;
           }
         }
@@ -486,9 +527,14 @@ export class DocsModule {
       }
     } catch (e) {
       debug.warn('[DocsModule] syncFromDb failed', e);
-      this.resolvePending();
+      this.markContentLoadError();
       if (this.root.style.display !== 'none') this.render();
     }
+  }
+
+  private markContentLoadError(): void {
+    this.contentLoadError ??= new Set<string>();
+    for (const id of this.pendingContent) this.contentLoadError.add(id);
   }
 
   /**
@@ -541,11 +587,13 @@ export class DocsModule {
 
   /** Сервер ответил, а документа там нет (или не ответил вовсе) — показываем, что есть. */
   private resolvePending(ids?: string[]): void {
+    this.contentLoadError ??= new Set<string>();
     const list = ids ?? [...this.pendingContent];
     if (!list.length) return;
     const lost: string[] = [];
     for (const id of list) {
       this.pendingContent.delete(id);
+      this.contentLoadError.delete(id);
       const doc = this.docs.find(d => d.id === id);
       if (!doc) continue;
       if (!doc.content) { doc.content = doc.type === 'word' ? '' : this.emptyExcel(); lost.push(doc.title); }
@@ -574,12 +622,18 @@ export class DocsModule {
       // лишь владелец отдельным запросом (setVisibility)
       if (!this.serverKnown.has(doc.id)) body.visibility = doc.visibility ?? 'company';
     }
-    dbFetch<unknown>(`docs_documents`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-      headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-    }).then(() => {
+    const chains = this.saveChains ?? (this.saveChains = new Map<string, Promise<void>>());
+    const previous = chains.get(doc.id);
+    const run = async (): Promise<void> => {
       if (this.deletingDocs.has(doc.id) || this.deletedDocs.has(doc.id)) { done?.(false); return; }
+      await dbFetch<unknown>(`docs_documents`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+      });
+      if (this.deletingDocs.has(doc.id) || this.deletedDocs.has(doc.id)) { done?.(false); return; }
+      const current = this.docs.find(d => d.id === doc.id);
+      if (current && current.updated_at > Number(body.updated_at)) { done?.(true); return; }
       const first = !this.serverKnown.has(doc.id);
       this.serverKnown.add(doc.id);
       this.dirty.delete(doc.id);
@@ -587,10 +641,15 @@ export class DocsModule {
       this.save();
       this.setSaveState('saved');
       done?.(true);
-    }).catch(e => {
-      debug.warn('[DocsModule] saveDocToDb failed', e);
-      this.setSaveState('error');
-      done?.(false);
+    };
+    // Первый запрос вызываем немедленно, чтобы закрытие вкладки успело
+    // поставить POST в транспорт до возврата управления браузеру.
+    const task = previous ? previous.catch(() => undefined).then(run) : run();
+    chains.set(doc.id, task);
+    void task.then(() => {
+      if (chains.get(doc.id) === task) chains.delete(doc.id);
+    }, () => {
+      if (chains.get(doc.id) === task) chains.delete(doc.id);
     });
   }
 
@@ -866,6 +925,7 @@ export class DocsModule {
     }
     // Даже при наличии кеша сверимся с сервером: другой участник мог изменить документ
     this.pendingContent.add(id);
+    (this.contentLoadError ??= new Set<string>()).delete(id);
     if (cached) { this.pendingContent.delete(id); }
     this.activeId = id;
     this.activeSheetIdx = 0;
@@ -1030,7 +1090,7 @@ export class DocsModule {
       if (ext === 'xlsx' || ext === 'xlsm') {
         const book = await readXlsx(await file.arrayBuffer(), { maxRows: MAX_IMPORT_ROWS });
         this.addDoc({ id: this.newId(), type: 'excel', title: bare, content: this.serializeExcel(book), updated_at: now });
-        if (book.sheets.some(s => s.truncated)) showToast(`В файле больше ${MAX_IMPORT_ROWS.toLocaleString('ru-RU')} строк — загружены первые ${MAX_IMPORT_ROWS.toLocaleString('ru-RU')}`, 'info');
+        if (book.sheets.some(s => s.truncated || s.truncatedCols)) showToast(`Импорт ограничен: ${book.sheets.some(s => s.truncated) ? `первые ${MAX_IMPORT_ROWS.toLocaleString('ru-RU')} строк` : ''}${book.sheets.some(s => s.truncated) && book.sheets.some(s => s.truncatedCols) ? ' и ' : ''}${book.sheets.some(s => s.truncatedCols) ? `первые ${MAX_IMPORT_COLS} колонок` : ''}`, 'info');
         return;
       }
 
@@ -1155,7 +1215,7 @@ export class DocsModule {
       const ws = wb.Sheets[sheetName];
       if (!ws['!ref']) return { name: sheetName, data: [[{ v: '' }]] };
       const range = XLSX.utils.decode_range(ws['!ref']);
-      const rows = range.e.r + 1, cols = range.e.c + 1;
+      const rows = range.e.r + 1, rawCols = range.e.c + 1, cols = Math.min(rawCols, MAX_IMPORT_COLS);
       const data: CellData[][] = [];
       for (let r = 0; r < Math.min(rows, MAX_IMPORT_ROWS); r++) {
         const row: CellData[] = [];
@@ -1165,7 +1225,7 @@ export class DocsModule {
       const colWidths = Array.from({ length: cols }, (_, c) => { const ci = (ws['!cols'] || [])[c]; return ci?.wch ? Math.round(ci.wch * 7 + 5) : ci?.wpx ? Math.round(ci.wpx) : null; });
       const rowHeights = Array.from({ length: data.length }, (_, r) => { const ri = (ws['!rows'] || [])[r]; return ri?.hpt ? Math.round(ri.hpt * 4 / 3) : ri?.hpx ? Math.round(ri.hpx) : null; });
       const merges: MergeRange[] = (ws['!merges'] ?? []).map((m: any) => ({ r1: m.s.r, c1: m.s.c, r2: m.e.r, c2: m.e.c }));
-      return { name: sheetName, data, colWidths, rowHeights, ...(merges.length ? { merges } : {}), ...(rows > MAX_IMPORT_ROWS ? { truncated: true } : {}) };
+      return { name: sheetName, data, colWidths, rowHeights, ...(merges.length ? { merges } : {}), ...(rows > MAX_IMPORT_ROWS ? { truncated: true } : {}), ...(rawCols > MAX_IMPORT_COLS ? { truncatedCols: true } : {}) };
     });
     return { sheets: sheets.length ? sheets : newWorkbook().sheets };
   }
@@ -1186,10 +1246,11 @@ export class DocsModule {
       cur += ch;
     }
     if (cur || row.length) { row.push(cur); rows.push(row); }
-    const w = Math.max(1, ...rows.map(r => r.length));
-    const data = rows.slice(0, MAX_IMPORT_ROWS).map(r => { const out = r.map(v => interpretInput(v, undefined)); while (out.length < w) out.push({ v: '' }); return out; });
+    const rawW = Math.max(1, ...rows.map(r => r.length));
+    const w = Math.min(rawW, MAX_IMPORT_COLS);
+    const data = rows.slice(0, MAX_IMPORT_ROWS).map(r => { const out = r.slice(0, w).map(v => interpretInput(v, undefined)); while (out.length < w) out.push({ v: '' }); return out; });
     if (!data.length) data.push([{ v: '' }]);
-    return { sheets: [{ name: 'Лист1', data }] };
+    return { sheets: [{ name: 'Лист1', data, ...(rows.length > MAX_IMPORT_ROWS ? { truncated: true } : {}), ...(rawW > MAX_IMPORT_COLS ? { truncatedCols: true } : {}) }] };
   }
 
   /** Ячейка SheetJS → модель: сырое значение, а не отформатированное. */
@@ -1489,7 +1550,10 @@ export class DocsModule {
   }
 
   private renderEditorShell(doc: DocItem): string {
-    const body = this.pendingContent.has(doc.id)
+    const errors = this.contentLoadError ?? (this.contentLoadError = new Set<string>());
+    const body = errors.has(doc.id)
+      ? `<div class="docs-loading docs-load-error"><div class="docs-loading-txt">Не удалось загрузить «${this.esc(doc.title)}».</div><div class="docs-loading-sub">Документ сохранён локально; повторите попытку, когда соединение восстановится.</div><button class="docs-retry-btn" id="docs-retry-content">Повторить</button></div>`
+      : this.pendingContent.has(doc.id)
       ? `<div class="docs-loading"><div class="docs-loading-spin"></div><div class="docs-loading-txt">Загружаем «${this.esc(doc.title)}»…</div><div class="docs-loading-sub">Забираем документ с сервера.</div></div>`
       : '<div class="docs-editor-host" id="docs-editor-host" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>';
     return `<div class="docs-editor-wrap">${body}</div>`;
@@ -1617,7 +1681,12 @@ export class DocsModule {
       this.root.querySelector('.docs-shell')?.classList.toggle('docs-fullscreen', this.isFullscreen);
       aiPage.register(this.getAiCapability());
     });
-    if (this.pendingContent.has(doc.id)) return;
+    this.root.querySelector('#docs-retry-content')?.addEventListener('click', () => {
+      (this.contentLoadError ??= new Set<string>()).delete(doc.id);
+      this.render();
+      void this.syncFromDb();
+    });
+    if (this.pendingContent.has(doc.id) || (this.contentLoadError ??= new Set<string>()).has(doc.id)) return;
     const host = this.root.querySelector<HTMLElement>('#docs-editor-host');
     if (!host) return;
     if (doc.type === 'word') this.mountWord(doc, host);
