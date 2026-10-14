@@ -344,16 +344,22 @@ export const financeSync = {
         onProgress?.({ storeName: store.name, storeId: store.id, loaded: 0, total: days.length, done: false });
         const types = days.length ? await fetchAccrualTypes(creds, signal) : new Map<string, string>();
         const typeName = (id: unknown) => (id == null ? '' : types.get(String(id)) ?? '');
-        let count = 0;
-        for (let i = 0; i < days.length; i++) {
-          if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-          const raw = await fetchAccrualsByDay(creds, days[i], signal);
-          const txs = raw.map(a => accrualToTransaction(a, typeName, store.id)).filter((t): t is MpTransaction => !!t);
-          if (txs.length) await mpTransactionsDb.upsertBatch(txs);
-          markDaySynced(store.id, days[i], today);
-          count += txs.length;
-          onProgress?.({ storeName: store.name, storeId: store.id, loaded: i + 1, total: days.length, done: false });
-        }
+        let count = 0, done = 0, next = 0;
+        // По 4 дня параллельно: Ozon отдаёт начисления только за сутки,
+        // и последовательная загрузка квартала занимала минуты.
+        const worker = async () => {
+          while (next < days.length) {
+            if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+            const day = days[next++];
+            const raw = await fetchAccrualsByDay(creds, day, signal);
+            const txs = raw.map(a => accrualToTransaction(a, typeName, store.id)).filter((t): t is MpTransaction => !!t);
+            if (txs.length) await mpTransactionsDb.upsertBatch(txs);
+            markDaySynced(store.id, day, today);
+            count += txs.length;
+            onProgress?.({ storeName: store.name, storeId: store.id, loaded: ++done, total: days.length, done: false });
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(4, days.length) }, worker));
         result[store.id] = count;
         total += count;
         onProgress?.({ storeName: store.name, storeId: store.id, loaded: count, total: count, done: true });
@@ -493,10 +499,10 @@ export const financeSync = {
 
   /** Обновляет только выбранный магазин; ошибки не выдаются за успешный sync. */
   async syncSelected(mp: 'ozon' | 'wb' | 'yandex', storeIds: Set<string>, from: string, to: string,
-    signal?: AbortSignal): Promise<void> {
+    signal?: AbortSignal, progress?: (p: SyncProgress) => void): Promise<void> {
     if (!storeIds.size) return;
     const errors: string[] = [];
-    const onProgress = (p: SyncProgress) => { if (p.error) errors.push(`${p.storeName}: ${p.error}`); };
+    const onProgress = (p: SyncProgress) => { if (p.error) errors.push(`${p.storeName}: ${p.error}`); progress?.(p); };
     const result = mp === 'ozon'
       ? await this.syncOzon(from, to, onProgress, signal, storeIds)
       : mp === 'wb'

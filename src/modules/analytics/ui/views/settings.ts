@@ -3,6 +3,7 @@
 import { StoreInfo, ManualEntry, TaxModel, TAX_LABEL, MP_SHORT } from '../../types';
 import { MissingCogsItem } from '../../services/kpiAggregator';
 import { rub, num, escapeHtml, jsArg } from '../format';
+import { productCell } from '../product';
 
 export type SettingsSection = 'tax' | 'ads' | 'cogs' | 'manual';
 
@@ -78,8 +79,7 @@ function cogsSection(s: SettingsInput): string {
     <p class="an-muted">Без себестоимости прибыль завышена. Новая цена действует для заказов с сегодняшнего дня, а для более старых заказов — если раньше цены не было.</p>
     ${s.missingCogs.map(m => `
       <form class="an-setrow" onsubmit="event.preventDefault();${M}?.setCostPrice('${jsArg(m.vendor_code)}', this.cost.value)">
-        <div class="an-setrow-name"><span class="an-mp an-mp-${m.mp}">${MP_SHORT[m.mp]}</span>
-          <div><b>${escapeHtml(m.vendor_code)}</b><small class="an-muted">${escapeHtml(m.name)} · ${num(m.orders_count)} зак.</small></div></div>
+        <div class="an-setrow-name">${productCell({ name: m.name, vendor_code: m.vendor_code, mp: m.mp }, { sub: `${num(m.orders_count)} зак.` })}</div>
         <label class="an-field"><input name="cost" type="number" min="0" step="0.01" placeholder="₽ за шт" required/>₽</label>
         <button class="an-btn" type="submit">Сохранить</button>
       </form>`).join('')}`;

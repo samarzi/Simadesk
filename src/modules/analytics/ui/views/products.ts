@@ -1,7 +1,8 @@
 /** «Товары» — прибыль по каждому артикулу, ABC, сортировка по любой колонке. */
 
-import { SkuPerformance, MP_SHORT } from '../../types';
+import { SkuPerformance } from '../../types';
 import { rub, num, pct, escapeHtml } from '../format';
+import { productCell } from '../product';
 
 export type ProductsSort = 'profit' | 'revenue' | 'units' | 'margin' | 'profit_per_unit' | 'returns' | 'cogs' | 'fees';
 
@@ -70,7 +71,7 @@ export function renderProducts(all: SkuPerformance[], st: ProductsState): string
           </tr></thead>
           <tbody>${list.slice(0, st.limit).map(x => `
             <tr>
-              <td class="an-prod"><span class="an-mp an-mp-${x.mp}">${MP_SHORT[x.mp]}</span><div><b title="${escapeHtml(x.name)}">${escapeHtml(x.name || x.vendor_code)}</b><small>${escapeHtml(x.vendor_code)}${x.missing_cogs_units ? ' · <span class="neg">нет себестоимости</span>' : ''}</small></div></td>
+              <td>${productCell({ name: x.name, vendor_code: x.vendor_code, mp: x.mp }, { sub: x.missing_cogs_units ? '<span class="neg">нет себестоимости</span>' : '' })}</td>
               <td><span class="an-abc ${abc.get(`${x.mp}|${x.vendor_code}`) ?? 'C'}">${abc.get(`${x.mp}|${x.vendor_code}`) ?? 'C'}</span></td>
               <td class="num">${num(x.units_sold)}</td>
               <td class="num ${x.return_rate_pct >= 10 ? 'neg' : ''}">${pct(x.return_rate_pct)}</td>

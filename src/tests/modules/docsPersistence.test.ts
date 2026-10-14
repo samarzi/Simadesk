@@ -20,7 +20,11 @@ vi.mock('@/services/dbClient', () => ({
     }
     if (endpoint.startsWith('docs_documents?company_id')) {
       if (dbState.failReads) throw new Error('HTTP 400 invalid input syntax for type uuid');
-      return dbState.rows;
+      // Как PostgREST: id=in.("a","b") отдаёт только запрошенные строки.
+      const m = endpoint.match(/id=in\.\(([^)]*)\)/);
+      if (!m) return dbState.rows;
+      const ids = new Set(m[1].split(',').map(x => x.replace(/"/g, '')));
+      return dbState.rows.filter(r => ids.has(r.id));
     }
     return [];
   }),
@@ -423,5 +427,31 @@ describe('сохранение не тормозит редактор', () => {
     const spy = vi.spyOn(localStorage, 'setItem');
     A.save(); A.save();
     expect(spy.mock.calls.filter(([k]) => String(k).includes('__doc_'))).toHaveLength(0);
+  });
+});
+
+describe('открытие редактора не скачивает все вкладки', () => {
+  it('содержимое запрашивается только для активного документа, остальные — при переключении', async () => {
+    installQuotaStorage(10_000_000);
+    const { dbFetch } = await import('@/services/dbClient');
+    const A = boot();
+    A.render = () => {};
+    A.docs = [
+      { id: 'd1', type: 'excel', title: 'Активный', content: '', updated_at: 1000 },
+      { id: 'd2', type: 'excel', title: 'Фоновый', content: '', updated_at: 1000 },
+    ];
+    A.activeId = 'd1';
+    A.pendingContent.add('d1'); A.pendingContent.add('d2');
+    dbState.rows = [
+      { id: 'd1', type: 'excel', title: 'Активный', content: bigExcel(2), updated_at: 2000 },
+      { id: 'd2', type: 'excel', title: 'Фоновый', content: bigExcel(3), updated_at: 2000 },
+    ];
+    await A.syncFromDb();
+    const contentCalls = (dbFetch as any).mock.calls.map((c: any[]) => String(c[0])).filter((u: string) => u.includes('select=id,content'));
+    expect(contentCalls).toHaveLength(1);
+    expect(contentCalls[0]).toContain('"d1"');
+    expect(contentCalls[0]).not.toContain('"d2"');
+    expect(A.pendingContent.has('d2')).toBe(true);
+    expect(A.docs.find((d: any) => d.id === 'd2').content).toBe('');
   });
 });

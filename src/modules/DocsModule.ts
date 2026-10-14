@@ -131,8 +131,13 @@ export class DocsModule {
     this.load();
     window.addEventListener('beforeunload', () => this.flushSave());
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && this.root.style.display !== 'none') this.pollRemote(); });
-    this.syncFromDb();
+    // С сервером синхронизируемся при первом открытии редактора, а не при
+    // загрузке любой страницы приложения: раньше каждый F5 скачивал и
+    // переписывал в браузер все открытые документы, даже если пользователь
+    // был в другом разделе.
   }
+
+  private syncedOnce = false;
 
   show(): void {
     this.root.style.display = '';
@@ -154,9 +159,13 @@ export class DocsModule {
       this.activeSheetIdx = 0;
       this.loadedCompanyId = cid;
       this.load();
-      this.syncFromDb();
+      this.syncedOnce = false;
     }
+    // Оболочка — сразу, тяжёлая таблица — следующим кадром: переход в
+    // раздел не ждёт разбора многомегабайтного документа.
+    this.deferMount = true;
     this.render();
+    if (!this.syncedOnce) { this.syncedOnce = true; void this.syncFromDb(); }
     if (!this.pollTimer) this.pollTimer = setInterval(() => this.pollRemote(), 20_000);
   }
 
@@ -494,16 +503,25 @@ export class DocsModule {
         if (!m) continue;
         Object.assign(doc, { owner_id: m.owner_id, visibility: m.visibility, ...(m.meta && Object.keys(m.meta).length ? { meta: m.meta } : {}) });
         if (m.title && m.title !== doc.title && m.updated_at >= doc.updated_at) { doc.title = m.title; changed = true; }
-        if (this.pendingContent.has(doc.id) || (m.updated_at > doc.updated_at && !this.dirty.has(doc.id))) needContent.push(doc.id);
+        if (this.pendingContent.has(doc.id) || (m.updated_at > doc.updated_at && !this.dirty.has(doc.id))) {
+          // Скачиваем только активный документ. Остальные вкладки помечаются
+          // «загружается» и догружаются при переключении (openDoc). Раньше при
+          // каждом открытии редактора скачивались и записывались в браузер
+          // все вкладки сразу — по несколько мегабайт каждая.
+          if (doc.id === this.activeId) needContent.push(doc.id);
+          else { this.pendingContent.add(doc.id); changed = true; }
+        }
         else if (this.dirty.has(doc.id) || doc.updated_at > m.updated_at) this.saveDocToDb(doc);   // правки этого ПК не дошли — дошлём
       }
       for (const doc of this.docs) if (!byId.has(doc.id) && !this.serverKnown.has(doc.id) && !this.pendingContent.has(doc.id) && doc.content) this.saveDocToDb(doc);
+      const returned = new Set<string>();
       if (needContent.length) {
         const rows = await dbFetch<Array<{ id: string; content: string; updated_at: number; title: string }>>(
           `docs_documents?company_id=eq.${companyId}&id=in.(${needContent.map(i => `"${i}"`).join(',')})&select=id,content,updated_at,title`);
         for (const row of rows) {
           const local = this.docs.find(d => d.id === row.id);
           if (!local) continue;
+          returned.add(row.id);
           if (row.content || this.pendingContent.has(row.id)) {
             const safe = row.content || local.content;
             if (safe !== local.content) changed = true;
@@ -518,7 +536,9 @@ export class DocsModule {
       }
       const stillPending = [...this.pendingContent].filter(id => !byId.has(id));
       if (stillPending.length) { this.resolvePending(stillPending); changed = true; }
-      if (this.pendingContent.size) { this.resolvePending(); changed = true; }
+      // Запрошенные, но не пришедшие с сервера — показываем то, что есть локально.
+      const missing = needContent.filter(id => !returned.has(id) && this.pendingContent.has(id));
+      if (missing.length) { this.resolvePending(missing); changed = true; }
 
       if (changed) {
         if (!this.activeId && this.docs.length) this.activeId = this.docs[0].id;
@@ -560,7 +580,9 @@ export class DocsModule {
               this.warnedNoPersist.add('conflict:' + doc.id);
               showToast(`«${doc.title}» одновременно изменили на другом устройстве. Сохранится ваша версия — проверьте документ.`, 'info');
             }
-          } else fetchIds.push(doc.id);
+          } else if (doc.id === this.activeId) fetchIds.push(doc.id);
+          // Неактивную вкладку не качаем в фоне — догрузится при переключении.
+          else this.pendingContent.add(doc.id);
         }
         if (m.visibility !== doc.visibility || m.owner_id !== doc.owner_id) { doc.visibility = m.visibility; doc.owner_id = m.owner_id; }
       }
@@ -1668,6 +1690,10 @@ export class DocsModule {
     });
   }
 
+  /** Смонтировать редактор после отрисовки оболочки (только для show()). */
+  private deferMount = false;
+  private mountTimer = 0;
+
   private bindEditor(doc: DocItem): void {
     const titleInp = this.root.querySelector<HTMLInputElement>('#docs-title-inp');
     titleInp?.addEventListener('input', () => this.renameDoc(doc.id, titleInp.value));
@@ -1689,8 +1715,20 @@ export class DocsModule {
     if (this.pendingContent.has(doc.id) || (this.contentLoadError ??= new Set<string>()).has(doc.id)) return;
     const host = this.root.querySelector<HTMLElement>('#docs-editor-host');
     if (!host) return;
-    if (doc.type === 'word') this.mountWord(doc, host);
-    else this.mountSheet(doc, host);
+    const mount = () => {
+      if (!host.isConnected || this.activeId !== doc.id) return;
+      if (doc.type === 'word') this.mountWord(doc, host);
+      else this.mountSheet(doc, host);
+    };
+    if (this.deferMount) {
+      this.deferMount = false;
+      host.innerHTML = '<div class="docs-loading"><div class="docs-loading-spin"></div><div class="docs-loading-txt">Открываем документ…</div></div>';
+      clearTimeout(this.mountTimer);
+      // Двойной кадр: браузер успевает показать раздел до тяжёлой работы.
+      requestAnimationFrame(() => { this.mountTimer = window.setTimeout(() => { host.innerHTML = ''; mount(); }, 0); });
+      return;
+    }
+    mount();
   }
 
   private mountSheet(doc: DocItem, el: HTMLElement): void {

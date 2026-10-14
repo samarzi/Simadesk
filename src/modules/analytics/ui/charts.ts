@@ -208,6 +208,8 @@ export class Tooltip {
 
 export interface BarRow {
   label: string;
+  /** Готовая HTML-подпись вместо текста (товар с артикулом и кнопками). */
+  labelHtml?: string;
   value: number;
   /** Подпись справа (значение). */
   valueText: string;
@@ -230,7 +232,7 @@ export function hbars(rows: BarRow[]): string {
       : `left:0;width:${w}%`;
     return `
       <div class="an-hbar" ${r.tip ? `data-tip="${escapeHtml(r.tip)}"` : ''}>
-        <div class="an-hbar-label" title="${escapeHtml(r.label)}">${escapeHtml(r.label)}</div>
+        <div class="an-hbar-label" ${r.labelHtml ? '' : `title="${escapeHtml(r.label)}"`}>${r.labelHtml ?? escapeHtml(r.label)}</div>
         <div class="an-hbar-track"><div class="an-hbar-fill ${r.value < 0 ? 'neg' : ''}" style="${style};background:${r.color}"></div></div>
         <div class="an-hbar-value">${escapeHtml(r.valueText)}${r.sub ? `<span>${escapeHtml(r.sub)}</span>` : ''}</div>
       </div>`;

@@ -65,7 +65,7 @@ function classify(name: string, category: string, accruals: number): TxKind {
     if (accruals > 0.01) return 'sale';
     if (accruals < -0.01) return 'return';
   }
-  if (n.includes('реклам') || n.includes('продвиж') || n.includes('трафарет') || n.includes('promotion') || n.includes('отзыв')) return 'advertising';
+  if (n.includes('реклам') || n.includes('продвиж') || n.includes('трафарет') || n.includes('promotion') || n.includes('отзыв') || n.includes('клик')) return 'advertising';
   if (n.includes('хранен') || n.includes('размещен') || n.includes('storage')) return 'storage';
   if (n.includes('штраф') || n.includes('penalty') || n.includes('нарушен')) return 'penalty';
   if (n.includes('выплат') || n.includes('перевод') || n.includes('payout')) return 'payout';
@@ -86,36 +86,60 @@ export function accrualToTransaction(a: any, typeName: TypeName, storeId: string
   const amount = accrualMoney(a?.total_amount ?? a?.amount);
 
   // Комиссия и услуги — со знаком как в ответе: минус = удержание у продавца.
+  // У товара «commission» — объект: seller_price (цена продавца за штуку),
+  // sale_amount (сколько заплатил покупатель), sale_commission (комиссия),
+  // bonus / coinvestment (доплаты Ozon). Доплаты отдельно не разбираем —
+  // они попадают в сверку «итог − выручка − удержания» как компенсация.
   let commission = 0;
   let sellerPrice = 0;
   let hasSellerPrice = false;
   const services: Fee[] = [];
   for (const p of products) {
-    commission += accrualMoney(p?.commission?.accrued ?? p?.commission?.amount ?? p?.commission);
+    const c = (p?.commission && typeof p.commission === 'object') ? p.commission : {};
+    const qty = Number(p?.quantity ?? p?.qty ?? 1) || 1;
+    commission += accrualMoney(c.sale_commission ?? c.commission_amount ?? c.accrued ?? c.amount ?? (typeof p?.commission !== 'object' ? p?.commission : 0));
     collectFees(p?.delivery?.services ?? p?.delivery, typeName, services, 'Логистика');
     collectFees(p?.services, typeName, services, 'Услуга Ozon');
-    if (p?.seller_price != null) {
+    const sp = c.seller_price ?? p?.seller_price;
+    if (sp != null) {
       hasSellerPrice = true;
-      sellerPrice += accrualMoney(p.seller_price) * (Number(p?.quantity ?? 1) || 1);
+      const unit = accrualMoney(sp);
+      const paid = Math.abs(accrualMoney(c.sale_amount));
+      // seller_price — за штуку; на случай, если Ozon пришлёт сумму за позицию,
+      // выбираем вариант, ближайший к сумме покупателя.
+      const perUnitTotal = unit * qty;
+      sellerPrice += qty > 1 && paid > 0 && Math.abs(Math.abs(unit) - paid) < Math.abs(Math.abs(perUnitTotal) - paid) ? unit : perUnitTotal;
     }
   }
   collectFees(a?.item_fees, typeName, services, label);
   collectFees(a?.non_item_fee, typeName, services, label);
   collectFees(a?.container_fees, typeName, services, 'Услуги по грузоместам');
 
+  // Название операции сверху бывает пустым (только категория) — берём его
+  // из единственной вложенной услуги: «Оплата за клик», «Хранение»…
+  let name = label;
+  if ((!name || name === category) && services.length) {
+    const top = [...services].sort((x, y) => Math.abs(y.price) - Math.abs(x.price))[0];
+    if (top?.name) name = top.name;
+  }
+
   const servicesSigned = services.reduce((s, f) => s + f.price, 0);
   // Выручка: явная цена продавца, иначе итог минус удержания.
   let accruals = 0;
-  if (products.length) accruals = hasSellerPrice ? sellerPrice : amount - commission - servicesSigned;
+  if (products.length) {
+    accruals = hasSellerPrice ? sellerPrice : amount - commission - servicesSigned;
+    // Возврат: Ozon может прислать цену продавца положительной — знак берём из итога.
+    if (hasSellerPrice && amount < 0 && accruals > 0 && commission >= 0) accruals = -accruals;
+  }
   // Начисление без разбивки (хранение, эквайринг одной суммой) — целиком как услуга.
-  if (!products.length && !services.length && Math.abs(amount) > 0.001) services.push({ name: label, price: amount });
+  if (!products.length && !services.length && Math.abs(amount) > 0.001) services.push({ name: label === category ? 'Начисление Ozon' : label, price: amount });
 
   const date = normalizeMpDate(String(a?.accrual_date ?? a?.date ?? a?.operation_date ?? '')) || new Date().toISOString();
   const orderDate = posting.order_date ?? a?.order_date ?? null;
   const op = {
     operation_id: id,
     operation_type: String(typeId ?? category),
-    operation_type_name: label,
+    operation_type_name: name,
     operation_date: date,
     amount,
     accruals_for_sale: accruals,
@@ -123,7 +147,7 @@ export function accrualToTransaction(a: any, typeName: TypeName, storeId: string
     delivery_charge: 0,
     return_delivery_charge: 0,
     services,
-    posting: { posting_number: postingNumber ?? '', order_date: orderDate },
+    posting: { ...posting, posting_number: postingNumber ?? '', order_date: orderDate },
     accrued_category: category,
     source: 'accrual/by-day',
   };
@@ -133,7 +157,7 @@ export function accrualToTransaction(a: any, typeName: TypeName, storeId: string
     marketplace: 'ozon',
     mp_transaction_id: String(id),
     operation_type: op.operation_type,
-    operation_type_name: label,
+    operation_type_name: name,
     operation_date: date,
     posting_number: postingNumber ? String(postingNumber) : null,
     items_json: products.length ? products.map(p => ({
@@ -148,7 +172,7 @@ export function accrualToTransaction(a: any, typeName: TypeName, storeId: string
     return_delivery_charge: 0,
     services_total: services.reduce((s, f) => s + Math.abs(f.price), 0),
     amount,
-    tx_kind: classify(label, category, accruals),
+    tx_kind: classify(name, category, accruals),
     raw_json: { ...a, ...op },
   };
 }
@@ -222,7 +246,8 @@ export async function fetchAccrualsByDay(creds: Creds, day: string, signal?: Abo
 // Начисления за прошедший день окончательны. Повторно грузим только сегодня,
 // вчера и дни, которые синхронизировались, когда ещё не закончились.
 
-const SYNC_KEY = (storeId: string) => `ozon_accrual_days_v1_${storeId}`;
+// v2: после исправления разбора комиссии (14.10.2026) все дни перезагружаются заново.
+const SYNC_KEY = (storeId: string) => `ozon_accrual_days_v2_${storeId}`;
 
 export function daysToSync(storeId: string, days: string[], todayMsk: string): string[] {
   let synced: Record<string, string> = {};

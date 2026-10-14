@@ -6,6 +6,7 @@
 import { KPI, Order, TimeseriesPoint, SkuPerformance, Mp, MP_LABEL, MP_SHORT } from '../../types';
 import { rub, rubShort, pct, num, dayShort, dayLong, escapeHtml, jsArg, plural } from '../format';
 import { hbars, stackBar, TimeSpec, TimePoint } from '../charts';
+import { productCell } from '../product';
 import { mskDayKey } from '@/utils/mpDate';
 
 export type ChartMetric = 'revenue' | 'profit' | 'orders';
@@ -245,10 +246,9 @@ function moneyFlow(k: KPI): string {
 
 function topProducts(list: SkuPerformance[], color: string): string {
   if (!list.length) return '<div class="an-chart-empty">Нет данных</div>';
-  const mps = new Set(list.map(s => s.mp));
   return hbars(list.map(s => ({
-    // Один товар может продаваться на нескольких площадках — подписываем площадку.
-    label: `${mps.size > 1 ? `${MP_SHORT[s.mp]} · ` : ''}${s.name || s.vendor_code}`,
+    label: s.name || s.vendor_code,
+    labelHtml: productCell({ name: s.name, vendor_code: s.vendor_code, mp: s.mp }, { compact: true }),
     value: s.net_profit,
     valueText: rub(s.net_profit),
     sub: `${num(s.units_sold)} шт · маржа ${pct(s.margin_pct, 0)}`,

@@ -329,3 +329,28 @@ html.light .an-mp-yandex { color: #8a6800; }
   .an-tabs::-webkit-scrollbar { display: none; }
   .an-tab { white-space: nowrap; padding: 9px 10px 11px; }
 }
+
+/* ── Товар: название, артикул, копирование ─────────────────────────── */
+.an-prod { display: flex; align-items: center; gap: 9px; min-width: 240px; max-width: 380px; }
+.an-prod.compact { min-width: 0; max-width: 100%; }
+.an-prod-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.an-prod-line, .an-prod-meta { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.an-prod-name {
+  color: var(--text); font-weight: 600; text-decoration: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+a.an-prod-name:hover { color: var(--accent-text); text-decoration: underline; }
+.an-prod-meta { color: var(--text2); font-size: 12px; }
+.an-prod-meta .an-mono { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.an-prod-sub { margin-left: 4px; white-space: nowrap; }
+.an-prod-sub::before { content: '·'; margin-right: 4px; color: var(--text3); }
+.an-copy {
+  appearance: none; border: 0; background: none; padding: 2px; margin: 0; border-radius: 5px;
+  color: var(--text3); cursor: pointer; display: inline-flex; flex-shrink: 0; opacity: .7;
+}
+.an-copy:hover { color: var(--text); background: var(--hover); opacity: 1; }
+.an-copy.done { color: var(--an-pos); opacity: 1; }
+.an-hbar-label .an-prod { max-width: 100%; }
+.an-hbar:has(.an-prod) { grid-template-columns: minmax(160px, 42%) 1fr auto; }
+.an-items { max-width: 340px; white-space: normal; }
+.an-kv > span .an-prod { min-width: 0; }

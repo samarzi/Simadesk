@@ -158,14 +158,15 @@ export const FEE_LABEL: Record<FeeKind, string> = {
  */
 export function classifyServiceName(name: string): FeeKind {
   const n = (name || '').toLowerCase();
-  if (n.includes('delivtocustomer') || n.includes('последняя миля') || n.includes('last mile')) return 'last_mile';
+  if (n.includes('delivtocustomer') || n.includes('последняя миля') || n.includes('last mile') || n.includes('места выдачи') || n.includes('пункта выдачи')) return 'last_mile';
   if (n.includes('acquiring') || n.includes('эквайр') || n.includes('приём платеж') || n.includes('прием платеж')) return 'acquiring';
   if (n.includes('return') || n.includes('возврат') || n.includes('невыкуп') || n.includes('обратн')) return 'logistics_return';
   if (n.includes('storage') || n.includes('хранен') || n.includes('размещени')) return 'storage';
   if (n.includes('penalty') || n.includes('штраф') || n.includes('defect') || n.includes('нарушен')) return 'penalty';
   if (n.includes('premium') || n.includes('promotion') || n.includes('cashback') || n.includes('points')
     || n.includes('review') || n.includes('stencil') || n.includes('gettingtothetop') || n.includes('marketing')
-    || n.includes('рекл') || n.includes('продвиж') || n.includes('отзыв') || n.includes('бонус')) return 'advertising';
+    || n.includes('рекл') || n.includes('продвиж') || n.includes('отзыв') || n.includes('бонус')
+    || n.includes('клик') || n.includes('click') || n.includes('трафарет') || n.includes('буст')) return 'advertising';
   if (n.includes('directflow') || n.includes('dropoff') || n.includes('pickup') || n.includes('fulfillment')
     || n.includes('logistic') || n.includes('trans') || n.includes('deliv') || n.includes('логист')
     || n.includes('доставк') || n.includes('магистрал') || n.includes('сборк') || n.includes('обработк')
@@ -445,7 +446,7 @@ function classifyPeriodCost(tx: MpTransaction): PeriodCostKind {
   }
   const raw = tx.raw_json as any;
   const n = `${tx.operation_type ?? ''} ${tx.operation_type_name ?? ''} ${raw?.bonus_type_name ?? ''}`.toLowerCase();
-  if (n.includes('рекл') || n.includes('продвиж') || n.includes('advert') || n.includes('promot') || n.includes('marketing') || n.includes('costperclick')) return 'advertising';
+  if (n.includes('рекл') || n.includes('продвиж') || n.includes('advert') || n.includes('promot') || n.includes('marketing') || n.includes('costperclick') || n.includes('клик') || n.includes('трафарет')) return 'advertising';
   if (n.includes('хранен') || n.includes('storage')) return 'storage';
   if (n.includes('штраф') || n.includes('penalty') || n.includes('fine')) return 'penalty';
   if (n.includes('эквайр') || n.includes('acquir')) return 'acquiring';

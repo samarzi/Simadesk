@@ -3,10 +3,10 @@
  * заказано → ожидаемый выкуп → расходы на штуку → прибыль и ROI.
  */
 
-import { MP_SHORT } from '../../types';
 import { UnitEconResult, UnitEconSettings, UnitSkuRow } from '../../services/unitEconomics';
 import { rub, rub2, num, qty, pct, escapeHtml } from '../format';
 import { stackBar } from '../charts';
+import { productCell } from '../product';
 
 export type UnitSortKey = 'orderedRevenue' | 'orderedUnits' | 'buyoutPct' | 'profit' | 'profitPerUnit' | 'roi' | 'drrBought' | 'ads';
 
@@ -240,7 +240,7 @@ function skuTable(r: UnitEconResult, sort: UnitViewInput['sort']): string {
             <th class="num">Себест.</th><th class="num">Комиссия</th><th class="num">Логистика</th>${th(COLS[3])}${th(COLS[4])}${th(COLS[5])}${th(COLS[6])}${th(COLS[7])}</tr></thead>
           <tbody>${sortUnitRows(r.skus, sort).map(x => `
             <tr>
-              <td class="an-prod"><span class="an-mp an-mp-${x.mp}">${MP_SHORT[x.mp]}</span><div><b title="${escapeHtml(x.name)}">${escapeHtml(x.name)}</b><small>${escapeHtml(x.vendor_code)}</small></div></td>
+              <td>${productCell({ name: x.name, vendor_code: x.vendor_code, mp: x.mp })}</td>
               <td class="num">${num(x.orderedUnits)}</td>
               <td class="num">${pct(x.buyoutPct, 0)}${approx(x.buyoutBasis)}</td>
               <td class="num">${rub2(x.price)}</td>

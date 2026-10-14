@@ -369,7 +369,11 @@ export class AnalyticsModule {
         for (const m of new Set(scope.map(s => s.mp))) {
           const ids = new Set(scope.filter(s => s.mp === m).map(s => s.id));
           try {
-            await financeSync.syncSelected(m, ids, txRange.start.toISOString(), txRange.end.toISOString(), controller.signal);
+            await financeSync.syncSelected(m, ids, txRange.start.toISOString(), txRange.end.toISOString(), controller.signal, p => {
+              if (id !== this.requestId || p.done || !p.total) return;
+              this.phase = `Финотчёт ${MP_SHORT[m]} · ${p.storeName}: ${p.loaded} из ${p.total}${m === 'ozon' ? ' дн.' : ''}`;
+              this.updateProgress();
+            });
           } catch (e) {
             if (controller.signal.aborted) return;
             failures.push(e instanceof Error ? e.message : String(e));
@@ -674,6 +678,35 @@ export class AnalyticsModule {
     this.debouncedRender();
   }
   showMoreOrders(): void { this.ordersState = { ...this.ordersState, limit: this.ordersState.limit + ORDERS_PAGE }; this.render(); }
+
+  /** Открыть товар в разделе «Товары» (каталог) по артикулу. */
+  async goToProduct(vendorCode: string): Promise<void> {
+    const w = window as any;
+    this.tip?.hide();
+    try {
+      await w.app?.navigateTo?.('products-hub');
+      const hub = w.productsHubModule;
+      const found = hub?.focusArticle ? await hub.focusArticle(vendorCode) : false;
+      if (!found) {
+        const { showToast } = await import('@/utils/toast');
+        showToast(`Артикул «${vendorCode}» не найден в каталоге товаров — показан поиск по нему.`, 'info');
+      }
+    } catch (e) { debug.warn('[Analytics] goToProduct', e); }
+  }
+
+  /** Скопировать текст по кнопке ⧉ и коротко показать «✓». */
+  async copyText(btn: HTMLElement, text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch { /* ignore */ }
+      ta.remove();
+    }
+    btn.classList.add('done');
+    setTimeout(() => btn.classList.remove('done'), 1200);
+  }
 
   openOrder(key: string): void { this.openedOrder = key; this.renderOverlay(); }
   closeOrder(): void { this.openedOrder = null; this.renderOverlay(); }

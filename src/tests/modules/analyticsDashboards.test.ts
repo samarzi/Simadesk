@@ -147,3 +147,23 @@ describe('график времени', () => {
     expect(t).toContain(0);
   });
 });
+
+import { productCell } from '@/modules/analytics/ui/product';
+
+describe('товар в списках: название, артикул, копирование, переход', () => {
+  it('показывает артикул, две кнопки копирования и ссылку в «Товары»', () => {
+    const html = productCell({ name: 'Футболка «Кот»', vendor_code: "TS-'CAT", mp: 'ozon' });
+    expect(html).toContain('TS-');
+    expect(html.match(/title="Скопировать (артикул|название)"/g)).toHaveLength(2);
+    expect(html).toContain("goToProduct('TS-\\&#39;CAT')");
+    expect(html).toContain('Футболка «Кот»');
+  });
+
+  it('используется во всех вкладках', () => {
+    const skus = computeSkuPerformance(orders, costs);
+    expect(renderProducts(skus, { search: '', sort: 'profit', dir: -1, limit: 100 })).toContain('goToProduct(');
+    expect(renderOrders(orders, { status: 'all', search: '', limit: 100 })).toContain('goToProduct(');
+    expect(renderOrderDrawer(orders[0])).toContain('goToProduct(');
+    expect(renderOverview(overview(30))).toContain('goToProduct(');
+  });
+});

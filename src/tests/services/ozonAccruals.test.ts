@@ -9,8 +9,9 @@ const typeName = (id: unknown) => types.get(String(id)) ?? '';
 const sale = {
   accrual_id: 9001, date: '2026-10-03', unit_number: 'P-1', accrued_category: 'POSTING', type_id: 40,
   total_amount: { amount: '1700', currency: 'RUB' },
-  posting: { products: [{ sku: 111, offer_id: 'A', name: 'Футболка', quantity: 1,
-    commission: { accrued: { amount: '-200' } },
+  posting: { posting_number: 'P-1', products: [{ sku: 111, offer_id: 'A', name: 'Футболка', quantity: 1,
+    // Реальная форма ответа Ozon: commission — объект с ценой продавца и комиссией
+    commission: { seller_price: { amount: '2000', currency: 'RUB' }, sale_amount: { amount: '2100' }, sale_commission: { amount: '-200' }, bonus: { amount: '0' } },
     delivery: { services: [{ type_id: 10, accrued: { amount: '-90' } }, { type_id: 11, accrued: '-10' }] } }] },
 };
 
@@ -71,7 +72,7 @@ describe('начисления Ozon (/v1/finance/accrual/by-day)', () => {
   it('возврат: выручка уходит в минус, комиссия возвращается', () => {
     const tx = accrualToTransaction({ accrual_id: 5, date: '2026-10-09', unit_number: 'P-1', accrued_category: 'POSTING',
       name: 'Возврат от покупателя', total_amount: '-1800',
-      posting: { products: [{ sku: 111, quantity: 1, commission: '200' }] } }, typeName, 'S1')!;
+      posting: { products: [{ sku: 111, quantity: 1, commission: { seller_price: { amount: '2000' }, sale_commission: { amount: '200' } } }] } }, typeName, 'S1')!;
     expect(tx.accruals_for_sale).toBe(-2000);
     expect(tx.tx_kind).toBe('return');
   });
@@ -86,5 +87,26 @@ describe('какие дни перезагружать', () => {
     markDaySynced('S1', '2026-10-13', '2026-10-13');
     const days = ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-13', '2026-10-14'];
     expect(daysToSync('S1', days, '2026-10-14')).toEqual(['2026-10-02', '2026-10-04', '2026-10-13', '2026-10-14']);
+  });
+});
+
+describe('реальные названия услуг Ozon', () => {
+  it('оплата за клик — реклама, доставка до места выдачи — последняя миля, сохраняется исходный posting', () => {
+    const tx = accrualToTransaction({ accrual_id: 7, date: '2026-10-03', unit_number: 'P-7', accrued_category: 'POSTING',
+      total_amount: '1500',
+      posting: { posting_number: 'P-7', products: [{ sku: 1, quantity: 2,
+        commission: { seller_price: { amount: '1000' }, sale_amount: { amount: '2000' }, sale_commission: { amount: '-400' } },
+        delivery: { services: [{ type_id: 1, accrued: { amount: '-80' } }, { type_id: 2, accrued: { amount: '-20' } }] } }] } },
+      (id: unknown) => (String(id) === '1' ? 'Логистика' : 'Доставка до места выдачи'), 'S1')!;
+    expect(tx.accruals_for_sale).toBe(2000);
+    expect(tx.sale_commission).toBe(-400);
+    expect(tx.raw_json.posting.products).toHaveLength(1);
+    const store = { id: 'S1', name: 'oz', mp: 'ozon' as const, tax_model: 'none' as const, tax_rate: 0, fulfillment: null };
+    const r = aggregateOrders({ ozonPostings: [], yandexOrders: [], wbOrders: [], transactions: [tx], stores: [store],
+      products: new Map(), cogs: { get: () => null, has: () => false } });
+    const o = r.orders[0];
+    expect(o.commission).toBe(400);
+    expect(o.fee_breakdown.find(f => f.type === 'last_mile')?.amount).toBe(20);
+    expect(o.fee_breakdown.find(f => f.type === 'logistics')?.amount).toBe(80);
   });
 });

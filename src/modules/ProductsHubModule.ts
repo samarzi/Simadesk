@@ -3309,4 +3309,28 @@ export class ProductsHubModule {
     const desc = parts.length ? ` (${parts.join(', ')})` : '';
     return `Показано ${shown} из ${total} товаров${desc}.`;
   }
+
+  /**
+   * Открыть карточку товара по артикулу — для перехода из других разделов
+   * (аналитика, заказы). Дожидается загрузки списка, ставит поиск по артикулу
+   * и выбирает товар. Возвращает false, если такого артикула в каталоге нет.
+   */
+  async focusArticle(article: string): Promise<boolean> {
+    const want = String(article ?? '').trim();
+    if (!want) return false;
+    const deadline = Date.now() + 20_000;
+    while ((this.loading || !this.items.length) && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 150));
+    }
+    const norm = want.toLowerCase();
+    const item = this.items.find(x => x.article === want) ?? this.items.find(x => x.article.toLowerCase() === norm);
+    this.aiFilter({ q: item?.article ?? want });
+    if (!item) return false;
+    this.selectProduct(item.article);
+    requestAnimationFrame(() => {
+      this.el.querySelector('.ph-row.active')?.scrollIntoView({ block: 'nearest' });
+    });
+    return true;
+  }
+
 }

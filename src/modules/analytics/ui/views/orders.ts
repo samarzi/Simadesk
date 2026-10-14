@@ -2,6 +2,7 @@
 
 import { Order, OrderStatus, STATUS_LABEL, MP_SHORT, MP_LABEL } from '../../types';
 import { rub, num, dateTime, escapeHtml, jsArg } from '../format';
+import { productCell } from '../product';
 
 export type OrdersStatus = OrderStatus | 'all';
 
@@ -66,7 +67,8 @@ export function renderOrders(orders: Order[], st: OrdersState): string {
             <tr onclick="${M}?.openOrder('${jsArg(o.order_key ?? o.order_id)}')">
               <td class="an-nowrap">${dateTime(o.date)}</td>
               <td><span class="an-mp an-mp-${o.mp}">${MP_SHORT[o.mp]}</span> <span class="an-mono">${escapeHtml(o.order_id)}</span>${o.finance_only ? ' <span class="an-tag" title="Маркетплейс не вернул заказ в списке — он восстановлен из финотчёта">из финотчёта</span>' : ''}</td>
-              <td class="an-items" title="${escapeHtml(o.items.map(i => `${i.vendor_code} × ${i.quantity} — ${i.name}`).join('\n'))}">${escapeHtml(o.items[0]?.name || o.items[0]?.vendor_code || '—')}${o.items.length > 1 ? ` <span class="an-muted">+${o.items.length - 1}</span>` : ''} <span class="an-muted">· ${num(units)} шт</span></td>
+              <td class="an-items">${o.items[0] ? productCell({ name: o.items[0].name, vendor_code: o.items[0].vendor_code }, { compact: true, mpBadge: false,
+                sub: `${num(units)} шт${o.items.length > 1 ? ` · ещё ${o.items.length - 1} ${o.items.length - 1 === 1 ? 'товар' : 'товара'}` : ''}` }) : '—'}</td>
               <td>${statusPill(o)}</td>
               <td class="num">${rub(o.status === 'returned' || o.status === 'cancelled' ? o.revenue_lost : o.revenue)}</td>
               <td class="num">${pending ? '<span class="an-muted" title="Финотчёт ещё не пришёл">ждём отчёт</span>' : rub(fees)}</td>
@@ -101,7 +103,7 @@ export function renderOrderDrawer(o: Order): string {
       <div class="an-drawer-body">
         <h4>Товары</h4>
         ${o.items.map(i => `
-          <div class="an-kv"><span>${escapeHtml(i.name || i.vendor_code)}<small>${escapeHtml(i.vendor_code)} · ${num(i.quantity)} шт × ${rub(i.price)}</small></span>
+          <div class="an-kv"><span>${productCell({ name: i.name, vendor_code: i.vendor_code }, { mpBadge: false, sub: `${num(i.quantity)} шт × ${rub(i.price)}` })}</span>
             <strong>${rub(i.price * i.quantity)}</strong><em>${i.cost_price != null ? `себест. ${rub(i.cost_price)}` : '<span class="neg">нет себестоимости</span>'}</em></div>`).join('')}
 
         <h4>Деньги по заказу</h4>
