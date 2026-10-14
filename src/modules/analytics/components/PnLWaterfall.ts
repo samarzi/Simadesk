@@ -27,7 +27,10 @@ export function renderPnL(k: KPI, onFilterClick = 'window.analyticsModule?.openO
     { icon: 'zap',         label: 'Реклама, хранение, штрафы', value: -mpPeriod, tint: '#f59e0b',    kind: 'expense' },
     { icon: 'edit',        label: 'Свои расходы',        value: -k.manual_costs, tint: '#94a3b8',    kind: 'expense' },
     { icon: 'package',     label: 'Себестоимость',       value: -k.cogs,       tint: '#22d3ee',      kind: 'expense' },
-    { icon: 'percent',     label: 'Налог',               value: -k.tax,        tint: '#f472b6',      kind: 'expense' },
+    { icon: 'percent',     label: k.vat > 0 || k.profit_tax > 0
+        ? `Налог${k.vat > 0 ? ` (в т.ч. НДС ${fmtMoney(k.vat)})` : ''}${k.profit_tax > 0 ? ` (с прибыли ${fmtMoney(k.profit_tax)})` : ''}`
+        : 'Налог',
+      value: -k.tax, tint: '#f472b6', kind: 'expense' },
     { icon: 'dollarSign',  label: 'Чистая прибыль',      value: k.net_profit,  tint: k.net_profit >= 0 ? 'var(--green)' : 'var(--red)', kind: 'total' },
   ];
 

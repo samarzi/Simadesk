@@ -86,7 +86,7 @@ export function card(title: string, body: string, note = ''): string {
     <div class="an2-card">
       <div class="an2-card-head">
         <div class="an2-card-title">${title}</div>
-        ${note ? `<div style="font-size:10px;color:var(--text3)">${note}</div>` : ''}
+        ${note ? `<div style="font-size:11px;color:var(--text3)">${note}</div>` : ''}
       </div>
       ${body}
     </div>

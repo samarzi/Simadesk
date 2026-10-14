@@ -137,7 +137,7 @@ function ordersTable(orders: Order[]): string {
           return `
             <tr onclick="window.analyticsModule?.openOrder('${escapeHtml(o.order_key ?? o.order_id).replace(/'/g, "\\'")}')">
               <td style="color:var(--text3);white-space:nowrap">${fmtDay(o.date)}</td>
-              <td style="font-family:ui-monospace,monospace;font-size:10.5px">${escapeHtml(o.order_id)}</td>
+              <td style="font-family:ui-monospace,monospace;font-size:11.5px">${escapeHtml(o.order_id)}</td>
               <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(names)}">${escapeHtml(names)}</td>
               <td class="num">${fmtMoney(o.revenue)}</td>
               <td class="num ${o.net_profit >= 0 ? 'pos' : 'neg'}">${o.source === 'real' ? fmtMoney(o.net_profit) : '<span class="an2-est-dot" title="финотчёт МП ещё не пришёл — прибыль по заказу пока не рассчитана">ждём отчёт</span>'}</td>

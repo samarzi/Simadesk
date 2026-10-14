@@ -140,7 +140,7 @@ export function renderReturnsDetail(c: DetailCtx): string {
         ${topSku.map(r => `
           <tr>
             <td>
-              <div style="font-size:10px;color:var(--text3)">${escapeHtml(r.vendorCode)}</div>
+              <div style="font-size:11px;color:var(--text3)">${escapeHtml(r.vendorCode)}</div>
               <div style="font-weight:600;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.name)}</div>
             </td>
             <td class="num">${r.returns > 0 ? `<span style="color:#f87171;font-weight:700">${fmtNum(r.returns)}</span>` : '—'}</td>
@@ -149,7 +149,7 @@ export function renderReturnsDetail(c: DetailCtx): string {
         `).join('')}
       </tbody>
     </table>
-    <div style="font-size:10px;color:var(--text3);margin-top:10px">Топ-10 по общему количеству</div>
+    <div style="font-size:11px;color:var(--text3);margin-top:10px">Топ-10 по общему количеству</div>
   `) : emptyBlock('Нет данных по товарам');
 
   const body = `

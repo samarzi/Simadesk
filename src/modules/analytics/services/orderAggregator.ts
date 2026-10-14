@@ -20,7 +20,7 @@ import {
 } from '../types';
 import { normalizeMpDate } from '@/utils/mpDate';
 import { CogsResolver } from './cogsResolver';
-import { calcTax } from './taxCalculator';
+import { calcOrderTax, isProfitTaxModel, minTaxRate } from './taxCalculator';
 import { settingsDb } from './settingsDb';
 
 export interface ProductInfo {
@@ -102,78 +102,160 @@ function mapWbStatus(s: string): OrderStatus {
 function isReturnTx(tx: MpTransaction): boolean {
   const k = tx.tx_kind;
   if (k === 'return' || k === 'return_svc') return true;
+  if (k) return false;
   const opCode = (tx.operation_type ?? '').toLowerCase();
   const opName = (tx.operation_type_name ?? '').toLowerCase();
   return opCode.includes('return') || opName.includes('возврат') || opName.includes('невыкуп');
 }
 function isCancelTx(tx: MpTransaction): boolean {
   if (tx.tx_kind === 'cancel') return true;
+  if (tx.tx_kind) return false;
   const op = (tx.operation_type ?? '').toLowerCase();
   return op.includes('cancel');
 }
 
-/** Нетто-расход по услугам МП за одну транзакцию.
- *
- *  Почему не `Math.abs(services_total)`: у Ozon поле `services[]` содержит и удержания
- *  (price < 0), и компенсации/возвраты услуг (price > 0). financeSync складывает их
- *  через Math.abs(), из-за чего компенсация попадала в расходы вторым удержанием и
- *  завышала «Расходы». Если raw_json с разбивкой есть — считаем со знаком по нему,
- *  иначе падаем на агрегат (WB/ЯМ пишут туда уже нормализованный положительный расход).
+/**
+ * Транзакция означает, что маркетплейс рассчитался по заказу: продажа, возврат
+ * или отмена. Раньше признаком служила любая ненулевая выручка в транзакции —
+ * и заказ Яндекс.Маркета «в доставке» (его статистика тоже несёт сумму)
+ * становился проданным раньше, чем покупатель его получил.
  */
+const SETTLE_KINDS = new Set(['sale', 'return', 'cancel']);
+function isSettlementTx(tx: MpTransaction): boolean {
+  if (tx.tx_kind) return SETTLE_KINDS.has(tx.tx_kind);
+  return Math.abs(tx.accruals_for_sale || 0) > 0.01;
+}
+
+/** Нетто-расход по услугам МП за одну транзакцию (price < 0 в API = удержание). */
 function servicesExpenseOf(tx: MpTransaction): number {
   const raw = (tx.raw_json as any)?.services;
   if (Array.isArray(raw) && raw.length) {
-    // price < 0 = удержание → расход положительный
     return raw.reduce((sum: number, s: any) => sum - (Number(s?.price) || 0), 0);
   }
   const svc = tx.services_total || 0;
   return svc < 0 ? -svc : svc;
 }
 
-// ── Fee breakdown из raw_json (где МП раскрывает) ───────────────────────────
+type FeeKind = FeeBreakdown['type'];
 
-function buildFeeBreakdown(txs: MpTransaction[]): FeeBreakdown[] {
-  // Накапливаем СО ЗНАКОМ — отрицательные значения в БД = удержание у продавца.
-  // Инвертируем при отображении: расход показываем как положительное число.
-  // Если в итоге значение отрицательное (компенсаций > удержаний) — это «возврат продавцу».
-  const acc = new Map<string, FeeBreakdown>();
-  const add = (type: FeeBreakdown['type'], label: string, amount: number) => {
-    if (!amount) return;
-    const cur = acc.get(type) ?? { type, label, amount: 0 };
-    cur.amount += amount;
-    acc.set(type, cur);
+export const FEE_LABEL: Record<FeeKind, string> = {
+  commission:       'Комиссия',
+  logistics:        'Прямая логистика',
+  last_mile:        'Последняя миля',
+  logistics_return: 'Обратная логистика',
+  storage:          'Хранение',
+  advertising:      'Реклама/продвижение',
+  penalty:          'Штрафы',
+  acquiring:        'Эквайринг',
+  service:          'Прочие услуги МП',
+  other:            'Прочие удержания',
+};
+
+/**
+ * Вид услуги по её названию. Ozon присылает коды вида
+ * MarketplaceServiceItemDirectFlowLogistic — раньше они не распознавались, и вся
+ * логистика Ozon попадала в «Услуги», а строка «Логистика» показывала ноль.
+ */
+export function classifyServiceName(name: string): FeeKind {
+  const n = (name || '').toLowerCase();
+  if (n.includes('delivtocustomer') || n.includes('последняя миля') || n.includes('last mile')) return 'last_mile';
+  if (n.includes('acquiring') || n.includes('эквайр')) return 'acquiring';
+  if (n.includes('return') || n.includes('возврат') || n.includes('невыкуп') || n.includes('обратн')) return 'logistics_return';
+  if (n.includes('storage') || n.includes('хранен') || n.includes('размещени')) return 'storage';
+  if (n.includes('penalty') || n.includes('штраф') || n.includes('defect') || n.includes('нарушен')) return 'penalty';
+  if (n.includes('premium') || n.includes('promotion') || n.includes('cashback') || n.includes('points')
+    || n.includes('review') || n.includes('stencil') || n.includes('gettingtothetop') || n.includes('marketing')
+    || n.includes('рекл') || n.includes('продвиж') || n.includes('отзыв') || n.includes('бонус')) return 'advertising';
+  if (n.includes('directflow') || n.includes('dropoff') || n.includes('pickup') || n.includes('fulfillment')
+    || n.includes('logistic') || n.includes('trans') || n.includes('deliv') || n.includes('логист')
+    || n.includes('доставк') || n.includes('магистрал') || n.includes('сборк') || n.includes('обработк')
+    || n.includes('выезд') || n.includes('отправлен')) return 'logistics';
+  return 'service';
+}
+
+/** Строка отчёта WB — возврат товара: суммы в ней положительные, но смысл обратный. */
+function isWbReturnRaw(raw: any): boolean {
+  const doc = String(raw?.doc_type_name ?? '').toLowerCase();
+  const op  = String(raw?.supplier_oper_name ?? '').toLowerCase();
+  return doc === 'возврат' || op === 'возврат';
+}
+
+const WB_RAW_FIELDS = ['storage_fee', 'penalty', 'deduction', 'acquiring_fee', 'acceptance', 'ppvz_inflicted_for_supplier'];
+
+/**
+ * Расходы по одной транзакции, разложенные по видам. Положительное = расход
+ * продавца, отрицательное = компенсация. Сумма по видам — ровно то, что
+ * удержал маркетплейс, поэтому «выручка − удержания» сходится с выплатой.
+ */
+export function txFees(tx: MpTransaction): Partial<Record<FeeKind, number>> {
+  const f: Partial<Record<FeeKind, number>> = {};
+  const add = (k: FeeKind, v: number) => {
+    if (!Number.isFinite(v) || Math.abs(v) < 1e-9) return;
+    f[k] = (f[k] ?? 0) + v;
   };
+  add('commission', -(tx.sale_commission || 0));
+  add('logistics', -(tx.delivery_charge || 0));
+  add('logistics_return', -(tx.return_delivery_charge || 0));
 
-  for (const tx of txs) {
-    add('commission', 'Комиссия', -(tx.sale_commission || 0));
-    add('logistics',  'Логистика', -(tx.delivery_charge || 0));
-    add('logistics_return', 'Возврат логистики', -(tx.return_delivery_charge || 0));
-
-    // Разбивка услуг — если МП прислал детализацию
-    const services = (tx.raw_json as any)?.services as Array<{ name: string; price: number }> | undefined;
-    if (Array.isArray(services)) {
-      for (const s of services) {
-        const raw = s.price || 0;
-        if (!raw) continue;
-        // У услуг знак тоже инвертируем: отрицательное в API = удержание
-        const amt = -raw;
-        const n = (s.name || '').toLowerCase();
-        if (n.includes('хран') || n.includes('storage')) add('storage', 'Хранение', amt);
-        else if (n.includes('рекл') || n.includes('продвиж') || n.includes('promo') || n.includes('advert')) add('advertising', 'Реклама/продвижение', amt);
-        else if (n.includes('штраф') || n.includes('penalty') || n.includes('компенсац')) add('penalty', 'Штрафы и удержания', amt);
-        else if (n.includes('эквайр') || n.includes('acquir')) add('acquiring', 'Эквайринг', amt);
-        else add('service', s.name || 'Сервис МП', amt);
-      }
-    } else if (tx.services_total) {
-      // Если детализации нет — используем агрегат (WB/ЯМ пишут уже положительный расход)
-      add('other', 'Прочие услуги МП', servicesExpenseOf(tx));
-    }
+  const raw = tx.raw_json as any;
+  const services = raw?.services;
+  if (tx.marketplace === 'wb' && raw && WB_RAW_FIELDS.some(k => raw[k] != null)) {
+    const num = (k: string) => Number(raw[k]) || 0;
+    const ret = isWbReturnRaw(raw) ? -1 : 1;
+    const bonus = String(raw.bonus_type_name ?? '').toLowerCase();
+    add('storage', num('storage_fee'));
+    add('penalty', num('penalty'));
+    add('acquiring', ret * num('acquiring_fee'));
+    add('service', num('acceptance'));
+    add(bonus.includes('продвиж') || bonus.includes('реклам') ? 'advertising' : 'other', num('deduction'));
+    add('other', num('ppvz_inflicted_for_supplier'));
+  } else if (Array.isArray(services) && services.length) {
+    for (const s of services) add(classifyServiceName(String(s?.name ?? '')), -(Number(s?.price) || 0));
+  } else if (tx.services_total) {
+    add('service', servicesExpenseOf(tx));
   }
 
-  // Удаляем нулевые и сортируем по абсолютной величине (большие удержания сверху)
-  return [...acc.values()]
-    .filter(f => Math.abs(f.amount) > 0.01)
+  // Ozon: всё, что изменило баланс, но не разложено по полям (эквайринг,
+  // корректировки), — это разница между итогом операции и её составляющими.
+  // Раньше эквайринг Ozon (отдельная операция с номером заказа) терялся.
+  if (tx.marketplace === 'ozon' && raw && typeof raw === 'object' && raw.amount != null) {
+    const servicesSigned = Array.isArray(services)
+      ? services.reduce((s: number, x: any) => s + (Number(x?.price) || 0), 0) : 0;
+    const expected = (tx.accruals_for_sale || 0) + (tx.sale_commission || 0)
+      + (tx.delivery_charge || 0) + (tx.return_delivery_charge || 0) + servicesSigned;
+    const residual = (tx.amount || 0) - expected;
+    if (Math.abs(residual) > 0.01) {
+      const op = `${tx.operation_type ?? ''} ${tx.operation_type_name ?? ''}`.toLowerCase();
+      add(op.includes('acquiring') || op.includes('эквайр') ? 'acquiring' : classifyServiceName(op) === 'service' ? 'other' : classifyServiceName(op), -residual);
+    }
+  }
+  return f;
+}
+
+function sumFees(txs: MpTransaction[]): Partial<Record<FeeKind, number>> {
+  const acc: Partial<Record<FeeKind, number>> = {};
+  for (const tx of txs) {
+    for (const [k, v] of Object.entries(txFees(tx)) as Array<[FeeKind, number]>) acc[k] = (acc[k] ?? 0) + v;
+  }
+  return acc;
+}
+
+function feeBreakdownOf(fees: Partial<Record<FeeKind, number>>): FeeBreakdown[] {
+  return (Object.entries(fees) as Array<[FeeKind, number]>)
+    .filter(([, v]) => Math.abs(v) > 0.01)
+    .map(([type, amount]) => ({ type, label: FEE_LABEL[type], amount }))
     .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+}
+
+/** Дата заказа из финотчёта: по ней заказ относится к периоду, как и живые заказы. */
+function orderDateOfTx(tx: MpTransaction): string | null {
+  const raw = tx.raw_json as any;
+  let d: unknown = null;
+  if (tx.marketplace === 'ozon') d = raw?.posting?.order_date;
+  else if (tx.marketplace === 'wb') d = raw?.order_dt;
+  else if (tx.marketplace === 'yandex') d = raw?.creationDate ?? tx.operation_date;
+  const iso = typeof d === 'string' && d ? normalizeMpDate(d) : '';
+  return iso || null;
 }
 
 // ── Билдер позиций заказа ───────────────────────────────────────────────────
@@ -183,6 +265,7 @@ function buildItems(
   items: Array<{ vendor_code: string; mp_sku?: string; name: string; quantity: number; price: number }>,
   products: ProductMap,
   cogs: CogsResolver,
+  date?: string,
 ): OrderItem[] {
   return items.map(it => {
     const revenue = it.price * it.quantity;
@@ -192,7 +275,7 @@ function buildItems(
     // Если в исходных данных vendor_code был числовым SKU — резолвим на реальный артикул продавца
     // из карты products. Это даёт корректное отображение И верный лукап себестоимости.
     const resolvedVc = info?.vendor_code ?? it.vendor_code;
-    const cost  = cogs.get(resolvedVc, it.mp_sku);
+    const cost  = cogs.get(resolvedVc, it.mp_sku, date);
     const cogsAmt = cost != null ? cost * it.quantity : 0;
     return {
       vendor_code: resolvedVc,
@@ -224,16 +307,17 @@ export function aggregateOrders(input: AggregateInput): AggregateResult {
     const store = storeMap.get(p.store_id);
     if (!store) continue;
     const orderId = p.posting_number;
+    const date = normalizeMpDate(p.created_at || p.in_process_at);
     const items = buildItems('ozon',
       p.products.map(pr => ({
         vendor_code: pr.offer_id,
         name: pr.name,
         quantity: pr.quantity,
         price: parseFloat(pr.price) || 0,
-      })), products, cogs);
+      })), products, cogs, date);
     const status = mapOzonStatus(p.status);
     orders.push(makeOrder({
-      orderId, mp: 'ozon', store, date: normalizeMpDate(p.created_at || p.in_process_at),
+      orderId, mp: 'ozon', store, date,
       status, status_raw: p.status, items,
       txs: txByOrder.get(makeOrderKey('ozon', store.id, orderId)) ?? [],
     }));
@@ -244,17 +328,18 @@ export function aggregateOrders(input: AggregateInput): AggregateResult {
     const store = storeMap.get(o.store_id);
     if (!store) continue;
     const orderId = String(o.id);
+    const date = normalizeMpDate(o.creation_date);
     const items = buildItems('yandex',
       o.items.map(it => ({
         vendor_code: it.offer_id,
         name: it.name,
         quantity: it.count,
         price: it.price,
-      })), products, cogs);
+      })), products, cogs, date);
     orders.push(makeOrder({
       // Яндекс отдаёт «DD-MM-YYYY HH:mm:ss» по Москве — без нормализации такие
       // заказы выпадали из графика, тепловой карты и сортировались по числу месяца.
-      orderId, mp: 'yandex', store, date: normalizeMpDate(o.creation_date),
+      orderId, mp: 'yandex', store, date,
       status: mapYandexStatus(o.status), status_raw: o.status, items,
       txs: txByOrder.get(makeOrderKey('yandex', store.id, orderId)) ?? [],
     }));
@@ -265,6 +350,7 @@ export function aggregateOrders(input: AggregateInput): AggregateResult {
     const store = storeMap.get(o.store_id);
     if (!store) continue;
     const orderId = o.srid ?? String(o.id);
+    const date = normalizeMpDate(o.created_at);
     const items = buildItems('wb',
       o.items.map(it => ({
         vendor_code: it.vendor_code,
@@ -272,69 +358,80 @@ export function aggregateOrders(input: AggregateInput): AggregateResult {
         name: it.name,
         quantity: it.count,
         price: it.price,
-      })), products, cogs);
+      })), products, cogs, date);
     orders.push(makeOrder({
-      orderId, mp: 'wb', store, date: normalizeMpDate(o.created_at),
+      orderId, mp: 'wb', store, date,
       status: mapWbStatus(o.status), status_raw: o.status, items,
       txs: txByOrder.get(makeOrderKey('wb', store.id, orderId)) ?? [],
     }));
   }
 
-  // ── Orphan-транзакции: posting в БД есть, а заказа не дотянуло (период не совпал
-  //    или live-API не вернул). Создаём заказ-«скелет» чтобы расходы не пропали. ──
+  // ── Заказы, известные только по финотчёту: живой API их не вернул.
+  //    К периоду относим по ДАТЕ ЗАКАЗА из финотчёта, как и живые заказы.
+  //    Раньше брали дату операции — и сентябрьский заказ, рассчитанный в
+  //    октябре, попадал в выручку и сентября, и октября. ──
   const seen = new Set(orders.map(o => o.order_key ?? makeOrderKey(o.mp, o.store_id, o.order_id)));
   const byOrphan = new Map<string, MpTransaction[]>();
   for (const tx of transactions) {
     if (!tx.posting_number) continue;
     const key = makeOrderKey(tx.marketplace, tx.store_id, tx.posting_number);
     if (seen.has(key)) continue;
-    if (periodStart && periodEnd) {
-      const ts = Date.parse(tx.operation_date);
-      if (!Number.isFinite(ts) || ts < periodStart.getTime() || ts > periodEnd.getTime()) continue;
-    }
     const list = byOrphan.get(key) ?? [];
     list.push(tx);
     byOrphan.set(key, list);
   }
+  const inPeriod = (iso: string | null | undefined): boolean => {
+    if (!periodStart || !periodEnd) return true;
+    const ts = Date.parse(iso ?? '');
+    return Number.isFinite(ts) && ts >= periodStart.getTime() && ts <= periodEnd.getTime();
+  };
+  const feeOnlyTxs: MpTransaction[] = [];
   for (const [, txs] of byOrphan) {
     const tx0 = txs[0];
     const store = storeMap.get(tx0.store_id);
     if (!store) continue;
 
-    // Сервисные операции МП (компенсации, разовые комиссии без posting'а товара):
-    // нет items + нет accruals + нет удержаний — НЕ показываем как заказ.
-    const hasItems = (tx0.items_json ?? []).length > 0;
-    const totalAccruals = txs.reduce((s, t) => s + Math.abs(t.accruals_for_sale || 0), 0);
-    const totalFees = txs.reduce((s, t) =>
-      s + Math.abs(t.sale_commission || 0) + Math.abs(t.delivery_charge || 0)
-        + Math.abs(t.return_delivery_charge || 0) + Math.abs(t.services_total || 0), 0);
-    if (!hasItems && totalAccruals === 0 && totalFees === 0) continue;
+    const orderDate = txs.map(orderDateOfTx).find(Boolean) ?? null;
+    const hasItems = txs.some(t => (t.items_json ?? []).length > 0);
+    const totalAccruals = txs.reduce((s, t) => s + Math.max(0, t.accruals_for_sale || 0), 0)
+      || txs.reduce((s, t) => s + Math.abs(t.accruals_for_sale || 0), 0);
 
-    // Для orphan-возврата: цена за единицу = abs(accruals) / qty (грубая оценка).
-    const totalQty = (tx0.items_json ?? []).reduce((s, it) => s + (it.quantity ?? 1), 0) || 1;
+    // Нет ни товаров, ни выручки — это не заказ, а отдельное удержание
+    // (эквайринг, корректировка). Учитываем как расход периода по дате операции.
+    if (!hasItems && totalAccruals === 0) {
+      if (orderDate ? inPeriod(orderDate) : true) feeOnlyTxs.push(...txs);
+      continue;
+    }
+    if (!inPeriod(orderDate ?? tx0.operation_date)) continue;
+
+    const itemsTx = txs.find(t => (t.items_json ?? []).length > 0) ?? tx0;
+    const totalQty = (itemsTx.items_json ?? []).reduce((s, it) => s + (it.quantity ?? 1), 0) || 1;
     const pricePerUnit = totalAccruals > 0 ? totalAccruals / totalQty : 0;
 
     const items = buildItems(store.mp,
-      (tx0.items_json ?? []).map(it => ({
+      (itemsTx.items_json ?? []).map(it => ({
         vendor_code: it.vendor_code ?? String(it.sku ?? ''),
         mp_sku: String(it.sku ?? ''),
         name: it.name,
         quantity: it.quantity ?? 1,
         price: pricePerUnit,
-      })), products, cogs);
-    const isReturn = txs.some(isReturnTx);
-    const isCancel = txs.some(isCancelTx);
+      })), products, cogs, orderDate ?? tx0.operation_date);
     orders.push(makeOrder({
-      orderId: tx0.posting_number!, mp: store.mp, store, date: normalizeMpDate(tx0.operation_date),
-      status: isCancel ? 'cancelled' : isReturn ? 'returned' : 'delivered',
+      orderId: tx0.posting_number!, mp: store.mp, store,
+      date: orderDate ?? normalizeMpDate(tx0.operation_date),
+      // Статус уточнит сам финотчёт: продажа / возврат / отмена.
+      status: 'in_delivery',
       status_raw: tx0.operation_type_name ?? tx0.operation_type ?? '',
-      items, txs, is_orphan: true,
+      items, txs, finance_only: true,
     }));
   }
 
   return {
     orders: orders.sort((a, b) => (b.date || '').localeCompare(a.date || '')),
-    periodCosts: collectPeriodCosts(transactions, storeMap, periodStart, periodEnd),
+    periodCosts: [
+      ...collectPeriodCosts(transactions.filter(t => !t.posting_number), storeMap, periodStart, periodEnd),
+      ...collectPeriodCosts(feeOnlyTxs, storeMap, periodStart, periodEnd),
+    ],
   };
 }
 
@@ -346,8 +443,9 @@ function classifyPeriodCost(tx: MpTransaction): PeriodCostKind {
     case 'penalty':     return 'penalty';
     default: break;
   }
-  const n = `${tx.operation_type ?? ''} ${tx.operation_type_name ?? ''}`.toLowerCase();
-  if (n.includes('рекл') || n.includes('продвиж') || n.includes('advert') || n.includes('promot') || n.includes('marketing')) return 'advertising';
+  const raw = tx.raw_json as any;
+  const n = `${tx.operation_type ?? ''} ${tx.operation_type_name ?? ''} ${raw?.bonus_type_name ?? ''}`.toLowerCase();
+  if (n.includes('рекл') || n.includes('продвиж') || n.includes('advert') || n.includes('promot') || n.includes('marketing') || n.includes('costperclick')) return 'advertising';
   if (n.includes('хранен') || n.includes('storage')) return 'storage';
   if (n.includes('штраф') || n.includes('penalty') || n.includes('fine')) return 'penalty';
   if (n.includes('эквайр') || n.includes('acquir')) return 'acquiring';
@@ -355,32 +453,25 @@ function classifyPeriodCost(tx: MpTransaction): PeriodCostKind {
 }
 
 /**
- * Нетто-расход по транзакции без заказа.
- * Берём сумму удержаний; если МП их не расшифровал — падаем на итог по счёту
- * (amount < 0 = деньги ушли у продавца). Компенсации дают отрицательный расход.
+ * Нетто-расход по транзакции без заказа. У Ozon итог операции (amount) —
+ * ровно то, на сколько изменился баланс, поэтому берём его. У WB/ЯМ
+ * суммируем удержания по полям.
  */
 function periodCostAmountOf(tx: MpTransaction): number {
-  const fees = -(tx.sale_commission || 0)
-             - (tx.delivery_charge || 0)
-             - (tx.return_delivery_charge || 0)
-             + servicesExpenseOf(tx);
+  const raw = tx.raw_json as any;
+  if (tx.marketplace === 'ozon' && raw && typeof raw === 'object' && raw.amount != null) {
+    return -(tx.amount || 0);
+  }
+  const fees = Object.values(txFees(tx)).reduce((s, v) => s + (v ?? 0), 0);
   if (Math.abs(fees) > 0.01) return fees - (tx.accruals_for_sale || 0);
   const amount = tx.amount || 0;
   return amount !== 0 ? -amount : 0;
 }
 
-/**
- * Собирает расходы, не привязанные к заказу.
- *
- * Раньше цикл orphan-заказов начинался с `if (!tx.posting_number) continue`, и
- * все такие транзакции пропадали бесследно: реклама, хранение, штрафы, подписки,
- * эквайринг. Для продавца это реальные списанные деньги, поэтому «Расходы» были
- * систематически занижены, а прибыль и маржа — завышены.
- */
+/** Расходы, не привязанные к заказу: реклама, хранение, штрафы, подписки, эквайринг. */
 function collectPeriodCosts(transactions: MpTransaction[], storeMap: Map<string, StoreInfo>, periodStart?: Date, periodEnd?: Date): PeriodCost[] {
   const out: PeriodCost[] = [];
   for (const tx of transactions) {
-    if (tx.posting_number) continue;
     if (periodStart && periodEnd) {
       const ts = Date.parse(tx.operation_date);
       if (!Number.isFinite(ts) || ts < periodStart.getTime() || ts > periodEnd.getTime()) continue;
@@ -408,14 +499,14 @@ function collectPeriodCosts(transactions: MpTransaction[], storeMap: Map<string,
   return out;
 }
 
-/** Категория расхода периода по типу транзакции и названию операции. */
 function groupTxByOrder(transactions: MpTransaction[]): Map<string, MpTransaction[]> {
   const map = new Map<string, MpTransaction[]>();
   for (const tx of transactions) {
     if (!tx.posting_number) continue;
-    const list = map.get(makeOrderKey(tx.marketplace, tx.store_id, tx.posting_number)) ?? [];
+    const key = makeOrderKey(tx.marketplace, tx.store_id, tx.posting_number);
+    const list = map.get(key) ?? [];
     list.push(tx);
-    map.set(makeOrderKey(tx.marketplace, tx.store_id, tx.posting_number), list);
+    map.set(key, list);
   }
   return map;
 }
@@ -433,102 +524,88 @@ interface MakeOrderInput {
   status_raw: string;
   items: OrderItem[];
   txs: MpTransaction[];
-  is_orphan?: boolean;
+  finance_only?: boolean;
 }
 
 function makeOrder(p: MakeOrderInput): Order {
   let revenue = p.items.reduce((s, it) => s + it.revenue, 0);
-  let commission = 0, logistics = 0, logistics_return = 0, services = 0, payout_actual = 0;
-  const fee_breakdown: FeeBreakdown[] = [];
 
   const hasReal = p.txs.length > 0;
-  const hasSettlement = p.txs.some(tx => tx.tx_kind === 'sale' || tx.tx_kind === 'return' || tx.tx_kind === 'cancel'
-    || Math.abs(tx.accruals_for_sale || 0) > 0.01);
+  const hasSettlement = p.txs.some(isSettlementTx);
   const source: SourceQuality = hasSettlement ? 'real' : 'estimated';
-  let isReturnByTx = false;
-  let isCancelByTx = false;
 
-  if (hasReal) {
-    // Ozon/WB/YM хранят удержания с отрицательным знаком (выручка минус для продавца),
-    // а корректировки/возвраты комиссии — с положительным (возврат продавцу).
-    // Складываем со знаком и инвертируем → получаем «нетто-расход».
-    // Это критично для возвратов: исходное удержание -7056 + возврат +6500 = -556 → расход 556,
-    // а не двойное удержание 13556 как было раньше с Math.abs().
-    for (const tx of p.txs) {
-      commission       += -(tx.sale_commission || 0);
-      logistics        += -(tx.delivery_charge || 0);
-      logistics_return += -(tx.return_delivery_charge || 0);
-      services += servicesExpenseOf(tx);
-      payout_actual += tx.amount || 0;
-    }
-    // Защита: если из-за компенсаций сумма ушла в минус (МП вернул больше чем удержал) —
-    // это редкий случай, но математически корректно: расход меньше нуля = компенсация.
-    // Оставляем как есть, чтобы прибыль отражала реальный нетто-эффект.
-    // Если у заказа в транзакциях нет revenue (только возврат-операция) — пересчитываем
-    const accrued = p.txs.reduce((s, t) => s + (t.accruals_for_sale || 0), 0);
-    if (accrued > 0 && revenue === 0) revenue = accrued;
+  // Удержания со знаком: компенсации и возвраты комиссии уменьшают расход.
+  const fees = sumFees(p.txs);
+  const commission       = fees.commission ?? 0;
+  const logistics        = (fees.logistics ?? 0) + (fees.last_mile ?? 0);
+  const logistics_return = fees.logistics_return ?? 0;
+  const services = (fees.storage ?? 0) + (fees.advertising ?? 0) + (fees.penalty ?? 0)
+    + (fees.acquiring ?? 0) + (fees.service ?? 0) + (fees.other ?? 0);
+  const payout_actual = p.txs.reduce((s, t) => s + (t.amount || 0), 0);
+  const fee_breakdown = feeBreakdownOf(fees);
 
-    isReturnByTx = p.txs.some(isReturnTx);
-    isCancelByTx = p.txs.some(isCancelTx);
+  const accrPos = p.txs.reduce((s, t) => s + Math.max(0, t.accruals_for_sale || 0), 0);
+  const accrNet = p.txs.reduce((s, t) => s + (t.accruals_for_sale || 0), 0);
+  if (accrPos > 0 && revenue === 0) revenue = accrPos;
 
-    fee_breakdown.push(...buildFeeBreakdown(p.txs));
-  }
+  const isReturnByTx = hasReal && p.txs.some(isReturnTx);
+  const isCancelByTx = hasReal && p.txs.some(isCancelTx);
+
+  // Частичный возврат: продажа прошла, покупателю вернули часть денег.
+  // Раньше любой возврат обнулял выручку всего заказа.
+  const refunded = accrPos - accrNet;
+  const partialShare = isReturnByTx && !isCancelByTx && accrPos > 0.01
+    && refunded > 0.01 && accrNet > 0.01 * accrPos
+    ? Math.min(1, refunded / accrPos) : 0;
 
   // Уточнение статуса по факту фин. транзакций (приоритет финотчёта над live-статусом)
   let status = p.status;
   if (isCancelByTx) status = 'cancelled';
-  else if (isReturnByTx) status = 'returned';
+  else if (isReturnByTx) status = partialShare > 0 ? 'delivered' : 'returned';
   else if (hasSettlement && status !== 'returned' && status !== 'cancelled') status = 'delivered';
 
-  // Cancel / Return: revenue зануляем. Возврат — покупатель вернул товар,
-  // значит нет чистой продажи. Себес при этом тоже не списываем (уже в cogsTotal ниже).
-  // revenue_lost сохраняет исходную сумму — без неё строка «Возвраты» в P&L всегда 0.
   let revenue_lost = 0;
   if (status === 'cancelled' || status === 'returned') {
     revenue_lost = revenue;
     revenue = 0;
-    // Позиции сохраняют исходную выручку — она нужна и для карточки заказа,
-    // и для корректного вычитания возврата в разбивке по SKU. Обнуляется только
-    // прибыль: заработка по этому заказу нет.
     for (const it of p.items) { it.net_profit = 0; }
+  } else if (partialShare > 0) {
+    revenue_lost = revenue * partialShare;
+    revenue -= revenue_lost;
+    for (const it of p.items) {
+      it.returned_qty = Math.min(it.quantity, Math.round(it.quantity * partialShare));
+      it.revenue *= 1 - partialShare;
+      it.cogs *= 1 - partialShare;
+    }
   }
 
-  // Если есть реальные транзакции но revenue = 0 — это сервисная/компенсационная операция
-  // (хранение, штраф, частичная корректировка), а не настоящая продажа. COGS не списываем.
+  // Есть транзакции, но выручки нет — сервисная операция, себестоимость не списываем.
   const feeOnlyTx = hasReal && revenue === 0;
   const cogsTotal = status === 'returned' || status === 'cancelled' || feeOnlyTx
     ? 0
     : p.items.reduce((s, it) => s + it.cogs, 0);
 
-  // Налог по заказу (используем настройки магазина)
-  // Настройка магазина из API — источник по умолчанию. Локальное override имеет
-  // приоритет, но глобальный USN6 больше не подменяет налоговую модель магазина.
-  const taxOv = settingsDb.get().store_tax[p.store.id] ?? {
-    model: p.store.tax_model,
-    rate: p.store.tax_rate,
-  };
-  const tax = calcTax(revenue, commission + logistics + logistics_return + services + cogsTotal, taxOv.model, taxOv.rate);
+  // Налог: настройка магазина из API, локальная настройка имеет приоритет.
+  const taxOv = settingsDb.get().store_tax[p.store.id];
+  const model = taxOv?.model ?? p.store.tax_model;
+  const rate  = taxOv?.rate  ?? p.store.tax_rate;
+  const vatRate = taxOv?.vat_rate ?? p.store.vat_rate ?? 0;
+  const mpFees = commission + logistics + logistics_return + services;
+  const { tax, vat } = calcOrderTax(revenue, mpFees, model, rate, vatRate);
 
-  const totalExpenses = commission + logistics + logistics_return + services + cogsTotal + tax;
-  const net_profit = revenue - totalExpenses;
+  const net_profit = revenue - mpFees - cogsTotal - tax;
 
-  // Распределение комиссии/логистики/налога по позициям пропорционально выручке
+  // Распределение удержаний и налога по позициям пропорционально выручке
   const denom = p.items.reduce((s, it) => s + Math.max(0, it.revenue), 0);
-  const shareDenom = denom > 0 ? denom : Math.max(1, p.items.length);
   for (const it of p.items) {
-    const share = denom > 0 ? it.revenue / denom : 1 / shareDenom;
-    const itemExpenses = (commission + logistics + logistics_return + services + tax) * share + it.cogs;
-    it.net_profit = it.revenue - itemExpenses;
+    const share = denom > 0 ? it.revenue / denom : 1 / Math.max(1, p.items.length);
+    it.net_profit = status === 'returned' || status === 'cancelled'
+      ? -(mpFees * share)
+      : it.revenue - (mpFees + tax) * share - it.cogs;
   }
 
-  // ВАЖНО: отсутствие себестоимости НЕ делает финотчёт «нереальным».
-  // Раньше здесь стоял downgrade source → 'estimated', из-за чего показатель
-  // «Финотчёт пришёл по N% заказов» падал до 40-50% на магазинах без заполненных
-  // себестоимостей и выдавал ложную тревогу. Пробел в COGS отражает missing_cogs_count.
+  // Отсутствие себестоимости НЕ делает финотчёт «нереальным» — пробел отражает missing_cogs_count.
   const missing_cogs_count = p.items.filter(it => it.cost_price == null && it.quantity > 0).length;
-
-  // Финотчёта по заказу ещё нет вообще — комиссия/логистика неизвестны,
-  // а заказ ещё может быть отменён на ПВЗ. Cancel/return уже занулены явно выше.
   const pending_settlement = !hasSettlement && status !== 'cancelled' && status !== 'returned';
 
   return {
@@ -550,12 +627,16 @@ function makeOrder(p: MakeOrderInput): Order {
     fee_breakdown,
     cogs: cogsTotal,
     tax,
+    vat,
+    profit_tax_rate: isProfitTaxModel(model) ? rate : 0,
+    min_tax_rate: minTaxRate(model),
     net_profit,
     payout_actual,
     source,
     missing_cogs_count,
     tx_ids: p.txs.map(t => t.mp_transaction_id),
     pending_settlement,
-    is_orphan: p.is_orphan ?? false,
+    is_orphan: false,
+    finance_only: p.finance_only ?? false,
   };
 }

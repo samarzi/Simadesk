@@ -1,4 +1,4 @@
-import { KPI, Order, TimeseriesPoint, MP_SHORT, MP_COLOR, SkuPerformance } from '../types';
+import { KPI, Order, TimeseriesPoint, MP_SHORT, MP_COLOR, SkuPerformance, PeriodCost, ManualEntry } from '../types';
 import { I } from '@/utils/icons';
 import { renderKpiCard } from '../components/KpiCard';
 import { renderPnL } from '../components/PnLWaterfall';
@@ -8,13 +8,14 @@ import { computeSkuPerformance, MissingCogsItem } from '../services/kpiAggregato
 
 // Memo по reference на orders. Перерасчёт O(orders × items) дорогой,
 // а при body-only renders массив тот же — кеш экономит ~30-80мс на каждый paint.
-const _skuMemo = new WeakMap<Order[], SkuPerformance[]>();
-function memoSkus(orders: Order[]): SkuPerformance[] {
+const _skuMemo = new WeakMap<Order[], { key: string; value: SkuPerformance[] }>();
+function memoSkus(orders: Order[], periodCosts: PeriodCost[], manual: ManualEntry[]): SkuPerformance[] {
+  const key = `${periodCosts.length}|${periodCosts.reduce((s, c) => s + c.amount, 0)}|${manual.length}|${manual.reduce((s, e) => s + e.amount, 0)}`;
   const cached = _skuMemo.get(orders);
-  if (cached) return cached;
-  const result = computeSkuPerformance(orders);
-  _skuMemo.set(orders, result);
-  return result;
+  if (cached?.key === key) return cached.value;
+  const value = computeSkuPerformance(orders, periodCosts, manual);
+  _skuMemo.set(orders, { key, value });
+  return value;
 }
 
 // Кеш всего HTML вкладки. При body-only repaints (фильтр, hover в Chart) объекты
@@ -23,11 +24,11 @@ function memoSkus(orders: Order[]): SkuPerformance[] {
 let _summaryCacheKey: string = '';
 let _summaryCacheHtml: string = '';
 
-export function renderSummaryTab(k: KPI, orders: Order[], ts: TimeseriesPoint[], prevKpi: KPI | null, missingCogs: MissingCogsItem[] = []): string {
+export function renderSummaryTab(k: KPI, orders: Order[], ts: TimeseriesPoint[], prevKpi: KPI | null, missingCogs: MissingCogsItem[] = [], periodCosts: PeriodCost[] = [], manual: ManualEntry[] = []): string {
   // Композитный ключ из reference-identity (одинаковые объекты = тот же ключ дешёво)
-  const key = `${k.revenue}|${k.net_profit}|${orders.length}|${ts.length}|${missingCogs.length}|${prevKpi?.revenue ?? 0}`;
+  const key = `${k.revenue}|${k.net_profit}|${orders.length}|${ts.length}|${missingCogs.length}|${prevKpi?.revenue ?? 0}|${periodCosts.length}|${manual.length}`;
   if (key === _summaryCacheKey && _summaryCacheHtml) return _summaryCacheHtml;
-  const html = renderSummaryTabUncached(k, orders, ts, prevKpi, missingCogs);
+  const html = renderSummaryTabUncached(k, orders, ts, prevKpi, missingCogs, periodCosts, manual);
   _summaryCacheKey = key;
   _summaryCacheHtml = html;
   return html;
@@ -39,7 +40,7 @@ export function clearSummaryCache(): void {
   _summaryCacheHtml = '';
 }
 
-function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[], prevKpi: KPI | null, missingCogs: MissingCogsItem[] = []): string {
+function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[], prevKpi: KPI | null, missingCogs: MissingCogsItem[] = [], periodCosts: PeriodCost[] = [], manual: ManualEntry[] = []): string {
   // Sparklines из timeseries (последние 30 точек)
   const tail = ts.slice(-30);
   const sparkRev    = tail.map(p => p.revenue);
@@ -68,7 +69,7 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
 
   const missingCogsHtml = hasMissing ? `
     <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(251,191,36,.2)">
-      <div style="font-size:10px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:rgba(251,191,36,.8);margin-bottom:8px">
+      <div style="font-size:11px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:rgba(251,191,36,.8);margin-bottom:8px">
         ${missingCogs.length} артикул${missingCogs.length === 1 ? '' : missingCogs.length < 5 ? 'а' : 'ов'} без себестоимости
       </div>
       <div class="an2-missing-cogs-list">
@@ -92,8 +93,8 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
           </div>`;
         }).join('')}
       </div>
-      <div style="margin-top:8px;font-size:10px;color:var(--text3)">
-        Введи сумму → <kbd style="background:var(--bg3);border:1px solid var(--border);border-radius:3px;padding:0 4px;font-size:10px">Enter</kbd> или <strong style="color:rgba(251,191,36,.8)">→</strong> чтобы сохранить. Также можно задать в <strong style="color:var(--text2)">Репрайсер → Себестоимости</strong>.
+      <div style="margin-top:8px;font-size:11px;color:var(--text3)">
+        Введи сумму → <kbd style="background:var(--bg3);border:1px solid var(--border);border-radius:3px;padding:0 4px;font-size:11px">Enter</kbd> или <strong style="color:rgba(251,191,36,.8)">→</strong> чтобы сохранить. Также можно задать в <strong style="color:var(--text2)">Репрайсер → Себестоимости</strong>.
       </div>
     </div>
   ` : '';
@@ -102,11 +103,11 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
     <div class="an2-card" style="background:linear-gradient(90deg, rgba(251,191,36,.06), transparent);border-color:rgba(251,191,36,.25)">
       <div style="display:flex;gap:12px;align-items:flex-start">
         <div style="font-size:18px;margin-top:1px">⚠</div>
-        <div style="flex:1;font-size:11px;color:var(--text2);line-height:1.6">
+        <div style="flex:1;font-size:12px;color:var(--text2);line-height:1.6">
           ${heavyAwaiting ? `
             <div>Финотчёт маркетплейса пришёл только по <strong>${k.source_real_pct.toFixed(0)}%</strong> выкупленных заказов.
               Остальные <strong>${fmtMoney(k.awaiting_revenue)}</strong> пока не входят в выручку и прибыль — комиссия и логистика по ним неизвестны.</div>
-            <div style="margin-top:5px;color:var(--text3);font-size:10.5px">
+            <div style="margin-top:5px;color:var(--text3);font-size:11.5px">
               ${(window as any).analyticsModule?._autoSyncing
                 ? `<span style="display:inline-flex;align-items:center;gap:6px;color:#60a5fa"><span class="an2-mini-spinner"></span>Подтягиваем финотчёт за период…</span>`
                 : `Нажми <strong style="color:var(--text2)">Обновить</strong>, чтобы подтянуть отчёт. Если период свежий — это норма, отчёт придёт сам через 1–3 дня.`}
@@ -120,7 +121,7 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
   ` : '';
 
   // Топ-5 SKU по прибыли (мемоизировано по ссылке на orders)
-  const skus = memoSkus(orders);
+  const skus = memoSkus(orders, periodCosts, manual);
   const top = skus.filter(s => s.units_sold > 0).slice(0, 5);
 
   // Небольшая доля оценки — это норма для свежих заказов, поясняем спокойно.
@@ -128,7 +129,7 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
     <div class="an2-card" style="background:linear-gradient(90deg, rgba(96,165,250,.05), transparent);border-color:rgba(96,165,250,.18);padding:9px 14px;margin-bottom:10px">
       <div style="display:flex;gap:10px;align-items:center">
         <div style="font-size:14px;color:#60a5fa">ⓘ</div>
-        <div style="flex:1;font-size:11px;color:var(--text2);line-height:1.5">
+        <div style="flex:1;font-size:12px;color:var(--text2);line-height:1.5">
           По <strong style="color:var(--text)">${fmtNum(k.awaiting_orders)}</strong> свежим выкупленным заказам
           на <strong style="color:var(--text)">${fmtMoney(k.awaiting_revenue)}</strong> маркетплейс ещё не прислал расчёт —
           они не входят в выручку и прибыль. Через пару дней отчёт придёт и цифры дорастут сами.
@@ -138,15 +139,16 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
     </div>
   ` : '';
 
-  // Плашка про источники данных для длинных периодов
-  const longPeriodInfoHtml = isLongPeriod ? `
+  // Заказы, которые живой API не вернул, восстановлены из финотчёта — говорим об этом.
+  const financeOnly = orders.filter(o => o.finance_only).length;
+  const longPeriodInfoHtml = isLongPeriod && financeOnly > 0 ? `
     <div class="an2-card" style="background:linear-gradient(90deg,rgba(124,58,237,.05),transparent);border-color:rgba(124,58,237,.2);padding:9px 14px;margin-bottom:10px">
       <div style="display:flex;gap:10px;align-items:center">
         <div style="font-size:14px;color:#a78bfa">${I.zap('', 14)}</div>
-        <div style="flex:1;font-size:11px;color:var(--text2);line-height:1.5">
-          Длинный период (${periodSpanDays} дн.) — заказы за последние <strong style="color:var(--text)">60 дней</strong> из live API маркетплейсов, более ранние — только из <strong style="color:var(--text)">финотчёта</strong> (mp_transactions).
-          Это <strong style="color:#a78bfa">правильный режим</strong>: live API маркетплейсов на исторических периодах ломается и теряет заказы.
-          <span style="color:var(--text3)">${fmtNum(liveCount)} из live · ${fmtNum(txOnlyCount)} только из финотчёта</span>
+        <div style="flex:1;font-size:12px;color:var(--text2);line-height:1.5">
+          ${fmtNum(financeOnly)} заказ(ов) за ${periodSpanDays} дн. маркетплейс не вернул в списке заказов —
+          они восстановлены из финотчёта по дате заказа и учтены в цифрах.
+          <span style="color:var(--text3)">${fmtNum(liveCount)} с финотчётом · ${fmtNum(txOnlyCount)} без финотчёта</span>
         </div>
       </div>
     </div>
@@ -178,7 +180,7 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
     <div class="an2-card">
       <div class="an2-card-head">
         <div class="an2-card-title">Динамика по дням</div>
-        <div style="font-size:10px;color:var(--text3)">${ts.length} дн.</div>
+        <div style="font-size:11px;color:var(--text3)">${ts.length} дн.</div>
       </div>
       <div class="an2-chart-wrap">${renderChart(ts)}</div>
     </div>
@@ -186,7 +188,7 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
     <div class="an2-card">
       <div class="an2-card-head">
         <div class="an2-card-title">P&L · откуда и куда уходят деньги</div>
-        <div style="font-size:10px;color:var(--text3)">кликни строку — увидишь связанные заказы</div>
+        <div style="font-size:11px;color:var(--text3)">кликни строку — увидишь связанные заказы</div>
       </div>
       ${renderPnL(k)}
     </div>
@@ -208,7 +210,7 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
               ${top.map(s => `
                 <tr onclick="window.analyticsModule?.setTab('products')">
                   <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                    <span style="color:var(--text3);font-size:10px">${escapeHtml(s.vendor_code)}</span><br>
+                    <span style="color:var(--text3);font-size:11px">${escapeHtml(s.vendor_code)}</span><br>
                     <span style="font-weight:600">${escapeHtml(s.name)}</span>
                   </td>
                   <td class="num">${fmtNum(s.units_sold)}</td>
@@ -227,19 +229,19 @@ function renderSummaryTabUncached(k: KPI, orders: Order[], ts: TimeseriesPoint[]
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px">
           <div style="padding:12px;background:var(--bg);border-radius:10px;border:1px solid var(--border)">
-            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Доставлено</div>
+            <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Доставлено</div>
             <div style="font-size:22px;font-weight:800;color:var(--green);margin-top:4px">${fmtNum(k.orders_delivered)}</div>
           </div>
           <div style="padding:12px;background:var(--bg);border-radius:10px;border:1px solid var(--border)">
-            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">В работе</div>
+            <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">В работе</div>
             <div style="font-size:22px;font-weight:800;color:#fbbf24;margin-top:4px">${fmtNum(k.orders_processing)}</div>
           </div>
           <div style="padding:12px;background:var(--bg);border-radius:10px;border:1px solid var(--border)">
-            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Возвратов</div>
+            <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Возвратов</div>
             <div style="font-size:22px;font-weight:800;color:var(--red);margin-top:4px">${fmtNum(k.orders_returned)}</div>
           </div>
           <div style="padding:12px;background:var(--bg);border-radius:10px;border:1px solid var(--border)">
-            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Отмены</div>
+            <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Отмены</div>
             <div style="font-size:22px;font-weight:800;color:#94a3b8;margin-top:4px">${fmtNum(k.orders_cancelled)}</div>
           </div>
         </div>

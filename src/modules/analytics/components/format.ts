@@ -19,7 +19,7 @@ export function fmtNum(v: number): string {
 }
 
 export function fmtPct(v: number, digits = 1): string {
-  return (v >= 0 ? '' : '−') + Math.abs(v).toFixed(digits) + '%';
+  return (v >= 0 ? '' : '−') + Math.abs(v).toFixed(digits).replace('.', ',') + '%';
 }
 
 export function fmtDate(iso: string): string {
@@ -40,4 +40,14 @@ export function escapeHtml(s: string): string {
   return String(s).replace(/[&<>"']/g, c => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!
   ));
+}
+
+/** Точная сумма с копейками — для удельных показателей (₽ на штуку). */
+export function fmtRub2(v: number): string {
+  return (v < 0 ? '−' : '') + Math.abs(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+}
+
+/** Дробное количество штук: 957,6 шт. */
+export function fmtQty(v: number): string {
+  return v.toLocaleString('ru-RU', { maximumFractionDigits: Number.isInteger(v) ? 0 : 1 });
 }

@@ -57,11 +57,13 @@ export interface OrderItem {
   cogs: number;
   /** Прибыль по позиции после распределения комиссии/логистики пропорционально выручке. */
   net_profit: number;
+  /** Сколько единиц вернули при частичном возврате (revenue и cogs уже уменьшены). */
+  returned_qty?: number;
 }
 
 /** Удержание МП по типу — пришло из mp_transaction.services[] (если МП раскрывает разбивку). */
 export interface FeeBreakdown {
-  type: 'commission' | 'logistics' | 'logistics_return' | 'storage' | 'advertising' | 'penalty' | 'acquiring' | 'service' | 'other';
+  type: 'commission' | 'logistics' | 'last_mile' | 'logistics_return' | 'storage' | 'advertising' | 'penalty' | 'acquiring' | 'service' | 'other';
   label: string;
   amount: number;
 }
@@ -97,8 +99,17 @@ export interface Order {
   fee_breakdown: FeeBreakdown[];
   /** Сумма себестоимости товаров в заказе (Σ item.cogs). */
   cogs: number;
-  /** Налог по заказу (рассчитан исходя из tax_model магазина). */
+  /** Налог по заказу: налог с выручки (УСН 6%, НПД, патент) + НДС.
+   *  Налог с прибыли (УСН 15%, ОСНО) считается за период целиком — см. computeProfitTax. */
   tax: number;
+  /** НДС к уплате по заказу (входит в tax). */
+  vat?: number;
+  /** Ставка налога с прибыли магазина (УСН 15%, ОСНО). 0 — налог с выручки. */
+  profit_tax_rate?: number;
+  /** Минимальный налог от выручки (УСН 15% → 1%). */
+  min_tax_rate?: number;
+  /** Заказ восстановлен только из финотчёта: живой API его не вернул. */
+  finance_only?: boolean;
   /** Чистая прибыль = revenue − commission − logistics − logistics_return − services − cogs − tax. */
   net_profit: number;
   /** Фактически выплачено (Σ tx.amount по этому posting). */
@@ -184,7 +195,12 @@ export interface KPI {
   logistics: number;
   services: number;
   cogs: number;
+  /** Все налоги: с выручки + НДС + налог с прибыли. */
   tax: number;
+  /** НДС к уплате (часть tax). */
+  vat: number;
+  /** Налог с прибыли за период — УСН 15% / ОСНО (часть tax). */
+  profit_tax: number;
   /** Расходы МП без привязки к заказу: реклама, хранение, штрафы. */
   period_costs: number;
   /** Ручные расходы пользователя за период. */
@@ -239,12 +255,26 @@ export interface SkuPerformance {
   name: string;
   image?: string;
   units_sold: number;
+  units_ordered: number;
+  units_returned: number;
+  units_cancelled: number;
+  returned_revenue: number;
+  cancelled_revenue: number;
   revenue: number;
   commission: number;
   logistics: number;
+  services: number;
+  tax: number;
   cogs: number;
+  period_costs: number;
+  manual_costs: number;
+  total_expenses: number;
   net_profit: number;
   margin_pct: number;
+  profit_per_unit: number;
+  cogs_coverage_pct: number;
+  missing_cogs_units: number;
+  return_rate_pct: number;
   /** Кол-во заказов в которых встречался SKU. */
   orders_count: number;
 }
@@ -281,6 +311,8 @@ export const TAX_LABEL: Record<TaxModel, string> = {
 export interface StoreTaxOverride {
   model: TaxModel;
   rate: number;              // 0.06 для 6%
+  /** Ставка НДС: 0, 0.05, 0.07 (УСН с НДС), 0.1, 0.22 (ОСНО). */
+  vat_rate?: number;
 }
 
 export interface AnalyticsSettings {
@@ -299,6 +331,8 @@ export interface StoreInfo {
   mp: Mp;
   tax_model: TaxModel;
   tax_rate: number;
+  /** Ставка НДС (0 — без НДС). */
+  vat_rate?: number;
   fulfillment: string | null;
   created_at?: string;
 }
@@ -310,4 +344,6 @@ export interface DateRange {
 }
 
 /** Период с пресетами. '1' — текущие московские сутки. */
-export type PeriodPreset = '1' | '7' | '30' | '90' | '180' | '365' | 'all' | 'custom';
+export type PeriodPreset =
+  | '1' | 'yesterday' | 'week' | 'prev_week' | 'month' | 'prev_month'
+  | '7' | '30' | '90' | '180' | '365' | 'all' | 'custom';

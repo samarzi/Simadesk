@@ -10,8 +10,8 @@ import { costPriceDb } from '@/services/costPriceDb';
 import { customColumnsDb } from '@/services/customColumnsDb';
 
 export interface CogsResolver {
-  /** Себестоимость единицы по артикулу. null = не задана. */
-  get(vendorCode: string, sku?: string): number | null;
+  /** Себестоимость единицы по артикулу на дату заказа. null = не задана. */
+  get(vendorCode: string, sku?: string, date?: string): number | null;
   /** Есть ли значение. */
   has(vendorCode: string, sku?: string): boolean;
 }
@@ -41,14 +41,19 @@ export function buildCogsResolver(): CogsResolver {
     }
   } catch (e) { debug.warn('[cogsResolver] swallowed error', e); }
 
-  const get = (vendorCode: string, sku?: string): number | null => {
-    if (vendorCode) {
-      const v = cache.get(vendorCode) ?? cache.get(vendorCode.toLowerCase());
-      if (v != null) return v;
-    }
-    if (sku) {
-      const v = cache.get(sku);
-      if (v != null) return v;
+  const get = (vendorCode: string, sku?: string, date?: string): number | null => {
+    for (const code of [vendorCode, sku]) {
+      if (!code) continue;
+      const v = cache.get(code) ?? cache.get(code.toLowerCase());
+      if (v == null) continue;
+      // История есть только у себестоимостей из главной таблицы.
+      if (date) {
+        try {
+          const dated = costPriceDb.costAt(code, date);
+          if (dated != null && dated > 0) return dated;
+        } catch { /* нет истории — берём текущую */ }
+      }
+      return v;
     }
     return null;
   };

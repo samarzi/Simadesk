@@ -13,7 +13,7 @@ import { wbFinanceApi, WbFinanceRow } from './wbFinanceApi';
 import { yandexFinanceApi, YmStatsOrder } from './yandexFinanceApi';
 import { mpTransactionsDb, MpTransaction, TxKind } from './mpTransactionsDb';
 import { YandexStore } from '@/types/yandex';
-import { normalizeMpDate } from '../utils/mpDate';
+import { normalizeMpDate, mskDayKey } from '../utils/mpDate';
 
 export interface SyncProgress {
   storeName: string;
@@ -92,7 +92,8 @@ function classifyOzonTxKind(op: OzonTransaction): TxKind {
 
 function classifyYmTxKind(status: string): TxKind {
   switch (status.toUpperCase()) {
-    case 'DELIVERED': case 'PICKUP': return 'sale';
+    // PICKUP — заказ ждёт покупателя в пункте выдачи: денег ещё нет.
+    case 'DELIVERED': return 'sale';
     case 'RETURNED': case 'PARTIALLY_RETURNED': return 'return';
     case 'CANCELLED_IN_DELIVERY': return 'return'; // отменено после отгрузки → физический возврат
     default:
@@ -131,34 +132,57 @@ function wbDeductions(row: WbFinanceRow): number {
   return sum;
 }
 
-function wbRowToTransaction(row: WbFinanceRow, storeId: string): MpTransaction {
-  const commission = Number(row.ppvz_sales_commission) || 0;
+/** Строка отчёта WB — возврат товара покупателем. */
+function isWbReturnRow(row: WbFinanceRow): boolean {
+  const doc = (row.doc_type_name ?? '').toLowerCase();
+  const op  = (row.supplier_oper_name ?? '').toLowerCase();
+  return doc === 'возврат' || op === 'возврат';
+}
+
+/**
+ * Строка отчёта WB → транзакция.
+ *
+ * Знак. В строке «Возврат» WB пишет суммы положительными, хотя деньги идут
+ * обратно: выручка уменьшается, комиссия возвращается продавцу. Раньше
+ * комиссия всегда записывалась как удержание — и по возврату списывалась второй раз.
+ *
+ * Комиссия. Поле ppvz_sales_commission — только часть вознаграждения WB
+ * (без НДС, без доплат за СПП). Полное удержание WB с продажи —
+ * «реализовано» − «к перечислению» − эквайринг. Так выручка − комиссия − эквайринг
+ * ровно равна сумме к перечислению, и аналитика сходится с выплатой.
+ */
+export function wbRowToTransaction(row: WbFinanceRow, storeId: string): MpTransaction {
+  const sign       = isWbReturnRow(row) ? -1 : 1;
   const logistics  = Number(row.delivery_rub) || 0;
   const revenue    = Number(row.retail_amount) || 0;
   const seller     = Number(row.ppvz_for_pay) || 0;
+  const acquiring  = Number(row.acquiring_fee) || 0;
+  const commission = revenue - seller - acquiring;
   const date = normalizeMpDate(row.rr_dt ?? row.sale_dt ?? row.order_dt) || new Date().toISOString();
+  const opName = row.bonus_type_name || row.supplier_oper_name || row.doc_type_name || null;
   return {
     store_id: storeId,
     marketplace: 'wb',
     mp_transaction_id: String(row.rrd_id),
     operation_type: row.supplier_oper_name ?? row.doc_type_name ?? null,
-    operation_type_name: row.supplier_oper_name ?? row.doc_type_name ?? null,
+    operation_type_name: opName,
     operation_date: date,
     posting_number: row.srid ? String(row.srid) : null,
     items_json: row.nm_id ? [{ name: row.ts_name ?? row.subject_name ?? '', sku: row.nm_id, vendor_code: row.sa_name ?? undefined, quantity: row.quantity ?? 1 }] : null,
-    accruals_for_sale: revenue,
-    sale_commission: -Math.abs(commission),
+    accruals_for_sale: sign * revenue,
+    // Отрицательное = удержание у продавца; по возврату — положительное (вернули).
+    sale_commission: -sign * commission,
     delivery_charge: -Math.abs(logistics),
     return_delivery_charge: 0,
     services_total: wbDeductions(row),
-    amount: seller,
+    amount: sign * seller,
     // Классифицируем тип операции при синке — не эвристикой в UI
     tx_kind: classifyWbTxKind(row),
     raw_json: row,
   };
 }
 
-function ymOrderToTransactions(order: YmStatsOrder, storeId: string): MpTransaction[] {
+export function ymOrderToTransactions(order: YmStatsOrder, storeId: string): MpTransaction[] {
   const txs: MpTransaction[] = [];
   // Без нормализации `new Date('15-08-2026 12:30:00')` даёт Invalid Date,
   // и `.toISOString()` бросал RangeError — синхронизация финотчёта ЯМ падала
@@ -259,7 +283,7 @@ function ymOrderToTransactions(order: YmStatsOrder, storeId: string): MpTransact
   return txs;
 }
 
-function ozonOpToTransaction(op: OzonTransaction, storeId: string): MpTransaction {
+export function ozonOpToTransaction(op: OzonTransaction, storeId: string): MpTransaction {
   const servicesTotal = (op.services ?? []).reduce((s, x) => s + Math.abs(Number(x.price) || 0), 0);
   return {
     store_id: storeId,
@@ -293,8 +317,9 @@ export const financeSync = {
     dateTo: string,
     onProgress?: (p: SyncProgress) => void,
     signal?: AbortSignal,
+    storeIds?: Set<string>,
   ): Promise<{ total: number; perStore: Record<string, number> }> {
-    const stores = await ozonDb.getStores();
+    const stores = (await ozonDb.getStores()).filter(s => !storeIds || storeIds.has(s.id));
     const result: Record<string, number> = {};
     let total = 0;
 
@@ -376,8 +401,9 @@ export const financeSync = {
     dateTo: string,
     onProgress?: (p: SyncProgress) => void,
     signal?: AbortSignal,
+    storeIds?: Set<string>,
   ): Promise<{ total: number; perStore: Record<string, number> }> {
-    const stores = await wbDb.getStores();
+    const stores = (await wbDb.getStores()).filter(s => !storeIds || storeIds.has(s.id));
     const result: Record<string, number> = {};
     let total = 0;
 
@@ -418,6 +444,7 @@ export const financeSync = {
     onProgress?: (p: SyncProgress) => void,
     signal?: AbortSignal,
     preloadedStores?: YandexStore[],
+    storeIds?: Set<string>,
   ): Promise<{ total: number; perStore: Record<string, number> }> {
     // Используем переданные магазины, либо запрашиваем заново
     let stores: YandexStore[];
@@ -428,6 +455,7 @@ export const financeSync = {
       stores = await yandexDb.getStores();
       debug.log(`[YM Sync] найдено магазинов через yandexDb: ${stores.length}`, stores.map(s => s.name));
     }
+    stores = stores.filter(s => !storeIds || storeIds.has(s.id));
     if (stores.length === 0) {
       console.warn('[YM Sync] ⚠ Нет подключённых магазинов Яндекс Маркет — синхронизация пропущена.');
       // Показываем пользователю что ЯМ не синхронизируется
@@ -480,6 +508,22 @@ export const financeSync = {
       }
     }
     return { total, perStore: result };
+  },
+
+  /** Обновляет только выбранный магазин; ошибки не выдаются за успешный sync. */
+  async syncSelected(mp: 'ozon' | 'wb' | 'yandex', storeIds: Set<string>, from: string, to: string,
+    signal?: AbortSignal): Promise<void> {
+    if (!storeIds.size) return;
+    const errors: string[] = [];
+    const onProgress = (p: SyncProgress) => { if (p.error) errors.push(`${p.storeName}: ${p.error}`); };
+    const result = mp === 'ozon'
+      ? await this.syncOzon(from, to, onProgress, signal, storeIds)
+      : mp === 'wb'
+        ? await this.syncWb(mskDayKey(from), mskDayKey(to), onProgress, signal, storeIds)
+        : await this.syncYandex(mskDayKey(from), mskDayKey(to), onProgress, signal, undefined, storeIds);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    if (errors.length) throw new Error(errors.join('; '));
+    if ([...storeIds].some(id => !(id in result.perStore))) throw new Error('Магазин недоступен для синхронизации');
   },
 
   /**

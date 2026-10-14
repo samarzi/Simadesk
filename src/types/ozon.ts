@@ -7,6 +7,9 @@ export interface OzonStore {
   tax_rate?: number | null;  // налоговая ставка %
   tax_model?: string | null; // 'usn6' | 'usn15' | 'osn' | 'patent' | 'npd'
   fulfillment_model?: string | null; // 'FBO' | 'FBS' | 'rFBS' | null (смешанный)
+  /** Ключи рекламного кабинета performance.ozon.ru (не Seller API). */
+  perf_client_id?: string | null;
+  perf_client_secret?: string | null;
   created_at: string;
 }
 

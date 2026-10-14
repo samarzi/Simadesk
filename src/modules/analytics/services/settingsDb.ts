@@ -4,10 +4,12 @@
  */
 
 import { AnalyticsSettings, ManualEntry, StoreTaxOverride, TaxModel } from '../types';
+import { UnitEconSettings, DEFAULT_UNIT_SETTINGS } from './unitEconomics';
 
 const KEY_SETTINGS = 'analytics2_settings_v1';
 const KEY_MANUAL   = 'analytics2_manual_v1';
 const KEY_AUDIT    = 'analytics2_audit_v1';
+const KEY_UNIT     = 'analytics2_unit_v1';
 
 const DEFAULT: AnalyticsSettings = {
   base_currency: 'RUB',
@@ -51,11 +53,24 @@ export const settingsDb = {
     audit('settings', 'обновлены настройки');
   },
 
-  setStoreTax(storeId: string, model: TaxModel, rate: number): void {
+  setStoreTax(storeId: string, model: TaxModel, rate: number, vat_rate?: number): void {
     const s = settingsDb.get();
-    s.store_tax = { ...s.store_tax, [storeId]: { model, rate } };
+    const prev = s.store_tax[storeId];
+    const vat = vat_rate ?? prev?.vat_rate ?? 0;
+    s.store_tax = { ...s.store_tax, [storeId]: { model, rate, vat_rate: vat } };
     save(KEY_SETTINGS, s);
-    audit('tax', `${storeId}: ${model} ${(rate * 100).toFixed(1)}%`);
+    audit('tax', `${storeId}: ${model} ${(rate * 100).toFixed(1)}%${vat ? `, НДС ${(vat * 100).toFixed(0)}%` : ''}`);
+  },
+
+  // ── Юнит-экономика ──
+  unitSettings(): UnitEconSettings {
+    return { ...DEFAULT_UNIT_SETTINGS, ...load<Partial<UnitEconSettings>>(KEY_UNIT, {}) };
+  },
+
+  saveUnitSettings(patch: Partial<UnitEconSettings>): UnitEconSettings {
+    const next = { ...settingsDb.unitSettings(), ...patch };
+    save(KEY_UNIT, next);
+    return next;
   },
 
   clearStoreTax(storeId: string): void {

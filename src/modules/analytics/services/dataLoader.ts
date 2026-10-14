@@ -60,6 +60,7 @@ export async function loadAllStores(): Promise<StoreInfo[]> {
       id, name, mp,
       tax_model:   override?.model ?? normalizeTaxModel(raw),
       tax_rate:    override?.rate  ?? ((rate ?? 0) / 100),
+      vat_rate:    override?.vat_rate ?? 0,
       fulfillment: ff ?? null,
       created_at,
     };

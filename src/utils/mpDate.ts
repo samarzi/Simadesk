@@ -94,3 +94,33 @@ export function mskDayStart(day: string): Date {
   const [y, m, d] = day.split('-').map(Number);
   return new Date(Date.UTC(y, (m || 1) - 1, d || 1) - MSK_OFFSET_MS);
 }
+
+export type CalendarPreset = 'yesterday' | 'week' | 'prev_week' | 'month' | 'prev_month';
+
+/**
+ * Календарные периоды по Москве: вчера, текущая/прошлая неделя (пн–вс),
+ * текущий/прошлый месяц. Менеджеры отчитываются именно так, а не
+ * «последними 30 днями». Текущие неделя и месяц заканчиваются сегодня.
+ */
+export function mskCalendarRange(preset: CalendarPreset, now: Date = new Date()): { start: Date; end: Date } {
+  const msk = new Date(now.getTime() + MSK_OFFSET_MS);
+  const y = msk.getUTCFullYear(), m = msk.getUTCMonth(), d = msk.getUTCDate();
+  const day = (yy: number, mm: number, dd: number) => Date.UTC(yy, mm, dd);
+  const today = day(y, m, d);
+  const DAY = 86_400_000;
+  let from: number, to: number; // московские полуночи, to — включительно
+  switch (preset) {
+    case 'yesterday': from = to = today - DAY; break;
+    case 'week': {
+      const dow = (msk.getUTCDay() + 6) % 7; // 0 = понедельник
+      from = today - dow * DAY; to = today; break;
+    }
+    case 'prev_week': {
+      const dow = (msk.getUTCDay() + 6) % 7;
+      to = today - (dow + 1) * DAY; from = to - 6 * DAY; break;
+    }
+    case 'month': from = day(y, m, 1); to = today; break;
+    case 'prev_month': from = day(y, m - 1, 1); to = day(y, m, 1) - DAY; break;
+  }
+  return { start: new Date(from - MSK_OFFSET_MS), end: new Date(to + DAY - 1 - MSK_OFFSET_MS) };
+}

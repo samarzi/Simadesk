@@ -7,10 +7,10 @@
 
 import { debug } from '@/utils/debug';
 import { I } from '@/utils/icons';
-import { mskRange } from '@/utils/mpDate';
+import { mskRange, mskDayKey, mskCalendarRange, CalendarPreset, normalizeMpDate } from '@/utils/mpDate';
 import { aiPage } from '@/services/aiPageContext';
-import { Mp, MP_LABEL, MP_COLOR, Order, KPI, TimeseriesPoint, PeriodPreset, StoreInfo, TaxModel, PeriodCost, ManualEntry } from './types';
-import { aggregateOrders, ProductMap } from './services/orderAggregator';
+import { Mp, MP_LABEL, MP_COLOR, STATUS_LABEL, Order, KPI, TimeseriesPoint, PeriodPreset, StoreInfo, TaxModel, PeriodCost, ManualEntry } from './types';
+import { aggregateOrders, AggregateInput } from './services/orderAggregator';
 import { buildCogsResolver } from './services/cogsResolver';
 import { computeKPI, computeTimeseries, computeMissingCogs, MissingCogsItem, computeSkuPerformance } from './services/kpiAggregator';
 import { loadAllStores, buildProductMap, loadOrders, loadTransactions, QueryProgress } from './services/dataLoader';
@@ -18,6 +18,12 @@ import { settingsDb } from './services/settingsDb';
 import { financeSync } from '@/services/financeSync';
 import { orderSyncService, OrderSyncStatus } from '@/services/orderSyncService';
 import { costPriceDb } from '@/services/costPriceDb';
+import { companyService } from '@/services/companyService';
+import { ozonDb } from '@/services/ozonDb';
+import { ozonPerformanceApi, PerfCredentials } from '@/services/ozonPerformanceApi';
+import { computeUnitEconomics, UnitEconResult, UnitEconSettings, UnitAdsInput, StoreTax } from './services/unitEconomics';
+import { exportXlsx, exportJson, exportFileName, Sheet } from './services/exporter';
+import { renderUnitTab, unitReportText, unitSheets, UnitSortKey } from './tabs/UnitTab';
 
 import { renderSummaryTab, clearSummaryCache } from './tabs/SummaryTab';
 import { renderOrdersTab, OrdersFilters, clearOrdersCache } from './tabs/OrdersTab';
@@ -35,7 +41,8 @@ function escapeHtmlJson(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-type Tab = 'summary' | 'orders' | 'products' | 'activity' | 'balance';
+type Tab = 'summary' | 'unit' | 'orders' | 'products' | 'activity' | 'balance';
+type MpSel = Mp | 'all';
 
 export class AnalyticsModule {
   private container: HTMLElement;
@@ -52,11 +59,11 @@ export class AnalyticsModule {
   private selectedStore: string | null = null;
   /** @deprecated use selectedStore */
   private selectedStores = new Set<string>();
-  /** Активный маркетплейс. Всегда ровно один — «все МП» больше нельзя. */
-  private selectedMp: Mp = (() => {
+  /** Активный маркетплейс или 'all' — сводный отчёт по всем площадкам. */
+  private selectedMp: MpSel = (() => {
     try {
       const saved = localStorage.getItem('an2_selected_mp');
-      if (saved === 'ozon' || saved === 'wb' || saved === 'yandex') return saved;
+      if (saved === 'ozon' || saved === 'wb' || saved === 'yandex' || saved === 'all') return saved;
     } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
     return 'ozon';
   })();
@@ -64,11 +71,23 @@ export class AnalyticsModule {
   private orders: Order[] = [];
   /** Расходы МП без привязки к заказу: реклама, хранение, штрафы. */
   private periodCosts: PeriodCost[] = [];
+  private manualEntries: ManualEntry[] = [];
   private prevOrders: Order[] = [];
   private kpi: KPI | null = null;
   private prevKpi: KPI | null = null;
   private ts: TimeseriesPoint[] = [];
 
+  private requestId = 0;
+  private controller: AbortController | null = null;
+  private loadedKey = '';
+  private loadError = '';
+  private loadWarning = '';
+  private phase = 'Подготавливаем магазины…';
+  private updatedAt: Date | null = null;
+  private syncedAt: Date | null = null;
+  private syncTimes = new Map<string, number>();
+  private rawInput: AggregateInput | null = null;
+  private companyId: string | null = null;
   private loading = false;
   private syncing = false;
   private dataLoaded = false;
@@ -78,7 +97,6 @@ export class AnalyticsModule {
   private _loadSummary: QueryProgress | null = null;
   private _loadStart = 0;
   private _loadElapsedMs = 0;
-  private _loadTimer = 0;
   private _syncStatus: OrderSyncStatus = orderSyncService.status;
 
   // ── «С начала» — поиск даты и подтверждение ─────────────────────────
@@ -92,7 +110,6 @@ export class AnalyticsModule {
   /** Авто-синхронизация: per-period antispam (ключ = period+stores hash → timestamp).
    *  Не дёргаем sync чаще раза в 10 минут для одного и того же среза. */
   /** Один срез синкаем максимум один раз за сессию — защита от рекурсии. */
-  private _autoSyncTriedThisSession = new Set<string>();
   /** Активен ли фоновый авто-sync прямо сейчас. */
   private _autoSyncing = false;
   private missingCogs: MissingCogsItem[] = [];
@@ -118,31 +135,77 @@ export class AnalyticsModule {
   private openedOrderId: string | null = null;
   private settingsOpen = false;
 
+  // ── Юнит-экономика ───────────────────────────────────────────────────
+  private unitResult: UnitEconResult | null = null;
+  private unitKey = '';
+  private unitLoading = false;
+  private unitError = '';
+  private unitUpdatedAt: Date | null = null;
+  private unitSort: { key: UnitSortKey; dir: 1 | -1 } = { key: 'orderedRevenue', dir: -1 };
+  /** Сырые данные для пересчёта без новой загрузки (смена настроек). */
+  private unitRaw: {
+    history: Order[]; ads: UnitAdsInput; fbs: UnitEconResult['fbs']; historyLabel: string;
+  } | null = null;
+  /** Статус проверки ключей Performance по магазину. */
+  private perfStatus = new Map<string, { ok: boolean; text: string }>();
+  private perfKeys = new Map<string, { clientId: string; clientSecret: string }>();
+
   constructor(container: HTMLElement) {
     this.container = container;
     // Подписываемся на статус фонового синка — обновляем бейдж в шапке
     orderSyncService.onStatus(s => {
       this._syncStatus = s;
-      if (!this.loading) this._scheduleBodyOnly();
+      // Фоновый кэш заказов не должен пересоздавать открытый экран.
+      this.updateStatus();
     });
   }
 
   async show(): Promise<void> {
     this.container.style.display = 'flex';
     this.container.style.flexDirection = 'column';
+    const companyId = companyService.getActiveId();
+    if (this.companyId !== companyId) {
+      this.controller?.abort();
+      this.requestId++;
+      this.companyId = companyId;
+      this.dataLoaded = false;
+      this.loadedKey = '';
+      this.orders = [];
+      this.kpi = this.prevKpi = null;
+      this.rawInput = null;
+      this._balances = [];
+      this._balanceLoaded = false;
+    }
+    if (this.loading) return;
     if (!this.dataLoaded) {
-      this.stores = await loadAllStores();
-      this.ensureStoreSelection();
+      this.loading = true;
+      this.phase = 'Подготавливаем магазины…';
       this.render();
-      this.refresh();
+      try {
+        this.stores = await loadAllStores();
+        if (companyId !== companyService.getActiveId()) return;
+        if (this.selectedMp !== 'all' && !this.stores.some(s => s.mp === this.selectedMp) && this.stores.length) this.selectedMp = this.stores[0].mp;
+        this.ensureStoreSelection();
+      } catch (e) {
+        this.loadError = e instanceof Error ? e.message : String(e);
+        this.loading = false;
+        this.render();
+        return;
+      }
+      this.loading = false;
+      await this.refresh();
     } else {
       this._registerAiPage();
-      this.render();
+      if (!this.updatedAt || Date.now() - this.updatedAt.getTime() > 5 * 60_000) await this.refresh();
+      else this.render();
     }
   }
 
   hide(): void {
     this.container.style.display = 'none';
+    this.controller?.abort();
+    this.requestId++;
+    this.loading = this.syncing = false;
     aiPage.clear('analytics');
   }
 
@@ -183,11 +246,16 @@ export class AnalyticsModule {
 
   private _periodLabel(): string {
     const labels: Record<string, string> = {
-      '1': 'сегодня', '7': '7 дней', '30': '30 дней', '90': '90 дней',
+      '1': 'сегодня', 'yesterday': 'вчера', 'week': 'эта неделя', 'prev_week': 'прошлая неделя',
+      'month': 'этот месяц', 'prev_month': 'прошлый месяц',
+      '7': '7 дней', '30': '30 дней', '90': '90 дней',
       '180': '6 месяцев', '365': '12 месяцев', 'all': 'всё время',
     };
-    if (this.period === 'custom' && this.customFrom && this.customTo) return `${this.customFrom} — ${this.customTo}`;
-    return labels[this.period] ?? this.period;
+    const { start, end } = this.getRange();
+    const d = (x: Date) => new Date(x.getTime() + 3 * 3600_000).toISOString().slice(0, 10).split('-').reverse().join('.');
+    const span = mskDayKey(start.toISOString()) === mskDayKey(end.toISOString()) ? d(start) : `${d(start)} — ${d(end)}`;
+    if (this.period === 'custom' && this.customFrom && this.customTo) return span;
+    return `${labels[this.period] ?? this.period} (${span})`;
   }
 
   private _registerAiPage(): void {
@@ -203,8 +271,8 @@ export class AnalyticsModule {
   // ── Период ────────────────────────────────────────────────────────────
   private getRange(): { start: Date; end: Date } {
     if (this.period === 'custom' && this.customFrom && this.customTo) {
-      const start = new Date(this.customFrom + 'T00:00:00.000Z');
-      const end   = new Date(this.customTo   + 'T23:59:59.999Z');
+      const start = new Date(this.customFrom + 'T00:00:00.000+03:00');
+      const end   = new Date(this.customTo   + 'T23:59:59.999+03:00');
       return { start, end };
     }
     if (this.period === 'all') {
@@ -214,6 +282,9 @@ export class AnalyticsModule {
         : new Date(Date.UTC(new Date().getUTCFullYear() - 1, 0, 1));
       start.setUTCHours(0, 0, 0, 0);
       return { start, end };
+    }
+    if (['yesterday', 'week', 'prev_week', 'month', 'prev_month'].includes(this.period)) {
+      return mskCalendarRange(this.period as CalendarPreset);
     }
     // Границы — московские сутки: площадки отчитываются по Москве, и продавец
     // мыслит так же. По UTC «сегодня» начиналось бы в 03:00 по Москве.
@@ -230,16 +301,16 @@ export class AnalyticsModule {
   }
 
   private getFilteredStoreIds(): Set<string> {
-    let pool = this.stores.filter(s => s.mp === this.selectedMp);
+    let pool = this.selectedMp === 'all' ? this.stores : this.stores.filter(s => s.mp === this.selectedMp);
     if (this.selectedStore) pool = pool.filter(s => s.id === this.selectedStore);
     return new Set(pool.map(s => s.id));
   }
 
+  /** Выбранный магазин должен принадлежать выбранной площадке; null — все магазины. */
   private ensureStoreSelection(): void {
+    if (this.selectedMp === 'all') { this.selectedStore = null; return; }
     const mpStores = this.stores.filter(s => s.mp === this.selectedMp);
-    if (mpStores.length > 1 && (!this.selectedStore || !mpStores.some(s => s.id === this.selectedStore))) {
-      this.selectedStore = mpStores[0].id;
-    }
+    if (this.selectedStore && !mpStores.some(s => s.id === this.selectedStore)) this.selectedStore = null;
   }
 
   /** Финотчёт часто появляется через несколько дней после даты заказа. Берём
@@ -250,207 +321,149 @@ export class AnalyticsModule {
     return { start: new Date(start.getTime() - pad), end: new Date(end.getTime() + pad) };
   }
 
-  // ── Загрузка данных ──────────────────────────────────────────────────
-  async refresh(): Promise<void> {
-    if (this.loading) return;
+  private queryKey(): string {
+    const { start, end } = this.getRange();
+    return `${companyService.getActiveId()}|${this.selectedMp}|${[...this.getFilteredStoreIds()].sort()}|${start.toISOString()}|${end.toISOString()}`;
+  }
+
+  // Все результаты публикуются одним снимком. Старый запрос не может изменить новый срез.
+  async refresh(forceSync = false): Promise<void> {
+    const id = ++this.requestId;
+    this.controller?.abort();
+    const controller = this.controller = new AbortController();
+    const storeIds = this.getFilteredStoreIds();
+    const mp = this.selectedMp;
+    const key = this.queryKey();
+    const { start, end } = this.getRange();
+    if (start > end) { this.loadError = 'Начало периода должно быть раньше окончания'; this.loading = false; this.render(); return; }
+    if (key !== this.loadedKey) {
+      this.dataLoaded = false;
+      this.prevKpi = null;
+      this.prevOrders = [];
+      this.openedOrderId = null;
+    }
     this.loading = true;
+    this.loadError = this.loadWarning = '';
+    this.phase = 'Обновляем финансовый отчёт магазина…';
     this._loadProgress = null;
     this._loadStart = Date.now();
-    // Таймер обновляет отображение прошедшего времени каждые 500мс
-    if (this._loadTimer) clearInterval(this._loadTimer);
-    this._loadTimer = window.setInterval(() => {
-      if (this.loading && !this.dataLoaded) this._scheduleBodyOnly();
-      else { clearInterval(this._loadTimer); this._loadTimer = 0; }
-    }, 500);
     this.render();
     try {
-      const storeIds = this.getFilteredStoreIds();
-      const { start, end } = this.getRange();
-      // Ждём актуальных данных из Supabase перед построением резолвера.
-      // Без await — кэш может быть пустым если аналитика открыта сразу после входа.
-      await costPriceDb.refresh();
-      const cogs = buildCogsResolver();
-      const products = await buildProductMap(storeIds);
-
-      // Колбэк прогресса: дебаунс через rAF чтобы не флудить ре-рендерами
-      let _rafProgress = 0;
-      const onProgress = (p: QueryProgress) => {
-        this._loadProgress = p;
-        if (!_rafProgress) {
-          _rafProgress = requestAnimationFrame(() => {
-            _rafProgress = 0;
-            if (this.loading && !this.dataLoaded) this._scheduleBodyOnly();
-          });
-        }
-      };
-
       const txRange = this.getSettlementRange(start, end);
-      const [liveOrders, txs] = await Promise.all([
-        loadOrders(start, end, storeIds, undefined, onProgress),
-        loadTransactions([...storeIds], txRange.start, txRange.end),
-      ]);
-
-      const filteredStores = this.stores.filter(s => storeIds.has(s.id));
-      const agg = aggregateOrders({
-        ozonPostings: liveOrders.ozonPostings,
-        yandexOrders: liveOrders.yandexOrders,
-        wbOrders: liveOrders.wbOrders,
-        transactions: txs,
-        stores: filteredStores,
-        products,
-        cogs,
-        periodStart: start,
-        periodEnd: end,
-      });
-      this.orders      = agg.orders;
-      this.periodCosts = agg.periodCosts;
-      const manual = this._manualFor(start, end, storeIds);
-      this.kpi = computeKPI(this.orders, this.periodCosts, manual);
-      this.ts  = computeTimeseries(this.orders, start, end, this.periodCosts, manual);
-      // Каталожные vendor_code (нормализованные) — чтобы missing COGS показывал только
-      // те артикулы, которые пользователь реально может найти в Репрайсере.
-      const knownVc = new Set<string>();
-      for (const info of products.values()) {
-        const vc = info.vendor_code?.trim().toLowerCase();
-        if (vc) knownVc.add(vc);
+      // Не запрашиваем будущие операции и не синхронизируем посторонние магазины.
+      txRange.end = new Date(Math.min(txRange.end.getTime(), Date.now()));
+      if (txRange.end < txRange.start) txRange.end = txRange.start;
+      const syncKey = `${key}|finance`;
+      const lastSync = this.syncTimes.get(syncKey);
+      if (storeIds.size && (forceSync || !lastSync || Date.now() - lastSync > 10 * 60_000)) {
+        try {
+          // В сводном режиме синхронизируем каждую площадку своими магазинами.
+          const mps = mp === 'all' ? [...new Set(this.stores.filter(s => storeIds.has(s.id)).map(s => s.mp))] : [mp];
+          for (const m of mps) {
+            const ids = new Set([...storeIds].filter(id => this.stores.find(s => s.id === id)?.mp === m));
+            await financeSync.syncSelected(m, ids, txRange.start.toISOString(), txRange.end.toISOString(), controller.signal);
+          }
+          if (id !== this.requestId) return;
+          this.syncTimes.set(syncKey, Date.now());
+        } catch (e) {
+          if (controller.signal.aborted) return;
+          this.loadWarning = 'Финотчёт не обновлён. Показаны сохранённые операции. ' + (e instanceof Error ? e.message : String(e));
+        }
       }
-      this.knownVendorCodes = knownVc;
-      this.missingCogs = computeMissingCogs(this.orders, knownVc);
+      if (id !== this.requestId) return;
+      this.phase = 'Загружаем заказы и себестоимость…';
+      this.updateStatus();
+      const [liveOrders, txs, products] = await Promise.all([
+        loadOrders(start, end, storeIds, controller.signal, p => {
+          if (id !== this.requestId) return;
+          this._loadProgress = p;
+          this.updateStatus();
+        }),
+        loadTransactions([...storeIds], txRange.start, txRange.end),
+        buildProductMap(storeIds),
+        costPriceDb.refresh(),
+      ]);
+      if (id !== this.requestId || controller.signal.aborted) return;
+      // Прогресс меняется из колбэка — TS не видит этого и сужает тип до null.
+      const progress = this._loadProgress as QueryProgress | null;
+      if (progress && progress.errors > 0) {
+        this.loadWarning += ' Часть заказов не загружена. Итоги неполные; повторите обновление.';
+      }
+      this.rawInput = { ...liveOrders, transactions: txs, stores: this.stores.filter(s => storeIds.has(s.id)),
+        products, cogs: buildCogsResolver(), periodStart: start, periodEnd: end };
+      this.loadedKey = key;
+      this.syncedAt = this.syncTimes.has(syncKey) ? new Date(this.syncTimes.get(syncKey)!) : null;
+      this.updatedAt = new Date();
+      this.applySnapshot();
       this.dataLoaded = true;
       this._loadElapsedMs = Date.now() - this._loadStart;
-      this._loadSummary   = this._loadProgress ? Object.assign({}, this._loadProgress) : null;
-      // Новые данные → инвалидируем все кеши вкладок
-      clearSummaryCache();
-      clearOrdersCache();
-      clearProductsCache();
+      this._loadSummary = this._loadProgress;
       this._registerAiPage();
-      this.render();
-
-      // Сравнение с прошлым периодом — фоновая загрузка
-      this.loadPrev(filteredStores, products, cogs);
-
-      // Авто-синхронизация финотчёта если покрытие низкое (< 60%)
-      // и в этом срезе давно не синкали (> 10 минут).
-      this._maybeAutoSync(start, end, storeIds);
-    } catch (e: unknown) {
-      console.error('[Analytics] refresh:', e);
+    } catch (e) {
+      if (id !== this.requestId || controller.signal.aborted) return;
+      this.loadError = 'Не удалось загрузить аналитику. ' + (e instanceof Error ? e.message : String(e));
     } finally {
-      this.loading = false;
-      if (this._loadTimer) { clearInterval(this._loadTimer); this._loadTimer = 0; }
-      this.render();
+      if (id === this.requestId) {
+        this.loading = this.syncing = false;
+        this.render();
+      }
     }
+  }
+
+  private applySnapshot(): void {
+    if (!this.rawInput) return;
+    const agg = aggregateOrders(this.rawInput);
+    this.orders = agg.orders;
+    this.periodCosts = agg.periodCosts;
+    this.knownVendorCodes = new Set([...this.rawInput.products.values()].map(p => p.vendor_code.trim().toLowerCase()));
+    this.missingCogs = computeMissingCogs(this.orders, this.knownVendorCodes);
+    this._recomputeWithManual(false);
+    clearOrdersCache();
+    clearProductsCache();
   }
 
   /** Ручные расходы пользователя, попадающие в период и в выбранные магазины. */
   private _manualFor(start: Date, end: Date, storeIds: Set<string>): ManualEntry[] {
-    const from = start.toISOString();
-    const to   = end.toISOString();
+    const from = mskDayKey(start.toISOString());
+    const to = mskDayKey(end.toISOString());
     return settingsDb.manualList().filter(e => {
-      if (!e.date || e.date < from || e.date > to) return false;
+      const day = e.date.length === 10 ? e.date : mskDayKey(e.date);
+      if (!day || day < from || day > to) return false;
       // Запись без привязки к магазину считаем общей для выбранного среза
       if (e.store_id && !storeIds.has(e.store_id)) return false;
-      if (e.mp && e.mp !== this.selectedMp) return false;
+      if (e.mp && this.selectedMp !== 'all' && e.mp !== this.selectedMp) return false;
       return true;
     });
   }
 
-  private async loadPrev(stores: StoreInfo[], products: ProductMap, cogs: ReturnType<typeof buildCogsResolver>): Promise<void> {
+  async comparePeriod(): Promise<void> {
+    if (!this.rawInput || this.loading || !this.dataLoaded) return;
+    const id = this.requestId;
+    const key = this.loadedKey;
+    const { start, end } = this.getPrevRange();
+    const stores = this.rawInput.stores;
+    const storeIds = new Set(stores.map(s => s.id));
+    this.loading = true;
+    this.phase = 'Загружаем предыдущий период…';
+    this.render();
     try {
-      const { start, end } = this.getPrevRange();
-      const storeIds = new Set(stores.map(s => s.id));
-      const txRange = this.getSettlementRange(start, end);
-      const [liveOrders, txs] = await Promise.all([
-        loadOrders(start, end, storeIds),
-        loadTransactions([...storeIds], txRange.start, txRange.end),
+      const range = this.getSettlementRange(start, end);
+      const [liveOrders, transactions] = await Promise.all([
+        loadOrders(start, end, storeIds, this.controller?.signal), loadTransactions([...storeIds], range.start, range.end),
       ]);
-      const agg = aggregateOrders({
-        ozonPostings: liveOrders.ozonPostings,
-        yandexOrders: liveOrders.yandexOrders,
-        wbOrders: liveOrders.wbOrders,
-        transactions: txs, stores, products, cogs, periodStart: start, periodEnd: end,
-      });
+      if (id !== this.requestId || key !== this.loadedKey) return;
+      const agg = aggregateOrders({ ...this.rawInput, ...liveOrders, transactions, periodStart: start, periodEnd: end });
       this.prevOrders = agg.orders;
       this.prevKpi = computeKPI(agg.orders, agg.periodCosts, this._manualFor(start, end, storeIds));
       clearSummaryCache();
-      this.render();
-    } catch (e) { console.warn('[Analytics] prev:', e); }
-  }
-
-  /** Авто-фоновая синхронизация финотчёта, если покрытие низкое.
-   *  Не блокирует UI, не показывает loader — только маленький badge "syncing".
-   *  Защиты:
-   *   - не запускается для периодов > 90 дней (слишком тяжёлый sync, ловит таймауты)
-   *   - анти-спам: один срез синкаем не чаще раза в 30 минут (cache в localStorage,
-   *     не теряется при reload — главная причина прошлого зацикливания)
-   *   - флаг _autoSyncTriedThisSession — попытка только один раз за сессию для каждого среза
-   */
-  private async _maybeAutoSync(start: Date, end: Date, storeIds: Set<string>): Promise<void> {
-    if (this._autoSyncing || this.syncing) return;
-    if (!this.kpi) return;
-    if (storeIds.size === 0) return; // no stores for selected MP → nothing to sync
-
-    // Allow auto-sync when orders.length === 0 (new user, or all API calls failed).
-    // Finance sync creates orphan-transactions which produce orders even without live API.
-    const coverage = this.orders.length > 0 ? this.kpi.source_real_pct : 0;
-    if (this.orders.length > 0 && coverage >= 60) return;
-
-    const spanDays = (end.getTime() - start.getTime()) / 86400_000;
-    if (spanDays > 90) {
-      console.info(`[Analytics] auto-sync skipped: period too long (${Math.round(spanDays)}d > 90d). Use manual "↻ Sync" button.`);
-      return;
-    }
-
-    const key = `${start.toISOString().slice(0,10)}_${end.toISOString().slice(0,10)}_${[...storeIds].sort().join(',')}`;
-
-    // Анти-спам в памяти: один раз за сессию
-    if (this._autoSyncTriedThisSession.has(key)) return;
-    this._autoSyncTriedThisSession.add(key);
-
-    // Анти-спам в localStorage: 30 мин
-    try {
-      const lsKey = 'an2_autosync_v1';
-      const cache: Record<string, number> = JSON.parse(localStorage.getItem(lsKey) ?? '{}');
-      const last = cache[key] ?? 0;
-      if (Date.now() - last < 30 * 60 * 1000) {
-        console.info(`[Analytics] auto-sync skipped: synced recently (${Math.round((Date.now() - last) / 60000)} min ago)`);
-        return;
-      }
-      cache[key] = Date.now();
-      // GC: оставляем только последние 50 записей
-      const entries = Object.entries(cache).sort((a, b) => b[1] - a[1]).slice(0, 50);
-      localStorage.setItem(lsKey, JSON.stringify(Object.fromEntries(entries)));
-    } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
-
-    this._autoSyncing = true;
-    this.render();
-    try {
-      console.info(`[Analytics] auto-sync: coverage ${coverage.toFixed(0)}% — pulling finance reports for ${start.toISOString().slice(0,10)}..${end.toISOString().slice(0,10)}`);
-      await financeSync.syncAll(start.toISOString(), end.toISOString());
-      this._autoSyncing = false;
-      // Перезагружаем заказы/tx, но БЕЗ повторного auto-sync (помечено в кеше выше)
-      await this.refresh();
     } catch (e) {
-      console.warn('[Analytics] auto-sync failed:', e);
-      this._autoSyncing = false;
-      this.render();
-    }
-  }
-
-  async syncFinances(): Promise<void> {
-    if (this.syncing) return;
-    this.syncing = true;
-    this.render();
-    try {
-      const { start, end } = this.getRange();
-      await financeSync.syncAll(start.toISOString(), end.toISOString());
-      await this.refresh();
-    } catch (e) {
-      console.error('[Analytics] sync:', e);
+      if (id === this.requestId) this.loadWarning = 'Не удалось загрузить сравнение: ' + String(e);
     } finally {
-      this.syncing = false;
-      this.render();
+      if (id === this.requestId) { this.loading = false; this.render(); }
     }
   }
+
+  async syncFinances(): Promise<void> { await this.refresh(true); }
 
   // ── Публичные методы (биндятся к window.analyticsModule) ─────────────
 
@@ -465,7 +478,317 @@ export class AnalyticsModule {
       el.classList.toggle('active', !!isActive);
     });
     if (t === 'balance' && !this._balanceLoaded) this._loadBalances();
+    if (t === 'unit') void this.loadUnit();
     this._scheduleBodyOnly();
+  }
+
+  // ── Юнит-экономика ───────────────────────────────────────────────────
+
+  /** Отбор живых заказов по дате создания (aggregateOrders сам их не фильтрует). */
+  private _liveInRange(
+    live: { ozonPostings: AggregateInput['ozonPostings']; yandexOrders: AggregateInput['yandexOrders']; wbOrders: AggregateInput['wbOrders'] },
+    from: Date, to: Date,
+  ) {
+    const ok = (raw: string | null | undefined) => {
+      const t = Date.parse(normalizeMpDate(raw ?? ''));
+      return Number.isFinite(t) && t >= from.getTime() && t <= to.getTime();
+    };
+    return {
+      ozonPostings: live.ozonPostings.filter(p => ok(p.created_at || p.in_process_at)),
+      yandexOrders: live.yandexOrders.filter(o => ok(o.creation_date)),
+      wbOrders: live.wbOrders.filter(o => ok(o.created_at)),
+    };
+  }
+
+  /** Загрузить историю, рекламу и FBS-отгрузки и посчитать юнит-экономику. */
+  async loadUnit(force = false): Promise<void> {
+    if (!this.rawInput || !this.dataLoaded) return;
+    const key = this.loadedKey;
+    if (!force && this.unitKey === key && (this.unitResult || this.unitLoading)) return;
+    const id = this.requestId;
+    const input = this.rawInput;
+    this.unitKey = key;
+    this.unitLoading = true;
+    this.unitError = '';
+    if (force) this.unitResult = null;
+    this._scheduleBodyOnly();
+    try {
+      const { start, end } = this.getRange();
+      const storeIds = new Set(input.stores.map(s => s.id));
+      // Опорное окно: 60 дней, закончившиеся за 10 дней до периода — заказы в нём
+      // уже успели доехать, выкупиться или вернуться.
+      const hEnd = new Date(start.getTime() - 10 * 86_400_000 - 1);
+      const hStart = new Date(hEnd.getTime() - 60 * 86_400_000 + 1);
+      const txRange = this.getSettlementRange(hStart, hEnd);
+      txRange.end = new Date(Math.min(txRange.end.getTime(), Date.now()));
+
+      // Финотчёт за опорное окно — синкаем не чаще раза в час.
+      const syncKey = `${key}|unit-history`;
+      const last = this.syncTimes.get(syncKey);
+      if (!last || Date.now() - last > 3600_000) {
+        try {
+          for (const m of new Set(input.stores.map(s => s.mp))) {
+            const ids = new Set(input.stores.filter(s => s.mp === m).map(s => s.id));
+            await financeSync.syncSelected(m, ids, txRange.start.toISOString(), txRange.end.toISOString(), this.controller?.signal);
+          }
+          this.syncTimes.set(syncKey, Date.now());
+        } catch (e) { debug.warn('[Analytics] unit history sync failed', e); }
+      }
+      if (id !== this.requestId || key !== this.loadedKey) return;
+
+      const [live, txs, ozStores] = await Promise.all([
+        loadOrders(hStart, end, storeIds, this.controller?.signal),
+        loadTransactions([...storeIds], txRange.start, txRange.end),
+        input.stores.some(s => s.mp === 'ozon') ? ozonDb.getStores().catch(() => []) : Promise.resolve([]),
+      ]);
+      if (id !== this.requestId || key !== this.loadedKey) return;
+
+      const hist = aggregateOrders({
+        ...input, ...this._liveInRange(live, hStart, hEnd), transactions: txs,
+        periodStart: hStart, periodEnd: hEnd,
+      });
+
+      // FBS: отправления, переданные в доставку в периоде (созданы могли раньше).
+      let fbs: UnitEconResult['fbs'] = null;
+      const fbsList = live.ozonPostings.filter(p => {
+        if (p.delivery_scheme !== 'fbs' && p.delivery_scheme !== 'rfbs') return false;
+        const handed = p.delivering_date
+          ?? (p.status === 'delivering' || p.status === 'delivered' ? p.shipment_date : null);
+        const t = Date.parse(normalizeMpDate(handed ?? ''));
+        return Number.isFinite(t) && t >= start.getTime() && t <= end.getTime();
+      });
+      if (input.stores.some(s => s.mp === 'ozon')) {
+        fbs = {
+          postings: fbsList.length,
+          units: fbsList.reduce((s, p) => s + p.products.reduce((a, x) => a + x.quantity, 0), 0),
+          revenue: fbsList.reduce((s, p) => s + p.products.reduce((a, x) => a + (parseFloat(x.price) || 0) * x.quantity, 0), 0),
+        };
+      }
+
+      // Реклама: Performance API для Ozon-магазинов с ключами, иначе финотчёт; плюс ручные записи.
+      const perfStores = ozStores.filter(s => storeIds.has(s.id) && s.perf_client_id && s.perf_client_secret);
+      const ads: UnitAdsInput = { source: 'none', campaigns: [], unassigned: 0 };
+      const adWarnings: string[] = [];
+      for (const st of perfStores) {
+        try {
+          const cred: PerfCredentials = { storeId: st.id, clientId: st.perf_client_id!, clientSecret: st.perf_client_secret! };
+          const r = await ozonPerformanceApi.spend(cred, start, end, this.controller?.signal);
+          ads.campaigns.push(...r.campaigns);
+          ads.source = 'performance';
+        } catch (e) {
+          adWarnings.push(`${st.name}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      const perfIds = new Set(ads.source === 'performance' ? perfStores.map(s => s.id) : []);
+      const financeAds = this.periodCosts.filter(c => c.kind === 'advertising' && !perfIds.has(c.store_id))
+        .reduce((s, c) => s + c.amount, 0)
+        + this.orders.filter(o => !perfIds.has(o.store_id))
+          .reduce((s, o) => s + o.fee_breakdown.filter(f => f.type === 'advertising').reduce((a, f) => a + f.amount, 0), 0);
+      const manualAds = this.manualEntries.filter(e => e.type === 'advertising').reduce((s, e) => s + e.amount, 0);
+      ads.unassigned = financeAds + manualAds;
+      if (ads.source === 'none') ads.source = financeAds > 0 ? 'finance' : manualAds > 0 ? 'manual' : 'none';
+
+      const dm = (d: Date) => new Date(d.getTime() + 3 * 3600_000).toISOString().slice(0, 10).split('-').reverse().join('.');
+      this.unitRaw = { history: hist.orders, ads, fbs, historyLabel: `за ${dm(hStart)} — ${dm(hEnd)}` };
+      this._computeUnit(adWarnings);
+      this.unitUpdatedAt = new Date();
+    } catch (e) {
+      if (id !== this.requestId) return;
+      this.unitError = 'Не удалось посчитать юнит-экономику. ' + (e instanceof Error ? e.message : String(e));
+    } finally {
+      if (id === this.requestId) {
+        this.unitLoading = false;
+        this._scheduleBodyOnly();
+      }
+    }
+  }
+
+  private _taxByStore(): Record<string, StoreTax> {
+    const out: Record<string, StoreTax> = {};
+    for (const s of this.rawInput?.stores ?? []) {
+      const st = this.stores.find(x => x.id === s.id) ?? s;
+      out[s.id] = { model: st.tax_model, rate: st.tax_rate, vat: st.vat_rate ?? 0 };
+    }
+    return out;
+  }
+
+  private _computeUnit(extraWarnings: string[] = []): void {
+    if (!this.unitRaw) return;
+    const r = computeUnitEconomics({
+      orders: this.orders,
+      history: this.unitRaw.history,
+      periodCosts: this.periodCosts,
+      ads: this.unitRaw.ads,
+      taxByStore: this._taxByStore(),
+      settings: settingsDb.unitSettings(),
+      fbs: this.unitRaw.fbs,
+    });
+    for (const w of extraWarnings) r.nuances.unshift({ level: 'warn', text: `Реклама Ozon не получена — ${w}` });
+    this.unitResult = r;
+  }
+
+  setUnitSetting(key: keyof UnitEconSettings, value: string | boolean): void {
+    const patch: Partial<UnitEconSettings> = {};
+    if (key === 'buyoutMode') patch.buyoutMode = value === 'manual' ? 'manual' : 'auto';
+    else if (key === 'includeFacts') patch.includeFacts = !!value;
+    else if (key === 'scenarioCost') {
+      const n = parseFloat(String(value));
+      patch.scenarioCost = String(value).trim() === '' || !Number.isFinite(n) || n < 0 ? null : n;
+    } else if (key === 'buyoutPct') {
+      const n = parseFloat(String(value));
+      if (!Number.isFinite(n) || n <= 0 || n > 100) return;
+      patch.buyoutPct = n;
+    } else if (key === 'minSample') {
+      const n = parseInt(String(value));
+      if (!Number.isFinite(n) || n < 1) return;
+      patch.minSample = n;
+    }
+    settingsDb.saveUnitSettings(patch);
+    this._computeUnit();
+    this._scheduleBodyOnly();
+  }
+
+  setUnitSort(key: UnitSortKey): void {
+    this.unitSort = this.unitSort.key === key ? { key, dir: this.unitSort.dir === -1 ? 1 : -1 } : { key, dir: -1 };
+    this._scheduleBodyOnly();
+  }
+
+  private _scopeLabel(): string {
+    const store = this.stores.find(s => s.id === this.selectedStore);
+    if (store) return `${MP_LABEL[store.mp]} · ${store.name}`;
+    return this.selectedMp === 'all' ? 'все площадки' : MP_LABEL[this.selectedMp];
+  }
+
+  async copyUnitReport(btn?: HTMLElement): Promise<void> {
+    if (!this.unitResult) return;
+    const text = unitReportText(this.unitResult, `${this._scopeLabel()} · ${this._periodLabel()}`);
+    try {
+      await navigator.clipboard.writeText(text);
+      if (btn) { const t = btn.textContent; btn.textContent = 'Скопировано ✓'; setTimeout(() => { btn.textContent = t; }, 1500); }
+    } catch {
+      window.prompt('Скопируйте отчёт:', text);
+    }
+  }
+
+  async exportUnit(kind: 'xlsx' | 'json'): Promise<void> {
+    if (!this.unitResult) return;
+    const title = `${this._scopeLabel()} · ${this._periodLabel()}`;
+    if (kind === 'json') {
+      exportJson(exportFileName('unit-economics', 'json'), { title, generated_at: new Date().toISOString(), settings: settingsDb.unitSettings(), ...this.unitResult });
+      return;
+    }
+    await exportXlsx(exportFileName('unit-economics', 'xlsx'), unitSheets(this.unitResult, title));
+  }
+
+  /** Выгрузить текущую вкладку в Excel. */
+  async exportCurrent(): Promise<void> {
+    if (this.tab === 'unit') return this.exportUnit('xlsx');
+    if (!this.kpi) return;
+    const k = this.kpi;
+    const title = `${this._scopeLabel()} · ${this._periodLabel()}`;
+    const sheets: Sheet[] = [];
+    sheets.push({
+      name: 'P&L',
+      rows: [
+        ['Статья', 'Сумма, ₽', '% выручки'],
+        ['Период', title, null],
+        ['Выручка (выкуплено)', k.revenue, 100],
+        ['Комиссия МП', -k.commission, k.revenue ? k.commission / k.revenue * 100 : null],
+        ['Логистика', -k.logistics, k.revenue ? k.logistics / k.revenue * 100 : null],
+        ['Услуги по заказам', -k.services, k.revenue ? k.services / k.revenue * 100 : null],
+        ['Реклама, хранение, штрафы', -k.period_costs, k.revenue ? k.period_costs / k.revenue * 100 : null],
+        ['Свои расходы', -k.manual_costs, k.revenue ? k.manual_costs / k.revenue * 100 : null],
+        ['Себестоимость', -k.cogs, k.revenue ? k.cogs / k.revenue * 100 : null],
+        ['Налог (вкл. НДС)', -k.tax, k.revenue ? k.tax / k.revenue * 100 : null],
+        ['  в т.ч. НДС', -k.vat, null],
+        ['  в т.ч. налог с прибыли', -k.profit_tax, null],
+        ['Чистая прибыль', k.net_profit, k.margin_pct],
+        [],
+        ['Заказано за период', k.ordered_revenue, null],
+        ['В пути', k.in_transit_revenue, null],
+        ['Ждут расчёта МП', k.awaiting_revenue, null],
+        ['Упущено: возвраты', k.returns_revenue, null],
+        ['Упущено: отмены', k.cancelled_revenue, null],
+        ['Заказов доставлено', k.orders_delivered, null],
+        ['Возвратов', k.orders_returned, null],
+        ['Отмен', k.orders_cancelled, null],
+        ['Выкуп, %', k.buyout_pct, null],
+        ['Средний чек', k.avg_check, null],
+        ['Единиц продано', k.units_sold, null],
+      ],
+      formats: { 1: 'money', 2: 'pct' },
+    });
+    if (k.period_costs_breakdown.length) {
+      sheets.push({ name: 'Расходы периода', rows: [['Категория', 'Сумма, ₽'], ...k.period_costs_breakdown.map(b => [b.label, b.amount])], formats: { 1: 'money' } });
+    }
+    sheets.push({ name: 'По дням', rows: [['Дата', 'Выручка', 'Расходы', 'Прибыль'], ...this.ts.map(p => [p.date, p.revenue, p.expenses, p.profit])], formats: { 1: 'money', 2: 'money', 3: 'money' } });
+    const skus = computeSkuPerformance(this.orders, this.periodCosts, this.manualEntries);
+    sheets.push({
+      name: 'Товары',
+      rows: [['МП', 'Артикул', 'Название', 'Продано, шт', 'Возвращено, шт', 'Отменено, шт', 'Выручка', 'Комиссия', 'Логистика', 'Услуги', 'Налог', 'Себестоимость', 'Общие расходы', 'Прибыль', 'Прибыль/шт', 'Маржа, %', '% возвратов'],
+        ...skus.map(x => [MP_LABEL[x.mp], x.vendor_code, x.name, x.units_sold, x.units_returned, x.units_cancelled, x.revenue, x.commission, x.logistics, x.services, x.tax, x.cogs, x.period_costs + x.manual_costs, x.net_profit, x.profit_per_unit, x.margin_pct, x.return_rate_pct])],
+      formats: { 6: 'money', 7: 'money', 8: 'money', 9: 'money', 10: 'money', 11: 'money', 12: 'money', 13: 'money', 14: 'money2', 15: 'pct', 16: 'pct' },
+    });
+    sheets.push({
+      name: 'Заказы',
+      rows: [['Дата', 'Заказ', 'МП', 'Магазин', 'Статус', 'Товары', 'Шт', 'Выручка', 'Упущено', 'Комиссия', 'Логистика', 'Обр. логистика', 'Услуги', 'Себестоимость', 'Налог', 'Прибыль', 'Выплата МП', 'Финотчёт'],
+        ...this.orders.filter(o => !o.is_orphan).map(o => [mskDayKey(o.date), o.order_id, MP_LABEL[o.mp], o.store_name, STATUS_LABEL[o.status],
+          o.items.map(i => i.vendor_code).join(', '), o.items.reduce((s, i) => s + i.quantity, 0), o.revenue, o.revenue_lost,
+          o.commission, o.logistics, o.logistics_return, o.services, o.cogs, o.tax, o.net_profit, o.payout_actual, o.source === 'real' ? 'да' : 'нет'])],
+      formats: { 7: 'money', 8: 'money', 9: 'money', 10: 'money', 11: 'money', 12: 'money', 13: 'money', 14: 'money', 15: 'money', 16: 'money' },
+    });
+    await exportXlsx(exportFileName('analytics', 'xlsx'), sheets);
+  }
+
+  // ── Ключи Ozon Performance ───────────────────────────────────────────
+
+  setPerfKey(storeId: string, field: 'clientId' | 'clientSecret', value: string): void {
+    const cur = this.perfKeys.get(storeId) ?? { clientId: '', clientSecret: '' };
+    cur[field] = value.trim();
+    this.perfKeys.set(storeId, cur);
+  }
+
+  async savePerfKeys(storeId: string): Promise<void> {
+    const keys = this.perfKeys.get(storeId);
+    const stores = await ozonDb.getStores().catch(() => []);
+    const st = stores.find(s => s.id === storeId);
+    const clientId = keys?.clientId || st?.perf_client_id || '';
+    const clientSecret = keys?.clientSecret || st?.perf_client_secret || '';
+    if (!clientId || !clientSecret) {
+      this.perfStatus.set(storeId, { ok: false, text: 'Укажите client_id и client_secret' });
+      this.render();
+      return;
+    }
+    this.perfStatus.set(storeId, { ok: true, text: 'Проверяем…' });
+    this.render();
+    try {
+      const n = await ozonPerformanceApi.check({ storeId, clientId, clientSecret });
+      await ozonDb.updateStore(storeId, { perf_client_id: clientId, perf_client_secret: clientSecret });
+      this.perfStatus.set(storeId, { ok: true, text: `Подключено · кампаний: ${n}` });
+      this._ozonStoresRaw = this._ozonStoresRaw.map(x => x.id === storeId ? { ...x, perf: true } : x);
+      this.perfKeys.delete(storeId);
+      this.unitKey = '';
+      if (this.tab === 'unit') void this.loadUnit(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.perfStatus.set(storeId, {
+        ok: false,
+        text: msg.includes('perf_client') ? 'Не сохранено: на сервере не применена миграция 20261014_analytics_unit_economics.sql' : msg,
+      });
+    }
+    this.render();
+  }
+
+  async clearPerfKeys(storeId: string): Promise<void> {
+    try {
+      await ozonDb.updateStore(storeId, { perf_client_id: null, perf_client_secret: null });
+      this.perfStatus.set(storeId, { ok: true, text: 'Ключи удалены' });
+      this._ozonStoresRaw = this._ozonStoresRaw.map(x => x.id === storeId ? { ...x, perf: false } : x);
+      this.unitKey = '';
+    } catch (e) {
+      this.perfStatus.set(storeId, { ok: false, text: e instanceof Error ? e.message : String(e) });
+    }
+    this.render();
   }
 
   private async _loadBalances(): Promise<void> {
@@ -656,9 +979,11 @@ export class AnalyticsModule {
   }
 
   /** Выбрать магазин (обязательный single-select). Повторный клик игнорируется — магазин всегда должен быть выбран. */
+  /** Выбрать магазин; пустой id — все магазины площадки. */
   selectStore(id: string): void {
-    if (!id || this.selectedStore === id) return;
-    this.selectedStore = id;
+    const next = id || null;
+    if (this.selectedStore === next) return;
+    this.selectedStore = next;
     this._allState = 'idle';
     this._allFrom  = null;
     this.refresh();
@@ -669,10 +994,8 @@ export class AnalyticsModule {
 
   toggleMp(mp: Mp): void { this.selectMp(mp); }
 
-  /** Single-select: маркетплейсы не пересекаются. Всегда ровно один активен.
-   *  Параметр 'all' игнорируем — режима «все МП» больше нет. */
+  /** Площадка или 'all' — сводный отчёт по всем подключённым площадкам. */
   selectMp(mp: Mp | 'all'): void {
-    if (mp === 'all') return;
     if (this.selectedMp === mp) return;
     this.selectedMp = mp;
     try { localStorage.setItem('an2_selected_mp', mp); } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
@@ -724,6 +1047,18 @@ export class AnalyticsModule {
 
   setProductsFilter(key: keyof ProductsFilters, value: string): void {
     (this.productsFilters as any)[key] = value;
+    if (key === 'search') this.productsFilters.limit = undefined;
+    this._scheduleBodyOnly();
+  }
+
+  sortProducts(key: ProductsFilters['sort']): void {
+    const f = this.productsFilters;
+    this.productsFilters = { ...f, sort: key, dir: f.sort === key ? ((f.dir ?? -1) === -1 ? 1 : -1) : -1 };
+    this._scheduleBodyOnly();
+  }
+
+  showMoreProducts(): void {
+    this.productsFilters = { ...this.productsFilters, limit: (this.productsFilters.limit ?? 200) + 200 };
     this._scheduleBodyOnly();
   }
 
@@ -875,7 +1210,18 @@ export class AnalyticsModule {
     this.render();
   }
 
-  openSettings(): void { this.settingsOpen = true; this.render(); }
+  /** Ozon-магазины с полями ключей рекламы — для настроек. */
+  private _ozonStoresRaw: Array<{ id: string; name: string; perf: boolean }> = [];
+
+  async openSettings(): Promise<void> {
+    this.settingsOpen = true;
+    this.render();
+    try {
+      const list = await ozonDb.getStores();
+      this._ozonStoresRaw = list.map(s => ({ id: s.id, name: s.name, perf: !!(s.perf_client_id && s.perf_client_secret) }));
+      if (this.settingsOpen) this.render();
+    } catch (e) { debug.warn('[Analytics] ozon stores for settings', e); }
+  }
   closeSettings(): void { this.settingsOpen = false; this.render(); }
 
   openCogsHint(): void {
@@ -886,55 +1232,28 @@ export class AnalyticsModule {
   setCostPrice(vendorCode: string, price: number): void {
     if (!vendorCode || !isFinite(price) || price < 0) return;
     costPriceDb.set(vendorCode, price);
-    // Локально применяем cost к заказам — артикул сразу исчезает из списка missing
-    // и KPI пересчитывается без полного refresh.
-    this.orders = this.orders.map(o => {
-      let cogsDelta = 0;
-      const newItems = o.items.map(it => {
-        if (it.vendor_code === vendorCode && it.cost_price == null) {
-          const itemCogs = price * it.quantity;
-          cogsDelta += itemCogs;
-          return { ...it, cost_price: price, cogs: itemCogs };
-        }
-        return it;
-      });
-      if (cogsDelta === 0) return o;
-      const newCogs = o.cogs + cogsDelta;
-      const fixedExpenses = o.commission + o.logistics + o.logistics_return + o.services + o.tax;
-      const revenueDenom = newItems.reduce((s, it) => s + Math.max(0, it.revenue), 0);
-      const itemsWithProfit = newItems.map(it => {
-        const share = revenueDenom > 0 ? Math.max(0, it.revenue) / revenueDenom : 1 / Math.max(1, newItems.length);
-        return { ...it, net_profit: it.revenue - it.cogs - fixedExpenses * share };
-      });
-      return {
-        ...o,
-        items: itemsWithProfit,
-        cogs: newCogs,
-        net_profit: o.revenue - (o.commission + o.logistics + o.logistics_return + o.services + newCogs + o.tax),
-      };
-    });
-    this.missingCogs = computeMissingCogs(this.orders, this.knownVendorCodes);
-    const { start, end } = this.getRange();
-    this.kpi = computeKPI(this.orders, this.periodCosts, this._manualFor(start, end, this.getFilteredStoreIds()));
-    clearSummaryCache();
-    clearOrdersCache();
-    clearProductsCache();
-    this.render();
-    try { window.app?.toast?.(`✓ Себестоимость ${price.toLocaleString('ru')} ₽ сохранена для «${vendorCode}»`, 'success'); } catch (e) { debug.warn('[AnalyticsModule] swallowed error', e); }
+    if (this.rawInput) this.rawInput = { ...this.rawInput, cogs: buildCogsResolver() };
+    this.applySnapshot();
   }
 
-  setTax(storeId: string, field: 'model' | 'rate', value: string): void {
-    const cur = settingsDb.taxFor(storeId);
-    if (field === 'model') settingsDb.setStoreTax(storeId, value as TaxModel, cur.rate);
-    else                   settingsDb.setStoreTax(storeId, cur.model, parseFloat(value) / 100);
-    this.stores = this.stores.map(s => s.id === storeId
-      ? { ...s, ...settingsDb.taxFor(storeId) }
-      : s);
-    this.render();
+  setTax(storeId: string, field: 'model' | 'rate' | 'vat', value: string): void {
+    const store = this.stores.find(s => s.id === storeId);
+    if (!store) return;
+    const model = field === 'model' ? value as TaxModel : store.tax_model;
+    const rate = field === 'rate' ? Number(value) / 100 : store.tax_rate;
+    const vat = field === 'vat' ? Number(value) / 100 : (store.vat_rate ?? 0);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 1 || !Number.isFinite(vat) || vat < 0 || vat > 1) return;
+    settingsDb.setStoreTax(storeId, model, rate, vat);
+    this.stores = this.stores.map(s => s.id === storeId ? { ...s, tax_model: model, tax_rate: rate, vat_rate: vat } : s);
+    this.unitKey = '';
+    if (this.rawInput) this.rawInput = { ...this.rawInput, stores: this.stores };
+    this.applySnapshot();
   }
-  clearTax(storeId: string): void {
+  async clearTax(storeId: string): Promise<void> {
     settingsDb.clearStoreTax(storeId);
-    loadAllStores().then(s => { this.stores = s; this.render(); });
+    this.stores = await loadAllStores();
+    if (this.rawInput) this.rawInput = { ...this.rawInput, stores: this.stores };
+    this.applySnapshot();
   }
   setFx(cur: string, val: string): void {
     settingsDb.setFx(cur, parseFloat(val) || 0);
@@ -945,11 +1264,13 @@ export class AnalyticsModule {
     const form = ev.target as HTMLFormElement;
     const fd = new FormData(form);
     const amount = parseFloat(String(fd.get('amount') ?? '0'));
-    if (!amount) return;
+    if (!Number.isFinite(amount) || amount <= 0) return;
     settingsDb.manualAdd({
       type: (fd.get('type') as any) ?? 'other_expense',
       amount, amount_native: amount, currency: 'RUB', fx_rate: 1,
       date: new Date().toISOString(),
+      store_id: this.selectedStore ?? undefined,
+      mp: this.selectedMp === 'all' ? undefined : this.selectedMp,
       description: String(fd.get('description') ?? ''),
     });
     form.reset();
@@ -962,15 +1283,18 @@ export class AnalyticsModule {
   }
 
   /** Пересчитать KPI после правки ручных расходов — без перезагрузки заказов. */
-  private _recomputeWithManual(): void {
-    if (this.kpi) {
+  private _recomputeWithManual(paint = true): void {
+    if (this.rawInput) {
       const { start, end } = this.getRange();
       const manual = this._manualFor(start, end, this.getFilteredStoreIds());
+      this.manualEntries = manual;
       this.kpi = computeKPI(this.orders, this.periodCosts, manual);
       this.ts  = computeTimeseries(this.orders, start, end, this.periodCosts, manual);
       clearSummaryCache();
+      clearProductsCache();
+      if (this.unitRaw && this.unitKey === this.loadedKey) this._computeUnit();
     }
-    this.render();
+    if (paint) this.render();
   }
 
   // ── Render ───────────────────────────────────────────────────────────
@@ -979,6 +1303,17 @@ export class AnalyticsModule {
   render(): void {
     this._pendingFull = true;
     this._scheduleRaf();
+  }
+
+  /** Изменяет только уже существующие элементы статуса. Во время загрузки
+   * не пересобираем весь DOM: это убирает мерцание карточек и сброс скролла. */
+  private updateStatus(): void {
+    const phase = this.container.querySelector<HTMLElement>('.an2-load-prog-label');
+    if (phase) phase.textContent = this.phase;
+    const meta = this.container.querySelector<HTMLElement>('.an2-live-load-status');
+    if (meta) meta.textContent = this._loadProgress
+      ? `${this._loadProgress.done} из ${this._loadProgress.total} источников`
+      : this.phase;
   }
 
   /** Только тело (без перерисовки шапки) — для фильтров/поиска. */
@@ -1009,7 +1344,7 @@ export class AnalyticsModule {
         ${this.renderHeader()}
         ${this.renderBody()}
         ${drawerHtml ? `<div class="an2-order-drawer-host">${drawerHtml}</div>` : ''}
-        ${this.settingsOpen ? renderSettingsDrawer(this.stores, settingsDb.manualList()) : ''}
+        ${this.settingsOpen ? renderSettingsDrawer(this.stores, settingsDb.manualList(), undefined, { ozon: this._ozonStoresRaw, status: this.perfStatus }) : ''}
       </div>
     `;
     // Сбрасываем body-html cache, чтобы следующий _paintBody действительно перерисовался
@@ -1066,9 +1401,14 @@ export class AnalyticsModule {
   private _freshTimer = 0;
 
   private renderHeader(): string {
-    const periods: Array<[PeriodPreset, string]> = [
-      ['1', 'Сегодня'], ['7', '7д'], ['30', '30д'], ['90', '90д'], ['180', '6м'], ['365', '12м'], ['all', 'С начала'],
+    const calendar: Array<[PeriodPreset, string]> = [
+      ['1', 'Сегодня'], ['yesterday', 'Вчера'], ['week', 'Неделя'], ['prev_week', 'Пр. неделя'], ['month', 'Месяц'], ['prev_month', 'Пр. месяц'],
     ];
+    const rolling: Array<[PeriodPreset, string]> = [
+      ['7', '7д'], ['30', '30д'], ['90', '90д'], ['180', '6м'], ['365', '12м'], ['all', 'С начала'],
+    ];
+    const periodBtn = ([v, l]: [PeriodPreset, string]) => `
+      <button class="an2-period-btn ${this.period === v ? 'active' : ''}" onclick="window.analyticsModule?.setPeriod('${v}')">${l}</button>`;
 
     const mps: Mp[] = ['ozon', 'wb', 'yandex'];
 
@@ -1087,6 +1427,7 @@ export class AnalyticsModule {
 
         <div class="an2-tabs">
           ${tabBtn('summary',  'Сводка')}
+          ${tabBtn('unit',     'Юнит-экономика')}
           ${tabBtn('orders',   'Заказы',  this.orders.length || undefined)}
           ${tabBtn('products', 'Товары')}
           ${tabBtn('activity', 'Активность')}
@@ -1094,9 +1435,8 @@ export class AnalyticsModule {
         </div>
 
         <div class="an2-period">
-          ${periods.map(([v, l]) => `
-            <button class="an2-period-btn ${this.period === v ? 'active' : ''}" onclick="window.analyticsModule?.setPeriod('${v}')">${l}</button>
-          `).join('')}
+          ${calendar.map(periodBtn).join('')}
+          <span class="an2-period-group">${rolling.map(periodBtn).join('')}</span>
           <button class="an2-period-btn ${this.period === 'custom' ? 'active' : ''}" onclick="window.analyticsModule?.setPeriod('custom')">…</button>
         </div>
         ${this.period === 'custom' ? `
@@ -1107,8 +1447,12 @@ export class AnalyticsModule {
           </div>
         ` : ''}
 
-        <div style="display:flex;gap:4px;align-items:center" title="Аналитика по одному маркетплейсу за раз — данные не смешиваются">
-          ${mps.map(mp => `
+        <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
+          ${this.stores.length && new Set(this.stores.map(s => s.mp)).size > 1 ? `
+            <button class="an2-filter-chip ${this.selectedMp === 'all' ? 'on' : ''}" onclick="window.analyticsModule?.selectMp('all')" title="Сводный отчёт по всем площадкам и магазинам">
+              Все площадки
+            </button>` : ''}
+          ${mps.filter(mp => !this.stores.length || this.stores.some(s => s.mp === mp)).map(mp => `
             <button class="an2-filter-chip ${this.selectedMp === mp ? 'on' : ''}" onclick="window.analyticsModule?.selectMp('${mp}')" title="Только ${MP_LABEL[mp]}">
               <span class="dot" style="background:${MP_COLOR[mp]}"></span>${MP_LABEL[mp]}
             </button>
@@ -1139,6 +1483,8 @@ export class AnalyticsModule {
           `;
         })()}
 
+        <button class="an2-btn ghost" onclick="window.analyticsModule?.exportCurrent()" title="Скачать текущий отчёт в Excel" ${this.dataLoaded ? '' : 'disabled'}>Excel</button>
+
         <button class="an2-icon-btn" onclick="window.analyticsModule?.openSettings()" title="Настройки">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 110-4h.09A1.65 1.65 0 004.6 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V2a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H22a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
         </button>
@@ -1163,6 +1509,12 @@ export class AnalyticsModule {
       }
     }
 
+    // Когда последний раз подтягивали финотчёт для этого среза
+    if (!this.loading && this.syncedAt) {
+      const t = this.syncedAt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' });
+      parts.push(`<span class="an2-load-meta" title="Финансовый отчёт маркетплейса обновлён в ${t} по Москве">финотчёт ${t}</span>`);
+    }
+
     // Фоновая синхронизация заказов
     if (this._syncStatus.syncing) {
       const { syncedStores, totalStores, currentStore } = this._syncStatus;
@@ -1177,12 +1529,14 @@ export class AnalyticsModule {
     return parts.join('');
   }
 
-  /** Чипы выбора магазина (обязательный single-select, без «Все»). */
+  /** Чипы выбора магазина: «Все магазины» или один. */
   private _renderStoreSelector(): string {
+    if (this.selectedMp === 'all') return '';
     const mpStores = this.stores.filter(s => s.mp === this.selectedMp);
     if (mpStores.length <= 1) return ''; // 0 или 1 магазин — фильтр не нужен
     return `
       <div class="an2-store-selector" title="Выберите магазин для анализа">
+        <button class="an2-filter-chip ${this.selectedStore == null ? 'on' : ''}" onclick="window.analyticsModule?.selectStore('')">Все магазины</button>
         ${mpStores.map(s => `
           <button
             class="an2-filter-chip ${this.selectedStore === s.id ? 'on' : ''}"
@@ -1198,7 +1552,10 @@ export class AnalyticsModule {
     const busy = this.loading || this.syncing;
     // an2-fresh — разрешение на вступительную анимацию. При полной отрисовке
     // экран собирается заново, поэтому она уместна; снимается таймером ниже.
-    return `<div class="an2-body${busy ? ' is-loading' : ''} an2-fresh">${this._tabContent()}</div>`;
+    const status = this.loadError || this.loadWarning
+      ? `<div class="an2-data-message ${this.loadError ? 'error' : 'warning'}">${escapeHtmlJson(this.loadError || this.loadWarning)}</div>`
+      : '';
+    return `<div class="an2-body${busy && this.dataLoaded ? ' is-loading' : ''} an2-fresh">${status}${this._tabContent()}</div>`;
   }
 
   private _tabContent(): string {
@@ -1285,35 +1642,43 @@ export class AnalyticsModule {
         orders: this.orders,
         ts: this.ts,
         periodLabel: this._periodLabel(),
-        mp: this.selectedMp,
-        storeName: store?.name ?? MP_LABEL[this.selectedMp],
+        mp: this.selectedMp === 'all' ? (store?.mp ?? 'ozon') : this.selectedMp,
+        storeName: store?.name ?? (this.selectedMp === 'all' ? 'Все площадки' : MP_LABEL[this.selectedMp]),
       });
     }
     switch (this.tab) {
-      case 'summary':  return renderSummaryTab(this.kpi, this.orders, this.ts, this.prevKpi, this.missingCogs);
+      case 'summary':  return renderSummaryTab(this.kpi, this.orders, this.ts, this.prevKpi, this.missingCogs, this.periodCosts, this.manualEntries);
       case 'orders':   return renderOrdersTab(this.orders, this.ordersFilters);
-      case 'products': return renderProductsTab(this.orders, this.productsFilters);
+      case 'products': return renderProductsTab(this.orders, this.productsFilters, this.periodCosts, this.manualEntries);
       case 'activity': return renderActivityTab(this.orders, this.activitySubTab);
+      case 'unit': {
+        if (this.unitKey !== this.loadedKey) { this.unitError = ''; void this.loadUnit(); }
+        const scopeStores = this.rawInput?.stores ?? [];
+        return renderUnitTab({
+          result: this.unitKey === this.loadedKey ? this.unitResult : null,
+          loading: this.unitLoading,
+          error: this.unitError,
+          settings: settingsDb.unitSettings(),
+          periodLabel: `${this._scopeLabel()} · ${this._periodLabel()}`,
+          updatedAt: this.unitUpdatedAt,
+          sort: this.unitSort,
+          perfConnected: this.unitRaw?.ads.source === 'performance',
+          isOzon: scopeStores.some(s => s.mp === 'ozon'),
+          historyLabel: this.unitRaw?.historyLabel ?? 'за 60 дней до периода',
+        });
+      }
+      default: return '';
     }
   }
 
   private renderLoader(): string {
-    const elapsed  = (Date.now() - this._loadStart) / 1000;
-    const elapsedS = elapsed < 1 ? '' : `${elapsed.toFixed(elapsed < 10 ? 1 : 0)} с`;
     const p = this._loadProgress;
 
     if (!p || p.total === 0) {
-      // Пустой прогресс — показываем описание фазы по времени
-      const phase =
-        elapsed < 3  ? 'Читаем кэш…' :
-        elapsed < 10 ? 'Загружаем из маркетплейсов…' :
-        elapsed < 20 ? 'Это займёт немного времени…' :
-                       'Почти готово…';
       return `
         <div class="an2-loader">
           <div class="an2-loader-ring"></div>
-          <div class="an2-loader-text">${phase}</div>
-          ${elapsedS ? `<div class="an2-loader-elapsed">${elapsedS}</div>` : ''}
+          <div class="an2-loader-text an2-live-load-status">${this.phase}</div>
         </div>
       `;
     }
@@ -1324,7 +1689,7 @@ export class AnalyticsModule {
       <div class="an2-loader">
         <div class="an2-loader-ring"></div>
         <div class="an2-load-prog">
-          <div class="an2-load-prog-label">${p.currentLabel || 'Загружаем…'}</div>
+          <div class="an2-load-prog-label">${this.phase}</div>
           <div class="an2-load-prog-bar-wrap">
             <div class="an2-load-prog-bar" style="width:${pct}%"></div>
           </div>
@@ -1333,7 +1698,6 @@ export class AnalyticsModule {
             ${p.cached  > 0 ? `<span class="an2-load-prog-cached">⚡ ${p.cached} из кэша</span>` : ''}
             ${p.fetched > 0 ? `<span class="an2-load-prog-api">↓ ${p.fetched} из API</span>` : ''}
             ${hasErrors     ? `<span class="an2-load-prog-err">⚠ ${p.errors} ошибок</span>` : ''}
-            ${elapsedS      ? `<span class="an2-load-prog-time">${elapsedS}</span>` : ''}
           </div>
         </div>
       </div>
@@ -1370,7 +1734,7 @@ export class AnalyticsModule {
     return `
       <div class="an2-empty">
         <div class="emoji">${I.store()}</div>
-        <h3>Нет магазинов для «${mpNames[this.selectedMp] ?? this.selectedMp}»</h3>
+        <h3>Нет магазинов для «${this.selectedMp === 'all' ? 'всех площадок' : mpNames[this.selectedMp]}»</h3>
         <p>У тебя нет подключённых магазинов на этом маркетплейсе. Переключись на другой:</p>
         ${buttons ? `<div class="an2-switch-mp-btns">${buttons}</div>` : ''}
       </div>

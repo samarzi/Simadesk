@@ -137,7 +137,7 @@ export function renderBalanceTab(balances: StoreBalance[]): string {
     <div class="bl-wrap">
       <div class="bl-toolbar">
         <span style="font-size:13px;font-weight:700;color:var(--text)">Баланс магазинов</span>
-        <span style="font-size:10.5px;color:var(--text3);margin-left:10px">
+        <span style="font-size:11.5px;color:var(--text3);margin-left:10px">
           Текущее состояние счёта из API площадки — не зависит от выбранного периода,
           маркетплейса и магазина в шапке. Яндекс.Маркет баланс кошелька не отдаёт.
         </span>

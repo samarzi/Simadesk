@@ -1,10 +1,12 @@
-import { fmtMoney, fmtPct } from './format';
+import { fmtMoney, fmtPct, fmtFull } from './format';
 
 export interface KpiCardOpts {
   label: string;
   value: number;
   prev?: number | null;
   format?: 'money' | 'pct' | 'int';
+  /** Точная сумма без сокращений «тыс/млн». */
+  exact?: boolean;
   tint?: string;            // CSS color для радиального фона
   sparkline?: number[];     // 12-30 точек
   invertDelta?: boolean;    // для расходов: рост = плохо
@@ -32,7 +34,7 @@ function renderSpark(points: number[]): string {
 export function renderKpiCard(opts: KpiCardOpts): string {
   const fmt = opts.format ?? 'money';
   let valueText: string;
-  if (fmt === 'money')      valueText = fmtMoney(opts.value);
+  if (fmt === 'money')      valueText = opts.exact ? fmtFull(opts.value) : fmtMoney(opts.value);
   else if (fmt === 'pct')   valueText = fmtPct(opts.value);
   else                      valueText = opts.value.toLocaleString('ru-RU');
 

@@ -120,6 +120,7 @@ function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
         <td>
           <div class="an2-order-id-cell">
             <span class="an2-order-id-text">${safeId}</span>
+            ${o.finance_only ? '<span class="an2-src-tag" title="Маркетплейс не вернул этот заказ в списке — он восстановлен из финотчёта">из финотчёта</span>' : ''}
             <button class="an2-copy-btn" title="Скопировать № заказа"
               onclick="event.stopPropagation();navigator.clipboard.writeText('${safeId}').then(()=>{this.innerHTML='<svg width=10 height=10 viewBox=&quot;0 0 10 10&quot;><polyline points=&quot;1.5,5.5 3.5,7.5 8.5,2.5&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.5&quot; fill=&quot;none&quot; stroke-linecap=&quot;round&quot;/></svg>';this.style.color='var(--green)';setTimeout(()=>{this.innerHTML='<svg width=10 height=10 viewBox=&quot;0 0 10 10&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.2&quot;><rect x=&quot;3&quot; y=&quot;1&quot; width=&quot;6&quot; height=&quot;7&quot; rx=&quot;1&quot;/><path d=&quot;M1 3h2v6h5v1&quot;/></svg>';this.style.color='';},1400)})">
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.2">
@@ -131,7 +132,7 @@ function _renderOrdersTabUncached(orders: Order[], f: OrdersFilters): string {
         <td><span class="mp-badge"><span class="mp-dot" style="background:${MP_COLOR[o.mp]}"></span>${MP_SHORT[o.mp]}</span></td>
         <td>
           <span class="an2-status-pill" style="background:${STATUS_COLOR[o.status]}1a;color:${STATUS_COLOR[o.status]}">
-            <span class="dot" style="background:${STATUS_COLOR[o.status]}"></span>${STATUS_LABEL[o.status]}
+            <span class="dot" style="background:${STATUS_COLOR[o.status]}"></span>${STATUS_LABEL[o.status]}${o.status === 'delivered' && o.revenue_lost > 0 ? ' · част. возврат' : ''}
           </span>
         </td>
         <td class="an2-col-goods">

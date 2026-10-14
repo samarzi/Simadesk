@@ -57,7 +57,7 @@ export function renderActivityTab(orders: Order[], subTab: ActivitySubTab): stri
   return `
     <div style="padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
       <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px">Активность продаж по времени</div>
-      <div style="font-size:10.5px;color:var(--text3);margin-bottom:12px">
+      <div style="font-size:11.5px;color:var(--text3);margin-bottom:12px">
         Считается по <strong style="color:var(--text2)">дате оформления заказа</strong> и по заказанной сумме —
         поэтому итог отличается от «Выручки» в Сводке, где деньги считаются по выкупленным заказам.
       </div>
@@ -69,7 +69,7 @@ export function renderActivityTab(orders: Order[], subTab: ActivitySubTab): stri
           { label: 'Пик (час)', val: noData ? '—' : a.byHour.indexOf(Math.max(...a.byHour)) + ':00', color: '#f59e0b' },
         ].map(k => `
           <div style="padding:10px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:10px">
-            <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">${k.label}</div>
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">${k.label}</div>
             <div style="font-size:18px;font-weight:800;color:${k.color}">${k.val}</div>
           </div>`).join('')}
       </div>
@@ -147,14 +147,14 @@ function renderHeatmap(a: Activity): string {
       <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Тепловая карта продаж</div>
       <div style="font-size:11px;color:var(--text2)">Каждая ячейка — выручка за час в конкретный день недели. Чем темнее — тем больше продаж.</div>
     </div>
-    <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;font-size:10px;color:var(--text2)">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;font-size:11px;color:var(--text2)">
       <span>Мало</span>
       ${['#f0fdf4','#bbf7d0','#4ade80','#16a34a','#15803d','#14532d'].map(c =>
         `<div style="width:20px;height:14px;background:${c};border-radius:3px"></div>`).join('')}
       <span>Много</span>
     </div>
     <div style="overflow-x:auto">
-      <table style="border-collapse:separate;border-spacing:3px;font-size:10px">
+      <table style="border-collapse:separate;border-spacing:3px;font-size:11px">
         <thead>
           <tr>
             <th style="width:32px;text-align:right;padding:0 6px 4px;color:var(--text2);font-weight:600"></th>
@@ -176,7 +176,7 @@ function renderHeatmap(a: Activity): string {
                   : '';
                 return `<td title="${tip}"
                   style="width:34px;height:26px;background:${bg};border-radius:4px;text-align:center;
-                    vertical-align:middle;cursor:default;font-size:9px;color:${tc}">
+                    vertical-align:middle;cursor:default;font-size:11px;color:${tc}">
                   ${cell.count > 0 ? cell.count : ''}
                 </td>`;
               }).join('')}
@@ -229,7 +229,7 @@ function renderByHour(a: Activity): string {
           <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;position:relative" title="${h}:00 — ${rev.toLocaleString('ru')} ₽">
             <div style="width:100%;background:${pct > 0.7 ? '#16a34a' : pct > 0.4 ? '#4ade80' : pct > 0.1 ? '#bbf7d0' : 'var(--bg2)'};
               border-radius:3px 3px 0 0;height:${height}px;transition:height .3s;flex-shrink:0;margin-top:auto"></div>
-            <div style="position:absolute;bottom:-18px;font-size:9px;color:var(--text3);white-space:nowrap">${h}</div>
+            <div style="position:absolute;bottom:-18px;font-size:11px;color:var(--text3);white-space:nowrap">${h}</div>
           </div>`;
       }).join('')}
     </div>

@@ -100,7 +100,7 @@ export function renderOrderDrawer(o: Order, onClose = 'window.analyticsModule?.c
 
         <!-- Удержания МП с разбивкой -->
         <div class="an2-drawer-section">
-          <h4>Удержания маркетплейса${o.status === 'returned' ? ' <span style="font-weight:400;color:var(--text3);font-size:10px;text-transform:none;letter-spacing:0">(не возвращаются продавцу)</span>' : ''}</h4>
+          <h4>Удержания маркетплейса${o.status === 'returned' ? ' <span style="font-weight:400;color:var(--text3);font-size:11px;text-transform:none;letter-spacing:0">(не возвращаются продавцу)</span>' : ''}</h4>
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:4px 12px">
             ${o.fee_breakdown.length > 0
               ? o.fee_breakdown.map(f => {
@@ -109,7 +109,7 @@ export function renderOrderDrawer(o: Order, onClose = 'window.analyticsModule?.c
                   const abs = Math.abs(f.amount);
                   return `
                   <div class="an2-fee-row">
-                    <span class="label">${escapeHtml(f.label)}${isComp ? ' <span style="color:var(--text3);font-size:9px">(возврат)</span>' : ''}</span>
+                    <span class="label">${escapeHtml(f.label)}${isComp ? ' <span style="color:var(--text3);font-size:11px">(возврат)</span>' : ''}</span>
                     <span class="amount" style="${isComp ? 'color:var(--green)' : ''}">${isComp ? '+' : '−'}${fmtMoney(abs, false)} ₽</span>
                   </div>`;
                 }).join('')

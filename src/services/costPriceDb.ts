@@ -168,6 +168,43 @@ async function removeFromServer(vendorCode: string): Promise<void> {
   } catch (e) { debug.warn('[costPriceDb] remove:', e); }
 }
 
+// ── История себестоимости ────────────────────────────────────────────────────
+// Каждое изменение себестоимости хранится с датой (таблица cost_price_history,
+// пишется триггером на cost_prices). Аналитика берёт себестоимость, которая
+// действовала на дату заказа, — изменение сегодня не переписывает прошлые месяцы.
+
+let history: Record<string, Array<{ from: number; cost: number }>> = {};
+let historyLoadedAt = 0;
+
+async function refreshHistory(force = false): Promise<void> {
+  const cid = companyService.getActiveId();
+  if (!cid || !localStorage.getItem('access_token')) return;
+  if (!force && Date.now() - historyLoadedAt < 60_000) return;
+  try {
+    const rows = await dbFetch<Array<{ vendor_code: string; cost: number; valid_from: string }>>(
+      `cost_price_history?company_id=eq.${cid}&select=vendor_code,cost,valid_from&order=valid_from.asc&limit=100000`,
+    );
+    const next: typeof history = {};
+    for (const r of rows) {
+      const from = Date.parse(r.valid_from);
+      if (!Number.isFinite(from)) continue;
+      (next[norm(r.vendor_code)] ??= []).push({ from, cost: Number(r.cost) });
+    }
+    history = next;
+    historyLoadedAt = Date.now();
+  } catch (e) {
+    // Миграция не применена — работаем по текущей себестоимости.
+    debug.warn('[costPriceDb] history unavailable:', e);
+    history = {};
+    historyLoadedAt = Date.now();
+  }
+}
+
+function rememberLocally(vendorCode: string, cost: number): void {
+  const list = (history[norm(vendorCode)] ??= []);
+  list.push({ from: Date.now(), cost });
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export const costPriceDb = {
@@ -187,6 +224,7 @@ export const costPriceDb = {
       companyId: companyService.getActiveId() ?? undefined,
     };
     saveCache();
+    rememberLocally(vendorCode, c);
     pushToServer(vendorCode, c);
   },
 
@@ -205,6 +243,7 @@ export const costPriceDb = {
       if (!vendorCode || !isFinite(cost) || cost < 0) { skipped++; continue; }
       const c = Math.round(cost * 100) / 100;
       cache[norm(vendorCode)] = { vendorCode, cost: c, updatedAt: now, companyId: cid ?? undefined };
+      rememberLocally(vendorCode, c);
       if (cid) toUpload.push({ company_id: cid, vendor_code: vendorCode, cost: c, updated_at: now });
       saved++;
     }
@@ -238,7 +277,30 @@ export const costPriceDb = {
   },
 
   /** Принудительная перезагрузка с сервера. Вызвать при смене компании или входе. */
-  async refresh(): Promise<void> { return refreshFromServer(); },
+  async refresh(): Promise<void> {
+    await refreshFromServer();
+    await refreshHistory();
+  },
+
+  /**
+   * Себестоимость на дату. Если на эту дату записи нет (заказ старше первой
+   * записи) — берётся самая ранняя известная себестоимость.
+   */
+  costAt(vendorCode: string, date?: string): number | null {
+    const current = cache[norm(vendorCode)]?.cost ?? null;
+    const list = history[norm(vendorCode)];
+    if (!date || !list?.length) return current;
+    const ts = Date.parse(date);
+    if (!Number.isFinite(ts)) return current;
+    let pick = list[0];
+    for (const e of list) { if (e.from <= ts) pick = e; else break; }
+    return pick.cost > 0 ? pick.cost : current;
+  },
+
+  /** Есть ли у артикула история изменений себестоимости. */
+  hasHistory(vendorCode: string): boolean {
+    return (history[norm(vendorCode)]?.length ?? 0) > 1;
+  },
 
   /** Доступен ли Supabase backend (миграция применена)? */
   isCloudSyncAvailable(): boolean { return dbAvailable; },

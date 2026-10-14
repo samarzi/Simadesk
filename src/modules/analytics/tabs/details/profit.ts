@@ -117,7 +117,7 @@ function skuTable(rows: Array<{ vendor_code: string; name: string; units_sold: n
         ${rows.map(s => `
           <tr>
             <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-              <span style="color:var(--text3);font-size:10px">${escapeHtml(s.vendor_code)}</span><br>
+              <span style="color:var(--text3);font-size:11px">${escapeHtml(s.vendor_code)}</span><br>
               <span style="font-weight:600">${escapeHtml(s.name)}</span>
             </td>
             <td class="num">${fmtNum(s.units_sold)}</td>

@@ -316,10 +316,10 @@ function ensureHandlers() {
             <span class="an2-ct-dot" style="background:${SERIES_META[k].varColor}"></span>
             <span>${SERIES_META[k].label}</span>
             <strong>${fmtMoney(val)}</strong>
-            <span style="color:${deltaCol};font-size:10px;margin-left:6px;font-weight:600">${deltaSign}${delta.toFixed(0)}%</span>
+            <span style="color:${deltaCol};font-size:11px;margin-left:6px;font-weight:600">${deltaSign}${delta.toFixed(0)}%</span>
           </div>`;
       }).join('')}
-      ${cfg.cumulative || cfg.showMA ? `<div style="font-size:9px;color:var(--text3);margin-top:4px;padding-top:4px;border-top:1px solid var(--border)">${
+      ${cfg.cumulative || cfg.showMA ? `<div style="font-size:11px;color:var(--text3);margin-top:4px;padding-top:4px;border-top:1px solid var(--border)">${
         [cfg.cumulative ? 'накопительный итог' : '', cfg.showMA ? 'сглажено: среднее за 7 точек, не факт дня' : '']
           .filter(Boolean).join(' · ')
       }</div>` : ''}
@@ -605,7 +605,7 @@ function renderControls(st: ChartState, total: number): string {
         </button>
       </div>
 
-      <div style="margin-left:auto;font-size:10px;color:var(--text3);white-space:nowrap">${total} точек</div>
+      <div style="margin-left:auto;font-size:11px;color:var(--text3);white-space:nowrap">${total} точек</div>
     </div>
   `;
 }
