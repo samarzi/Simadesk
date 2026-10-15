@@ -315,12 +315,16 @@ export class AllOrdersModule {
     let days = 7;
     if (this.period === '30') days = 30;
     else if (this.period === '90') days = 90;
-    const from = new Date(now.getTime() - days * 86_400_000);
+    // Work with calendar days in the user's local timezone. A rolling `now - N*24h`
+    // range can omit orders created earlier today when the API normalizes dates
+    // differently (especially Yandex's date-only endpoint).
+    const toDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1), 0, 0, 0, 0);
     return {
       since: from.toISOString(),
-      to:    now.toISOString(),
+      to:    toDate.toISOString(),
       ymFrom: ymDateOnly(from),
-      ymTo:   ymDateOnly(now),
+      ymTo:   ymDateOnly(toDate),
       wbFrom: from.toISOString().slice(0, 19) + '+00:00',
     };
   }
@@ -336,13 +340,9 @@ export class AllOrdersModule {
     this.render();
 
     const { since, to } = this.getPeriod();
-    const startTs = new Date(since).getTime();
-    const endTs   = new Date(to).getTime();
-    const days    = (endTs - startTs) / 86_400_000;
-
     // 7 дней — прямой API (нужны активные заказы в реальном времени).
     // 30/90 дней — через кэш (прошлые месяцы из Supabase + текущий из API).
-    if (days <= 8) {
+    if (this.period === '7') {
       await this._loadFromApi(ac, signal);
     } else {
       await this._loadFromCache(ac, signal, new Date(since), new Date(to));
@@ -1118,7 +1118,7 @@ export class AllOrdersModule {
     const actionsBlock = this.buildActionsHtml(o);
 
     return `
-      <div class="ozo-modal" data-mp="${o.marketplace}">
+      <div class="ozo-modal orders-modal" data-mp="${o.marketplace}">
         <div class="ozo-modal-head">
           <div style="min-width:0;flex:1">
             <div class="ozo-modal-title ozo-modal-title-copy"
@@ -1341,7 +1341,8 @@ export class AllOrdersModule {
         <section class="orders-filters">
           <div class="orders-filter-top">
             <div class="orders-search"><span>⌕</span><input class="search-input" aria-label="Поиск заказов" placeholder="Поиск по номеру, артикулу или товару" value="${this.esc(this.search)}" oninput="window.allOrdersModule.setSearch(this.value)"></div>
-            <div class="orders-filter-meta">${activeFilters ? `<button class="orders-clear" onclick="window.allOrdersModule.clearAllFilters()">Сбросить фильтры <b>${activeFilters}</b></button>` : '<span>Нажмите на заказ, чтобы открыть детали</span>'}</div>
+            <div class="orders-date-fields"><label>с <input type="date" value="${this.dateFrom ?? ''}" max="${todayLocal()}" oninput="window.allOrdersModule.setDateFrom(this.value)"></label><label>по <input type="date" value="${this.dateTo ?? ''}" max="${todayLocal()}" oninput="window.allOrdersModule.setDateTo(this.value)"></label><button class="orders-today ${this.dateFrom === this.dateTo && this.dateFrom === todayLocal() ? 'active' : ''}" onclick="window.allOrdersModule.setToday()">Сегодня</button></div>
+            <div class="orders-filter-meta">${activeFilters ? `<button class="orders-clear" onclick="window.allOrdersModule.clearAllFilters()">Сбросить <b>${activeFilters}</b></button>` : '<span>Выберите заказ для деталей</span>'}</div>
           </div>
           <div class="orders-filter-row">
             <div class="orders-filter-label">Маркетплейс</div>
@@ -1361,7 +1362,6 @@ export class AllOrdersModule {
             <div class="orders-filter-label">Период</div>
             <div class="orders-segmented"><button class="${this.period === '7' ? 'active' : ''}" onclick="window.allOrdersModule.setPeriod('7')">7 дней</button><button class="${this.period === '30' ? 'active' : ''}" onclick="window.allOrdersModule.setPeriod('30')">30 дней</button><button class="${this.period === '90' ? 'active' : ''}" onclick="window.allOrdersModule.setPeriod('90')">90 дней</button></div>
             ${schemeCounts.length > 1 || this.filterScheme ? `<div class="orders-filter-label">Схема</div><div class="orders-segmented">${schemeCounts.map(s => `<button class="${this.filterScheme === s.scheme ? 'active' : ''}" onclick="window.allOrdersModule.setSchemeFilter('${s.scheme}')">${s.scheme} <b>${s.count}</b></button>`).join('')}</div>` : ''}
-            <div class="orders-date-fields"><label>с <input type="date" value="${this.dateFrom ?? ''}" max="${todayLocal()}" oninput="window.allOrdersModule.setDateFrom(this.value)"></label><label>по <input type="date" value="${this.dateTo ?? ''}" max="${todayLocal()}" oninput="window.allOrdersModule.setDateTo(this.value)"></label><button class="orders-today ${this.dateFrom === this.dateTo && this.dateFrom === todayLocal() ? 'active' : ''}" onclick="window.allOrdersModule.setToday()">Сегодня</button></div>
           </div>
         </section>
 

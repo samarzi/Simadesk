@@ -5784,3 +5784,155 @@
 #aoo-modal .ozo-modal-actions-row { gap:8px; padding-top:9px; }
 #aoo-modal .ozo-modal-actions-row .btn { border-radius:8px; font-size:11px; }
 @media (max-width: 700px) { #aoo-modal.ozo-modal-backdrop { padding:10px; } #aoo-modal .ozo-info-grid { grid-template-columns:repeat(2,1fr); padding:13px; } #aoo-modal .ozo-modal-head,#aoo-modal .ozo-products-list,#aoo-modal .ozo-section-head,#aoo-modal .ozo-modal-actions { padding-left:15px; padding-right:15px; } #aoo-modal .ozo-modal-total { margin-left:15px; margin-right:15px; } }
+
+/* ══════════════════════════════════════════════════════════════
+   ORDERS WORKSPACE — theme-safe compact pass
+   The v3 layout used fixed light colors, so it ignored the global
+   SimaDesk theme. Keep all surfaces tied to the application tokens.
+   ══════════════════════════════════════════════════════════════ */
+#orders-section .orders-app {
+  color: var(--text);
+  background: var(--bg);
+}
+#orders-section .orders-header {
+  min-height: 58px;
+  padding: 11px 20px 10px;
+  background: var(--bg2);
+  border-bottom-color: var(--border);
+}
+#orders-section .orders-heading { gap: 10px; }
+#orders-section .orders-heading-icon { width: 34px; height: 34px; border-radius: 9px; box-shadow:none; }
+#orders-section .orders-heading-icon svg { width: 18px; height: 18px; }
+#orders-section .orders-heading h1 { font-size: 18px; color: var(--text); }
+#orders-section .orders-heading p { margin-top: 2px; color: var(--text3); font-size: 10px; }
+#orders-section .orders-header-actions { gap: 6px; }
+#orders-section .orders-warning { max-width: 220px; padding: 5px 8px; border-color: color-mix(in srgb, #f59e0b 35%, var(--border)); background: color-mix(in srgb, #f59e0b 10%, var(--bg2)); color: #f5b83d; }
+#orders-section .orders-refresh { min-height: 29px; padding: 6px 10px; border-radius: 7px; box-shadow:none; }
+
+#orders-section .orders-kpis {
+  gap: 7px;
+  padding: 8px 20px;
+  background: var(--bg2);
+  border-bottom-color: var(--border);
+}
+#orders-section .orders-kpi {
+  min-height: 49px;
+  padding: 8px 11px;
+  border-color: var(--border);
+  border-radius: 8px;
+  background: var(--bg3);
+}
+#orders-section .orders-kpi span, #orders-section .orders-kpi small { color: var(--text3); font-size: 10px; }
+#orders-section .orders-kpi strong { margin: 2px 0; color: var(--text); font-size: 17px; }
+#orders-section .orders-kpi-main strong { color: var(--accent); }
+#orders-section .orders-kpi-alert { border-color: color-mix(in srgb, #f59e0b 35%, var(--border)); background: color-mix(in srgb, #f59e0b 8%, var(--bg3)); }
+#orders-section .orders-kpi-alert strong { color: #f5b83d; }
+#orders-section .orders-kpi-period strong { font-size: 14px; }
+
+#orders-section .orders-filters {
+  padding: 8px 20px 7px;
+  background: var(--bg);
+  border-bottom-color: var(--border);
+}
+#orders-section .orders-filter-top { gap: 8px; margin-bottom: 6px; }
+#orders-section .orders-search {
+  flex: 1 1 300px;
+  max-width: 460px;
+  height: 31px;
+  padding: 0 9px;
+  border-color: var(--border2);
+  border-radius: 7px;
+  background: var(--bg2);
+  color: var(--text3);
+}
+#orders-section .orders-search input { color: var(--text); font-size: 12px; }
+#orders-section .orders-search input::placeholder { color: var(--text3); }
+#orders-section .orders-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+#orders-section .orders-filter-meta { color: var(--text3); font-size: 10px; }
+#orders-section .orders-clear { color: var(--accent-text); }
+#orders-section .orders-clear b { color: var(--bg); background: var(--accent); }
+#orders-section .orders-filter-row { gap: 5px 7px; }
+#orders-section .orders-filter-row + .orders-filter-row { margin-top: 5px; }
+#orders-section .orders-filter-label { color: var(--text3); font-size: 9px; letter-spacing: .45px; }
+#orders-section .orders-filter-label-status { margin-left: 8px; }
+#orders-section .orders-segmented { gap: 1px; padding: 2px; border-color: var(--border); border-radius: 7px; background: var(--bg3); }
+#orders-section .orders-segmented button { min-height: 24px; padding: 0 7px; border-radius: 5px; color: var(--text2); font-size: 10px; }
+#orders-section .orders-segmented button:hover { color: var(--text); }
+#orders-section .orders-segmented button.active { color: var(--accent-text); background: var(--bg2); box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+#orders-section .orders-segmented b { color: var(--text3); font-size: 9px; }
+#orders-section .orders-segmented button.active b { color: var(--accent); }
+#orders-section .orders-date-fields { flex: 0 0 auto; gap: 4px; margin-left: auto; color: var(--text3); font-size: 10px; }
+#orders-section .orders-date-fields input { width: 106px; height: 26px; padding: 0 6px; border-color: var(--border2); border-radius: 6px; color: var(--text); background: var(--bg2); font-size: 10px; }
+#orders-section .orders-today { height: 26px; padding: 0 8px; border-color: var(--border2); border-radius: 6px; color: var(--text2); background: var(--bg2); font-size: 10px; }
+#orders-section .orders-today.active { color: var(--accent-text); border-color: var(--accent); background: var(--accent-dim); }
+
+#orders-section .orders-content { padding: 10px 20px 56px; background: var(--bg); }
+#orders-section .orders-table-wrap { border-color: var(--border); border-radius: 9px; background: var(--bg2); box-shadow: 0 5px 20px rgba(0,0,0,.12); }
+#orders-section .orders-table { font-size: 11px; }
+#orders-section .orders-table th { padding: 8px 10px; border-bottom-color: var(--border); color: var(--text3); background: var(--bg3); font-size: 9px; }
+#orders-section .orders-row:hover { background: var(--hover); }
+#orders-section .orders-row td { height: 51px; padding: 7px 10px; border-bottom-color: var(--border); color: var(--text2); }
+#orders-section .orders-id { color: var(--text); font-size: 11px; }
+#orders-section .orders-copy { color: var(--text3); }
+#orders-section .orders-copy:hover, #orders-section .orders-sku:hover { color: var(--accent); }
+#orders-section .orders-store, #orders-section .orders-date, #orders-section .orders-product-title, #orders-section .orders-qty { color: var(--text2) !important; }
+#orders-section .orders-product-title { font-size: 11px; }
+#orders-section .orders-sku { color: var(--text3); }
+#orders-section .orders-total { color: var(--text) !important; }
+#orders-section .orders-total small { color: var(--text3); }
+#orders-section .ord-quick-action, #orders-section .ord-open-action { border-color: var(--border2); color: var(--text2); background: var(--bg3); }
+#orders-section .ord-quick-action:hover, #orders-section .ord-open-action:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+#orders-section .ord-quick-action.is-primary { color: var(--green); border-color: color-mix(in srgb, var(--green) 35%, var(--border)); background: var(--green-dim); }
+#orders-section .ord-quick-action.is-danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, var(--border)); background: var(--red-dim); }
+#orders-section .orders-date-row td { padding: 10px 10px 4px; color: var(--text3); background: var(--bg); }
+#orders-section .orders-date-row td span { padding: 3px 6px; color: var(--text2); background: var(--bg3); }
+#orders-section .orders-loading, #orders-section .orders-empty { color: var(--text2); }
+#orders-section .orders-loading strong, #orders-section .orders-empty strong { color: var(--text); }
+#orders-section .orders-empty-icon { color: var(--accent); background: var(--accent-dim); }
+#orders-section .orders-empty button { border-color: var(--accent); color: var(--accent-text); background: var(--accent-dim); }
+
+/* Order detail modal: compact, readable and theme aware in both modes. */
+#aoo-modal.ozo-modal-backdrop { background: rgba(0,0,0,.62); backdrop-filter: blur(6px); padding: 18px; }
+#aoo-modal .ozo-modal.orders-modal { max-width: 860px; border-color: var(--border2); border-radius: 13px; background: var(--bg2); box-shadow: var(--shadow); }
+#aoo-modal .orders-modal .ozo-modal-head { padding: 16px 20px 13px; background: var(--bg2); border-bottom-color: var(--border); }
+#aoo-modal .orders-modal .ozo-modal-title { color: var(--text); font-size: 17px; }
+#aoo-modal .orders-modal .ozo-modal-close { width: 28px; height: 28px; border-color: var(--border2); color: var(--text2); background: var(--bg3); }
+#aoo-modal .orders-modal .ozo-modal-close:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+#aoo-modal .orders-modal .ozo-modal-body { background: var(--bg); }
+#aoo-modal .orders-modal .ozo-info-grid { grid-template-columns: repeat(4,1fr); gap: 6px; padding: 12px 20px; background: var(--bg2); border-bottom-color: var(--border); }
+#aoo-modal .orders-modal .ozo-info-card { min-height: 44px; padding: 7px 8px; border-color: var(--border); border-radius: 7px; background: var(--bg3); }
+#aoo-modal .orders-modal .ozo-info-card-lbl { color: var(--text3); font-size: 8px; }
+#aoo-modal .orders-modal .ozo-info-card-val { color: var(--text2); font-size: 10px; }
+#aoo-modal .orders-modal .ozo-section-head { padding: 14px 20px 7px; }
+#aoo-modal .orders-modal .ozo-section-title { color: var(--text); font-size: 13px; }
+#aoo-modal .orders-modal .ozo-section-meta { color: var(--text3); font-size: 10px; }
+#aoo-modal .orders-modal .ozo-products-list { padding: 0 20px; }
+#aoo-modal .orders-modal .ozo-prod-card { padding: 8px 0; border-bottom-color: var(--border); background: transparent; }
+#aoo-modal .orders-modal .ozo-prod-thumb { width: 44px; height: 44px; border-color: var(--border); border-radius: 7px; background: var(--bg3); }
+#aoo-modal .orders-modal .ozo-prod-name { color: var(--text); font-size: 11px; }
+#aoo-modal .orders-modal .ozo-prod-unit { color: var(--text3); font-size: 9px; }
+#aoo-modal .orders-modal .ozo-prod-line { color: var(--text); font-size: 12px; }
+#aoo-modal .orders-modal .ozo-modal-total { margin: 10px 20px 0; padding: 10px 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg3); }
+#aoo-modal .orders-modal .ozo-modal-total-lbl { color: var(--text2); font-size: 10px; }
+#aoo-modal .orders-modal .ozo-modal-total-val { color: var(--text); font-size: 15px; }
+#aoo-modal .orders-modal .ozo-modal-actions { margin-top: 12px; padding: 11px 20px 14px; border-top-color: var(--border); background: var(--bg2); }
+#aoo-modal .orders-modal .ozo-modal-actions-label { color: var(--text3); font-size: 9px; }
+#aoo-modal .orders-modal .ozo-modal-actions-row { gap: 6px; padding-top: 7px; }
+#aoo-modal .orders-modal .ozo-modal-actions-status { color: var(--text2); }
+#aoo-modal .orders-modal .ozo-pill { border-color: var(--border2); color: var(--text2); background: var(--bg3); }
+#aoo-modal .orders-modal .oz-sku-chip { border-color: var(--border2); color: var(--text2); background: var(--bg3); }
+#aoo-modal .orders-modal .btn:not(.btn-primary) { border-color: var(--border2); color: var(--text); background: var(--bg3) !important; }
+#aoo-modal .orders-modal .btn:not(.btn-primary):hover { border-color: var(--accent); color: var(--accent); }
+#aoo-modal .orders-modal .btn-primary { color: var(--bg); background: var(--accent); }
+
+@media (max-width: 900px) {
+  #orders-section .orders-header, #orders-section .orders-kpis, #orders-section .orders-filters, #orders-section .orders-content { padding-left: 12px; padding-right: 12px; }
+  #orders-section .orders-filter-top { flex-wrap: wrap; }
+  #orders-section .orders-date-fields { margin-left: 0; }
+  #orders-section .orders-filter-meta { margin-left: auto; }
+}
+@media (max-width: 700px) {
+  #aoo-modal .orders-modal .ozo-info-grid { grid-template-columns: repeat(2,1fr); padding: 11px 14px; }
+  #aoo-modal .orders-modal .ozo-modal-head, #aoo-modal .orders-modal .ozo-products-list, #aoo-modal .orders-modal .ozo-section-head, #aoo-modal .orders-modal .ozo-modal-actions { padding-left: 14px; padding-right: 14px; }
+  #aoo-modal .orders-modal .ozo-modal-total { margin-left: 14px; margin-right: 14px; }
+}
