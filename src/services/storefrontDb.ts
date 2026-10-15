@@ -17,9 +17,12 @@ export interface StorefrontSettings {
   show_category_filter: boolean;
   show_stock: boolean;
   hide_out_of_stock: boolean;
+  theme?: StorefrontTheme;
   created_at?: string;
   updated_at?: string;
 }
+
+export type StorefrontTheme = 'classic' | 'midnight' | 'ocean' | 'sunset' | 'forest' | 'lavender';
 
 export interface StorefrontGroup {
   id: string;

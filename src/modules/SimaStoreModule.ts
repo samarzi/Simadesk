@@ -1,6 +1,6 @@
 import { storefrontDb } from '../services/storefrontDb';
 import { aiFetch } from '@/services/aiProxy';
-import type { StorefrontSettings, StorefrontProduct, StorefrontBanner, StorefrontGroup, StorefrontVariantGroup } from '../services/storefrontDb';
+import type { StorefrontSettings, StorefrontProduct, StorefrontBanner, StorefrontGroup, StorefrontVariantGroup, StorefrontTheme } from '../services/storefrontDb';
 import { companyService } from '../services/companyService';
 import { showToast } from '../utils/toast';
 import { reportAiUsage } from '@/services/aiUsage';
@@ -40,6 +40,15 @@ const I = {
 };
 
 const SRC = { wb: 'WB', ozon: 'Ozon', yandex: 'Яндекс' } as const;
+
+const STORE_THEMES: Array<{ id: StorefrontTheme; name: string; description: string; swatches: string[] }> = [
+  { id: 'classic',  name: 'Классика', description: 'Чёрный и белый', swatches: ['#111111', '#ffffff', '#d9d9d9'] },
+  { id: 'midnight', name: 'Полночь',  description: 'Графит и синий', swatches: ['#101827', '#4f8cff', '#dbeafe'] },
+  { id: 'ocean',    name: 'Океан',    description: 'Тёмный бирюзовый', swatches: ['#062b35', '#25d0c7', '#d8fffb'] },
+  { id: 'sunset',   name: 'Закат',    description: 'Тёплый коралл', swatches: ['#2b1518', '#ff8a65', '#ffe0c2'] },
+  { id: 'forest',   name: 'Лес',      description: 'Изумруд и лайм', swatches: ['#0b2119', '#47d18c', '#d9ffe8'] },
+  { id: 'lavender', name: 'Лаванда',  description: 'Слива и сирень', swatches: ['#21172e', '#b79cff', '#f0eaff'] },
+];
 
 /* ── CSS ──────────────────────────────────────────────────────────────────── */
 const CSS = `
@@ -243,6 +252,29 @@ html.light .vs-hero-logo{color:#000}
 .vs-prev-dt{aspect-ratio:16/5;background:var(--bg4);border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:10px}
 .vs-prev-mob{aspect-ratio:3/4;max-height:160px;background:var(--bg4);border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--text2);font-size:10px}
 .vs-prev-dt img,.vs-prev-mob img{width:100%;height:100%;object-fit:cover}
+.vs-hero{position:relative;overflow:hidden;padding:24px 26px;border:1px solid var(--border);border-radius:20px;background:linear-gradient(120deg,var(--bg2),var(--bg3));box-shadow:0 12px 32px rgba(0,0,0,.12)}
+.vs-hero::after{content:'';position:absolute;width:220px;height:220px;right:-80px;top:-120px;border-radius:50%;background:var(--accent-dim);filter:blur(2px);pointer-events:none}
+.vs-hero-body,.vs-hero-actions{position:relative;z-index:1}
+.vs-stat{min-height:142px;padding:16px 16px 14px;background:linear-gradient(150deg,var(--bg2),var(--bg3))}
+.vs-card,.vs-grp-card,.vs-bn-card,.vs-tbl-wrap{box-shadow:0 8px 24px rgba(0,0,0,.08)}
+.vs-theme-wrap{margin:4px 0 24px;padding:18px;border:1px solid var(--border);border-radius:16px;background:linear-gradient(150deg,var(--bg2),var(--bg3))}
+.vs-theme-intro{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px}
+.vs-theme-intro-ico{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:var(--accent-dim);color:var(--accent-text);flex-shrink:0}
+.vs-theme-intro-title{font-size:14px;font-weight:800;color:var(--text)}
+.vs-theme-intro-sub{font-size:12px;color:var(--text2);margin-top:3px;line-height:1.45}
+.vs-theme-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media(max-width:760px){.vs-theme-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:430px){.vs-theme-grid{grid-template-columns:1fr}}
+.vs-theme-option{position:relative;display:flex;flex-direction:column;gap:9px;padding:11px;border:1px solid var(--border2);border-radius:12px;background:var(--bg3);color:var(--text);cursor:pointer;text-align:left;transition:border-color .16s,transform .16s,box-shadow .16s}
+.vs-theme-option:hover{border-color:var(--accent);transform:translateY(-1px)}
+.vs-theme-option.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-dim),0 8px 18px rgba(0,0,0,.12)}
+.vs-theme-option input{position:absolute;opacity:0;pointer-events:none}
+.vs-theme-preview{height:54px;border-radius:8px;padding:8px;display:flex;align-items:flex-end;gap:5px;overflow:hidden}
+.vs-theme-preview span{display:block;height:10px;border-radius:3px;flex:1}
+.vs-theme-meta{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.vs-theme-name{font-size:12px;font-weight:800}.vs-theme-desc{font-size:10px;color:var(--text2);margin-top:2px}
+.vs-theme-check{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid var(--border2);color:transparent;flex-shrink:0}
+.vs-theme-option.on .vs-theme-check{background:var(--accent);border-color:var(--accent);color:#000}
 @keyframes vs-spin{to{transform:rotate(360deg)}}
 `;
 
@@ -459,6 +491,26 @@ export class SimaStoreModule {
     </div>`;
   }
 
+  private renderThemePicker(): string {
+    const active = this.settings?.theme ?? 'classic';
+    return `<div class="vs-theme-wrap">
+      <div class="vs-theme-intro">
+        <div class="vs-theme-intro-ico">${ic(I.image, 17)}</div>
+        <div><div class="vs-theme-intro-title">Тема публичного SimaStore</div>
+        <div class="vs-theme-intro-sub">Цвета применяются только к витрине этого кабинета. Настройки интерфейса SimaDesk и другие кабинеты не изменяются.</div></div>
+      </div>
+      <div class="vs-theme-grid">
+        ${STORE_THEMES.map(t => `<label class="vs-theme-option ${active === t.id ? 'on' : ''}">
+          <input type="radio" name="vs-theme" value="${t.id}" ${active === t.id ? 'checked' : ''}>
+          <div class="vs-theme-preview" style="background:${t.swatches[0]}">
+            <span style="background:${t.swatches[2]}"></span><span style="background:${t.swatches[1]};height:18px"></span><span style="background:${t.swatches[2]};height:26px"></span>
+          </div>
+          <div class="vs-theme-meta"><div><div class="vs-theme-name">${esc(t.name)}</div><div class="vs-theme-desc">${esc(t.description)}</div></div><span class="vs-theme-check">${ic(I.check, 11)}</span></div>
+        </label>`).join('')}
+      </div>
+    </div>`;
+  }
+
   /* ── Settings ────────────────────────────────────────────────────────────── */
   private renderSettings(): string {
     const s = this.settings;
@@ -515,6 +567,9 @@ export class SimaStoreModule {
           </div>
         </div>
       </div>
+
+      <div class="vs-sec">${ic(I.image,14)} Внешний вид</div>
+      ${this.renderThemePicker()}
 
       <div class="vs-sec">${ic(I.search,14)} Фильтры на витрине</div>
       <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
@@ -1660,6 +1715,11 @@ ${candidates.join('\n')}`;
       this.validateSlug(v);
     });
     document.getElementById('vs-save')?.addEventListener('click', () => this.save());
+    this.el.querySelectorAll<HTMLInputElement>('input[name="vs-theme"]').forEach(input => {
+      input.addEventListener('change', () => {
+        this.el.querySelectorAll('.vs-theme-option').forEach(option => option.classList.toggle('on', option.contains(input)));
+      });
+    });
 
     // Groups
     const grpAdd = () => this.openGroupModal(null);
@@ -2019,6 +2079,7 @@ ${candidates.join('\n')}`;
     if (btn) { btn.disabled = true; btn.textContent = 'Сохраняем…'; }
     try {
       const cb = (id: string) => (document.getElementById(id) as HTMLInputElement|null)?.checked ?? false;
+      const theme = ((this.el.querySelector('input[name="vs-theme"]:checked') as HTMLInputElement|null)?.value || 'classic') as StorefrontTheme;
       await storefrontDb.save({
         company_id:           this.companyId,
         is_enabled:           cb('vs-enabled'),
@@ -2034,6 +2095,7 @@ ${candidates.join('\n')}`;
         show_category_filter: cb('vs-fcat'),
         show_stock:           cb('vs-show-stock'),
         hide_out_of_stock:    cb('vs-hide-oos'),
+        theme,
       });
       this.settings = await storefrontDb.get(this.companyId);
       showToast('Настройки сохранены', 'success');

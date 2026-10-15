@@ -19,6 +19,25 @@ interface Settings {
   show_category_filter?: boolean;
   show_stock?: boolean;
   hide_out_of_stock?: boolean;
+  theme?: StorefrontTheme;
+}
+type StorefrontTheme = 'classic' | 'midnight' | 'ocean' | 'sunset' | 'forest' | 'lavender';
+
+const STORE_THEME_VARS: Record<StorefrontTheme, Record<string, string>> = {
+  classic:  { background:'0 0% 97%', foreground:'0 0% 9%', card:'0 0% 100%', primary:'0 0% 9%', primaryForeground:'0 0% 100%', secondary:'0 0% 93%', secondaryForeground:'0 0% 12%', muted:'0 0% 93%', mutedForeground:'0 0% 38%', accent:'0 0% 89%', accentForeground:'0 0% 10%', border:'0 0% 80%', input:'0 0% 76%', ring:'0 0% 9%' },
+  midnight: { background:'222 47% 8%', foreground:'214 32% 94%', card:'222 42% 12%', primary:'217 92% 68%', primaryForeground:'222 47% 8%', secondary:'222 35% 17%', secondaryForeground:'214 32% 94%', muted:'222 32% 19%', mutedForeground:'215 20% 68%', accent:'217 55% 24%', accentForeground:'214 32% 96%', border:'217 30% 25%', input:'217 30% 26%', ring:'217 92% 68%' },
+  ocean:    { background:'191 72% 8%', foreground:'181 44% 95%', card:'190 63% 12%', primary:'174 69% 54%', primaryForeground:'191 72% 8%', secondary:'190 46% 17%', secondaryForeground:'181 44% 95%', muted:'190 40% 20%', mutedForeground:'183 25% 69%', accent:'174 48% 22%', accentForeground:'181 44% 96%', border:'184 36% 26%', input:'184 36% 27%', ring:'174 69% 54%' },
+  sunset:   { background:'12 36% 9%', foreground:'30 45% 96%', card:'12 31% 14%', primary:'13 100% 70%', primaryForeground:'12 36% 9%', secondary:'12 31% 20%', secondaryForeground:'30 45% 96%', muted:'12 27% 23%', mutedForeground:'24 25% 72%', accent:'14 43% 27%', accentForeground:'30 45% 96%', border:'12 27% 31%', input:'12 27% 32%', ring:'13 100% 70%' },
+  forest:   { background:'150 45% 7%', foreground:'143 38% 95%', card:'150 38% 11%', primary:'148 57% 56%', primaryForeground:'150 45% 7%', secondary:'150 30% 16%', secondaryForeground:'143 38% 95%', muted:'150 27% 20%', mutedForeground:'143 22% 68%', accent:'148 38% 23%', accentForeground:'143 38% 96%', border:'148 28% 25%', input:'148 28% 26%', ring:'148 57% 56%' },
+  lavender: { background:'267 31% 9%', foreground:'270 42% 96%', card:'267 26% 14%', primary:'255 100% 81%', primaryForeground:'267 31% 9%', secondary:'267 25% 20%', secondaryForeground:'270 42% 96%', muted:'267 22% 24%', mutedForeground:'270 24% 73%', accent:'255 35% 29%', accentForeground:'270 42% 97%', border:'264 24% 31%', input:'264 24% 32%', ring:'255 100% 81%' },
+};
+
+function applyStoreTheme(theme?: StorefrontTheme): void {
+  const id: StorefrontTheme = theme && theme in STORE_THEME_VARS ? theme : 'classic';
+  const root = document.documentElement;
+  root.dataset.storeTheme = id;
+  for (const [name, value] of Object.entries(STORE_THEME_VARS[id])) root.style.setProperty(`--${name.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`)}`, value);
+  root.style.colorScheme = id === 'classic' ? 'light' : 'dark';
 }
 interface Product {
   source: string;
@@ -587,6 +606,24 @@ html { scrollbar-gutter: stable; }
 .ss-hiw-mob-icon { flex-shrink:0; width:2.75rem; height:2.75rem; border-radius:.75rem; display:flex; align-items:center; justify-content:center; font-size:1.2rem; position:relative; }
 .ss-hiw-mob-num { position:absolute; top:-3px; right:-3px; width:1.1rem; height:1.1rem; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:.55rem; font-weight:900; color:#000; background:#00FFCC; box-shadow:0 0 0 2px hsl(var(--background)); }
 .ss-hiw-connector { width:1px; height:.75rem; background:linear-gradient(to bottom,hsl(var(--primary)/.4),transparent); margin:.15rem auto; }
+/* Theme surface overrides. Inline marketplace colors remain recognizable, while the store chrome follows the selected cabinet theme. */
+html[data-store-theme="classic"] body{background:#f4f4f4;color:#111}
+html[data-store-theme="classic"] .nav-modern{background:rgba(255,255,255,.94);border-color:#d8d8d8}
+html[data-store-theme="classic"] .ss-header-brand{background:linear-gradient(90deg,#111,#555);-webkit-background-clip:text;background-clip:text}
+html[data-store-theme="classic"] .ss-logo-init{background:#111;color:#fff}
+html[data-store-theme="classic"] .ss-card,html[data-store-theme="classic"] .ss-skel,html[data-store-theme="classic"] .ss-filter-drawer,html[data-store-theme="classic"] .ss-det-layout{background:#fff;border-color:#d6d6d6}
+html[data-store-theme="classic"] .ss-card-grad{background:linear-gradient(to top,rgba(0,0,0,.22),transparent 62%)}
+html[data-store-theme="classic"] .ss-card-buy-btn,html[data-store-theme="classic"] .ss-catalog-btn{background:#111;color:#fff}
+html[data-store-theme="classic"] .ss-search,html[data-store-theme="classic"] .ss-price-inp,html[data-store-theme="classic"] .ss-src-tabs{background:#fff;color:#111;border-color:#c9c9c9}
+html[data-store-theme="classic"] .ss-contact{background:#fff!important}
+html[data-store-theme="classic"] .ss-fav-btn{background:rgba(0,0,0,.58)}
+html[data-store-theme="classic"] .ss-det-panel{background:#fff;color:#111}
+html[data-store-theme="classic"] .ss-det-title,html[data-store-theme="classic"] .ss-card-title{color:#111}
+html[data-store-theme="classic"] .ss-det-subtitle,html[data-store-theme="classic"] .ss-meta{color:#555}
+html[data-store-theme="classic"] .ss-hiw-mob-card,html[data-store-theme="classic"] .ss-hiw-step-card{background:rgba(255,255,255,.72)}
+html[data-store-theme="classic"] .ss-hiw-num,html[data-store-theme="classic"] .ss-hiw-mob-num{color:#fff;background:#111}
+html[data-store-theme="classic"] .ss-modal-bg{background:rgba(0,0,0,.35)}
+html[data-store-theme="classic"] .ss-modal{background:#fff;color:#111}
 `;
   document.head.appendChild(el);
 }
@@ -1819,6 +1856,7 @@ function openDetail(
 
 async function init(): Promise<void> {
   injectCSS();
+  applyStoreTheme('classic');
 
   const root = document.getElementById('root')!;
   const progress = document.getElementById('ss-progress');
@@ -1862,6 +1900,7 @@ async function init(): Promise<void> {
     return;
   }
 
+  applyStoreTheme(data.settings?.theme);
   hideProgress();
 
   let showStock: boolean;
