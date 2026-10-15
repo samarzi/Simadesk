@@ -235,7 +235,7 @@ html { scrollbar-gutter: stable; }
 .ss-rec-track { display:flex; gap:.75rem; width:max-content; will-change:transform; }
 .ss-rec-track .ss-card { width:148px; flex-shrink:0; }
 .ss-rec-track .ss-card .ss-card-img { overflow:hidden; }
-.ss-rec-track .ss-card .ss-card-img img { transform:scale(1.6); transform-origin:center center; }
+.ss-rec-track .ss-card .ss-card-img img { transform:none; }
 .ss-rec-track .ss-card .ss-card-price-row { display:none; }
 .ss-rec-track .ss-card .ss-card-buy { display:none; }
 .ss-rec-track .ss-card .ss-card-body { padding:.4rem .5rem .5rem; }
@@ -257,8 +257,8 @@ html { scrollbar-gutter: stable; }
 }
 .ss-card:hover { transform:translateY(-3px); box-shadow:0 14px 34px hsl(var(--primary)/.14),0 8px 22px rgba(0,0,0,.16); }
 .ss-rec-track .ss-card:hover { transform:none; }
-.ss-card-img  { position:relative; aspect-ratio:4/5; background:hsl(var(--muted)/.3); overflow:hidden; }
-.ss-card-img img { width:100%; height:100%; object-fit:cover; }
+.ss-card-img  { position:relative; aspect-ratio:4/5; background:linear-gradient(145deg,hsl(var(--muted)/.56),hsl(var(--card))); overflow:hidden; display:flex; align-items:center; justify-content:center; }
+.ss-card-img img { width:100%; height:100%; object-fit:contain; object-position:center; display:block; padding:.25rem; box-sizing:border-box; }
 .ss-card-grad { position:absolute; inset:0; background:linear-gradient(to top,rgba(0,0,0,.6) 0%,rgba(0,0,0,.2) 40%,transparent 100%); pointer-events:none; }
 .ss-card-body { padding:.65rem .7rem .4rem; flex:1; min-height:6.2rem; display:flex; flex-direction:column; align-items:flex-start; }
 /* ── Favourites ── */
