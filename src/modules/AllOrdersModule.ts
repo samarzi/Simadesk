@@ -1197,6 +1197,41 @@ export class AllOrdersModule {
       </div>`;
   }
 
+  /** Compact actions shown in the table without replacing the detail modal. */
+  private buildQuickActionsHtml(o: UnifiedOrder): string {
+    const sid = this.esc(o.storeId);
+    const oid = this.esc(o.id);
+    const stop = 'event.stopPropagation();';
+    const btn = (label: string, title: string, cls: string, action: string) =>
+      `<button class="ord-quick-action ${cls}" title="${title}" aria-label="${title}" onclick="${stop}${action}">${label}</button>`;
+
+    if (o.marketplace === 'ozon') {
+      const ship = ['awaiting_packaging', 'awaiting_deliver'].includes(o.status)
+        ? btn('↗', 'Отгрузить', 'is-primary', `window.allOrdersModule.ozonShip('${oid}','${sid}')`) : '';
+      const label = !['cancelled', 'delivered'].includes(o.status)
+        ? btn('▣', 'Этикетка', '', `window.allOrdersModule.ozonLabel('${oid}','${sid}')`) : '';
+      const cancel = ['awaiting_packaging', 'awaiting_deliver'].includes(o.status)
+        ? btn('×', 'Отменить', 'is-danger', `window.allOrdersModule.ozonCancel('${oid}','${sid}')`) : '';
+      return ship + label + cancel;
+    }
+    if (o.marketplace === 'yandex') {
+      const ship = o.status === 'PROCESSING'
+        ? btn('↗', 'Готов к отгрузке', 'is-primary', `window.allOrdersModule.yandexShip('${oid}','${sid}')`) : '';
+      const label = ['PROCESSING', 'DELIVERY'].includes(o.status)
+        ? btn('▣', 'Этикетка', '', `window.allOrdersModule.yandexLabel('${oid}','${sid}')`) : '';
+      const cancel = !['CANCELLED', 'DELIVERED', 'RETURNED'].includes(o.status)
+        ? btn('×', 'Отменить', 'is-danger', `window.allOrdersModule.yandexCancel('${oid}','${sid}')`) : '';
+      return ship + label + cancel;
+    }
+    const confirm = o.status === 'new'
+      ? btn('✓', 'Подтвердить', 'is-primary', `window.allOrdersModule.wbConfirm('${oid}','${sid}')`) : '';
+    const sticker = ['new', 'confirm'].includes(o.status)
+      ? btn('▣', 'Стикер SVG', '', `window.allOrdersModule.wbSticker('${oid}','${sid}')`) : '';
+    const cancel = ['new', 'confirm'].includes(o.status)
+      ? btn('×', 'Отменить', 'is-danger', `window.allOrdersModule.wbCancel('${oid}','${sid}')`) : '';
+    return confirm + sticker + cancel;
+  }
+
   // ── Product image/name cache ─────────────────────────────────────────────
 
   private _productImageCache: Map<string, string> | null = null;
@@ -1269,6 +1304,8 @@ export class AllOrdersModule {
 
     const filtered = this.getFiltered();
     const totalSum = filtered.reduce((s, o) => s + o.total, 0);
+    const actionableCount = filtered.filter(o => o.canAct).length;
+    const deliveredCount = filtered.filter(o => statusCategory(o.marketplace, o.status) === 'delivered').length;
 
     const cntByMp = (mp: Marketplace) => this.orders.filter(o => o.marketplace === mp).length;
     const ozonCount = cntByMp('ozon');
@@ -1335,6 +1372,13 @@ export class AllOrdersModule {
               ${this.loading ? 'Загрузка…' : 'Обновить'}
             </button>
           </div>
+        </div>
+
+        <div class="ord-summary-strip">
+          <div class="ord-summary-main"><span class="ord-summary-kicker">Рабочий список</span><strong>${filtered.length.toLocaleString('ru')} заказов</strong><span>${Math.round(totalSum).toLocaleString('ru')} ₽</span></div>
+          <div class="ord-summary-stat is-attention"><b>${actionableCount}</b><span>требуют действия</span></div>
+          <div class="ord-summary-stat"><b>${deliveredCount}</b><span>доставлено</span></div>
+          <div class="ord-summary-period">Период: <b>${this.period} дней</b></div>
         </div>
 
         <!-- МП-фильтры -->
@@ -1506,7 +1550,7 @@ export class AllOrdersModule {
       if (grpKey !== lastGroup) {
         lastGroup = grpKey;
         const grpLabel = this._dateGroupLabel(ts);
-        grpRow = `<tr class="ord-date-group-row"><td colspan="7"><span class="ord-date-group-label">${grpLabel}</span></td></tr>`;
+        grpRow = `<tr class="ord-date-group-row"><td colspan="8"><span class="ord-date-group-label">${grpLabel}</span></td></tr>`;
       }
       return grpRow + `
         <tr class="oz-row" style="cursor:pointer" onclick="window.allOrdersModule.openDetail('${o.marketplace}','${this.esc(o.id)}')">
@@ -1539,6 +1583,7 @@ export class AllOrdersModule {
           </td>
           <td style="text-align:center">${o.itemsCount}</td>
           <td class="oz-prc" style="text-align:right;white-space:nowrap;font-weight:700">${Math.round(o.total).toLocaleString('ru')} ${o.currency === 'RUB' ? '₽' : o.currency}</td>
+          <td class="ord-actions-cell" onclick="event.stopPropagation()"><div class="ord-quick-actions">${this.buildQuickActionsHtml(o)}<button class="ord-open-action" title="Открыть заказ" aria-label="Открыть заказ" onclick="window.allOrdersModule.openDetail('${o.marketplace}','${this.esc(o.id)}')">›</button></div></td>
         </tr>`;
     }).join('');
 
@@ -1553,6 +1598,7 @@ export class AllOrdersModule {
             <th>Товар</th>
             <th style="text-align:center">Шт.</th>
             <th style="text-align:right">Сумма</th>
+            <th style="width:132px;text-align:right">Действия</th>
           </tr></thead>
           <tbody>${tbody}</tbody>
         </table>
