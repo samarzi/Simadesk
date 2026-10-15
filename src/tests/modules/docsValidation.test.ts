@@ -93,3 +93,20 @@ describe('проверка данных: несколько диапазонов
     expect(ws.getCell('B55').dataValidation).toBeFalsy();
   });
 });
+
+import { renderBook } from './sheetHarness';
+
+describe('выпадающий список в редакторе', () => {
+  it('значение вставляется в ячейку ниже заполненных строк (шаблоны маркетплейсов)', () => {
+    const rule = { type: 'list', allowBlank: true, formulae: ['"Да,Нет"'] };
+    const book: any = { sheets: [{ name: 'Остатки', data: [[{ v: 'Склад' }], [{ v: 'Москва' }], [{ v: 'Казань' }]], xl: { dv: { 'A4:A300': rule } } }] };
+    const { root } = renderBook(book);
+    const btn = root.querySelector<HTMLElement>('.xl-dv-btn[data-dv="9,0"]');
+    expect(btn).toBeTruthy();
+    btn!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+    const item = [...document.querySelectorAll<HTMLElement>('.xm-menu .xm-item')].find(x => x.textContent?.includes('Нет'));
+    expect(item).toBeTruthy();
+    item!.click();
+    expect(book.sheets[0].data[9][0].v).toBe('Нет');
+  });
+});

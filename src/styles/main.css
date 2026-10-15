@@ -4836,3 +4836,52 @@ html:not(.light) .docs-excel-wrap.dx-freeze-row .docs-excel tbody tr[data-row="0
 .docs-document-delete:hover, .docs-document-delete:focus-visible {
   color: #dc4545; background: rgba(220,69,69,.1); border-color: rgba(220,69,69,.3);
 }
+
+/* ── Островок над панелью навигации (листы редактора, «Итого» в «Товарах») ──
+   Тот же стеклянный овал, что и навигация; всегда по центру, чуть выше неё.
+   Содержимое страницы уходит под него до самого низа экрана. */
+.sd-island:not(#_) {
+  position: fixed;
+  left: 50%;
+  bottom: 104px;
+  transform: translateX(-50%);
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100vw - 48px);
+  padding: 5px 6px;
+  /* Свои цвета текста: островок лежит и на тёмной странице, и на белой таблице */
+  --isl-text: #f4f4f5;
+  --isl-text2: rgba(255, 255, 255, 0.74);
+  --isl-hover: rgba(255, 255, 255, 0.10);
+  background: rgba(22, 22, 26, 0.84);
+  backdrop-filter: blur(28px) saturate(200%);
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 999px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  color: var(--isl-text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  user-select: none;
+}
+html.light .sd-island:not(#_) {
+  --isl-text: #1c1b19;
+  --isl-text2: rgba(0, 0, 0, 0.62);
+  --isl-hover: rgba(0, 0, 0, 0.06);
+  background: rgba(233, 230, 223, 0.92);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.12);
+}
+/* Панель навигации в режиме автоскрытия не занимает место — островок опускается */
+body:has(.dock.dock-autohide) .sd-island:not(#_) { bottom: 18px; }
+.sd-island-sep { width: 1px; align-self: stretch; margin: 4px 4px; background: rgba(255, 255, 255, 0.12); flex-shrink: 0; }
+html.light .sd-island-sep { background: rgba(0, 0, 0, 0.10); }
+.sd-island-btn {
+  appearance: none; border: 0; background: transparent; color: var(--isl-text2);
+  height: 30px; min-width: 30px; padding: 0 9px; border-radius: 999px;
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; flex-shrink: 0;
+}
+.sd-island-btn:hover { background: var(--isl-hover); color: var(--isl-text); }
+.sd-island-btn.round { width: 30px; padding: 0; font-size: 18px; font-weight: 500; }

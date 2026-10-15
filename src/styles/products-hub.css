@@ -1931,11 +1931,7 @@ html.light .ph2 .pos { color: #12804b; } html.light .ph2 .neg { color: #c62828; 
 .ph2-cost:hover { background: var(--bg3); }
 .ph2-addcost { color: #e0a100; font-size: 12px; font-weight: 600; }
 .ph2-cost-inp { width: 88px; text-align: right; font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--accent); background: var(--bg2); color: var(--text); outline: none; }
-.ph2-tfoot { flex-shrink: 0; border-top: 1px solid var(--border2); background: var(--bg2); }
-.ph2-tfoot .ph2-tr { height: 42px; font-weight: 600; }
 /* Отступ под плавающую панель навигации */
-.ph2-tfoot { margin-bottom: 104px; }
-body:has(.dock.dock-autohide) .ph2-tfoot { margin-bottom: 0; }
 .ph2 .ph-list-empty { padding: 60px 20px; text-align: center; color: var(--text2); }
 
 /* Карточка — боковая панель */
@@ -1986,3 +1982,28 @@ body:has(.dock.dock-autohide) .ph2-tfoot { margin-bottom: 0; }
 .ph2 .ph-extra-row { display: grid; grid-template-columns: 34px 130px 1fr; gap: 8px; align-items: start; }
 .ph2 .ph-extra-items { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .ph2 .ph-extra-items > span { white-space: nowrap; }
+
+/* ══ «Итого» — островок над навигацией (15.10.2026) ═══════════════════
+   Таблица идёт до низа экрана, итоги — в плавающем овале по центру. */
+.ph2-tfoot.sd-island { margin: 0; border-top: 0; padding: 6px 10px; gap: 2px; }
+body:has(.dock.dock-autohide) .ph2-tfoot.sd-island { margin: 0; }
+.ph2-isl-stat { display: flex; flex-direction: column; align-items: flex-start; padding: 2px 12px; line-height: 1.2; white-space: nowrap; }
+.ph2-isl-stat span { font-size: 11px; color: var(--isl-text2); }
+.ph2-isl-stat b { font-size: 14px; font-weight: 700; color: var(--isl-text); font-variant-numeric: tabular-nums; }
+.ph2-isl-stat b small { font-size: 11px; color: var(--isl-text2); font-weight: 500; }
+.ph2-isl-stat.pos b { color: #3ccf86; }
+.ph2-isl-stat.neg b { color: #ff6b6b; }
+html.light .ph2-isl-stat.pos b { color: #12804b; }
+html.light .ph2-isl-stat.neg b { color: #c62828; }
+.ph2-isl-head b { font-size: 13px; }
+/* Последние строки прокручиваются выше островка и навигации */
+.ph2-body #ph-spacer { margin-bottom: 170px; }
+body:has(.dock.dock-autohide) .ph2-body #ph-spacer { margin-bottom: 80px; }
+/* Панель выбранных товаров — над островком */
+.ph2 .ph-selection-bar { bottom: 168px; }
+body:has(.dock.dock-autohide) .ph2 .ph-selection-bar { bottom: 80px; }
+@media (max-width: 900px) {
+  .ph2-tfoot.sd-island { overflow-x: auto; justify-content: flex-start; scrollbar-width: none; }
+  .ph2-isl-stat { padding: 2px 8px; }
+}
+.ph2.ph2-card-open .ph2-tfoot { display: none; }

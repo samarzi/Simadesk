@@ -275,7 +275,7 @@ export class SheetEditor {
             <div class="xl-layer" data-layer><textarea class="xl-sink" data-sink tabindex="-1" aria-label="Ввод в ячейку" autocomplete="off" spellcheck="false"></textarea></div>
           </div>
         </div>
-        <div class="xl-bottom">
+        <div class="xl-bottom sd-island" role="toolbar" aria-label="Листы книги">
           <div class="xl-tabs" data-tabs></div>
           <div class="xl-status" data-status></div>
         </div>
@@ -568,9 +568,17 @@ export class SheetEditor {
     const rule = this.validationAt(this.sheet(), r, c);
     const values = rule ? this.validationValues(rule) : [];
     if (!values.length) return;
+    // Список часто стоит на строках ниже заполненных данных (шаблоны маркетплейсов:
+    // данные — 3 строки, список — на всю колонку). Строки data[r] там ещё нет —
+    // прямое присваивание падало, и выбранное значение не вставлялось.
+    const put = (value: string) => this.change(() => {
+      const sh = this.sheet();
+      ensureSize(sh, r + 1, c + 1);
+      sh.data[r][c] = interpretInput(value, this.cell(r, c));
+    });
     showMenu([
-      ...(this.cell(r, c)?.v ? [{ label: 'Очистить значение', action: () => this.change(() => { this.sheet().data[r][c] = interpretInput('', this.cell(r, c)); }) }] : []),
-      ...values.map(value => ({ label: value, checked: this.cell(r, c)?.v === value, action: () => this.change(() => { this.sheet().data[r][c] = interpretInput(value, this.cell(r, c)); }) })),
+      ...(this.cell(r, c)?.v ? [{ label: 'Очистить значение', action: () => put('') }] : []),
+      ...values.map(value => ({ label: value, checked: this.cell(r, c)?.v === value, action: () => put(value) })),
     ], anchor);
   }
 

@@ -397,7 +397,7 @@ export class ProductsHubModule {
           <div id="ph-spacer" style="width:1px;pointer-events:none"></div>
           <div id="ph-items" style="position:absolute;top:0;left:0;right:0"></div>
         </div>
-        <div class="ph2-tfoot" id="ph2-tfoot"></div>
+        <div class="ph2-tfoot sd-island" id="ph2-tfoot" role="status" aria-label="Итого по выбранным товарам"></div>
       </div>
 
       <div class="ph2-drawer-bg" id="ph2-drawer-bg" style="display:none"></div>
@@ -513,19 +513,18 @@ export class ProductsHubModule {
       sold += t.sold; returned += t.returned; revenue += t.revenue; fees += t.commission + t.otherFees; stock += t.stock;
       if (t.profit != null) { profit += t.profit; withProfit++; }
     }
-    foot.innerHTML = `<div class="ph2-tr">
-      <div class="ph2-td c-check"></div>
-      <div class="ph2-td c-prod"><b>Итого</b> · ${num(this.filtered.length)} ${plural(this.filtered.length, ['товар', 'товара', 'товаров'])}</div>
-      <div class="ph2-td c-mps"></div>
-      <div class="ph2-td c-num"></div>
-      <div class="ph2-td c-num">${num(stock)}</div>
-      <div class="ph2-td c-num">${num(sold)}${returned ? `<small> / −${num(returned)}</small>` : ''}</div>
-      <div class="ph2-td c-num">${pr(revenue)}</div>
-      <div class="ph2-td c-num">${pr(fees)}</div>
-      <div class="ph2-td c-num"></div>
-      <div class="ph2-td c-num ${profit >= 0 ? 'pos' : 'neg'}" title="${withProfit < this.filtered.length ? `Без ${this.filtered.length - withProfit} товаров без себестоимости` : ''}">${pr(profit)}${withProfit < this.filtered.length ? '<small>*</small>' : ''}</div>
-      <div class="ph2-td c-num">${revenue > 0 ? `${(profit / revenue * 100).toFixed(1).replace('.', ',')}%` : '—'}</div>
-    </div>`;
+    const missing = this.filtered.length - withProfit;
+    const stat = (label: string, value: string, cls = '', title = '') =>
+      `<div class="ph2-isl-stat ${cls}"${title ? ` title="${esc(title)}"` : ''}><span>${label}</span><b>${value}</b></div>`;
+    foot.innerHTML = `
+      <div class="ph2-isl-stat ph2-isl-head"><span>Итого</span><b>${num(this.filtered.length)} ${plural(this.filtered.length, ['товар', 'товара', 'товаров'])}</b></div>
+      <span class="sd-island-sep"></span>
+      ${stat('Остаток', num(stock))}
+      ${stat('Продано', `${num(sold)}${returned ? `<small> / −${num(returned)}</small>` : ''}`, '', returned ? `Возвращено ${num(returned)} шт` : '')}
+      ${stat('Выручка', pr(revenue))}
+      ${stat('Удержания', pr(fees))}
+      ${stat('Прибыль', `${pr(profit)}${missing ? '<small>*</small>' : ''}`, profit >= 0 ? 'pos' : 'neg', missing ? `Без ${missing} ${plural(missing, ['товара', 'товаров', 'товаров'])} без себестоимости` : '')}
+      ${stat('Маржа', revenue > 0 ? `${(profit / revenue * 100).toFixed(1).replace('.', ',')}%` : '—')}`;
   }
 
   private totalsOf(p: HubProduct): Totals {
@@ -666,6 +665,7 @@ export class ProductsHubModule {
     const bg = this.el.querySelector<HTMLElement>('#ph2-drawer-bg');
     if (d) d.style.display = 'none';
     if (bg) bg.style.display = 'none';
+    this.el.classList.remove('ph2-card-open');
     this.renderListItems();
   }
 
@@ -1590,6 +1590,7 @@ export class ProductsHubModule {
     const bg = this.el.querySelector<HTMLElement>('#ph2-drawer-bg');
     if (d) { d.style.display = ''; d.scrollTop = 0; }
     if (bg) bg.style.display = '';
+    this.el.classList.add('ph2-card-open');
     this.renderCard(p);
   }
 

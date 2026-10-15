@@ -354,3 +354,38 @@ body:has(.dock.dock-autohide) .docs-shell:not(.docs-fullscreen) { padding-bottom
 /* Вставка из буфера — значок с подсказкой «Вставить (Ctrl+V)», без текста */
 .xr-btn[data-dd="paste"] > span { display: none; }
 .xr-group { padding: 0 4px; }
+
+/* ══ Листы — островок над навигацией (15.10.2026) ════════════════════
+   Таблица идёт до низа экрана, листы и масштаб — в плавающем овале по центру. */
+.docs-shell:not(.docs-fullscreen) { padding-bottom: 0; }
+body:has(.dock.dock-autohide) .docs-shell:not(.docs-fullscreen) { padding-bottom: 0; }
+.xl-app { position: relative; }
+/* Последние строки прокручиваются выше островка и навигации */
+.xl-scroll::after { content: ''; display: block; height: 170px; }
+body:has(.dock.dock-autohide) .xl-scroll::after { height: 80px; }
+.docs-fullscreen .xl-bottom.sd-island:not(#_) { bottom: 18px; }
+.docs-fullscreen .xl-scroll::after { height: 80px; }
+
+.xl-bottom.sd-island:not(#_) { height: auto; border-top: 1px solid rgba(255,255,255,.10); }
+html.light .xl-bottom.sd-island:not(#_) { border-top-color: rgba(0,0,0,.08); }
+.xl-bottom .xl-tabs { flex: 0 1 auto; align-items: center; gap: 2px; min-width: 0; }
+.xl-bottom .xl-tab-add {
+  width: 30px; height: 30px; border-radius: 999px; font-size: 18px; line-height: 1;
+  color: var(--isl-text2); background: transparent;
+}
+.xl-bottom .xl-tab-add:hover { background: var(--isl-hover); color: var(--isl-text); }
+.xl-bottom .xl-tab-list { gap: 2px; align-items: center; max-width: min(60vw, 900px); }
+.xl-bottom .xl-tab {
+  height: 30px; padding: 0 14px; border: 0; border-radius: 999px;
+  font-size: 13px; color: var(--isl-text2); gap: 6px;
+}
+.xl-bottom .xl-tab::after { position: static; width: 6px; height: 6px; border-radius: 50%; background: var(--tab, transparent); order: -1; }
+.xl-bottom .xl-tab:not([style*="--tab"])::after { display: none; }
+.xl-bottom .xl-tab:hover { background: var(--isl-hover); color: var(--isl-text); }
+.xl-bottom .xl-tab.on { background: var(--accent-dim); color: var(--isl-text); font-weight: 600; box-shadow: none; }
+.xl-bottom .xl-tab-name[contenteditable="true"] { background: var(--bg2); color: var(--isl-text); box-shadow: 0 0 0 1px var(--accent); border-radius: 4px; }
+.xl-bottom .xl-status { color: var(--isl-text2); font-size: 12px; padding: 0 4px 0 8px; gap: 10px; border-left: 1px solid rgba(255,255,255,.12); margin-left: 4px; }
+html.light .xl-bottom .xl-status { border-left-color: rgba(0,0,0,.10); }
+.xl-bottom .xl-st-info:empty { display: none; }
+.xl-bottom .xl-zoomctl button { color: var(--isl-text2); border-radius: 999px; padding: 3px 8px; }
+.xl-bottom .xl-zoomctl button:hover { background: var(--isl-hover); color: var(--isl-text); }
