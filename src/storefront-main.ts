@@ -96,6 +96,9 @@ const BUY_LABEL: Record<string,string>= { wb:'Купить на WB', ozon:'Ку�
 function esc(s: unknown): string {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+function formatPrice(value: number): string {
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value);
+}
 function getImages(p: Product): string[] {
   const validUrl = (u: unknown): u is string =>
     typeof u === 'string' && u.length > 0 && (u.startsWith('http') || u.startsWith('//'));
@@ -181,7 +184,7 @@ html { scrollbar-gutter: stable; }
 }
 .ss-header-brand {
   font-weight:800;
-  background:linear-gradient(90deg,#00FFCC,#00CCAA,#7FFFD4,#00CED1,#00FFCC);
+  background:linear-gradient(90deg,hsl(var(--primary)),hsl(var(--foreground)/.72),hsl(var(--primary)));
   background-size:300% 300%;
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
   animation:ss-brand-shimmer 5s ease infinite;
@@ -220,9 +223,8 @@ html { scrollbar-gutter: stable; }
 .ss-rec-track .ss-card .ss-card-buy { display:none; }
 .ss-rec-track .ss-card .ss-card-body { padding:.4rem .5rem .5rem; }
 .ss-rec-track .ss-card .ss-card-title {
-  display:block; height:2.7em; overflow:hidden;
-  mask-image:linear-gradient(to bottom,#000 40%,transparent 100%);
-  -webkit-mask-image:linear-gradient(to bottom,#000 40%,transparent 100%);
+  display:-webkit-box; min-height:2.6em; overflow:hidden;
+  -webkit-line-clamp:2; -webkit-box-orient:vertical;
 }
 
 .ss-skel { background:hsl(var(--muted)/.5); border-radius:.875rem; overflow:hidden; animation:ss-shimmer 1.4s ease-in-out infinite; }
@@ -234,14 +236,14 @@ html { scrollbar-gutter: stable; }
   background:hsl(var(--card)); border:1px solid hsl(var(--border)/.6);
   border-radius:.875rem; overflow:hidden; cursor:pointer;
   transition:transform .2s, box-shadow .2s;
-  position:relative;
+  position:relative; display:flex; flex-direction:column; min-width:0;
 }
-.ss-card:hover { transform:translateY(-3px); box-shadow:0 12px 40px rgba(0,0,0,.4); }
+.ss-card:hover { transform:translateY(-3px); box-shadow:0 14px 34px hsl(var(--primary)/.14),0 8px 22px rgba(0,0,0,.16); }
 .ss-rec-track .ss-card:hover { transform:none; }
-.ss-card-img  { position:relative; aspect-ratio:3/4; background:hsl(var(--muted)/.3); overflow:hidden; }
+.ss-card-img  { position:relative; aspect-ratio:4/5; background:hsl(var(--muted)/.3); overflow:hidden; }
 .ss-card-img img { width:100%; height:100%; object-fit:cover; }
 .ss-card-grad { position:absolute; inset:0; background:linear-gradient(to top,rgba(0,0,0,.6) 0%,rgba(0,0,0,.2) 40%,transparent 100%); pointer-events:none; }
-.ss-card-body { padding:.5rem .625rem .375rem; }
+.ss-card-body { padding:.65rem .7rem .4rem; flex:1; min-height:6.2rem; display:flex; flex-direction:column; align-items:flex-start; }
 /* ── Favourites ── */
 .ss-fav-btn {
   position:absolute; top:.4rem; left:.4rem; z-index:5;
@@ -277,15 +279,21 @@ html { scrollbar-gutter: stable; }
 .ss-det-fav-btn.active { border-color:hsl(0 72% 51%/.6); color:hsl(0 72% 51%); background:hsl(0 72% 51%/.07); }
 .ss-det-fav-btn svg { width:16px; height:16px; flex-shrink:0; transition:fill .2s; }
 .ss-det-fav-btn.active svg { fill:hsl(0 72% 51%); stroke:hsl(0 72% 51%); }
-.ss-card-title { font-size:.75rem; font-weight:700; line-height:1.3; color:hsl(var(--foreground)); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:2em; }
+.ss-card-title { font-size:.78rem; font-weight:750; line-height:1.35; color:hsl(var(--foreground)); overflow-wrap:anywhere; word-break:break-word; min-height:2.7em; }
 .ss-card-price-row { display:flex; align-items:center; gap:.35rem; flex-wrap:wrap; padding:.35rem 0 .25rem; }
-.ss-card-buy { padding:.25rem .5rem .5rem; }
+.ss-card-price { font-size:.95rem; font-weight:900; color:hsl(var(--foreground)); letter-spacing:-.01em; }
+.ss-stock { display:inline-flex; align-items:center; font-size:10px; font-weight:800; padding:2px 7px; border-radius:6px; margin-top:4px; }
+.ss-stock-ok { color:hsl(142 72% 45%); background:hsl(142 72% 29%/.15); }
+.ss-stock-oos { color:hsl(0 72% 68%); background:hsl(0 72% 51%/.13); }
+.ss-card-buy { padding:.25rem .6rem .6rem; margin-top:auto; width:100%; }
 .ss-card-buy-btn {
   display:flex; align-items:center; justify-content:center;
   width:100%; height:1.75rem; font-size:10px; font-weight:700;
-  background:linear-gradient(135deg,#00FFCC,#00CCAA); color:#000;
-  border-radius:.5rem; border:none; cursor:pointer;
+  background:linear-gradient(135deg,hsl(var(--primary)),hsl(var(--primary)/.76)); color:hsl(var(--primary-foreground));
+  border-radius:.55rem; border:none; cursor:pointer; transition:filter .15s,transform .15s,box-shadow .15s;
 }
+.ss-card-buy-btn:hover { filter:brightness(1.08); transform:translateY(-1px); box-shadow:0 6px 16px hsl(var(--primary)/.22); }
+.ss-card-buy-btn:focus-visible,.ss-catalog-btn:focus-visible,.ss-btn-pri:focus-visible,.ss-btn-sec:focus-visible,.ss-src-tab:focus-visible,.ss-filter-pill:focus-visible,.ss-chip:focus-visible { outline:3px solid hsl(var(--ring)/.42); outline-offset:2px; }
 
 /* ── Variant selector buttons (detail panel only) ── */
 .ss-det-var-btn {
@@ -308,13 +316,13 @@ html { scrollbar-gutter: stable; }
 .ss-catalog-btn {
   display:flex; align-items:center; justify-content:center; gap:.75rem;
   width:100%; padding:1.1rem; border-radius:1rem;
-  background:linear-gradient(135deg,#00FFCC,#00CCAA);
-  color:#000; font-size:1.1rem; font-weight:900;
+  background:linear-gradient(135deg,hsl(var(--primary)),hsl(var(--primary)/.76));
+  color:hsl(var(--primary-foreground)); font-size:1.05rem; font-weight:900;
   text-decoration:none; border:none; cursor:pointer;
-  box-shadow:0 8px 32px rgba(0,255,204,.25);
+  box-shadow:0 8px 32px hsl(var(--primary)/.22);
   transition:transform .2s, box-shadow .2s;
 }
-.ss-catalog-btn:hover { transform:translateY(-2px); box-shadow:0 14px 40px rgba(0,255,204,.35); }
+.ss-catalog-btn:hover { transform:translateY(-2px); filter:brightness(1.08); box-shadow:0 14px 40px hsl(var(--primary)/.3); }
 .ss-catalog-btn svg { transition:transform .2s; }
 .ss-catalog-btn:hover svg { transform:translateX(4px); }
 
@@ -327,7 +335,7 @@ html { scrollbar-gutter: stable; }
   font-size:.8rem; font-weight:700; color:hsl(var(--foreground));
   transition:border-color .15s, box-shadow .15s;
 }
-.ss-group-chip:hover { border-color:hsl(var(--primary)); box-shadow:0 2px 12px rgba(0,255,204,.2); }
+.ss-group-chip:hover { border-color:hsl(var(--primary)); background:hsl(var(--primary)/.08); box-shadow:0 2px 12px hsl(var(--primary)/.18); }
 .ss-group-chip-img { width:24px; height:24px; border-radius:50%; object-fit:cover; flex-shrink:0; }
 .ss-group-chip-ph { width:24px; height:24px; border-radius:50%; background:hsl(var(--primary)/.2); display:flex; align-items:center; justify-content:center; font-size:.7rem; font-weight:900; color:hsl(var(--primary)); flex-shrink:0; }
 .ss-group-chip-lbl { white-space:nowrap; }
@@ -335,7 +343,7 @@ html { scrollbar-gutter: stable; }
 .ss-detail {
   position:fixed; inset:0; z-index:100;
   background:hsl(var(--background));
-  overflow-y:auto; overflow-x:hidden;
+  overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain;
   transform:translateX(100%);
   transition:transform .35s cubic-bezier(.25,.46,.45,.94);
   will-change:transform;
@@ -348,7 +356,7 @@ html { scrollbar-gutter: stable; }
   width:2.5rem; height:5rem;
   background:hsl(var(--primary)/.8); border-radius:0 3rem 3rem 0;
   display:flex; align-items:center; justify-content:center;
-  color:#000; font-size:1.1rem; opacity:0; transition:opacity .2s; pointer-events:none;
+  color:hsl(var(--primary-foreground)); font-size:1.1rem; opacity:0; transition:opacity .2s; pointer-events:none;
 }
 .ss-swipe-ind.visible { opacity:1; }
 
@@ -393,15 +401,20 @@ html { scrollbar-gutter: stable; }
 .ss-gal-thumb.active { border-color:hsl(var(--primary)); }
 .ss-gal-thumb img { width:100%; height:100%; object-fit:cover; }
 
-.ss-det-body { padding:1rem 1rem 7rem; }
+.ss-det-body { padding:1rem 1rem 7rem; max-width:1240px; width:100%; margin:0 auto; box-sizing:border-box; }
 @media (min-width:1024px) {
-  .ss-det-body { padding:1.5rem 2rem 5rem; }
-  .ss-det-layout { display:grid; grid-template-columns:300px 1fr; gap:2rem; align-items:start; }
+  .ss-det-body { padding:1.5rem 2rem 5rem; max-width:1240px; width:100%; margin:0 auto; box-sizing:border-box; }
+  .ss-det-layout { display:grid; grid-template-columns:minmax(280px,400px) minmax(0,1fr); gap:clamp(1.25rem,3vw,3rem); align-items:start; }
 }
 @media (min-width:1280px) { .ss-det-layout{grid-template-columns:400px 1fr;} }
+.ss-det-layout > * { min-width:0; }
+.ss-det-specs { display:flex; flex-direction:column; gap:0; margin-top:.75rem; border-top:1px solid hsl(var(--border)/.35); }
+.ss-det-spec-row { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; min-width:0; padding:.65rem 0; border-bottom:1px solid hsl(var(--border)/.3); font-size:.85rem; }
+.ss-det-spec-row > span:first-child { flex:0 0 auto; color:hsl(var(--muted-foreground)); }
+.ss-det-spec-row > span:last-child { min-width:0; max-width:70%; text-align:right; font-weight:650; overflow-wrap:anywhere; word-break:break-word; }
 .ss-det-title { font-size:1.25rem; font-weight:800; line-height:1.3; margin-bottom:.75rem; color:hsl(var(--foreground)); }
 @media (min-width:640px) { .ss-det-title{font-size:1.5rem;} }
-.ss-price-big { font-size:2rem; font-weight:900; background:linear-gradient(to right,#00FFCC,#00CCAA); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+.ss-price-big { font-size:2rem; font-weight:900; color:hsl(var(--primary)); }
 .ss-price-row { display:flex; align-items:baseline; gap:.6rem; flex-wrap:wrap; margin-bottom:1rem; }
 .ss-price-old  { font-size:1rem; text-decoration:line-through; opacity:.4; }
 .ss-price-disc { font-size:.8rem; font-weight:800; color:#f87171; background:hsl(0 72% 51%/.12); border:1px solid hsl(0 72% 51%/.2); padding:.15rem .4rem; border-radius:.35rem; }
@@ -412,12 +425,12 @@ html { scrollbar-gutter: stable; }
 .ss-btn-pri {
   display:flex; align-items:center; justify-content:center; gap:.5rem;
   padding:.9rem 1.5rem; border-radius:.875rem; font-weight:800; font-size:.95rem;
-  text-decoration:none; color:#000;
-  background:linear-gradient(135deg,#00FFCC,#00CCAA);
+  text-decoration:none; color:hsl(var(--primary-foreground));
+  background:linear-gradient(135deg,hsl(var(--primary)),hsl(var(--primary)/.76));
   box-shadow:0 6px 20px hsl(var(--primary)/.3);
   transition:transform .15s,opacity .15s; border:none; cursor:pointer;
 }
-.ss-btn-pri:hover { opacity:.9; transform:translateY(-1px); }
+.ss-btn-pri:hover { filter:brightness(1.08); transform:translateY(-1px); }
 .ss-btn-sec {
   display:flex; align-items:center; justify-content:center; gap:.5rem;
   padding:.75rem 1.5rem; border-radius:.875rem; font-weight:700; font-size:.875rem;
@@ -432,7 +445,7 @@ html { scrollbar-gutter: stable; }
   border-radius:.875rem; color:hsl(var(--foreground)); font-size:.875rem; outline:none;
   transition:border-color .15s, background .15s;
 }
-.ss-search:focus { border-color:hsl(var(--primary)/.6); background:hsl(var(--muted)/1.2); }
+.ss-search:focus { border-color:hsl(var(--primary)/.8); background:hsl(var(--card)); box-shadow:0 0 0 3px hsl(var(--ring)/.14); }
 .ss-search::placeholder { color:hsl(var(--muted-foreground)/.8); }
 
 /* ── Floating glass search bar ── */
@@ -484,8 +497,8 @@ html { scrollbar-gutter: stable; }
 .ss-float-count {
   font-size:.7rem; font-weight:800; white-space:nowrap;
   padding:.25rem .6rem; border-radius:999px; margin-right:.35rem;
-  background:rgba(212,240,0,.2); border:1px solid rgba(212,240,0,.3);
-  color:#d4f000; flex-shrink:0;
+  background:hsl(var(--primary)/.16); border:1px solid hsl(var(--primary)/.35);
+  color:hsl(var(--primary)); flex-shrink:0;
 }
 @media (max-width:480px) { .ss-float-count { display:none; } }
 
@@ -495,7 +508,8 @@ html { scrollbar-gutter: stable; }
   color:hsl(var(--muted-foreground)); border-radius:.875rem;
   transition:background .15s,color .15s;
 }
-.ss-src-tab.active { background:hsl(var(--background)); color:hsl(var(--primary)); box-shadow:0 1px 4px rgba(0,0,0,.3); }
+.ss-src-tab:hover { background:hsl(var(--primary)/.1); color:hsl(var(--foreground)); }
+.ss-src-tab.active { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); box-shadow:0 4px 12px hsl(var(--primary)/.22); }
 
 /* ── Filter modal ── */
 .ss-filter-overlay { display:none; position:fixed; inset:0; z-index:200; background:rgba(0,0,0,.5); }
@@ -511,8 +525,9 @@ html { scrollbar-gutter: stable; }
 .ss-filter-drawer-body { overflow-y:auto; padding:.875rem 1rem; flex:1; display:flex; flex-direction:column; gap:1rem; }
 .ss-filter-drawer-footer { display:flex; gap:.5rem; padding:.75rem 1rem max(1.25rem, env(safe-area-inset-bottom, 1.25rem)); border-top:1px solid hsl(var(--border)/.4); flex-shrink:0; }
 .ss-filter-pill { display:flex; align-items:center; gap:.5rem; width:100%; padding:.625rem 1rem; border-radius:.875rem; border:1.5px solid hsl(var(--border)/.7); background:hsl(var(--muted)/.4); cursor:pointer; font-size:.875rem; font-weight:700; color:hsl(var(--foreground)); transition:background .15s; }
+.ss-filter-pill:hover { background:hsl(var(--primary)/.1); border-color:hsl(var(--primary)/.55); }
 .ss-filter-pill.has-active { border-color:hsl(var(--primary)/.6); color:hsl(var(--primary)); }
-.ss-filter-cnt { background:hsl(var(--primary)); color:#000; border-radius:999px; padding:.05rem .375rem; font-size:.68rem; font-weight:900; margin-left:auto; }
+.ss-filter-cnt { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); border-radius:999px; padding:.05rem .375rem; font-size:.68rem; font-weight:900; margin-left:auto; }
 .ss-filters-bar { display:flex; flex-wrap:wrap; gap:.5rem .75rem; margin-bottom:.75rem; align-items:flex-start; }
 .ss-filter-group { display:flex; flex-direction:column; gap:.3rem; }
 .ss-filter-label { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:hsl(var(--muted-foreground)); }
@@ -558,11 +573,12 @@ html { scrollbar-gutter: stable; }
   align-items:center; height:3.5rem; padding:0 .75rem; gap:.5rem;
   max-width:1400px; margin:0 auto;
 }
+.nav-modern { background:hsl(var(--background)/.88); border-bottom:1px solid hsl(var(--border)/.72); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
 .ss-hdr-logo-cell { display:flex; align-items:center; gap:.5rem; overflow:hidden; min-width:0; }
 .ss-hdr-logo-btn { background:none; border:none; cursor:pointer; padding:0; text-align:left; transition:opacity .15s; }
 .ss-hdr-logo-btn:hover { opacity:.8; }
 .ss-logo-img { width:2rem; height:2rem; border-radius:.5rem; object-fit:cover; flex-shrink:0; }
-.ss-logo-init { width:2rem; height:2rem; border-radius:.5rem; background:linear-gradient(135deg,#00FFCC,#00CCAA); display:flex; align-items:center; justify-content:center; font-weight:900; font-size:.875rem; color:#000; flex-shrink:0; }
+.ss-logo-init { width:2rem; height:2rem; border-radius:.5rem; background:linear-gradient(135deg,hsl(var(--primary)),hsl(var(--primary)/.72)); display:flex; align-items:center; justify-content:center; font-weight:900; font-size:.875rem; color:hsl(var(--primary-foreground)); flex-shrink:0; }
 @media(min-width:640px) { .ss-logo-img,.ss-logo-init { width:2.5rem; height:2.5rem; border-radius:.625rem; font-size:1.1rem; } }
 .ss-hdr-name { font-size:.95rem; font-weight:800; color:hsl(var(--foreground)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 @media(min-width:640px) { .ss-hdr-name { font-size:1.3rem; } }
@@ -604,7 +620,7 @@ html { scrollbar-gutter: stable; }
 @media (min-width:640px) { .ss-hiw-steps-mob{display:none;} }
 .ss-hiw-mob-card { display:flex; align-items:center; gap:.75rem; padding:.75rem 1rem; border-radius:.875rem; }
 .ss-hiw-mob-icon { flex-shrink:0; width:2.75rem; height:2.75rem; border-radius:.75rem; display:flex; align-items:center; justify-content:center; font-size:1.2rem; position:relative; }
-.ss-hiw-mob-num { position:absolute; top:-3px; right:-3px; width:1.1rem; height:1.1rem; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:.55rem; font-weight:900; color:#000; background:#00FFCC; box-shadow:0 0 0 2px hsl(var(--background)); }
+.ss-hiw-mob-num { position:absolute; top:-3px; right:-3px; width:1.1rem; height:1.1rem; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:.55rem; font-weight:900; color:hsl(var(--primary-foreground)); background:hsl(var(--primary)); box-shadow:0 0 0 2px hsl(var(--background)); }
 .ss-hiw-connector { width:1px; height:.75rem; background:linear-gradient(to bottom,hsl(var(--primary)/.4),transparent); margin:.15rem auto; }
 /* Theme surface overrides. Inline marketplace colors remain recognizable, while the store chrome follows the selected cabinet theme. */
 html[data-store-theme="classic"] body{background:#f4f4f4;color:#111}
@@ -613,7 +629,6 @@ html[data-store-theme="classic"] .ss-header-brand{background:linear-gradient(90d
 html[data-store-theme="classic"] .ss-logo-init{background:#111;color:#fff}
 html[data-store-theme="classic"] .ss-card,html[data-store-theme="classic"] .ss-skel,html[data-store-theme="classic"] .ss-filter-drawer,html[data-store-theme="classic"] .ss-det-layout{background:#fff;border-color:#d6d6d6}
 html[data-store-theme="classic"] .ss-card-grad{background:linear-gradient(to top,rgba(0,0,0,.22),transparent 62%)}
-html[data-store-theme="classic"] .ss-card-buy-btn,html[data-store-theme="classic"] .ss-catalog-btn{background:#111;color:#fff}
 html[data-store-theme="classic"] .ss-search,html[data-store-theme="classic"] .ss-price-inp,html[data-store-theme="classic"] .ss-src-tabs{background:#fff;color:#111;border-color:#c9c9c9}
 html[data-store-theme="classic"] .ss-contact{background:#fff!important}
 html[data-store-theme="classic"] .ss-fav-btn{background:rgba(0,0,0,.58)}
@@ -624,6 +639,8 @@ html[data-store-theme="classic"] .ss-hiw-mob-card,html[data-store-theme="classic
 html[data-store-theme="classic"] .ss-hiw-num,html[data-store-theme="classic"] .ss-hiw-mob-num{color:#fff;background:#111}
 html[data-store-theme="classic"] .ss-modal-bg{background:rgba(0,0,0,.35)}
 html[data-store-theme="classic"] .ss-modal{background:#fff;color:#111}
+html[data-store-theme="classic"] .ss-src-tab.active{background:#111;color:#fff}
+html[data-store-theme="classic"] .ss-filter-apply{background:#111;color:#fff}
 `;
   document.head.appendChild(el);
 }
@@ -765,11 +782,15 @@ function renderCard(
   ).join('');
   const isFav = favs?.has(group.key) ?? false;
 
+  const priceHtml = group.price_min > 0
+    ? `<div class="ss-card-price-row"><span class="ss-card-price">${group.price_min === group.price_max ? `${formatPrice(group.price_min)} ₽` : `от ${formatPrice(group.price_min)} ₽`}</span></div>`
+    : '';
+
   // Stock badge
   const stockHtml = showStock
     ? group.totalStock > 0
-      ? `<div style="display:inline-flex;align-items:center;font-size:10px;font-weight:700;color:#44dd88;background:rgba(68,221,136,.12);padding:2px 7px;border-radius:6px;margin-top:4px">${group.totalStock} шт.</div>`
-      : `<div style="display:inline-flex;align-items:center;font-size:10px;font-weight:700;color:#ff6b6b;background:rgba(255,107,107,.1);padding:2px 7px;border-radius:6px;margin-top:4px">нет в наличии</div>`
+      ? `<div class="ss-stock ss-stock-ok">${group.totalStock} шт.</div>`
+      : `<div class="ss-stock ss-stock-oos">нет в наличии</div>`
     : '';
 
   return `
@@ -783,7 +804,8 @@ function renderCard(
     <div style="position:absolute;top:.4rem;right:.4rem;display:flex;flex-direction:column;gap:.2rem;align-items:flex-end">${badgesHtml}</div>
   </div>
   <div class="ss-card-body">
-    <div class="ss-card-title">${esc(group.title)}</div>
+    <div class="ss-card-title" title="${esc(group.title)}">${esc(group.title)}</div>
+    ${priceHtml}
     ${stockHtml}
   </div>
   <div class="ss-card-buy">
@@ -910,7 +932,7 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
   if (s.logo_url) setFavicon(s.logo_url);
 
   root.innerHTML = `
-<div style="min-height:100vh;background:hsl(var(--background));color:hsl(var(--foreground))">
+<div class="ss-store-shell" style="min-height:100vh;background:hsl(var(--background));color:hsl(var(--foreground))">
   ${headerHtml(s, false)}
 
   ${mobContacts ? `<div class="ss-mob-contacts">${mobContacts}</div>` : ''}
@@ -1048,7 +1070,7 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, all
   const hasSrc = (src: string) => groups.some(g => g.entries.some(e => e.source === src));
 
   root.innerHTML = `
-<div style="min-height:100vh;background:hsl(var(--background));color:hsl(var(--foreground))">
+<div class="ss-store-shell" style="min-height:100vh;background:hsl(var(--background));color:hsl(var(--foreground))">
   ${headerHtml(s, true, 'Главная')}
 
   <div style="max-width:1400px;margin:0 auto;padding:.75rem .75rem 4rem">
@@ -1093,7 +1115,7 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, all
       <div class="ss-filter-drawer-body" id="ss-filters-bar"></div>
       <div class="ss-filter-drawer-footer">
         <button id="sf-reset" style="flex:1;padding:.65rem;border-radius:.75rem;border:1.5px solid hsl(var(--border)/.6);background:none;cursor:pointer;font-weight:700;font-size:.875rem;color:hsl(var(--foreground))">Сбросить</button>
-        <button id="ss-filter-apply" style="flex:2;padding:.65rem;border-radius:.75rem;border:none;background:hsl(var(--primary));cursor:pointer;font-weight:800;font-size:.875rem;color:#000">Применить</button>
+        <button id="ss-filter-apply" class="ss-filter-apply" style="flex:2;padding:.65rem;border-radius:.75rem;border:none;background:hsl(var(--primary));cursor:pointer;font-weight:800;font-size:.875rem;color:hsl(var(--primary-foreground))">Применить</button>
       </div>
     </div>
   </div>
@@ -1506,13 +1528,6 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, all
 let _sharedFavs: Set<string> | undefined;
 let _sharedToggleFav: ((key: string, el?: HTMLElement|null) => void) | undefined;
 
-// Brand colors for each marketplace
-const MKT_COLOR: Record<string, string> = {
-  wb:     'background:#CB11AB;color:#fff;border:none;box-shadow:0 4px 16px rgba(203,17,171,.3)',
-  ozon:   'background:#005BFF;color:#fff;border:none;box-shadow:0 4px 16px rgba(0,91,255,.3)',
-  yandex: 'background:#FDE100;color:#000;border:none;box-shadow:0 4px 16px rgba(253,225,0,.35)',
-};
-
 function openDetail(
   group: GroupedProduct, allGroups: GroupedProduct[], slug: string, onClose: () => void,
   favs?: Set<string>, toggleFav?: (key: string, el?: HTMLElement|null) => void,
@@ -1520,12 +1535,11 @@ function openDetail(
 ): void {
   const imgs = group.images;
 
-  // Build brand-colored buy buttons for all entries
+  // Store actions use the selected cabinet theme; marketplace identity stays in the label.
   const mktBtn = (entry: typeof group.entries[0]) => {
     const url   = buildEntryUrl(entry);
     const label = BUY_LABEL[entry.source] ?? 'Купить';
-    const style = MKT_COLOR[entry.source] ?? '';
-    return `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="ss-btn-pri" style="${style}">${label} ↗</a>`;
+    return `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="ss-btn-pri" data-marketplace="${esc(entry.source)}">${label} ↗</a>`;
   };
   const buyButtonsHtml = group.entries.map(mktBtn).join('');
 
@@ -1655,15 +1669,12 @@ function openDetail(
         ${customBtnHtml}
         ${favs !== undefined ? `<button class="ss-det-fav-btn${favs.has(group.key)?' active':''}" id="ss-det-fav">${HEART_SVG}${favs.has(group.key) ? 'В избранном' : 'В избранное'}</button>` : ''}
       </div>
-      <div style="display:flex;flex-direction:column;gap:.25rem;margin-top:.5rem">
-        ${group.vendor_code ? `<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0;border-bottom:1px solid hsl(var(--border)/.3)"><span style="color:hsl(var(--muted-foreground))">Артикул</span><span style="font-weight:600">${esc(group.vendor_code)}</span></div>` : ''}
-        ${group.brand ? `<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0;border-bottom:1px solid hsl(var(--border)/.3)"><span style="color:hsl(var(--muted-foreground))">Бренд</span><span style="font-weight:600">${esc(group.brand)}</span></div>` : ''}
-        ${group.weight_kg  ? `<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0;border-bottom:1px solid hsl(var(--border)/.3)"><span style="color:hsl(var(--muted-foreground))">Вес</span><span style="font-weight:600">${group.weight_kg} кг</span></div>` : ''}
-        ${(group.length_cm || group.width_cm || group.height_cm) ? `<div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0;border-bottom:1px solid hsl(var(--border)/.3)"><span style="color:hsl(var(--muted-foreground))">Габариты (ДxШxВ)</span><span style="font-weight:600">${[group.length_cm,group.width_cm,group.height_cm].map(v=>v??'—').join(' × ')} см</span></div>` : ''}
-        <div style="display:flex;justify-content:space-between;font-size:.85rem;padding:.5rem 0">
-          <span style="color:hsl(var(--muted-foreground))">Площадки</span>
-          <span style="font-weight:600">${[...new Set(group.entries.map(e => BADGE[e.source]??e.source))].join(', ')}</span>
-        </div>
+      <div class="ss-det-specs">
+        ${group.vendor_code ? `<div class="ss-det-spec-row"><span>Артикул</span><span>${esc(group.vendor_code)}</span></div>` : ''}
+        ${group.brand ? `<div class="ss-det-spec-row"><span>Бренд</span><span>${esc(group.brand)}</span></div>` : ''}
+        ${group.weight_kg  ? `<div class="ss-det-spec-row"><span>Вес</span><span>${group.weight_kg} кг</span></div>` : ''}
+        ${(group.length_cm || group.width_cm || group.height_cm) ? `<div class="ss-det-spec-row"><span>Габариты (Д × Ш × В)</span><span>${[group.length_cm,group.width_cm,group.height_cm].map(v=>v??'—').join(' × ')} см</span></div>` : ''}
+        <div class="ss-det-spec-row"><span>Площадки</span><span>${[...new Set(group.entries.map(e => BADGE[e.source]??e.source))].join(', ')}</span></div>
       </div>
     </div>
   </div>
@@ -1878,7 +1889,7 @@ async function init(): Promise<void> {
     root.innerHTML = `<div style="min-height:100vh;background:hsl(var(--background));display:flex;align-items:center;justify-content:center;text-align:center;padding:2rem">
       <div><div style="display:flex;justify-content:center;margin-bottom:1rem;color:hsl(var(--foreground)/.2)"><svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0119 12.55M5 12.55a10.94 10.94 0 015.17-2.39M10.71 5.05A16 16 0 0122.56 9M1.42 9a15.91 15.91 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01"/></svg></div><h1 style="font-size:1.25rem;font-weight:900;color:hsl(var(--foreground));margin-bottom:.5rem">Ошибка соединения</h1>
       <p style="color:hsl(var(--muted-foreground));margin-bottom:1.5rem">Проверьте подключение к интернету</p>
-      <button onclick="location.reload()" style="background:linear-gradient(135deg,#00FFCC,#00CCAA);color:#000;font-weight:800;padding:.75rem 2rem;border-radius:.875rem;border:none;cursor:pointer;font-size:.9rem">Обновить</button></div></div>`;
+      <button class="ss-catalog-btn" style="max-width:280px;margin:0 auto;font-size:.9rem;padding:.75rem 1.25rem" onclick="location.reload()">Обновить</button></div></div>`;
   };
 
   let data: StoreData | null = null;
@@ -1896,7 +1907,7 @@ async function init(): Promise<void> {
     root.innerHTML = `<div style="min-height:100vh;background:hsl(var(--background));display:flex;align-items:center;justify-content:center;text-align:center;padding:2rem">
       <div><div style="display:flex;justify-content:center;margin-bottom:1rem;color:hsl(var(--foreground)/.2)"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div><h1 style="font-size:1.5rem;font-weight:900;color:hsl(var(--foreground));margin-bottom:.5rem">Магазин не найден</h1>
       <p style="color:hsl(var(--muted-foreground));margin-bottom:1.5rem">Проверьте адрес или попросите владельца поделиться ссылкой</p>
-      <a href="https://simadesk.ru" style="display:inline-block;background:linear-gradient(135deg,#00FFCC,#00CCAA);color:#000;font-weight:800;padding:.75rem 2rem;border-radius:.875rem;text-decoration:none">Открыть SimaDesk</a></div></div>`;
+      <a href="https://simadesk.ru" class="ss-catalog-btn" style="max-width:280px;margin:0 auto;font-size:.9rem;padding:.75rem 1.25rem">Открыть SimaDesk</a></div></div>`;
     return;
   }
 
