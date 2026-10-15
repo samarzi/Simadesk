@@ -109,6 +109,16 @@ function getImages(p: Product): string[] {
   if (validUrl(p.image_url)) return [p.image_url];
   return [];
 }
+function optimizeImages(container: ParentNode): void {
+  container.querySelectorAll<HTMLImageElement>('img').forEach((img, i) => {
+    img.decoding = 'async';
+    if (img.loading === 'lazy') img.fetchPriority = 'low';
+    if (i === 0 && img.closest('.ss-gal-main')) {
+      img.loading = 'eager';
+      img.fetchPriority = 'high';
+    }
+  });
+}
 function buildEntryUrl(p: Product): string {
   if (p.source === 'wb') return `https://www.wildberries.ru/catalog/${p.source_id}/detail.aspx`;
   if (p.source === 'ozon') return `https://www.ozon.ru/product/${p.ozon_sku ?? p.source_id}/`;
@@ -255,11 +265,13 @@ html { scrollbar-gutter: stable; }
   border-radius:.875rem; overflow:hidden; cursor:pointer;
   transition:transform .2s, box-shadow .2s;
   position:relative; display:flex; flex-direction:column; min-width:0;
+  content-visibility:auto; contain-intrinsic-size:320px 420px;
 }
 .ss-card:hover { transform:translateY(-3px); box-shadow:0 14px 34px hsl(var(--primary)/.14),0 8px 22px rgba(0,0,0,.16); }
 .ss-rec-track .ss-card:hover { transform:none; }
 .ss-card-img  { position:relative; aspect-ratio:4/5; background:linear-gradient(145deg,hsl(var(--muted)/.56),hsl(var(--card))); overflow:hidden; display:flex; align-items:center; justify-content:center; }
 .ss-card-img img { width:100%; height:100%; object-fit:contain; object-position:center; display:block; padding:.25rem; box-sizing:border-box; }
+.ss-card-img img, .ss-rec-track img, .ss-gal-thumb img { image-rendering:auto; filter:none !important; transform:none !important; }
 .ss-card-grad { position:absolute; inset:0; background:linear-gradient(to top,rgba(0,0,0,.6) 0%,rgba(0,0,0,.2) 40%,transparent 100%); pointer-events:none; }
 .ss-card-body { padding:.65rem .7rem .4rem; flex:1; min-height:6.2rem; display:flex; flex-direction:column; align-items:flex-start; }
 /* ── Favourites ── */
@@ -433,6 +445,9 @@ html { scrollbar-gutter: stable; }
 .ss-gal-thumb.active { border-color:hsl(var(--primary)); transform:translateY(-1px); box-shadow:0 5px 14px hsl(var(--primary)/.2); }
 .ss-gal-thumb img { width:100%; height:100%; object-fit:cover; }
 @media (max-width:639px) { .ss-gal-nav { width:2.5rem; height:2.5rem; } .ss-gal-nav-prev{left:.5rem}.ss-gal-nav-next{right:.5rem} }
+@media (max-width:800px) {
+  .nav-modern, .ss-det-hdr, .ss-gal-nav, .ss-gal-count, .ss-fav-btn { backdrop-filter:none; -webkit-backdrop-filter:none; }
+}
 
 .ss-det-body { padding:1rem 1rem 7rem; max-width:1240px; width:100%; margin:0 auto; box-sizing:border-box; }
 @media (min-width:1024px) {
@@ -1021,6 +1036,7 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
     Powered by <a href="https://simadesk.ru" style="color:hsl(var(--primary));font-weight:700;text-decoration:none">SimaDesk</a>
   </footer>
 </div>`;
+  optimizeImages(root);
 
   let bannerCarousel: Carousel|null = null;
   if (banners.length > 0) {
@@ -1059,6 +1075,7 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
   </div>
 </div>`;
     }).join('');
+    optimizeImages(track);
 
     const trackEl = track;
     const wrap = document.getElementById('ss-rec-carousel');
@@ -1385,6 +1402,7 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, all
     } else {
       slice.forEach(g => { grid.insertAdjacentHTML('beforeend', renderCard(g, favs, variantMap, showStock, allGroups)); });
     }
+    optimizeImages(grid);
     const sentinel = document.getElementById('ss-cat-sentinel');
     sentinel?.remove();
     lazyObserver?.disconnect();
@@ -1756,6 +1774,7 @@ function openDetail(
 `;
 
   document.body.appendChild(panel);
+  optimizeImages(panel);
   requestAnimationFrame(() => requestAnimationFrame(() => { panel.classList.add('open'); }));
 
   // Gallery sync
