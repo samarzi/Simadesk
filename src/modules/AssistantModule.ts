@@ -3203,6 +3203,7 @@ export class AssistantModule {
         clean: cleanForTTS,
         onStart: () => this.setStatus('Озвучиваю…', 'speaking'),
         onEnd: () => this.onStreamTtsEnd(),
+        onError: () => this.onTtsError(),
       });
     }
     this.streamTts.feed(display);
@@ -3235,6 +3236,11 @@ export class AssistantModule {
     if (!this.isLoading) this.setStatus('Готова');
   }
 
+  /** Озвучка не удалась целиком — сказать об этом, а не молчать. */
+  private onTtsError(): void {
+    showToast('Озвучка сейчас недоступна — попробуйте позже', 'warning');
+  }
+
   private startMsgTts(text: string, btn: HTMLElement): void {
     ttsStop();
     edgeTtsUnlock(); // разблокировать AudioContext в контексте пользовательского жеста
@@ -3251,6 +3257,7 @@ export class AssistantModule {
       rate: this.ttsRate,
       voice: this.ttsVoiceName,
       clean: cleanForTTS,
+      onError: () => this.onTtsError(),
       onEnd: () => {
         btn.classList.remove('speaking');
         if (this.speakingBtn === btn) {

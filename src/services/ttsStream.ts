@@ -80,6 +80,8 @@ export interface TtsStreamOptions {
   onStart?: () => void;
   /** Очередь опустела и вход закрыт. */
   onEnd?: () => void;
+  /** Ни одна фраза не синтезировалась — сервер озвучки недоступен. */
+  onError?: () => void;
 }
 
 /**
@@ -92,6 +94,7 @@ export class TtsStreamSession {
   private inputClosed = false;
   private cancelled = false;
   private started = false;
+  private failed = 0;
   private spokenChars = 0;
   private isFirst = true;
   private readonly gen: number;
@@ -156,7 +159,7 @@ export class TtsStreamSession {
   private enqueue(text: string): void {
     // Синтез стартует сразу — следующая фраза готовится, пока играет текущая.
     const job = edgeTtsSynthesize(text, this.opts.rate, this.opts.voice)
-      .catch(() => null);
+      .catch(() => { this.failed++; return null; });
     this.pending.push(job);
   }
 
@@ -178,6 +181,7 @@ export class TtsStreamSession {
     }
     // Очередь пуста. Если вход закрыт и ничего не подъехало — сессия окончена.
     if (this.alive && this.inputClosed && !this.pending.length) {
+      if (!this.started && this.failed) this.opts.onError?.();
       this.opts.onEnd?.();
     }
   }
