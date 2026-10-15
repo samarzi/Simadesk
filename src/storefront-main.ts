@@ -269,8 +269,8 @@ html { scrollbar-gutter: stable; }
 }
 .ss-card:hover { transform:translateY(-3px); box-shadow:0 14px 34px hsl(var(--primary)/.14),0 8px 22px rgba(0,0,0,.16); }
 .ss-rec-track .ss-card:hover { transform:none; }
-.ss-card-img  { position:relative; aspect-ratio:4/5; background:linear-gradient(145deg,hsl(var(--muted)/.56),hsl(var(--card))); overflow:hidden; display:flex; align-items:center; justify-content:center; }
-.ss-card-img img { width:100%; height:100%; object-fit:contain; object-position:center; display:block; padding:.25rem; box-sizing:border-box; }
+.ss-card-img  { position:relative; aspect-ratio:4/5; background:linear-gradient(145deg,hsl(var(--muted)/.56),hsl(var(--card))); overflow:hidden; display:flex; align-items:center; justify-content:center; padding:.35rem; box-sizing:border-box; }
+.ss-card-img img { width:auto; height:auto; max-width:100%; max-height:100%; object-fit:contain; object-position:center; display:block; }
 .ss-card-img img, .ss-rec-track img, .ss-gal-thumb img { image-rendering:auto; filter:none !important; transform:none !important; }
 .ss-card-grad { position:absolute; inset:0; background:linear-gradient(to top,rgba(0,0,0,.6) 0%,rgba(0,0,0,.2) 40%,transparent 100%); pointer-events:none; }
 .ss-card-body { padding:.65rem .7rem .4rem; flex:1; min-height:6.2rem; display:flex; flex-direction:column; align-items:flex-start; }
