@@ -678,18 +678,9 @@ export class AllOrdersModule {
 
   setSearch(q: string): void {
     this.search = q;
-    const body = this.container.querySelector<HTMLElement>('#ord-body');
-    if (body) {
-      const filtered = this.getFiltered();
-      body.innerHTML = this.renderContent(filtered);
-      const countEl = this.container.querySelector<HTMLElement>('#ord-count-str');
-      if (countEl) {
-        const total = filtered.reduce((s, o) => s + o.total, 0);
-        countEl.textContent = `${filtered.length.toLocaleString('ru')} заказов · ${Math.round(total).toLocaleString('ru')} ₽`;
-      }
-    } else {
-      this.render();
-    }
+    // The new workspace updates KPIs, status counts and the table together.
+    // render() also restores the search focus and caret position.
+    this.render();
   }
 
   setDateFrom(v: string): void { this.dateFrom = v || null; this.render(); }
@@ -699,6 +690,15 @@ export class AllOrdersModule {
     this.dateFrom = d; this.dateTo = d; this.render();
   }
   clearDateFilter(): void { this.dateFrom = null; this.dateTo = null; this.render(); }
+  clearAllFilters(): void {
+    this.filterMps.clear();
+    this.filterScheme = '';
+    this.filterStatus = '';
+    this.search = '';
+    this.dateFrom = null;
+    this.dateTo = null;
+    this.render();
+  }
 
   refresh(): void {
     this.orders = [];
@@ -1277,221 +1277,100 @@ export class AllOrdersModule {
 
   private renderEmpty(): void {
     this.container.innerHTML = `
-      <div class="oz-wrap">
-        <div class="oz-topbar">
-          <div class="oz-topbar-left">
-            <div class="oz-brand">
-              <svg class="oz-brand-icon" viewBox="0 0 20 20" fill="none"><rect x="1" y="1" width="18" height="18" rx="4" stroke="currentColor" stroke-width="1.5"/><path d="M5 7h10M5 10h7M5 13h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-              <span class="oz-brand-name">Все заказы</span>
-            </div>
-          </div>
-        </div>
-        <div class="oz-empty" style="margin-top:60px">
-          <div class="oz-empty-title">Нет подключённых маркетплейсов</div>
-          <div class="oz-empty-sub">Подключи Ozon или Яндекс Маркет в разделе <b>Маркетплейсы</b></div>
-        </div>
+      <div class="orders-app">
+        <header class="orders-header"><div class="orders-heading"><div class="orders-heading-icon">${I.package('', 21)}</div><div><h1>Заказы</h1><p>Единый центр обработки заказов со всех маркетплейсов</p></div></div></header>
+        <div class="orders-empty orders-empty-screen"><div class="orders-empty-icon">+</div><strong>Подключите маркетплейс</strong><span>После подключения Ozon, Яндекс Маркета или WB здесь появятся заказы.</span></div>
       </div>`;
   }
 
   render(): void {
     if (!this.ozonStores.length && !this.yandexStores.length && !this.wbStores.length) { this.renderEmpty(); return; }
 
-    // Сохраняем фокус поиска до пересоздания DOM
     const activeEl = document.activeElement as HTMLInputElement | null;
-    const searchFocused = activeEl?.classList.contains('search-input') && this.container.contains(activeEl);
+    const searchFocused = !!activeEl && activeEl.classList.contains('search-input') && this.container.contains(activeEl);
     const selStart = searchFocused ? activeEl!.selectionStart : null;
-    const selEnd   = searchFocused ? activeEl!.selectionEnd   : null;
-
+    const selEnd = searchFocused ? activeEl!.selectionEnd : null;
     const filtered = this.getFiltered();
     const totalSum = filtered.reduce((s, o) => s + o.total, 0);
     const actionableCount = filtered.filter(o => o.canAct).length;
     const deliveredCount = filtered.filter(o => statusCategory(o.marketplace, o.status) === 'delivered').length;
-
     const cntByMp = (mp: Marketplace) => this.orders.filter(o => o.marketplace === mp).length;
-    const ozonCount = cntByMp('ozon');
-    const ymCount = cntByMp('yandex');
-    const wbCount = cntByMp('wb');
 
-    // Список с учётом МП/схемы/поиска, но БЕЗ фильтра статуса — для корректных счётчиков на вкладках статусов
-    const ordersForStatusCounts = (() => {
-      let list = this.orders;
-      if (this.filterMps.size > 0) list = list.filter(o => this.filterMps.has(o.marketplace));
-      if (this.filterScheme) list = list.filter(o => o.scheme === this.filterScheme);
+    const contextOrders = this.orders.filter(o => {
+      if (this.filterMps.size && !this.filterMps.has(o.marketplace)) return false;
+      if (this.filterScheme && o.scheme !== this.filterScheme) return false;
       if (this.search) {
         const q = this.search.toLowerCase();
-        list = list.filter(o =>
-          o.id.toLowerCase().includes(q) ||
-          o.firstOfferId.toLowerCase().includes(q) ||
-          o.firstName.toLowerCase().includes(q),
-        );
+        if (![o.id, o.firstOfferId, o.firstName].some(v => v.toLowerCase().includes(q))) return false;
       }
       if (this.dateFrom || this.dateTo) {
         const fromTs = this.dateFrom ? new Date(this.dateFrom + 'T00:00:00').getTime() : 0;
         const toTs = this.dateTo ? new Date(this.dateTo + 'T23:59:59').getTime() : Infinity;
-        list = list.filter(o => {
-          const t = parseDateTs(o.created_at);
-          return t >= fromTs && t <= toTs;
-        });
+        const ts = parseDateTs(o.created_at);
+        if (ts < fromTs || ts > toTs) return false;
       }
-      return list;
-    })();
-
-    // Scheme counts — БЕЗ схема-фильтра, чтобы кнопка сброса оставалась видна
-    const ordersForSchemeCounts = (() => {
-      let list = this.orders;
-      if (this.filterMps.size > 0) list = list.filter(o => this.filterMps.has(o.marketplace));
-      if (this.search) {
-        const q2 = this.search.toLowerCase();
-        list = list.filter(o => o.id.toLowerCase().includes(q2) || o.firstOfferId.toLowerCase().includes(q2) || o.firstName.toLowerCase().includes(q2));
-      }
-      return list;
-    })();
-    const schemes: Scheme[] = ['FBO', 'FBS', 'FBW', 'DBS', 'FBY', 'WB'];
-    const schemeCounts = schemes.map(s => ({ scheme: s, count: ordersForSchemeCounts.filter(o => o.scheme === s).length })).filter(s => s.count > 0);
-
-    // Status category counts — только по текущему МП/схеме/поиску
+      return true;
+    });
     const statusCats: StatusCategory[] = ['new', 'delivering', 'delivered', 'cancelled', 'returned'];
-    const statusCounts = statusCats.map(c => ({
-      cat: c,
-      count: ordersForStatusCounts.filter(o => statusCategory(o.marketplace, o.status) === c).length,
-    })).filter(s => s.count > 0);
+    const statusCounts = statusCats.map(cat => ({ cat, count: contextOrders.filter(o => statusCategory(o.marketplace, o.status) === cat).length })).filter(x => x.count);
+    const schemes: Scheme[] = ['FBO', 'FBS', 'FBW', 'DBS', 'FBY', 'WB'];
+    const schemeCounts = schemes.map(scheme => ({ scheme, count: contextOrders.filter(o => o.scheme === scheme).length })).filter(x => x.count);
+    const activeFilters = Number(this.filterMps.size > 0) + Number(!!this.filterScheme) + Number(!!this.filterStatus) + Number(!!this.search) + Number(!!this.dateFrom || !!this.dateTo);
 
     this.container.innerHTML = `
-      <div class="oz-wrap">
-        <div class="oz-topbar">
-          <div class="oz-topbar-left">
-            <div class="oz-brand">
-              <svg class="oz-brand-icon" viewBox="0 0 20 20" fill="none"><rect x="1" y="1" width="18" height="18" rx="4" stroke="currentColor" stroke-width="1.5"/><path d="M5 7h10M5 10h7M5 13h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-              <span class="oz-brand-name">Все заказы</span>
-            </div>
+      <div class="orders-app">
+        <header class="orders-header">
+          <div class="orders-heading">
+            <div class="orders-heading-icon">${I.package('', 21)}</div>
+            <div><h1>Заказы</h1><p>Единый центр обработки заказов со всех маркетплейсов</p></div>
           </div>
-          <div class="oz-topbar-right">
-            ${this.wbWarning ? `<span style="font-size:11px;padding:4px 10px;border-radius:8px;background:rgba(251,191,36,.12);color:#fbbf24;font-weight:600;margin-right:8px">${this.esc(this.wbWarning)}</span>` : ''}
+          <div class="orders-header-actions">
+            ${this.wbWarning ? `<span class="orders-warning">${this.esc(this.wbWarning)}</span>` : ''}
             ${helpBtn('orders')}
-            <button class="btn btn-primary" onclick="window.allOrdersModule.refresh()" ${this.loading ? 'disabled' : ''}>
-              ${this.loading ? 'Загрузка…' : 'Обновить'}
-            </button>
+            <button class="orders-refresh" onclick="window.allOrdersModule.refresh()" ${this.loading ? 'disabled' : ''}>${this.loading ? 'Загрузка…' : 'Обновить'} <span>↻</span></button>
           </div>
-        </div>
+        </header>
 
-        <div class="ord-summary-strip">
-          <div class="ord-summary-main"><span class="ord-summary-kicker">Рабочий список</span><strong>${filtered.length.toLocaleString('ru')} заказов</strong><span>${Math.round(totalSum).toLocaleString('ru')} ₽</span></div>
-          <div class="ord-summary-stat is-attention"><b>${actionableCount}</b><span>требуют действия</span></div>
-          <div class="ord-summary-stat"><b>${deliveredCount}</b><span>доставлено</span></div>
-          <div class="ord-summary-period">Период: <b>${this.period} дней</b></div>
-        </div>
+        <section class="orders-kpis">
+          <div class="orders-kpi orders-kpi-main"><span>Показывается</span><strong>${filtered.length.toLocaleString('ru')}</strong><small>заказов · ${Math.round(totalSum).toLocaleString('ru')} ₽</small></div>
+          <div class="orders-kpi orders-kpi-alert"><span>В работу</span><strong>${actionableCount}</strong><small>заказов требуют действия</small></div>
+          <div class="orders-kpi"><span>Доставлено</span><strong>${deliveredCount}</strong><small>в текущей выборке</small></div>
+          <div class="orders-kpi orders-kpi-period"><span>Загрузка</span><strong>${this.period} дней</strong><small>${this.loading ? 'обновляем данные…' : 'данные актуальны'}</small></div>
+        </section>
 
-        <!-- МП-фильтры -->
-        <div class="ord-scheme-bar">
-          <button class="oz-tab ${this.filterMps.size === 0 ? 'active' : ''}"
-            onclick="window.allOrdersModule.setMarketplace('')">
-            Все<span class="oz-tab-cnt">${this.orders.length}</span>
-          </button>
-          <button class="oz-tab ${this.filterMps.has('ozon') ? 'active' : ''}"
-            onclick="window.allOrdersModule.setMarketplace('ozon')">
-            ${this.filterMps.has('ozon') ? '✓ ' : ''}<span class="oz-dot" style="background:#005bff"></span>Ozon<span class="oz-tab-cnt">${ozonCount}</span>
-          </button>
-          <button class="oz-tab ${this.filterMps.has('yandex') ? 'active' : ''}"
-            onclick="window.allOrdersModule.setMarketplace('yandex')">
-            ${this.filterMps.has('yandex') ? '✓ ' : ''}<span class="oz-dot" style="background:#fc3f1d"></span>Яндекс<span class="oz-tab-cnt">${ymCount}</span>
-          </button>
-          <button class="oz-tab ${this.filterMps.has('wb') ? 'active' : ''}"
-            onclick="window.allOrdersModule.setMarketplace('wb')">
-            ${this.filterMps.has('wb') ? '✓ ' : ''}<span class="oz-dot" style="background:#cb11ab"></span>WB<span class="oz-tab-cnt">${wbCount}</span>
-          </button>
-        </div>
-
-        <!-- Статус-фильтры -->
-        ${statusCounts.length > 0 || this.filterStatus ? `
-        <div class="ord-scheme-bar" style="margin-top:2px">
-          <button class="oz-tab ${this.filterStatus === '' ? 'active' : ''}"
-            onclick="window.allOrdersModule.setStatusFilter('')">
-            Все статусы<span class="oz-tab-cnt">${ordersForStatusCounts.length}</span>
-          </button>
-          ${statusCounts.map(s => `
-            <button class="oz-tab ${this.filterStatus === s.cat ? 'active' : ''}"
-              onclick="window.allOrdersModule.setStatusFilter('${s.cat}')">
-              <span class="oz-dot" style="background:${STATUS_CAT_COLORS[s.cat]}"></span>${STATUS_CAT_LABELS[s.cat]}<span class="oz-tab-cnt">${s.count}</span>
-            </button>
-          `).join('')}
-        </div>` : ''}
-
-        <!-- Фильтры -->
-        <div class="oz-filter-bar" style="flex-wrap:wrap;gap:6px 12px">
-          <!-- Дата: быстрые кнопки -->
-          <div class="oz-filter-group">
-            <span class="oz-filter-label">Дата</span>
-            <div class="oz-filter-pills" style="gap:4px">
-              <button class="oz-fpill ${!this.dateFrom && !this.dateTo ? 'active' : ''}"
-                onclick="window.allOrdersModule.clearDateFilter()">Все</button>
-              <button class="oz-fpill ${this.dateFrom === this.dateTo && this.dateFrom === todayLocal() ? 'active' : ''}"
-                onclick="window.allOrdersModule.setToday()">Сегодня</button>
+        <section class="orders-filters">
+          <div class="orders-filter-top">
+            <div class="orders-search"><span>⌕</span><input class="search-input" aria-label="Поиск заказов" placeholder="Поиск по номеру, артикулу или товару" value="${this.esc(this.search)}" oninput="window.allOrdersModule.setSearch(this.value)"></div>
+            <div class="orders-filter-meta">${activeFilters ? `<button class="orders-clear" onclick="window.allOrdersModule.clearAllFilters()">Сбросить фильтры <b>${activeFilters}</b></button>` : '<span>Нажмите на заказ, чтобы открыть детали</span>'}</div>
+          </div>
+          <div class="orders-filter-row">
+            <div class="orders-filter-label">Маркетплейс</div>
+            <div class="orders-segmented">
+              <button class="${this.filterMps.size === 0 ? 'active' : ''}" onclick="window.allOrdersModule.setMarketplace('')">Все <b>${this.orders.length}</b></button>
+              <button class="${this.filterMps.has('ozon') ? 'active' : ''}" onclick="window.allOrdersModule.setMarketplace('ozon')"><i class="orders-dot dot-ozon"></i>Ozon <b>${cntByMp('ozon')}</b></button>
+              <button class="${this.filterMps.has('yandex') ? 'active' : ''}" onclick="window.allOrdersModule.setMarketplace('yandex')"><i class="orders-dot dot-ym"></i>Яндекс <b>${cntByMp('yandex')}</b></button>
+              <button class="${this.filterMps.has('wb') ? 'active' : ''}" onclick="window.allOrdersModule.setMarketplace('wb')"><i class="orders-dot dot-wb"></i>WB <b>${cntByMp('wb')}</b></button>
+            </div>
+            <div class="orders-filter-label orders-filter-label-status">Статус</div>
+            <div class="orders-segmented orders-status-segmented">
+              <button class="${this.filterStatus === '' ? 'active' : ''}" onclick="window.allOrdersModule.setStatusFilter('')">Все <b>${contextOrders.length}</b></button>
+              ${statusCounts.map(s => `<button class="${this.filterStatus === s.cat ? 'active' : ''}" onclick="window.allOrdersModule.setStatusFilter('${s.cat}')"><i class="orders-dot" style="background:${STATUS_CAT_COLORS[s.cat]}"></i>${STATUS_CAT_LABELS[s.cat]} <b>${s.count}</b></button>`).join('')}
             </div>
           </div>
-          <!-- Дата: произвольный диапазон -->
-          <div class="oz-filter-group">
-            <span class="oz-filter-label">С</span>
-            <input type="date" value="${this.dateFrom ?? ''}" max="${todayLocal()}"
-              oninput="window.allOrdersModule.setDateFrom(this.value)"
-              style="padding:4px 8px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:7px;font-size:12px;height:28px">
+          <div class="orders-filter-row orders-filter-row-secondary">
+            <div class="orders-filter-label">Период</div>
+            <div class="orders-segmented"><button class="${this.period === '7' ? 'active' : ''}" onclick="window.allOrdersModule.setPeriod('7')">7 дней</button><button class="${this.period === '30' ? 'active' : ''}" onclick="window.allOrdersModule.setPeriod('30')">30 дней</button><button class="${this.period === '90' ? 'active' : ''}" onclick="window.allOrdersModule.setPeriod('90')">90 дней</button></div>
+            ${schemeCounts.length > 1 || this.filterScheme ? `<div class="orders-filter-label">Схема</div><div class="orders-segmented">${schemeCounts.map(s => `<button class="${this.filterScheme === s.scheme ? 'active' : ''}" onclick="window.allOrdersModule.setSchemeFilter('${s.scheme}')">${s.scheme} <b>${s.count}</b></button>`).join('')}</div>` : ''}
+            <div class="orders-date-fields"><label>с <input type="date" value="${this.dateFrom ?? ''}" max="${todayLocal()}" oninput="window.allOrdersModule.setDateFrom(this.value)"></label><label>по <input type="date" value="${this.dateTo ?? ''}" max="${todayLocal()}" oninput="window.allOrdersModule.setDateTo(this.value)"></label><button class="orders-today ${this.dateFrom === this.dateTo && this.dateFrom === todayLocal() ? 'active' : ''}" onclick="window.allOrdersModule.setToday()">Сегодня</button></div>
           </div>
-          <div class="oz-filter-group">
-            <span class="oz-filter-label">По</span>
-            <input type="date" value="${this.dateTo ?? ''}" max="${todayLocal()}"
-              oninput="window.allOrdersModule.setDateTo(this.value)"
-              style="padding:4px 8px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:7px;font-size:12px;height:28px">
-          </div>
+        </section>
 
-          <div class="oz-filter-sep"></div>
-
-          <!-- Загрузка: период -->
-          <div class="oz-filter-group">
-            <span class="oz-filter-label">Загрузить</span>
-            <div class="oz-filter-pills">
-              ${['7','30','90'].map(p => `
-                <button class="oz-fpill ${this.period === p ? 'active' : ''}"
-                  onclick="window.allOrdersModule.setPeriod('${p}')">${p} дн</button>
-              `).join('')}
-            </div>
-          </div>
-
-          ${schemeCounts.length > 1 || this.filterScheme ? `
-          <div class="oz-filter-sep"></div>
-          <div class="oz-filter-group">
-            <span class="oz-filter-label">Схема</span>
-            <div class="oz-filter-pills">
-              <button class="oz-fpill ${this.filterScheme === '' ? 'active' : ''}"
-                onclick="window.allOrdersModule.setSchemeFilter('')">Все</button>
-              ${schemeCounts.map(s => `
-                <button class="oz-fpill ${this.filterScheme === s.scheme ? 'active' : ''}"
-                  style="${this.filterScheme === s.scheme ? SCHEME_CSS[s.scheme] : ''}"
-                  onclick="window.allOrdersModule.setSchemeFilter('${s.scheme}')">${s.scheme}<span class="oz-tab-cnt">${s.count}</span></button>
-              `).join('')}
-            </div>
-          </div>` : ''}
-
-          <div class="oz-filter-sep"></div>
-          <div class="search-wrap" style="width:200px">
-            <span class="search-ic"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10 10l3 3" stroke-linecap="round"/></svg></span>
-            <input class="search-input" placeholder="Номер, артикул…" value="${this.esc(this.search)}"
-              oninput="window.allOrdersModule.setSearch(this.value)">
-          </div>
-          <span class="oz-filter-count" id="ord-count-str">${filtered.length.toLocaleString('ru')} заказов · ${Math.round(totalSum).toLocaleString('ru')} ₽</span>
-        </div>
-
-        <!-- Контент -->
-        <div class="oz-body" id="ord-body" style="flex:1;overflow:auto;padding-bottom:90px">
-          ${this.renderContent(filtered)}
-        </div>
+        <main class="orders-content" id="ord-body">${this.renderContent(filtered)}</main>
       </div>`;
 
-    // Восстанавливаем фокус поиска после пересоздания DOM
     if (searchFocused) {
-      const inp = this.container.querySelector<HTMLInputElement>('.search-input');
-      if (inp) {
-        inp.focus();
-        if (selStart !== null && selEnd !== null) inp.setSelectionRange(selStart, selEnd);
-      }
+      const input = this.container.querySelector<HTMLInputElement>('.search-input');
+      if (input) { input.focus(); if (selStart !== null && selEnd !== null) input.setSelectionRange(selStart, selEnd); }
     }
   }
 
@@ -1512,22 +1391,17 @@ export class AllOrdersModule {
   private renderContent(rows: UnifiedOrder[]): string {
     if (this.loading && !this.orders.length) {
       return `
-        <div class="ord-loader">
-          <div class="ord-loader-spinner">
-            <svg class="oz-spin" viewBox="0 0 40 40" fill="none" stroke="#005bff" stroke-width="3" stroke-linecap="round" style="width:48px;height:48px">
-              <path d="M36 20A16 16 0 1 1 20 4" stroke-dasharray="60 30"/>
-            </svg>
-          </div>
-          <div class="ord-loader-title">Загружаем заказы со всех маркетплейсов</div>
-          <div class="ord-loader-sub">FBO + FBS + FBW · ${this.period} дней</div>
-          <div class="ord-loader-bar"><div class="ord-loader-bar-fill"></div></div>
+        <div class="orders-loading">
+          <div class="orders-loading-spinner"></div>
+          <strong>Собираем заказы</strong>
+          <span>Проверяем Ozon, Яндекс Маркет и WB за последние ${this.period} дней</span>
         </div>`;
     }
     if (!rows.length) {
       if (this.wbWarning && this.filterMps.size === 0) {
-        return `<div class="oz-empty"><div class="oz-empty-title">Заказов нет</div><div class="oz-empty-sub">${this.esc(this.wbWarning)}</div></div>`;
+        return `<div class="orders-empty"><div class="orders-empty-icon">!</div><strong>Не удалось загрузить заказы</strong><span>${this.esc(this.wbWarning)}</span><button onclick="window.allOrdersModule.refresh()">Повторить загрузку</button></div>`;
       }
-      return `<div class="oz-empty"><div class="oz-empty-title">Заказов нет</div></div>`;
+      return `<div class="orders-empty"><div class="orders-empty-icon">⌕</div><strong>Заказов не найдено</strong><span>Измените фильтры или период, чтобы увидеть другие заказы.</span><button onclick="window.allOrdersModule.clearAllFilters()">Сбросить фильтры</button></div>`;
     }
 
     let lastGroup = '';
@@ -1537,12 +1411,9 @@ export class AllOrdersModule {
         : o.marketplace === 'yandex'
         ? `<span class="mp-badge mp-badge-yandex">ЯМ</span>`
         : `<span class="mp-badge mp-badge-wb">WB</span>`;
-      const schemeBadge = o.scheme
-        ? `<span style="display:inline-block;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;${SCHEME_CSS[o.scheme] || ''}">${o.scheme}</span>`
-        : '';
-      // Action indicator for FBS orders that need attention
-      const needsAction = o.canAct && (o.status === 'awaiting_packaging' || o.status === 'PROCESSING' || o.status === 'new');
-      const actionDot = needsAction ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#4ade80;margin-left:4px" title="Требуется действие"></span>' : '';
+      const schemeBadge = o.scheme ? `<span class="orders-scheme" style="${SCHEME_CSS[o.scheme] || ''}">${o.scheme}</span>` : '';
+      const needsAction = o.canAct;
+      const actionDot = needsAction ? '<i class="orders-attention" title="Требуется действие"></i>' : '';
 
       const ts = parseDateTs(o.created_at);
       const grpKey = this._dateGroupKey(ts);
@@ -1550,55 +1421,33 @@ export class AllOrdersModule {
       if (grpKey !== lastGroup) {
         lastGroup = grpKey;
         const grpLabel = this._dateGroupLabel(ts);
-        grpRow = `<tr class="ord-date-group-row"><td colspan="8"><span class="ord-date-group-label">${grpLabel}</span></td></tr>`;
+        grpRow = `<tr class="orders-date-row"><td colspan="8"><span>${grpLabel}</span></td></tr>`;
       }
       return grpRow + `
-        <tr class="oz-row" style="cursor:pointer" onclick="window.allOrdersModule.openDetail('${o.marketplace}','${this.esc(o.id)}')">
-          <td>
-            <div style="display:flex;flex-direction:column;align-items:center;gap:3px">
-              ${mpBadge}${schemeBadge}
-            </div>
-          </td>
-          <td>
-            <span class="oz-sku-chip" onclick="event.stopPropagation();window.allOrdersModule.copyText('${this.esc(o.id)}', this)">
-              <svg class="oz-sku-chip-ic" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="8" height="9" rx="1"/><path d="M2 10V2a1 1 0 0 1 1-1h7"/></svg>
-              <span class="oz-sku-chip-text">${this.esc(o.id)}</span>
-            </span>
-            <div class="oz-muted" style="font-size:11px;margin-top:3px;display:flex;align-items:center;gap:5px">
-              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${o.storeColor}"></span>
-              ${this.esc(o.storeName)}
-            </div>
-          </td>
+        <tr class="orders-row" onclick="window.allOrdersModule.openDetail('${o.marketplace}','${this.esc(o.id)}')">
+          <td class="orders-market-cell"><div>${mpBadge}</div>${schemeBadge}</td>
+          <td><div class="orders-id" title="Открыть заказ">${this.esc(o.id)} <button class="orders-copy" title="Копировать номер" onclick="event.stopPropagation();window.allOrdersModule.copyText('${this.esc(o.id)}', this)">⧉</button></div><div class="orders-store"><i style="background:${o.storeColor}"></i>${this.esc(o.storeName)}</div></td>
           <td><span class="oz-badge ${o.statusCss}">${o.statusLabel}</span>${actionDot}</td>
-          <td class="oz-muted">${fmtDateTime(o.created_at)}</td>
-          <td>
-            ${o.firstOfferId
-              ? `<div class="ord-product-line">
-                  <span class="oz-sku-chip" onclick="event.stopPropagation();window.allOrdersModule.copyText('${this.esc(o.firstOfferId)}', this)">
-                    <svg class="oz-sku-chip-ic" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="8" height="9" rx="1"/><path d="M2 10V2a1 1 0 0 1 1-1h7"/></svg>
-                    <span class="oz-sku-chip-text">${this.esc(o.firstOfferId)}</span>
-                  </span>
-                </div>${o.firstName ? `<div class="oz-muted" style="font-size:11px;margin-top:2px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.esc(o.firstName)}</div>` : ''}`
-              : '—'}
-          </td>
-          <td style="text-align:center">${o.itemsCount}</td>
-          <td class="oz-prc" style="text-align:right;white-space:nowrap;font-weight:700">${Math.round(o.total).toLocaleString('ru')} ${o.currency === 'RUB' ? '₽' : o.currency}</td>
-          <td class="ord-actions-cell" onclick="event.stopPropagation()"><div class="ord-quick-actions">${this.buildQuickActionsHtml(o)}<button class="ord-open-action" title="Открыть заказ" aria-label="Открыть заказ" onclick="window.allOrdersModule.openDetail('${o.marketplace}','${this.esc(o.id)}')">›</button></div></td>
+          <td class="orders-date">${fmtDateTime(o.created_at)}</td>
+          <td><div class="orders-product-title">${this.esc(o.firstName || 'Товар без названия')}</div>${o.firstOfferId ? `<button class="orders-sku" onclick="event.stopPropagation();window.allOrdersModule.copyText('${this.esc(o.firstOfferId)}', this)">${this.esc(o.firstOfferId)} ⧉</button>` : ''}</td>
+          <td class="orders-qty">${o.itemsCount}</td>
+          <td class="orders-total">${Math.round(o.total).toLocaleString('ru')} <small>${o.currency === 'RUB' ? '₽' : o.currency}</small></td>
+          <td class="orders-actions-cell" onclick="event.stopPropagation()"><div class="ord-quick-actions">${this.buildQuickActionsHtml(o)}<button class="ord-open-action" title="Открыть карточку" aria-label="Открыть карточку" onclick="window.allOrdersModule.openDetail('${o.marketplace}','${this.esc(o.id)}')">›</button></div></td>
         </tr>`;
     }).join('');
 
     return `
-      <div class="oz-table-wrap">
-        <table class="oz-table">
+      <div class="orders-table-wrap">
+        <table class="orders-table">
           <thead><tr>
-            <th style="width:70px">МП</th>
+            <th>МП</th>
             <th>Заказ</th>
             <th>Статус</th>
             <th>Дата</th>
             <th>Товар</th>
-            <th style="text-align:center">Шт.</th>
-            <th style="text-align:right">Сумма</th>
-            <th style="width:132px;text-align:right">Действия</th>
+            <th>Шт.</th>
+            <th>Сумма</th>
+            <th>Действия</th>
           </tr></thead>
           <tbody>${tbody}</tbody>
         </table>
