@@ -448,8 +448,12 @@ export const ozonApi = {
           if (!offerId) continue;
 
           // v3: images are direct URL strings
-          const imgRaw: unknown[] = item.images ?? [];
-          const images = imgRaw.filter((img): img is string => typeof img === 'string' && !!img).slice(0, 5);
+          // Главное фото Ozon отдаёт отдельно (primary_image) — ставим его первым.
+          // Раньше брали только 5 фото без главного: редактор видел неполный набор,
+          // и сохранение порядка стирало остальные фото на Ozon.
+          const prim: unknown[] = Array.isArray((item as any).primary_image) ? (item as any).primary_image : (item as any).primary_image ? [(item as any).primary_image] : [];
+          const imgRaw: unknown[] = [...prim, ...(item.images ?? [])];
+          const images = [...new Set(imgRaw.filter((img): img is string => typeof img === 'string' && !!img))];
 
           // v3: barcodes is an array
           const barcode = Array.isArray(item.barcodes) ? (item.barcodes[0] || '') : (item.barcode || '');
@@ -768,18 +772,14 @@ export const ozonApi = {
   async archiveProducts(creds: Creds, productIds: number[]): Promise<void> {
     const CHUNK = 100;
     for (let i = 0; i < productIds.length; i += CHUNK) {
-      await ozonPost('/v1/product/archive', {
-        items: productIds.slice(i, i + CHUNK).map(id => ({ product_id: id })),
-      }, creds);
+      await ozonPost('/v1/product/archive', { product_id: productIds.slice(i, i + CHUNK) }, creds);
     }
   },
 
   async unarchiveProducts(creds: Creds, productIds: number[]): Promise<void> {
     const CHUNK = 100;
     for (let i = 0; i < productIds.length; i += CHUNK) {
-      await ozonPost('/v1/product/unarchive', {
-        items: productIds.slice(i, i + CHUNK).map(id => ({ product_id: id })),
-      }, creds);
+      await ozonPost('/v1/product/unarchive', { product_id: productIds.slice(i, i + CHUNK) }, creds);
     }
   },
 
@@ -1124,9 +1124,78 @@ export const ozonApi = {
     return Number(resp?.task_id ?? resp?.result?.task_id) || null;
   },
 
-  /** Заменить фото товара целиком (порядок = порядок в массиве, первое — главное). */
-  async importPictures(creds: Creds, productId: number, images: string[]): Promise<void> {
-    await ozonPost<any>('/v1/product/pictures/import', { product_id: productId, images }, creds);
+  /** Текущие фото карточки: главное + остальные, 360° и маркетинговый цвет. */
+  async getCurrentPictures(creds: Creds, offerId: string): Promise<{ images: string[]; images360: string[]; color_image: string } | null> {
+    const [cur] = await this.getProductAttributes(offerId, creds);
+    if (!cur) return null;
+    const url = (i: any) => typeof i === 'string' ? i : i?.file_name ?? i?.url ?? '';
+    const images = [...new Set([cur.primary_image, ...(cur.images ?? [])].map(url).filter(Boolean))] as string[];
+    return { images, images360: (cur.images360 ?? []).map(url).filter(Boolean), color_image: cur.color_image ?? '' };
+  },
+
+  /**
+   * Заменить фото товара: порядок = порядок массива, первое — главное (до 30 шт).
+   * Ozon заменяет набор целиком, поэтому:
+   *  - фото, которых нет в нашем списке и которые пользователь не удалял, дописываем в конец
+   *    (наш каталог мог быть неполным — иначе они бы пропали);
+   *  - 360° и маркетинговое фото передаём как есть, иначе они сотрутся.
+   * Затем ждём обработку (/v2/product/pictures/info) и возвращаем итоговый список.
+   */
+  async replacePictures(
+    creds: Creds, productId: number, offerId: string, wanted: string[], removed: string[] = [],
+  ): Promise<{ images: string[]; pending: boolean }> {
+    const cur = await this.getCurrentPictures(creds, offerId);
+    const removedSet = new Set(removed);
+    const keep = (cur?.images ?? []).filter(u => !wanted.includes(u) && !removedSet.has(u));
+    const images = [...wanted, ...keep].slice(0, 30);
+    if (!images.length) throw new Error('У товара на Ozon должно остаться хотя бы одно фото');
+    await ozonPost<any>('/v1/product/pictures/import', {
+      product_id: productId, images,
+      ...(cur?.images360?.length ? { images360: cur.images360 } : {}),
+      ...(cur?.color_image ? { color_image: cur.color_image } : {}),
+    }, creds);
+    // Ozon скачивает фото по ссылкам несколько секунд
+    for (let i = 0; i < 6; i++) {
+      await new Promise(r => setTimeout(r, i === 0 ? 4000 : 3000));
+      const info = await ozonPost<any>('/v2/product/pictures/info', { product_id: [productId] }, creds, 2, true).catch(() => null);
+      const item = (info?.items ?? info?.result?.items ?? [])[0];
+      if (!item) continue;
+      const errs: any[] = item.errors ?? [];
+      if (errs.length) throw new Error(`Ozon не принял фото: ${errs.map((e: any) => e.message || e.description || e.code).join('; ')}`);
+      const got = [...(item.primary_photo ?? []), ...(item.photo ?? [])];
+      if (got.length >= images.length) return { images: [...new Set(got)] as string[], pending: false };
+    }
+    return { images, pending: true };
+  },
+
+  /** Рейтинг контента карточек (0–100) и что сделать, чтобы его поднять. */
+  async getContentRating(creds: Creds, skus: number[]): Promise<Array<{
+    sku: number; rating: number;
+    groups: Array<{ key: string; name: string; rating: number; weight: number; improve_at_least: number;
+      improve_attributes: Array<{ id: number; name: string }>; conditions: Array<{ key: string; description: string; fulfilled: boolean; cost: number }> }>;
+  }>> {
+    if (!skus.length) return [];
+    const resp = await ozonPost<any>('/v1/product/rating-by-sku', { skus }, creds, 2, true);
+    return resp?.products ?? [];
+  },
+
+  /**
+   * Обновить цены по нескольким товарам и вернуть результат по каждому —
+   * без исключения на весь пакет (для массового редактирования).
+   */
+  async updatePricesDetailed(creds: Creds, prices: Array<{ offer_id: string; price: string; old_price?: string; min_price?: string; vat?: string }>): Promise<Map<string, string | null>> {
+    const out = new Map<string, string | null>();
+    for (let i = 0; i < prices.length; i += 1000) {
+      const chunk = prices.slice(i, i + 1000);
+      const resp = await ozonPost<any>('/v1/product/import/prices', { prices: chunk }, creds);
+      const items: any[] = resp?.result ?? [];
+      for (const p of chunk) {
+        const r = items.find(x => x.offer_id === p.offer_id);
+        const errs = (r?.errors ?? []).map((e: any) => e?.message || e?.code || JSON.stringify(e)).join('; ');
+        out.set(p.offer_id, r && r.updated === false ? (errs || 'Ozon не обновил цену') : null);
+      }
+    }
+    return out;
   },
 
   // ── Update product barcode via /v1/product/update/barcodes ───────────────

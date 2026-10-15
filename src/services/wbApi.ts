@@ -346,21 +346,47 @@ export const wbApi = {
       if (updates.dimensions) Object.assign(updated.dimensions, updates.dimensions);
       if (updates.weightBrutto != null) updated.dimensions.weightBrutto = updates.weightBrutto;
     }
-    // WB GET returns photos as [{big:"...", c246x328:"...",...}] but cards/update expects [{url:"..."}].
-    // Always transform to the correct format; use explicit new photos if provided.
-    if (updates.photos) {
-      updated.photos = updates.photos.map((url: string) => ({ url }));
-    } else {
-      updated.photos = (card.photos ?? [])
-        .map((p: any) => ({ url: p.big ?? p.c516x688 ?? p.url ?? '' }))
-        .filter((p: any) => p.url);
-    }
+    // cards/update не меняет фото, видео и теги (документация WB) — их не шлём.
+    // Фото меняются отдельно: saveMedia (/content/v3/media/save).
+    delete updated.photos; delete updated.video; delete updated.tags;
+    if (updates.photos) await this.saveMedia(apiKey, nmID, updates.photos);
     if (updates.title !== undefined) updated.title = updates.title;
     if (updates.brand !== undefined) updated.brand = updates.brand;
     if (updates.description !== undefined) updated.description = updates.description;
 
     const result = await wbFetch<any>('/wb-content/content/v2/cards/update', 'POST', apiKey, [updated]);
     if (result?.error) throw new Error(`WB: ${result.errorText ?? 'Ошибка обновления карточки'}`);
+    // 200 ещё не значит «обновлено»: ошибки карточек WB складывает в отдельный список
+    await new Promise(r => setTimeout(r, 2500));
+    const errs = await this.getCardErrors(apiKey, card.vendorCode).catch(() => []);
+    if (errs.length) throw new Error(`WB не принял изменения: ${errs.join('; ')}`);
+  },
+
+  /**
+   * Заменить фото карточки (порядок массива = порядок в карточке, до 30 шт).
+   * WB заменяет набор целиком; ссылки должны вести прямо на файл, фото от 700×900.
+   */
+  async saveMedia(apiKey: string, nmId: number, urls: string[]): Promise<void> {
+    const resp = await wbFetch<any>('/wb-content/content/v3/media/save', 'POST', apiKey, { nmId, data: urls.slice(0, 30) });
+    if (resp?.error) throw new Error(`WB не принял фото: ${resp.errorText || 'ошибка'}`);
+  },
+
+  /** Ошибки последнего редактирования карточки по артикулу продавца (из списка несозданных карточек). */
+  async getCardErrors(apiKey: string, vendorCode: string): Promise<string[]> {
+    const resp = await wbFetch<any>('/wb-content/content/v2/cards/error/list', 'POST', apiKey, { cursor: { limit: 100 }, order: { ascending: false } }, undefined, 2);
+    const batches: any[] = resp?.data?.items ?? resp?.data ?? [];
+    const out: string[] = [];
+    for (const b of Array.isArray(batches) ? batches : []) {
+      const codes: string[] = b.vendorCodes ?? (b.vendorCode ? [b.vendorCode] : []);
+      if (!codes.includes(vendorCode)) continue;
+      // Старые ошибки висят в списке, пока карточку не исправят — берём только свежие
+      const at = Date.parse(b.updatedAt ?? '');
+      if (isFinite(at) && Date.now() - at > 3 * 60_000) continue;
+      const e = b.errors;
+      const list = Array.isArray(e) ? e : e && typeof e === 'object' ? (e[vendorCode] ?? Object.values(e).flat()) : [];
+      out.push(...list.map((x: any) => typeof x === 'string' ? x : x?.message ?? JSON.stringify(x)));
+    }
+    return [...new Set(out)];
   },
 
   /** Получить полную карточку по nm_id (title + photos) — для проверки применённых правок. */
@@ -1185,14 +1211,38 @@ export async function updateWbPrices(
   apiKey: string,
   items: { nmID: number; price: number; discount?: number }[],
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<number | null> {
   try {
-    await wbFetch('/wb-prices/api/v2/upload/task', 'POST', apiKey, { data: items }, signal, 3);
+    const resp = await wbFetch<any>('/wb-prices/api/v2/upload/task', 'POST', apiKey, { data: items }, signal, 3);
+    if (resp?.error) throw new Error(`WB: ${resp.errorText || 'цены не приняты'}`);
+    return Number(resp?.data?.id) || null;
   } catch (err: unknown) {
     // WB возвращает 400 когда цена уже установлена — не ошибка
-    if (errMsg(err).includes('already set')) return;
+    if (errMsg(err).includes('already set')) return null;
     throw err;
   }
+}
+
+/**
+ * Дождаться обработки загрузки цен WB и вернуть ошибки по товарам (nmID → текст).
+ * Например, «карантин цен»: новая цена сильно ниже старой — WB продаёт по старой.
+ * null — загрузка ещё обрабатывается.
+ */
+export async function waitWbPriceTask(apiKey: string, uploadId: number, tries = 6): Promise<Map<number, string> | null> {
+  for (let i = 0; i < tries; i++) {
+    await new Promise(r => setTimeout(r, i === 0 ? 2500 : 3000));
+    const t = await wbFetch<any>(`/wb-prices/api/v2/history/tasks?uploadID=${uploadId}`, 'GET', apiKey, undefined, undefined, 2).catch(() => null);
+    const status = Number(t?.data?.status);
+    if (![3, 4, 5, 6].includes(status)) continue;
+    const errs = new Map<number, string>();
+    if (status === 5 || status === 6) {
+      const g = await wbFetch<any>(`/wb-prices/api/v2/history/goods/task?uploadID=${uploadId}&limit=1000`, 'GET', apiKey, undefined, undefined, 2).catch(() => null);
+      for (const it of g?.data?.historyGoods ?? []) if (it.errorText) errs.set(Number(it.nmID), String(it.errorText));
+    }
+    if (status === 4) errs.set(0, 'загрузка цен отменена');
+    return errs;
+  }
+  return null;
 }
 
 /**

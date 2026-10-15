@@ -46,6 +46,18 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
   });
 
 /** Универсальный HTTP-запрос к Яндекс Маркету с экспоненциальным retry. */
+/** Ошибки из ответа методов изменения каталога (status=ERROR, results[].errors). */
+function yandexResultErrors(resp: any): string[] {
+  if (!resp) return [];
+  const out: string[] = [];
+  for (const r of resp.results ?? resp.result?.results ?? []) {
+    for (const e of r.errors ?? []) out.push([r.offerId, e.message ?? e.type ?? e.code].filter(Boolean).join(': '));
+  }
+  for (const e of resp.errors ?? []) out.push(e.message ?? e.code);
+  if (!out.length && resp.status === 'ERROR') out.push('ошибка без пояснений');
+  return out.filter(Boolean);
+}
+
 async function yandexFetch<T>(
   path: string,
   method: 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -172,11 +184,30 @@ export const yandexApi = {
     businessId: number,
     offer: Record<string, any>,
   ): Promise<void> {
-    await yandexFetch(
-      `/businesses/${businessId}/offer-mappings/update`,
+    const resp = await yandexFetch<any>(
+      `/v2/businesses/${businessId}/offer-mappings/update`,
       'POST', apiKey,
       { offerMappings: [{ offer }] },
     );
+    // 200 ещё не значит «сохранено»: при ошибке status=ERROR, и изменения не применяются
+    const errs = yandexResultErrors(resp);
+    if (errs.length) throw new Error(`Яндекс Маркет не принял изменения: ${errs.join('; ')}`);
+  },
+
+  /** Убрать товары в архив / вернуть из архива (на уровне бизнеса). */
+  async setArchived(apiKey: string, businessId: number, offerIds: string[], archived: boolean): Promise<Map<string, string | null>> {
+    const out = new Map<string, string | null>();
+    for (let i = 0; i < offerIds.length; i += 200) {
+      const chunk = offerIds.slice(i, i + 200);
+      const resp = await yandexFetch<any>(
+        `/v2/businesses/${businessId}/offer-mappings/${archived ? 'archive' : 'unarchive'}`, 'POST', apiKey, { offerIds: chunk });
+      const failed: any[] = resp?.result?.notArchivedOffers ?? resp?.result?.notUnarchivedOffers ?? [];
+      for (const id of chunk) {
+        const f = failed.find(x => x.offerId === id);
+        out.set(id, f ? String(f.error ?? 'не удалось') : null);
+      }
+    }
+    return out;
   },
 
   /**
@@ -424,13 +455,17 @@ export const yandexApi = {
       })),
     };
 
-    // Вызываем оба метода — у разных типов кампаний работает разный
-    await Promise.all([
-      yandexFetch(`/v2/businesses/${businessId}/offer-mappings/update`, 'POST', apiKey, mappingsBody, signal)
-        .catch(e => console.warn('[YM] offer-mappings/update failed:', (e instanceof Error ? e.message : String(e)))),
-      yandexFetch(`/v2/businesses/${businessId}/offer-prices/updates`, 'POST', apiKey, pricesBody, signal)
-        .catch(e => console.warn('[YM] offer-prices/updates failed:', (e instanceof Error ? e.message : String(e)))),
+    // Вызываем оба метода — у разных типов кампаний работает разный.
+    // Раньше ошибки обоих молча уходили в консоль, и «цена сохранена» показывалась всегда.
+    const results = await Promise.allSettled([
+      yandexFetch<any>(`/v2/businesses/${businessId}/offer-mappings/update`, 'POST', apiKey, mappingsBody, signal),
+      yandexFetch<any>(`/v2/businesses/${businessId}/offer-prices/updates`, 'POST', apiKey, pricesBody, signal),
     ]);
+    const problems = results.map(r => r.status === 'rejected'
+      ? (r.reason instanceof Error ? r.reason.message : String(r.reason))
+      : yandexResultErrors(r.value).join('; ')).filter(Boolean);
+    if (problems.length === results.length) throw new Error(`Яндекс Маркет не принял цену: ${problems.join(' | ')}`);
+    if (problems.length) console.warn('[YM] один из методов цены не сработал:', problems);
   },
 
   /**

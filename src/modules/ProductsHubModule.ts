@@ -7,7 +7,7 @@ import { ozonDb } from '@/services/ozonDb';
 import { wbDb } from '@/services/wbDb';
 import { yandexDb } from '@/services/yandexDb';
 import { ozonApi } from '@/services/ozonApi';
-import { wbApi, updateWbPrices } from '@/services/wbApi';
+import { wbApi, updateWbPrices, waitWbPriceTask } from '@/services/wbApi';
 import { yandexApi } from '@/services/yandexApi';
 import { costPriceDb } from '@/services/costPriceDb';
 import { customColumnsDb } from '@/services/customColumnsDb';
@@ -21,6 +21,8 @@ import { boxes } from '@/stores/appStore';
 import { RULE_LABELS, type RepricerRule } from '@/modules/repricer/types';
 import { debug } from '@/utils/debug';
 import { dbFetch } from '@/services/dbClient';
+import { BulkEditor } from '@/modules/products/bulkEditor';
+import type { CardChanges, BulkHost } from '@/modules/products/bulkTypes';
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -146,10 +148,13 @@ interface EditState {
   saving: boolean; saveError: string; saveOk: boolean;
   /** Пояснение после сохранения (например, «Ozon ещё обрабатывает»). */
   saveNote: string;
+  /** Фото, которые пользователь удалил (чтобы не вернуть их при слиянии с маркетплейсом). */
+  removedPhotos: Set<string>;
   extraLoaded: boolean; extraLoading: boolean;
   dirtyFields: Set<string>;
 }
 type PeriodDays = 7 | 30 | 90 | 180;
+
 
 // ═══════════════════════════════════════════════════════════════════
 // Constants
@@ -240,7 +245,7 @@ function num(n: number | null | undefined): string {
 // Module
 // ═══════════════════════════════════════════════════════════════════
 
-export class ProductsHubModule {
+export class ProductsHubModule implements BulkHost {
   private items: HubProduct[]    = [];
   private filtered: HubProduct[] = [];
   private selectedArticle: string | null = null;
@@ -286,7 +291,6 @@ export class ProductsHubModule {
 
   // ── Edit state
   private editState = new Map<string, EditState>();
-  private extraDataCache = new Map<string, { vat?: string; description?: string }>();
   private photoAddStoreId: string | null = null;
   private photoAddMode: 'url' | 'file' = 'url';
   private photoAddUrlValue = '';
@@ -298,6 +302,8 @@ export class ProductsHubModule {
   /** Когда товары магазина последний раз приходили из API (max synced_at строк каталога). */
   private productSyncAt = new Map<string, number>();
   private autoSyncing = false;
+  /** Рейтинг контента Ozon по магазину и артикулу: данные, «грузится» или «нет». */
+  private ratingCache = new Map<string, any>();
   private static readonly AUTO_SYNC_MS = 3 * 3600 * 1000;
   // field def UUID → human-readable name
   private fieldDefNames = new Map<string, string>();
@@ -411,7 +417,7 @@ export class ProductsHubModule {
           <button id="ph-sel-all"    class="ph-sel-btn"        title="Отметить все в списке">${I.check('', 14)} Отметить все</button>
           <div class="ph-sel-divider"></div>
           <button id="ph-sel-export" class="ph-sel-btn accent" title="Экспорт выбранных в Excel">${I.download('', 14)} Экспорт</button>
-          <button id="ph-sel-edit"   class="ph-sel-btn"        title="Редактировать выбранные">${I.edit('', 14)} Редактировать</button>
+          <button id="ph-sel-edit"   class="ph-sel-btn accent" title="Цены, габариты, НДС, себестоимость, архив — сразу во всех магазинах">${I.edit('', 14)} Управлять карточками</button>
           <div class="ph-sel-divider"></div>
           <button id="ph-sel-hide"   class="ph-sel-btn warn"   title="Скрыть выбранные">${I.eyeOff('', 14)} Скрыть</button>
           <button id="ph-sel-clear"  class="ph-sel-btn muted"  title="Снять выбор">✕</button>
@@ -679,8 +685,13 @@ export class ProductsHubModule {
       ...this.wbStores.map((s: any) => ({ s, mp: 'wb' as Mp })),
       ...this.ymStores.filter((s: any) => s.business_id).map((s: any) => ({ s, mp: 'yandex' as Mp })),
     ];
+    // Версия каталога: после исправления загрузки фото Ozon (раньше брались
+    // только 5 и без главного) один раз перечитываем все магазины
+    let forceAll = false;
+    try { forceAll = localStorage.getItem('ph_catalog_v') !== '2'; } catch { /* ignore */ }
     const stale = all.filter(({ s }) => {
       if (this.syncing.get(s.id)) return false;
+      if (forceAll) return true;
       const t = this.lastSyncAt(s.id);
       return !t || Date.now() - t > ProductsHubModule.AUTO_SYNC_MS;
     });
@@ -705,6 +716,7 @@ export class ProductsHubModule {
           this.syncing.set(s.id, false);
         }
       }
+      if (forceAll && !stale.some(({ s }) => this.syncErr.has(s.id))) { try { localStorage.setItem('ph_catalog_v', '2'); } catch { /* ignore */ } }
       await this.load({ quiet: true });
     } finally {
       this.autoSyncing = false;
@@ -911,7 +923,7 @@ export class ProductsHubModule {
         case 'photo-delete': {
           const idx = +(el.getAttribute('data-idx') ?? -1);
           const st = this.editState.get(storeId);
-          if (st && idx >= 0) { st.photos.splice(idx, 1); st.dirtyFields.add('photos'); this.refreshPhotosTab2(); }
+          if (st && idx >= 0) { const [gone] = st.photos.splice(idx, 1); if (gone) st.removedPhotos.add(gone); st.dirtyFields.add('photos'); this.refreshPhotosTab2(); }
           break;
         }
         case 'open-lightbox': {
@@ -1733,6 +1745,67 @@ export class ProductsHubModule {
       ${this.tplTabsHead(p)}
       <div class="pc-body">${this.tplTabContent(p)}</div>
     </div>` + this.tplLightbox();
+    if (this.activeTab === 'overview') this.loadRatings(p);
+  }
+
+  // ─── Качество карточки Ozon (рейтинг контента) ──────────────────
+
+  private tplRatingSection(p: HubProduct): string {
+    const oz = p.mp_entries.filter(e => e.mp === 'ozon');
+    if (!oz.length) return '';
+    return `<section class="pc-sec"><div class="pc-sec-h"><h3>Качество карточки на Ozon</h3><span class="pc-muted">рейтинг контента — влияет на показы в поиске</span></div>
+      ${oz.map(e => `<div class="pc-rating" id="pc-rating-${esc(e.store_id)}">${this.tplRating(p, e)}</div>`).join('')}</section>`;
+  }
+
+  private tplRating(p: HubProduct, e: MpStoreEntry): string {
+    const r = this.ratingCache.get(`${e.store_id}|${p.article}`);
+    const head = p.mp_entries.filter(x => x.mp === 'ozon').length > 1 ? `<div class="pc-rating-store">${esc(e.store_name)}</div>` : '';
+    if (r === undefined || r === 'loading') return `${head}<div class="pc-muted">${I.loader('', 13)} Загружаю рейтинг…</div>`;
+    if (r === 'none') return `${head}<div class="pc-muted">Ozon не вернул рейтинг — у товара ещё нет SKU или он не прошёл модерацию</div>`;
+    if (typeof r === 'string') return `${head}<div class="pc-muted">Не удалось получить рейтинг: ${esc(r)}</div>`;
+    const score = Math.round(r.rating ?? 0);
+    const tone = score >= 80 ? 'ok' : score >= 50 ? 'mid' : 'bad';
+    const todo: Array<{ text: string; cost: number }> = [];
+    for (const g of r.groups ?? []) {
+      for (const c of g.conditions ?? []) if (!c.fulfilled) todo.push({ text: c.description, cost: c.cost ?? 0 });
+      const attrs = (g.improve_attributes ?? []).map((a: any) => a.name).filter(Boolean);
+      if (attrs.length && g.improve_at_least > 0) {
+        todo.push({ text: `${g.name}: заполните ещё ${g.improve_at_least} — например, ${attrs.slice(0, 6).join(', ')}${attrs.length > 6 ? '…' : ''}`, cost: 0 });
+      }
+    }
+    todo.sort((a, b) => b.cost - a.cost);
+    return `${head}
+      <div class="pc-rating-top">
+        <div class="pc-rating-score ${tone}"><b>${score}</b><span>/100</span></div>
+        <div class="pc-rating-bars">${(r.groups ?? []).map((g: any) => `
+          <div class="pc-rating-g" title="${esc(g.name)}: ${Math.round(g.rating ?? 0)} из 100, вес ${Math.round(g.weight ?? 0)}%">
+            <span>${esc(g.name)}</span><i><u style="width:${Math.max(0, Math.min(100, g.rating ?? 0))}%"></u></i><em>${Math.round(g.rating ?? 0)}</em>
+          </div>`).join('')}</div>
+      </div>
+      ${todo.length ? `<ul class="pc-rating-todo">${todo.slice(0, 8).map(t => `<li>${esc(t.text)}${t.cost ? ` <b>+${Math.round(t.cost)}</b>` : ''}</li>`).join('')}</ul>`
+        : '<div class="pc-muted">Всё, что учитывает рейтинг, заполнено 👍</div>'}
+      <div class="pc-note">Характеристики, видео и rich-контент заполняются в кабинете Ozon; название, описание, фото и габариты — во вкладках «Редактирование» и «Фото».</div>`;
+  }
+
+  private async loadRatings(p: HubProduct): Promise<void> {
+    for (const e of p.mp_entries.filter(x => x.mp === 'ozon')) {
+      const key = `${e.store_id}|${p.article}`;
+      if (this.ratingCache.has(key)) continue;
+      const prod = this.rawProd('ozon', e.store_id, p.article);
+      const store = this.rawStore('ozon', e.store_id);
+      if (!prod?.sku || !store) { this.ratingCache.set(key, 'none'); this.paintRating(p, e); continue; }
+      this.ratingCache.set(key, 'loading');
+      ozonApi.getContentRating({ client_id: store.client_id, api_key: store.api_key }, [Number(prod.sku)])
+        .then(list => this.ratingCache.set(key, list.find(x => Number(x.sku) === Number(prod.sku)) ?? 'none'))
+        .catch(err => this.ratingCache.set(key, (err instanceof Error ? err.message : String(err)).slice(0, 120)))
+        .finally(() => this.paintRating(p, e));
+    }
+  }
+
+  private paintRating(p: HubProduct, e: MpStoreEntry): void {
+    if (this.selectedArticle !== p.article) return;
+    const el = this.cardEl?.querySelector<HTMLElement>(`#pc-rating-${CSS.escape(e.store_id)}`);
+    if (el) el.innerHTML = this.tplRating(p, e);
   }
 
   /** Себестоимость из поля в карточке: сохранить и пересчитать прибыль. */
@@ -1965,6 +2038,7 @@ export class ProductsHubModule {
 
     return `
       ${sec('Где продаётся', stores)}
+      ${this.tplRatingSection(p)}
       ${sec('О товаре', factsHtml + charsHtml, `<button class="pc-linkbtn" onclick="window.productsHubModule?.setTab('card-edit')">Изменить</button>`)}
       ${sec('Описание', descHtml)}
       <div class="pc-split">
@@ -2155,7 +2229,7 @@ export class ProductsHubModule {
           width_cm:  prod.width_cm  ? String(prod.width_cm)  : (p.width_cm  ? String(p.width_cm)  : ''),
           height_cm: prod.height_cm ? String(prod.height_cm) : (p.height_cm ? String(p.height_cm) : ''),
           photos: [...(prod.images ?? [])],
-          priceLocked: locked, saving: false, saveError: '', saveOk: false, saveNote: '',
+          priceLocked: locked, saving: false, saveError: '', saveOk: false, saveNote: '', removedPhotos: new Set(),
           extraLoaded: false, extraLoading: false, // description still fetched on-demand
           dirtyFields: new Set(),
         });
@@ -2178,7 +2252,7 @@ export class ProductsHubModule {
           length_cm: prod.length_cm ? String(prod.length_cm) : '', width_cm: prod.width_cm ? String(prod.width_cm) : '',
           height_cm: prod.height_cm ? String(prod.height_cm) : '',
           photos: [...(prod.pictures ?? [])],
-          priceLocked: locked, saving: false, saveError: '', saveOk: false, saveNote: '',
+          priceLocked: locked, saving: false, saveError: '', saveOk: false, saveNote: '', removedPhotos: new Set(),
           extraLoaded: true, extraLoading: false, // description from DB — no API call needed
           dirtyFields: new Set(),
         });
@@ -2201,7 +2275,7 @@ export class ProductsHubModule {
           length_cm: prod.length_cm ? String(prod.length_cm) : '', width_cm: prod.width_cm ? String(prod.width_cm) : '',
           height_cm: prod.height_cm ? String(prod.height_cm) : '',
           photos: [...(prod.pictures ?? [])],
-          priceLocked: locked, saving: false, saveError: '', saveOk: false, saveNote: '',
+          priceLocked: locked, saving: false, saveError: '', saveOk: false, saveNote: '', removedPhotos: new Set(),
           extraLoaded: true, extraLoading: false, // all extra data from DB
           dirtyFields: new Set(),
         });
@@ -2786,226 +2860,426 @@ export class ProductsHubModule {
 
   // ─── Save card ────────────────────────────────────────────────────
 
+  // ═══ Отправка изменений в маркетплейсы ═════════════════════════════
+  //  Одна функция для карточки и массового редактирования: шлёт только
+  //  переданные поля, ждёт подтверждения маркетплейса и записывает
+  //  результат в нашу базу — иначе следующая загрузка вернула бы старое.
+
+  rawProd(mp: Mp, storeId: string, article: string): any {
+    const a = article.trim().toLowerCase();
+    if (mp === 'ozon') return this.ozProds.find((x: any) => x.store_id === storeId && String(x.offer_id ?? '').trim().toLowerCase() === a);
+    if (mp === 'wb') return this.wbProds.find((x: any) => x.store_id === storeId && String(x.vendor_code ?? x.nm_id ?? '').trim().toLowerCase() === a);
+    return this.ymProds.find((x: any) => x.store_id === storeId && String(x.offer_id ?? x.vendor_code ?? '').trim().toLowerCase() === a);
+  }
+
+  rawStore(mp: Mp, storeId: string): any {
+    const list: any[] = mp === 'ozon' ? this.ozStores : mp === 'wb' ? this.wbStores : this.ymStores;
+    return list.find(s => s.id === storeId);
+  }
+
+  /** Записать подтверждённые изменения в нашу таблицу товаров магазина. */
+  async persistRaw(mp: Mp, storeId: string, article: string, patch: Record<string, unknown>): Promise<void> {
+    if (!Object.keys(patch).length) return;
+    const table = mp === 'ozon' ? 'ozon_products' : mp === 'wb' ? 'wb_products' : 'yandex_products';
+    const key = mp === 'wb' ? 'vendor_code' : 'offer_id';
+    try {
+      await dbFetch(`${table}?store_id=eq.${encodeURIComponent(storeId)}&${key}=eq.${encodeURIComponent(article)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(patch),
+      });
+    } catch (e) { debug.warn('[ProductsHub] persist failed', e); }
+  }
+
+  /** Правило Ozon: зачёркнутая цена должна быть заметно выше цены. */
+  private static ozonOldPriceProblem(price: number, old: number): string | null {
+    if (!old || old <= 0) return null;
+    const need = price < 400 ? 20 : price <= 10000 ? price * 0.05 : 500;
+    return old - price < need ? `зачёркнутая цена должна быть выше цены минимум на ${price < 400 ? '20 ₽' : price <= 10000 ? '5%' : '500 ₽'}` : null;
+  }
+
+  /** Проверка изменений до отправки — понятный текст вместо отказа маркетплейса. */
+  private validateChanges(mp: Mp, ch: CardChanges, cur: { price: number | null }): string[] {
+    const out: string[] = [];
+    if (ch.name !== undefined) {
+      if (!ch.name.trim()) out.push('название не может быть пустым');
+      if (mp === 'wb' && ch.name.trim().length > 60) out.push('название на WB — не длиннее 60 символов');
+      if (mp === 'ozon' && ch.name.trim().length > 500) out.push('название на Ozon — не длиннее 500 символов');
+    }
+    const price = ch.price ?? cur.price;
+    if (ch.price !== undefined && !(ch.price! > 0)) out.push('цена должна быть больше нуля');
+    if (mp === 'wb' && ch.price !== undefined && !Number.isInteger(ch.price)) out.push('цена WB — целое число');
+    if (mp === 'ozon' && price && ch.old_price != null && ch.old_price > 0) {
+      const p = ProductsHubModule.ozonOldPriceProblem(price, ch.old_price);
+      if (p) out.push(p);
+    }
+    if (mp === 'ozon' && price && ch.min_price != null && ch.min_price > price) out.push('минимальная цена не может быть больше цены');
+    if (mp === 'wb' && ch.discount !== undefined && (ch.discount < 0 || ch.discount > 95 || !Number.isInteger(ch.discount))) out.push('скидка WB — целое число от 0 до 95');
+    for (const k of ['weight_kg', 'length_cm', 'width_cm', 'height_cm'] as const) {
+      if (ch[k] !== undefined && ch[k] != null && !(ch[k]! > 0)) out.push('вес и габариты — положительные числа');
+    }
+    return [...new Set(out)];
+  }
+
   /**
-   * Сохранить карточку в магазин. Отправляем ТОЛЬКО изменённые поля:
-   * раньше каждое сохранение заново слало цену (а на Ozon ещё и мин. цену = цене)
-   * и всю карточку — даже если поменяли одну букву в названии.
+   * Отправить изменения карточки в магазин. Возвращает пояснение
+   * («ещё обрабатывается») или пустую строку; при ошибке бросает исключение.
    */
+  async pushCardChanges(article: string, storeId: string, mp: Mp, ch: CardChanges): Promise<string> {
+    const store = this.rawStore(mp, storeId);
+    const prod = this.rawProd(mp, storeId, article);
+    if (!store || !prod) throw new Error('Товар не найден в каталоге магазина — обновите каталог');
+    const entry = this.items.find(x => x.article.toLowerCase() === article.toLowerCase())?.mp_entries.find(e => e.store_id === storeId);
+    const curPrice = mp === 'yandex' ? (prod.basic_price ?? null) : (prod.price ?? null);
+    const problems = this.validateChanges(mp, ch, { price: curPrice });
+    if (problems.length) throw new Error(`Не сохранено: ${problems.join('; ')}`);
+
+    const has = (k: keyof CardChanges) => ch[k] !== undefined;
+    const dimsDirty = has('weight_kg') || has('length_cm') || has('width_cm') || has('height_cm');
+    const val = (k: 'weight_kg' | 'length_cm' | 'width_cm' | 'height_cm') => (has(k) ? ch[k] : prod[k]) ?? null;
+    const dims: Dimensions = {
+      weight_g:  val('weight_kg') != null ? Math.round(val('weight_kg')! * 1000) : null,
+      length_mm: val('length_cm') != null ? Math.round(val('length_cm')! * 10)   : null,
+      width_mm:  val('width_cm')  != null ? Math.round(val('width_cm')!  * 10)   : null,
+      height_mm: val('height_cm') != null ? Math.round(val('height_cm')! * 10)   : null,
+    };
+    const priceDirty = has('price') || has('old_price') || has('min_price') || has('discount');
+    const patch: Record<string, unknown> = {};
+    let note = '';
+
+    if (mp === 'ozon') {
+      const creds = { client_id: store.client_id, api_key: store.api_key };
+      const tasks: number[] = [];
+      const newPrice = ch.price ?? prod.price;
+      const newOld = has('old_price') ? (ch.old_price ?? 0) : (prod.old_price ?? 0);
+      if (has('name') || has('vat') || has('description') || dimsDirty) {
+        const t = await ozonApi.updateCardMerged(creds, article, prod.product_id ?? null, {
+          ...(has('name') ? { name: ch.name!.trim() } : {}),
+          ...(has('vat') ? { vat: ch.vat } : {}),
+          ...(has('description') ? { description: ch.description } : {}),
+          ...(priceDirty ? { price: String(newPrice), old_price: String(newOld || 0) } : {}),
+          ...(dimsDirty ? { weight_g: dims.weight_g, depth_mm: dims.length_mm, width_mm: dims.width_mm, height_mm: dims.height_mm } : {}),
+        });
+        if (t) tasks.push(t);
+      }
+      if (has('barcode') && ch.barcode && ch.barcode !== (prod.barcode ?? '')) {
+        if (!prod.sku) throw new Error('У товара ещё нет SKU Ozon — штрихкод можно поменять после модерации');
+        await ozonApi.updateBarcode(creds, prod.sku, ch.barcode.trim());
+        patch.barcode = ch.barcode.trim();
+      }
+      if (priceDirty) {
+        const res = await ozonApi.updatePricesDetailed(creds, [{
+          offer_id: article, price: String(newPrice), old_price: String(newOld || 0),
+          ...(ch.min_price != null ? { min_price: String(ch.min_price) } : {}),
+        }]);
+        const err = res.get(article);
+        if (err) throw new Error(`Ozon не принял цену: ${err}`);
+        patch.price = newPrice; patch.old_price = newOld || null;
+        if (ch.min_price != null) patch.min_price = ch.min_price;
+      }
+      let pending = false;
+      for (const t of tasks) if (await ozonApi.waitImportTask(creds, t) === 'pending') pending = true;
+      if (has('name')) patch.name = ch.name!.trim();
+      if (has('vat')) patch.vat = ch.vat;
+      if (pending) note = 'Ozon принял изменения и ещё обрабатывает их — на сайте появятся через несколько минут';
+
+    } else if (mp === 'wb') {
+      if (!prod.nm_id) throw new Error('У товара нет nmID — обновите каталог WB');
+      if (has('name') || has('brand') || has('description') || dimsDirty) {
+        const upd: Parameters<typeof wbApi.updateCard>[2] = {};
+        if (has('name')) upd.title = ch.name!.trim();
+        if (has('brand')) upd.brand = ch.brand!.trim();
+        if (has('description')) upd.description = ch.description;
+        if (dimsDirty) {
+          const wb = toWb(dims);
+          if (wb.length != null || wb.width != null || wb.height != null) {
+            upd.dimensions = { length: Math.round(wb.length ?? 0), width: Math.round(wb.width ?? 0), height: Math.round(wb.height ?? 0) };
+          }
+          if (wb.weight_kg != null) upd.weightBrutto = wb.weight_kg;
+        }
+        await wbApi.updateCard(store.api_key, prod.nm_id, upd);
+        if (has('name')) patch.title = ch.name!.trim();
+        if (has('brand')) patch.brand = ch.brand!.trim();
+        if (has('description')) patch.description = ch.description;
+      }
+      if (priceDirty) {
+        const price = Math.round(ch.price ?? prod.price);
+        const discount = Math.round(has('discount') ? ch.discount! : (prod.discount ?? 0));
+        const id = await updateWbPrices(store.api_key, [{ nmID: prod.nm_id, price, discount }]);
+        if (id) {
+          const errs = await waitWbPriceTask(store.api_key, id);
+          const e = errs?.get(Number(prod.nm_id)) ?? errs?.get(0);
+          if (e) throw new Error(`WB не принял цену: ${e}`);
+          if (!errs) note = 'WB ещё обрабатывает цену — обновится через пару минут';
+        }
+        patch.price = price; patch.discount = discount;
+      }
+      if (!note && (has('name') || has('brand') || has('description') || dimsDirty)) note = 'WB обновит карточку на сайте в течение нескольких минут';
+
+    } else {
+      if (!store.business_id) throw new Error('У магазина Яндекс Маркета не указан business_id — переподключите магазин');
+      if (has('name') || has('brand') || has('description') || has('barcode') || has('vat') || dimsDirty) {
+        const offer: Record<string, unknown> = { offerId: article };
+        if (dimsDirty) {
+          const ym = toYm(dims);
+          const wd: Record<string, number> = {};
+          if (ym.length != null) wd.length = ym.length;
+          if (ym.width  != null) wd.width  = ym.width;
+          if (ym.height != null) wd.height = ym.height;
+          if (ym.weight != null) wd.weight = ym.weight;
+          if (Object.keys(wd).length) offer.weightDimensions = wd;
+        }
+        if (has('name')) offer.name = ch.name!.trim();
+        if (has('brand')) offer.vendor = ch.brand!.trim();
+        if (has('description')) offer.description = ch.description;
+        if (has('barcode') && ch.barcode) offer.barcodes = [ch.barcode.trim()];
+        if (has('vat') && ch.vat) offer.tax = { vatType: ch.vat };
+        await yandexApi.updateOffer(store.api_key, store.business_id, offer);
+        if (has('name')) patch.name = ch.name!.trim();
+        if (has('brand')) patch.vendor = ch.brand!.trim();
+        if (has('description')) patch.description = ch.description;
+        if (has('barcode')) patch.barcode = ch.barcode!.trim();
+        if (has('vat')) patch.vat = ch.vat;
+      }
+      if (has('price')) {
+        await yandexApi.updateOfferPrices(store.api_key, String(store.campaign_id ?? ''), [{ offerId: article, price: ch.price! }]);
+        patch.basic_price = ch.price;
+        // Цена общая для бизнеса — во всех его кампаниях
+        const bid = store.business_id;
+        this.items.find(x => x.article.toLowerCase() === article.toLowerCase())
+          ?.mp_entries.filter(e => e.mp === 'yandex' && this.rawStore('yandex', e.store_id)?.business_id === bid)
+          .forEach(e => { e.price = ch.price!; });
+      }
+    }
+
+    if (dimsDirty) {
+      for (const k of ['weight_kg', 'length_cm', 'width_cm', 'height_cm'] as const) if (has(k)) patch[k] = ch[k];
+    }
+    // Подтверждено маркетплейсом → в память и в базу
+    Object.assign(prod, patch);
+    if (mp === 'yandex' && patch.vendor !== undefined) prod.vendor = patch.vendor;
+    await this.persistRaw(mp, storeId, article, patch);
+    try { localStorage.setItem(`ph_autosync_${storeId}`, new Date().toISOString()); } catch { /* ignore */ }
+
+    const hub = this.items.find(x => x.article.toLowerCase() === article.toLowerCase());
+    if (hub) {
+      if (dimsDirty) {
+        if (dims.weight_g)  hub.weight_kg = dims.weight_g / 1000;
+        if (dims.length_mm) hub.length_cm = dims.length_mm / 10;
+        if (dims.width_mm)  hub.width_cm  = dims.width_mm / 10;
+        if (dims.height_mm) hub.height_cm = dims.height_mm / 10;
+      }
+      if (has('name') && ch.name!.trim()) hub.name = ch.name!.trim();
+      if (has('barcode') && ch.barcode!.trim()) hub.barcode = ch.barcode!.trim();
+      if (has('brand') && ch.brand!.trim()) hub.brand = ch.brand!.trim();
+    }
+    if (entry) {
+      if (has('description')) entry.description = ch.description!;
+      if (has('vat')) entry.vat = ch.vat!;
+      if (has('barcode')) entry.barcode = ch.barcode!.trim();
+      if (priceDirty && mp === 'ozon') { entry.price = Number(patch.price); entry.old_price = (patch.old_price as number) || null; }
+      if (priceDirty && mp === 'wb') {
+        const base = Number(patch.price), d = Number(patch.discount ?? 0);
+        entry.old_price = d > 0 ? base : null;
+        entry.price = d > 0 ? Math.round(base * (1 - d / 100)) : base;
+      }
+    }
+    this.totalsCache.delete(hub?.article ?? article);
+    return note;
+  }
+
+  /**
+   * Сохранить фото карточки: порядок = порядок массива, первое — главное.
+   * Фото с компьютера сначала заливаются в наше хранилище (маркетплейс берёт по ссылке).
+   */
+  private async pushPhotos(article: string, storeId: string, mp: Mp, photos: string[], removed: string[]): Promise<{ urls: string[]; note: string; failedLocal: number }> {
+    const store = this.rawStore(mp, storeId);
+    const prod = this.rawProd(mp, storeId, article);
+    if (!store || !prod) throw new Error('Товар не найден в каталоге магазина — обновите каталог');
+    const { uploadPhoto, isDataUrl } = await import('@/services/photoUpload');
+    const list = [...photos];
+    for (let i = 0; i < list.length; i++) {
+      if (!isDataUrl(list[i])) continue;
+      try {
+        const blob = await (await fetch(list[i])).blob();
+        list[i] = await uploadPhoto(new File([blob], `photo.${blob.type.split('/')[1] || 'jpg'}`, { type: blob.type }), article);
+      } catch { /* останется data:URL */ }
+    }
+    const urls = list.filter(u => /^https?:\/\//.test(u));
+    const failedLocal = list.length - urls.length;
+    if (!urls.length) throw new Error('Нет ни одного фото со ссылкой — маркетплейс берёт фото только по ссылке');
+    let note = '';
+    let final = urls;
+
+    if (mp === 'ozon') {
+      if (!prod.product_id) throw new Error('Нет ID товара Ozon — обновите каталог');
+      const r = await ozonApi.replacePictures({ client_id: store.client_id, api_key: store.api_key }, prod.product_id, article, urls, removed);
+      final = r.images;
+      if (r.pending) note = 'Ozon ещё загружает фото — на сайте обновятся через несколько минут';
+      if (final.length > urls.length) note = `${note ? note + '. ' : ''}Сохранили и ${final.length - urls.length} фото, которых не было в каталоге SimaDesk`;
+      await this.persistRaw('ozon', storeId, article, { images: final });
+      prod.images = final;
+    } else if (mp === 'wb') {
+      if (!prod.nm_id) throw new Error('Нет nmID — обновите каталог WB');
+      if (urls.length > 30) throw new Error('На WB — не больше 30 фото');
+      await wbApi.saveMedia(store.api_key, prod.nm_id, urls);
+      note = 'WB обрабатывает фото несколько минут. Если фото меньше 700×900 px, WB его не примет';
+      await this.persistRaw('wb', storeId, article, { pictures: urls });
+      prod.pictures = urls;
+    } else {
+      await yandexApi.updateOffer(store.api_key, store.business_id!, { offerId: article, pictures: urls });
+      // Фото общие для бизнеса — обновляем во всех его кампаниях
+      const bid = store.business_id;
+      for (const s of (this.ymStores as any[]).filter(s => s.business_id === bid)) {
+        const other = this.rawProd('yandex', s.id, article);
+        if (other) other.pictures = urls;
+        await this.persistRaw('yandex', s.id, article, { pictures: urls });
+        if (s.id !== storeId) { const os = this.editState.get(s.id); if (os) os.photos = [...urls]; }
+        catalogCache.setPhotos(s.id, article, urls);
+      }
+      note = 'Яндекс Маркет обновит фото в течение нескольких минут';
+    }
+    if (mp !== 'yandex') catalogCache.setPhotos(storeId, article, final);
+    try { localStorage.setItem(`ph_autosync_${storeId}`, new Date().toISOString()); } catch { /* ignore */ }
+    const hub = this.items.find(x => x.article.toLowerCase() === article.toLowerCase());
+    const he = hub?.mp_entries.find(e => e.store_id === storeId);
+    if (he) he.images = [...final];
+    if (hub && final[0] && hub.mp_entries[0]?.store_id === storeId) hub.image_url = final[0];
+    return { urls: final, note, failedLocal };
+  }
+
+  /**
+   * Цены пачкой по одному магазину: Ozon и WB — одним запросом на магазин,
+   * с результатом по каждому товару. Возвращает артикул → ошибка (null — успешно).
+   */
+  async pushPricesBatch(storeId: string, mp: Mp, rows: Array<{ article: string; price: number; old_price?: number | null; min_price?: number | null; discount?: number }>): Promise<Map<string, string | null>> {
+    const out = new Map<string, string | null>();
+    const store = this.rawStore(mp, storeId);
+    if (!store) { rows.forEach(r => out.set(r.article, 'магазин не найден')); return out; }
+    const ok: typeof rows = [];
+    for (const r of rows) {
+      const prod = this.rawProd(mp, storeId, r.article);
+      if (!prod) { out.set(r.article, 'товара нет в каталоге магазина'); continue; }
+      const probs = this.validateChanges(mp, { price: r.price, old_price: r.old_price, min_price: r.min_price, discount: r.discount }, { price: r.price });
+      if (probs.length) { out.set(r.article, probs.join('; ')); continue; }
+      ok.push(r);
+    }
+    if (!ok.length) return out;
+    const apply = async (r: typeof rows[number], patch: Record<string, unknown>) => {
+      const prod = this.rawProd(mp, storeId, r.article);
+      Object.assign(prod, patch);
+      await this.persistRaw(mp, storeId, r.article, patch);
+      const e = this.items.find(x => x.article.toLowerCase() === r.article.toLowerCase())?.mp_entries.find(x => x.store_id === storeId);
+      if (e) {
+        if (mp === 'wb') { const d = Number(patch.discount ?? 0); e.old_price = d > 0 ? r.price : null; e.price = d > 0 ? Math.round(r.price * (1 - d / 100)) : r.price; }
+        else { e.price = r.price; if (mp === 'ozon') e.old_price = (patch.old_price as number) || null; }
+      }
+      this.totalsCache.delete(e ? r.article : r.article);
+    };
+    try {
+      if (mp === 'ozon') {
+        const creds = { client_id: store.client_id, api_key: store.api_key };
+        const res = await ozonApi.updatePricesDetailed(creds, ok.map(r => {
+          const prod = this.rawProd(mp, storeId, r.article);
+          const old = r.old_price !== undefined ? (r.old_price ?? 0) : (prod.old_price ?? 0);
+          return { offer_id: prod.offer_id, price: String(r.price), old_price: String(old || 0), ...(r.min_price != null ? { min_price: String(r.min_price) } : {}) };
+        }));
+        for (const r of ok) {
+          const prod = this.rawProd(mp, storeId, r.article);
+          const err = res.get(prod.offer_id) ?? null;
+          out.set(r.article, err);
+          if (!err) await apply(r, { price: r.price, old_price: (r.old_price !== undefined ? r.old_price : prod.old_price) || null, ...(r.min_price != null ? { min_price: r.min_price } : {}) });
+        }
+      } else if (mp === 'wb') {
+        const items = ok.map(r => { const prod = this.rawProd(mp, storeId, r.article); return { r, nm: Number(prod.nm_id), discount: Math.round(r.discount ?? prod.discount ?? 0) }; }).filter(x => x.nm);
+        const id = await updateWbPrices(store.api_key, items.map(x => ({ nmID: x.nm, price: Math.round(x.r.price), discount: x.discount })));
+        const errs = id ? await waitWbPriceTask(store.api_key, id) : new Map<number, string>();
+        for (const x of items) {
+          const err = errs?.get(x.nm) ?? errs?.get(0) ?? null;
+          out.set(x.r.article, err);
+          if (!err) await apply(x.r, { price: Math.round(x.r.price), discount: x.discount });
+        }
+      } else {
+        await yandexApi.updateOfferPrices(store.api_key, String(store.campaign_id ?? ''), ok.map(r => ({ offerId: this.rawProd(mp, storeId, r.article).offer_id, price: r.price })));
+        for (const r of ok) { out.set(r.article, null); await apply(r, { basic_price: r.price }); }
+      }
+      try { localStorage.setItem(`ph_autosync_${storeId}`, new Date().toISOString()); } catch { /* ignore */ }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      for (const r of ok) if (!out.has(r.article)) out.set(r.article, msg);
+    }
+    return out;
+  }
+
+  /** Архив / из архива по магазину. WB архива через API не даёт. */
+  async pushArchive(storeId: string, mp: Mp, articles: string[], archived: boolean): Promise<Map<string, string | null>> {
+    const out = new Map<string, string | null>();
+    const store = this.rawStore(mp, storeId);
+    if (mp === 'wb') { articles.forEach(a => out.set(a, 'у WB нет архива через API — только удаление в корзину в кабинете')); return out; }
+    if (!store) { articles.forEach(a => out.set(a, 'магазин не найден')); return out; }
+    try {
+      if (mp === 'ozon') {
+        const ids: number[] = [];
+        for (const a of articles) {
+          const prod = this.rawProd(mp, storeId, a);
+          if (prod?.product_id) ids.push(prod.product_id); else out.set(a, 'нет ID товара Ozon — обновите каталог');
+        }
+        const creds = { client_id: store.client_id, api_key: store.api_key };
+        if (ids.length) await (archived ? ozonApi.archiveProducts(creds, ids) : ozonApi.unarchiveProducts(creds, ids));
+        for (const a of articles) if (!out.has(a)) {
+          out.set(a, null);
+          const status = archived ? 'archived' : 'processed';
+          const prod = this.rawProd(mp, storeId, a); if (prod) prod.status = status;
+          await this.persistRaw(mp, storeId, a, { status });
+        }
+      } else {
+        if (!store.business_id) throw new Error('у магазина не указан business_id');
+        const res = await yandexApi.setArchived(store.api_key, store.business_id, articles.map(a => this.rawProd(mp, storeId, a)?.offer_id ?? a), archived);
+        for (const a of articles) {
+          const err = res.get(this.rawProd(mp, storeId, a)?.offer_id ?? a) ?? null;
+          out.set(a, err);
+          if (!err) { const prod = this.rawProd(mp, storeId, a); if (prod) prod.archived = archived; await this.persistRaw(mp, storeId, a, { archived }); }
+        }
+      }
+      for (const a of articles) if (!out.get(a)) {
+        const e = this.items.find(x => x.article.toLowerCase() === a.toLowerCase())?.mp_entries.find(x => x.store_id === storeId);
+        if (e) e.status = archived ? 'В архиве' : 'В продаже';
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      for (const a of articles) if (!out.has(a)) out.set(a, msg);
+    }
+    return out;
+  }
+
+  /** Сохранить карточку из вкладки «Редактирование». */
   private async doSaveCard(article: string, storeId: string, mp: 'ozon' | 'wb' | 'yandex'): Promise<void> {
     const st = this.editState.get(storeId);
     if (!st || st.saving) return;
-    const d = new Set([...st.dirtyFields].filter(f => f !== 'photos'));
-    if (!d.size) { st.saveOk = false; st.saveError = ''; st.saveNote = 'Изменений нет'; this.refreshEditTab(); return; }
-
-    const has = (...f: string[]) => f.some(x => d.has(x));
-    const numOrNull = (v: string) => { const n = parseFloat(String(v).replace(',', '.')); return isFinite(n) ? n : null; };
-    // Проверка до отправки — понятная ошибка вместо отказа маркетплейса
-    const problems: string[] = [];
-    if (has('name') && !st.name.trim()) problems.push('название не может быть пустым');
-    if (has('price', 'old_price', 'min_price', 'discount')) {
-      const price = numOrNull(st.price);
-      if (price == null || price <= 0) problems.push('укажите цену больше нуля');
-      const old = st.old_price ? numOrNull(st.old_price) : null;
-      if (mp === 'ozon' && old != null && price != null && old > 0 && old <= price) problems.push('старая цена должна быть больше текущей (или оставьте поле пустым)');
-      const min = st.min_price ? numOrNull(st.min_price) : null;
-      if (mp === 'ozon' && min != null && price != null && min > price) problems.push('минимальная цена не может быть больше цены');
-      const disc = st.discount ? numOrNull(st.discount) : 0;
-      if (mp === 'wb' && (disc == null || disc < 0 || disc > 95)) problems.push('скидка WB — от 0 до 95%');
+    const d = [...st.dirtyFields].filter(f => f !== 'photos');
+    if (!d.length) { st.saveOk = false; st.saveError = ''; st.saveNote = 'Изменений нет'; this.refreshEditTab(); return; }
+    const num = (v: string) => { const n = parseFloat(String(v).replace(',', '.')); return isFinite(n) ? n : null; };
+    const ch: CardChanges = {};
+    for (const f of d) {
+      switch (f) {
+        case 'name': case 'brand': case 'barcode': case 'description': case 'vat': ch[f] = st[f]; break;
+        case 'price': ch.price = num(st.price) ?? 0; break;
+        case 'old_price': ch.old_price = st.old_price ? num(st.old_price) : 0; break;
+        case 'min_price': ch.min_price = st.min_price ? num(st.min_price) : null; break;
+        case 'discount': ch.discount = st.discount ? num(st.discount)! : 0; break;
+        case 'weight_kg': case 'length_cm': case 'width_cm': case 'height_cm': ch[f] = st[f] ? num(st[f]) : null; break;
+      }
     }
-    for (const f of ['weight_kg', 'length_cm', 'width_cm', 'height_cm'] as const) {
-      if (d.has(f) && st[f] && !(numOrNull(st[f])! > 0)) problems.push('вес и габариты — положительные числа');
-    }
-    if (problems.length) {
-      st.saveError = `Не сохранено: ${[...new Set(problems)].join('; ')}`;
-      st.saveOk = false; st.saveNote = '';
-      this.refreshEditTab();
-      return;
-    }
+    if (st.priceLocked) { delete ch.price; delete ch.old_price; delete ch.min_price; delete ch.discount; }
+    // Ozon: описание отправляем, только если оно загрузилось (иначе затрём пустым)
+    if (mp === 'ozon' && !st.extraLoaded) delete ch.description;
+    // Ozon требует цену вместе со старой ценой — подставим текущую
+    if (mp === 'ozon' && (ch.old_price !== undefined || ch.min_price !== undefined) && ch.price === undefined) ch.price = num(st.price) ?? undefined;
 
     st.saving = true; st.saveError = ''; st.saveOk = false; st.saveNote = '';
     this.refreshEditTab();
-    const sentFields = new Set(d);
     try {
-      const n = (v: string) => numOrNull(v);
-      const dimsDirty = has('weight_kg', 'length_cm', 'width_cm', 'height_cm');
-      const dims: Dimensions = {
-        weight_g:  st.weight_kg ? Math.round(n(st.weight_kg)! * 1000) : null,
-        length_mm: st.length_cm ? Math.round(n(st.length_cm)! * 10)   : null,
-        width_mm:  st.width_cm  ? Math.round(n(st.width_cm)!  * 10)   : null,
-        height_mm: st.height_cm ? Math.round(n(st.height_cm)! * 10)   : null,
-      };
-      const hubEntry = () => this.items.find(x => x.article.toLowerCase() === article.toLowerCase())?.mp_entries.find(e => e.store_id === storeId);
-      const priceDirty = has('price', 'old_price', 'min_price', 'discount') && !st.priceLocked;
-
-      if (mp === 'ozon') {
-        const store = this.ozStores.find((s: any) => s.id === storeId);
-        const prod  = this.ozProds.find((x: any) => x.store_id === storeId && String(x.offer_id ?? '').trim().toLowerCase() === article.toLowerCase());
-        if (!store || !prod) throw new Error('Товар не найден в каталоге магазина — обновите каталог');
-        const creds = { client_id: store.client_id, api_key: store.api_key };
-        const tasks: number[] = [];
-
-        // Название, НДС, габариты и описание — одной задачей, поверх текущей карточки
-        const descDirty = has('description') && st.extraLoaded;
-        if (has('name', 'vat') || dimsDirty || descDirty) {
-          const t = await ozonApi.updateCardMerged(creds, article, prod.product_id ?? null, {
-            ...(has('name') ? { name: st.name.trim() } : {}),
-            ...(has('vat') ? { vat: st.vat } : {}),
-            ...(descDirty ? { description: st.description } : {}),
-            // Новая цена — и в импорт, иначе он может вернуть старую поверх обновления цен
-            ...(priceDirty ? { price: String(n(st.price)), old_price: st.old_price ? String(n(st.old_price)) : '0' } : {}),
-            ...(dimsDirty ? { weight_g: dims.weight_g, depth_mm: dims.length_mm, width_mm: dims.width_mm, height_mm: dims.height_mm } : {}),
-          });
-          if (t) tasks.push(t);
-        }
-        if (has('barcode') && st.barcode && st.barcode !== (prod.barcode ?? '')) {
-          if (!prod.sku) throw new Error('У товара ещё нет SKU Ozon — штрихкод можно поменять после модерации');
-          await ozonApi.updateBarcode(creds, prod.sku, st.barcode.trim());
-          prod.barcode = st.barcode.trim();
-        }
-        if (priceDirty) {
-          await ozonApi.updatePrices(creds, [{
-            offer_id: article,
-            price: String(n(st.price)),
-            old_price: st.old_price ? String(n(st.old_price)) : '0',
-            ...(st.min_price ? { min_price: String(n(st.min_price)) } : {}),
-          }]);
-          const e = hubEntry();
-          if (e) { e.price = n(st.price); e.old_price = st.old_price ? n(st.old_price) : null; }
-          prod.price = n(st.price); prod.old_price = st.old_price ? n(st.old_price) : null;
-          if (st.min_price) prod.min_price = n(st.min_price);
-        }
-        // Ждём, что Ozon реально принял правки, — ошибки модерации показываем
-        let pending = false;
-        for (const t of tasks) if (await ozonApi.waitImportTask(creds, t) === 'pending') pending = true;
-        if (has('name')) prod.name = st.name.trim();
-        if (has('vat')) prod.vat = st.vat;
-        if (dimsDirty) {
-          prod.weight_kg = st.weight_kg ? n(st.weight_kg) : prod.weight_kg;
-          prod.length_cm = st.length_cm ? n(st.length_cm) : prod.length_cm;
-          prod.width_cm  = st.width_cm  ? n(st.width_cm)  : prod.width_cm;
-          prod.height_cm = st.height_cm ? n(st.height_cm) : prod.height_cm;
-        }
-        if (pending) st.saveNote = 'Ozon принял изменения и ещё обрабатывает их — на сайте появятся через несколько минут';
-
-      } else if (mp === 'wb') {
-        const store = this.wbStores.find((s: any) => s.id === storeId);
-        const prod  = this.wbProds.find((x: any) => x.store_id === storeId &&
-          String(x.vendor_code ?? x.nm_id ?? '').trim().toLowerCase() === article.toLowerCase());
-        if (!store || !prod) throw new Error('Товар не найден в каталоге магазина — обновите каталог');
-        if (!prod.nm_id) throw new Error('У товара нет nmID — обновите каталог WB');
-        if (has('name', 'brand', 'description') || dimsDirty) {
-          const upd: Parameters<typeof wbApi.updateCard>[2] = {};
-          if (has('name')) upd.title = st.name.trim();
-          if (has('brand')) upd.brand = st.brand.trim();
-          if (has('description')) upd.description = st.description;
-          if (dimsDirty) {
-            const wb = toWb(dims);
-            if (wb.length != null || wb.width != null || wb.height != null) {
-              upd.dimensions = {
-                length: wb.length != null ? Math.round(wb.length) : 0,
-                width:  wb.width  != null ? Math.round(wb.width)  : 0,
-                height: wb.height != null ? Math.round(wb.height) : 0,
-              };
-            }
-            if (wb.weight_kg != null) upd.weightBrutto = wb.weight_kg;
-          }
-          await wbApi.updateCard(store.api_key, prod.nm_id, upd);
-        }
-        if (priceDirty) {
-          const discount = st.discount ? Math.round(n(st.discount)!) : 0;
-          await updateWbPrices(store.api_key, [{ nmID: prod.nm_id, price: Math.round(n(st.price)!), discount }]);
-          const e = hubEntry();
-          if (e) {
-            // WB: entry.price — цена покупателя (со скидкой), entry.old_price — базовая
-            const base = Math.round(n(st.price)!);
-            e.old_price = discount > 0 ? base : null;
-            e.price = discount > 0 ? Math.round(base * (1 - discount / 100)) : base;
-          }
-          prod.price = n(st.price); prod.discount = discount;
-        }
-        if (dimsDirty) {
-          prod.weight_kg = st.weight_kg ? n(st.weight_kg) : prod.weight_kg;
-          prod.length_cm = st.length_cm ? n(st.length_cm) : prod.length_cm;
-          prod.width_cm  = st.width_cm  ? n(st.width_cm)  : prod.width_cm;
-          prod.height_cm = st.height_cm ? n(st.height_cm) : prod.height_cm;
-        }
-        if (has('name')) prod.title = st.name.trim();
-        if (has('brand')) prod.brand = st.brand.trim();
-        if (has('description')) prod.description = st.description;
-        st.saveNote = 'WB обновит карточку на сайте в течение нескольких минут';
-
-      } else {
-        const store = this.ymStores.find((s: any) => s.id === storeId);
-        const prod  = this.ymProds.find((x: any) => x.store_id === storeId &&
-          String(x.offer_id ?? x.vendor_code ?? '').trim().toLowerCase() === article.toLowerCase());
-        if (!store || !prod) throw new Error('Товар не найден в каталоге магазина — обновите каталог');
-        if (!store.business_id) throw new Error('У магазина Яндекс Маркета не указан business_id — переподключите магазин');
-        if (has('name', 'brand', 'description', 'barcode', 'vat') || dimsDirty) {
-          const offer: Record<string, unknown> = { offerId: article };
-          if (dimsDirty) {
-            const ym = toYm(dims);
-            const wd: Record<string, number> = {};
-            if (ym.length != null) wd.length = ym.length;
-            if (ym.width  != null) wd.width  = ym.width;
-            if (ym.height != null) wd.height = ym.height;
-            if (ym.weight != null) wd.weight = ym.weight;
-            if (Object.keys(wd).length) offer.weightDimensions = wd;
-          }
-          if (has('name')) offer.name = st.name.trim();
-          if (has('brand')) offer.vendor = st.brand.trim();
-          if (has('description')) offer.description = st.description;
-          if (has('barcode') && st.barcode) offer.barcodes = [st.barcode.trim()];
-          if (has('vat') && st.vat) offer.tax = { vatType: st.vat };
-          await yandexApi.updateOffer(store.api_key, store.business_id, offer);
-        }
-        // Цена в Яндекс Маркете общая для всего бизнеса — обновляем во всех его кампаниях
-        if (priceDirty) {
-          await yandexApi.updateOfferPrices(store.api_key, String(store.campaign_id ?? ''), [{ offerId: article, price: n(st.price)! }]);
-          const bid = store.business_id;
-          this.items.find(x => x.article.toLowerCase() === article.toLowerCase())
-            ?.mp_entries.filter(e => e.mp === 'yandex' && (this.ymStores as any[]).find(s => s.id === e.store_id)?.business_id === bid)
-            .forEach(e => { e.price = n(st.price); });
-          prod.basic_price = n(st.price);
-        }
-        if (dimsDirty) {
-          prod.weight_kg = st.weight_kg ? n(st.weight_kg) : prod.weight_kg;
-          prod.length_cm = st.length_cm ? n(st.length_cm) : prod.length_cm;
-          prod.width_cm  = st.width_cm  ? n(st.width_cm)  : prod.width_cm;
-          prod.height_cm = st.height_cm ? n(st.height_cm) : prod.height_cm;
-        }
-        if (has('name')) prod.name = st.name.trim();
-        if (has('brand')) prod.vendor = st.brand.trim();
-        if (has('description')) prod.description = st.description;
-        if (has('barcode')) prod.barcode = st.barcode.trim();
-        if (has('vat')) prod.vat = st.vat;
-      }
-
-      // Карточка в разделе — сразу с новыми данными
-      const hub = this.items.find(x => x.article.toLowerCase() === article.toLowerCase());
-      if (hub) {
-        if (dimsDirty) {
-          if (dims.weight_g)  hub.weight_kg = dims.weight_g / 1000;
-          if (dims.length_mm) hub.length_cm = dims.length_mm / 10;
-          if (dims.width_mm)  hub.width_cm  = dims.width_mm / 10;
-          if (dims.height_mm) hub.height_cm = dims.height_mm / 10;
-        }
-        if (has('name') && st.name.trim()) hub.name = st.name.trim();
-        if (has('barcode') && st.barcode.trim()) hub.barcode = st.barcode.trim();
-        const e = hub.mp_entries.find(x => x.store_id === storeId);
-        if (e) {
-          if (has('description')) e.description = st.description;
-          if (has('vat')) e.vat = st.vat;
-          if (has('barcode')) e.barcode = st.barcode.trim();
-        }
-      }
-      if (st.extraLoaded) {
-        const ck = `${storeId}:${article}`;
-        const extra = mp === 'ozon' ? { vat: st.vat } : { description: st.description };
-        this.extraDataCache.set(ck, { ...this.extraDataCache.get(ck), ...extra });
-      }
-      for (const f of sentFields) st.dirtyFields.delete(f);
+      st.saveNote = await this.pushCardChanges(article, storeId, mp, ch);
+      for (const f of d) st.dirtyFields.delete(f);
       st.saveOk = true;
-      this.totalsCache.delete(article);
       this.renderListItems();
     } catch (e: unknown) {
       st.saveError = (e instanceof Error ? e.message : String(e)) || 'Ошибка сохранения';
@@ -3015,75 +3289,22 @@ export class ProductsHubModule {
     }
   }
 
-  // ─── Save photos ──────────────────────────────────────────────────
-
+  /** Сохранить фото из вкладки «Фото». */
   private async doSavePhotos(article: string, storeId: string, mp: 'ozon' | 'wb' | 'yandex'): Promise<void> {
     const st = this.editState.get(storeId);
-    if (!st) return;
-    st.saving = true; st.saveError = '';
+    if (!st || st.saving) return;
+    st.saving = true; st.saveError = ''; st.saveNote = '';
     this.refreshPhotosTab2();
-
     try {
-      const { uploadPhoto, isDataUrl } = await import('@/services/photoUpload');
-      for (let i = 0; i < st.photos.length; i++) {
-        if (!isDataUrl(st.photos[i])) continue;
-        try {
-          const blob = await (await fetch(st.photos[i])).blob();
-          const file = new File([blob], `photo.${blob.type.split('/')[1] || 'jpg'}`, { type: blob.type });
-          st.photos[i] = await uploadPhoto(file, article);
-        } catch { /* остаётся data:URL */ }
-      }
-      const urls = st.photos.filter(u => u.startsWith('http'));
-      const pendingLocal = st.photos.filter(isDataUrl);
-
-      if (mp === 'ozon') {
-        const store = this.ozStores.find((s: any) => s.id === storeId);
-        const prod  = this.ozProds.find((x: any) => x.store_id === storeId && String(x.offer_id ?? '').trim().toLowerCase() === article.toLowerCase());
-        if (!store || !prod) throw new Error('Магазин не найден');
-        if (!prod.product_id) throw new Error('Нет ID товара Ozon — обновите каталог');
-        // Отдельный метод для фото: импорт карточки с одними фото мог затереть остальное
-        await ozonApi.importPictures({ client_id: store.client_id, api_key: store.api_key }, prod.product_id, urls);
-        prod.images = urls;
-      } else if (mp === 'wb') {
-        const store = this.wbStores.find((s: any) => s.id === storeId);
-        const prod  = this.wbProds.find((x: any) => x.store_id === storeId && String(x.vendor_code ?? x.nm_id ?? '').trim().toLowerCase() === article.toLowerCase());
-        if (!store || !prod || !prod.nm_id) throw new Error('Нет nmID — невозможно сохранить фото WB');
-        await wbApi.updateCard(store.api_key, prod.nm_id, { photos: urls });
-        prod.pictures = urls;
-      } else {
-        const store = this.ymStores.find((s: any) => s.id === storeId);
-        const prod  = this.ymProds.find((x: any) => x.store_id === storeId && String(x.offer_id ?? x.vendor_code ?? '').trim().toLowerCase() === article.toLowerCase());
-        if (!store || !prod) throw new Error('Магазин не найден');
-        await yandexApi.updateOffer(store.api_key, store.business_id!, { offerId: article, pictures: urls });
-        // Photos are shared at business level — sync to all stores in same business
-        const bid = store.business_id;
-        const sameBizIds = (this.ymStores as any[]).filter(s => s.business_id === bid).map((s: any) => s.id);
-        for (const sid of sameBizIds) {
-          const otherProd = (this.ymProds as any[]).find(x => x.store_id === sid &&
-            String(x.offer_id ?? x.vendor_code ?? '').trim().toLowerCase() === article.toLowerCase());
-          if (otherProd) otherProd.pictures = urls;
-          if (sid !== storeId) {
-            const otherSt = this.editState.get(sid);
-            if (otherSt) otherSt.photos = [...urls];
-          }
-          catalogCache.setPhotos(sid, article, urls);
-        }
-      }
-
-      if (mp !== 'yandex') catalogCache.setPhotos(storeId, article, urls);
-      st.photos = [...urls, ...pendingLocal];
-      if (!pendingLocal.length) st.dirtyFields.delete('photos');
-      // Главное фото в карточке и таблице — сразу новое
-      const hub = this.items.find(x => x.article.toLowerCase() === article.toLowerCase());
-      const he = hub?.mp_entries.find(e => e.store_id === storeId);
-      if (he) he.images = [...urls];
-      if (hub && urls[0]) hub.image_url = urls[0];
-      showToast(mp === 'ozon' ? 'Фото отправлены в Ozon — обновятся после обработки' : 'Фото сохранены', 'success');
-      if (pendingLocal.length > 0) {
-        st.saveError = `${pendingLocal.length} фото не удалось загрузить — попробуйте ещё раз`;
-      }
+      const r = await this.pushPhotos(article, storeId, mp, st.photos, [...st.removedPhotos]);
+      st.photos = r.urls;
+      st.removedPhotos.clear();
+      st.dirtyFields.delete('photos');
+      st.saveNote = r.note;
+      if (r.failedLocal) st.saveError = `${r.failedLocal} фото с компьютера не загрузились в хранилище — добавьте их ещё раз`;
+      showToast('Фото сохранены', 'success');
     } catch (e: unknown) {
-      st.saveError = (e instanceof Error ? e.message : String(e)) ?? 'Ошибка сохранения фото';
+      st.saveError = (e instanceof Error ? e.message : String(e)) || 'Ошибка сохранения фото';
     } finally {
       st.saving = false;
       this.refreshPhotosTab2();
@@ -3457,184 +3678,32 @@ export class ProductsHubModule {
 
   // ─── Bulk edit modal ────────────────────────────────────────────
 
+  /** «Управление карточками»: массовое редактирование выбранных товаров через API. */
   private showBulkEditModal(): void {
-    const products = this.selectedArticles.size > 0
-      ? this.items.filter(p => this.selectedArticles.has(p.article))
-      : [];
-    if (!products.length) { showToast('Выбери хотя бы один товар', 'info'); return; }
+    const products = this.items.filter(p => this.selectedArticles.has(p.article) && p.mp_entries.length);
+    if (!products.length) { showToast('Выберите товары, которые есть в магазинах', 'info'); return; }
+    new BulkEditor(this, products).open();
+  }
 
-    const existing = this.el.querySelector('#ph-bulk-modal-bg');
-    if (existing) existing.remove();
+  isPriceLocked(article: string, mp: Mp): boolean {
+    return this.lockedByMp.get(article.toLowerCase())?.has(mp) ?? false;
+  }
 
-    const cfLabelSet = new Map<string, string>();
-    for (const p of products) for (const cf of p.custom_fields) cfLabelSet.set(cf.id, cf.label);
-    const cfIds = [...cfLabelSet.keys()];
+  async setCostValue(article: string, value: number): Promise<void> {
+    await costPriceDb.set(article, value);
+    const p = this.items.find(x => x.article === article);
+    if (p) { p.cost_price = value; p.has_cost = true; this.totalsCache.delete(article); }
+  }
 
-    const priceOf = (p: HubProduct, mp: Mp) => String(p.mp_entries.find(x => x.mp === mp)?.price ?? '');
-    const descOf  = (p: HubProduct, mp: Mp) => {
-      const r = mp === 'ozon' ? this.rawOzProd(p.article) : mp === 'wb' ? this.rawWbProd(p.article) : this.rawYmProd(p.article);
-      return r?.description ?? '';
-    };
-    const photosOf = (p: HubProduct, mp: Mp) => {
-      const e = p.mp_entries.find(x => x.mp === mp);
-      return e?.images ?? [];
-    };
-
-    const thead = `<tr>
-      <th>Артикул</th>
-      <th>Название</th><th>Бренд</th><th>Штрихкод</th><th>Себестоимость</th>
-      <th>Вес кг</th><th>Длина</th><th>Ширина</th><th>Высота</th>
-      <th>Цена ВБ</th><th>Описание ВБ</th><th>Фото ВБ</th>
-      <th>Цена Озон</th><th>Описание Озон</th><th>Фото Озон</th>
-      <th>Цена Яндекс</th><th>Описание Яндекс</th><th>Фото Яндекс</th>
-      ${cfIds.map(id => `<th>${esc(cfLabelSet.get(id)!)}</th>`).join('')}
-    </tr>`;
-
-    const inp = (article: string, field: string, value: string, type = 'text', wide = false) =>
-      `<input class="ph-bulk-input${wide ? ' wide' : ''}" ${type !== 'text' ? `type="${type}"` : ''} data-article="${esc(article)}" data-field="${esc(field)}" value="${esc(value)}" />`;
-
-    const photoCell = (p: HubProduct, mp: Mp) => {
-      const photos = photosOf(p, mp);
-      const thumbs = photos.slice(0, 3).map(u => `<img src="${esc(u)}" class="ph-bulk-thumb" onerror="this.style.display='none'">`).join('');
-      const extra  = photos.length > 3 ? `<span class="ph-bulk-photo-more">+${photos.length - 3}</span>` : '';
-      return `<td class="ph-bulk-photo-cell">
-        ${thumbs}${extra}
-        <button class="ph-bulk-photo-btn" onclick="window.productsHubModule?.selectProduct('${esc(p.article).replace(/'/g,'&#39;')}');document.getElementById('ph-bulk-modal-bg')?.remove()">Изменить</button>
-      </td>`;
-    };
-
-    const tableRows = products.map(p => {
-      const cfCells = cfIds.map(id =>
-        `<td>${inp(p.article, `cf:${id}`, String(p.custom_fields.find(c => c.id === id)?.value ?? ''))}</td>`
-      ).join('');
-      return `<tr>
-        <td class="ph-bulk-art">${esc(p.article)}</td>
-        <td>${inp(p.article, 'name',       p.name,              'text', true)}</td>
-        <td>${inp(p.article, 'brand',      p.brand ?? '')}</td>
-        <td>${inp(p.article, 'barcode',    p.barcode ?? '')}</td>
-        <td>${inp(p.article, 'cost',       String(p.cost_price ?? ''), 'number')}</td>
-        <td>${inp(p.article, 'weight_kg',  String(p.weight_kg ?? ''),  'number')}</td>
-        <td>${inp(p.article, 'length_cm',  String(p.length_cm ?? ''),  'number')}</td>
-        <td>${inp(p.article, 'width_cm',   String(p.width_cm ?? ''),   'number')}</td>
-        <td>${inp(p.article, 'height_cm',  String(p.height_cm ?? ''),  'number')}</td>
-        <td>${inp(p.article, 'price:wb',   priceOf(p,'wb'),   'number')}</td>
-        <td>${inp(p.article, 'desc:wb',    descOf(p,'wb'),    'text', true)}</td>
-        ${photoCell(p, 'wb')}
-        <td>${inp(p.article, 'price:ozon', priceOf(p,'ozon'), 'number')}</td>
-        <td>${inp(p.article, 'desc:ozon',  descOf(p,'ozon'),  'text', true)}</td>
-        ${photoCell(p, 'ozon')}
-        <td>${inp(p.article, 'price:yandex', priceOf(p,'yandex'), 'number')}</td>
-        <td>${inp(p.article, 'desc:yandex',  descOf(p,'yandex'),  'text', true)}</td>
-        ${photoCell(p, 'yandex')}
-        ${cfCells}
-      </tr>`;
-    }).join('');
-
-    const modal = document.createElement('div');
-    modal.id = 'ph-bulk-modal-bg';
-    modal.className = 'ph-bulk-modal-bg';
-    modal.innerHTML = `
-      <div class="ph-bulk-modal">
-        <div class="ph-bulk-modal-head">
-          <span>Редактировать: ${products.length} товаров</span>
-          <button class="ph-bulk-close" id="ph-bulk-close">✕</button>
-        </div>
-        <div class="ph-bulk-table-wrap">
-          <table class="ph-bulk-table"><thead>${thead}</thead><tbody>${tableRows}</tbody></table>
-        </div>
-        <div class="ph-bulk-modal-foot">
-          <span class="ph-bulk-note">Цены и описания синхронизируются с маркетплейсами. Фото — через карточку товара.</span>
-          <button class="ph-action secondary" id="ph-bulk-cancel">Отмена</button>
-          <button class="ph-action primary" id="ph-bulk-save">Сохранить и синхронизировать</button>
-        </div>
-      </div>`;
-    this.el.appendChild(modal);
-
-    const close = () => modal.remove();
-    modal.querySelector('#ph-bulk-close')?.addEventListener('click', close);
-    modal.querySelector('#ph-bulk-cancel')?.addEventListener('click', close);
-    modal.addEventListener('click', e => { if (e.target === modal) close(); });
-
-    modal.querySelector('#ph-bulk-save')?.addEventListener('click', async () => {
-      const saveBtn = modal.querySelector<HTMLButtonElement>('#ph-bulk-save')!;
-      saveBtn.disabled = true;
-      saveBtn.textContent = 'Сохраняем…';
-
-      const inputs = modal.querySelectorAll<HTMLInputElement>('.ph-bulk-input');
-      const changes: Record<string, Record<string, string>> = {};
-      for (const inp2 of inputs) {
-        const art = inp2.dataset.article!;
-        const field = inp2.dataset.field!;
-        if (!changes[art]) changes[art] = {};
-        changes[art][field] = inp2.value.trim();
-      }
-
-      let saved = 0;
-      const syncTasks: Array<() => Promise<void>> = [];
-
-      for (const [article, fields] of Object.entries(changes)) {
-        const p = this.items.find(x => x.article === article);
-        if (!p) continue;
-
-        const n = (k: string) => { const v = parseFloat(fields[k]?.replace(',','.')); return isNaN(v) ? null : v; };
-
-        if (fields.name)     p.name    = fields.name;
-        if (fields.brand)    p.brand   = fields.brand;
-        if (fields.barcode)  p.barcode = fields.barcode;
-        if (n('cost') !== null) { try { costPriceDb.set(article, n('cost')!); } catch { /* не критично */ } p.cost_price = n('cost'); p.has_cost = true; }
-        if (n('weight_kg') !== null) p.weight_kg = n('weight_kg');
-        if (n('length_cm') !== null) p.length_cm = n('length_cm');
-        if (n('width_cm')  !== null) p.width_cm  = n('width_cm');
-        if (n('height_cm') !== null) p.height_cm = n('height_cm');
-
-        // Sync price + description per MP
-        for (const mp of ['wb','ozon','yandex'] as Mp[]) {
-          const entry = p.mp_entries.find(e => e.mp === mp);
-          if (!entry) continue;
-          const stores: any[] = mp === 'ozon' ? this.ozStores : mp === 'wb' ? this.wbStores : this.ymStores;
-          const store = stores.find((s: any) => s.name === entry.store_name);
-          if (!store) continue;
-          const storeId: string = store.id;
-          const st = this.editState.get(storeId);
-          if (!st) continue;
-          let dirty = false;
-          const np = n(`price:${mp}`);
-          if (np !== null && String(np) !== st.price) { st.price = String(np); entry.price = np; dirty = true; }
-          const desc = fields[`desc:${mp}`];
-          if (desc !== undefined && desc !== st.description) { st.description = desc; dirty = true; }
-          if (fields.name && fields.name !== st.name) { st.name = fields.name; dirty = true; }
-          if (fields.brand && fields.brand !== st.brand) { st.brand = fields.brand; dirty = true; }
-          if (n('weight_kg') !== null) { st.weight_kg = String(n('weight_kg')!); dirty = true; }
-          if (n('length_cm') !== null) { st.length_cm = String(n('length_cm')!); dirty = true; }
-          if (n('width_cm')  !== null) { st.width_cm  = String(n('width_cm')!);  dirty = true; }
-          if (n('height_cm') !== null) { st.height_cm = String(n('height_cm')!); dirty = true; }
-          if (dirty) {
-            this.editState.set(storeId, st);
-            syncTasks.push(() => this.doSaveCard(article, storeId, mp).catch(() => {}));
-          }
-        }
-
-        for (const [field, val] of Object.entries(fields)) {
-          if (!field.startsWith('cf:')) continue;
-          const cfId = field.slice(3);
-          try { customColumnsDb.setValue(article, cfId, val); } catch { /* не критично */ }
-          const cf = p.custom_fields.find(c => c.id === cfId);
-          if (cf) cf.value = val;
-        }
-        saved++;
-      }
-
-      for (const t of syncTasks) await t();
-
-      close();
-      this.applyFilters();
-      this.renderList();
-      if (this.selectedArticle) {
-        const pp = this.items.find(x => x.article === this.selectedArticle);
-        if (pp) this.renderCard(pp);
-      }
-      showToast(`Сохранено: ${saved} товаров${syncTasks.length ? `, синхронизировано с МП` : ''}`, 'success');
-    });
+  /** После массового редактирования — перерисовать таблицу и открытую карточку. */
+  afterBulk(): void {
+    this.totalsCache.clear();
+    this.aggregateSales();
+    this.applyFilters();
+    this.renderList();
+    this.renderTableFoot();
+    this.renderQuick();
+    if (this.selectedArticle) this.refreshOpenCard();
   }
 
   // ─── Public AI methods (called from aiPageCapabilities) ─────────────────────
