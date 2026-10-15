@@ -184,17 +184,18 @@ html { scrollbar-gutter: stable; }
 }
 .ss-store-shell {
   min-height:100vh;
+  position:relative;
   isolation:isolate;
   background:
     radial-gradient(45rem 30rem at 0% -5%,hsl(var(--primary)/.22),transparent 66%),
     radial-gradient(38rem 28rem at 102% 3%,hsl(var(--accent)/.36),transparent 68%),
     radial-gradient(42rem 26rem at 52% 112%,hsl(var(--primary)/.15),transparent 70%),
     linear-gradient(135deg,hsl(var(--background)),hsl(var(--muted)/.5) 48%,hsl(var(--background)));
-  background-attachment:fixed;
+  background-attachment:scroll;
 }
 .ss-store-shell::before {
-  content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
-  opacity:.22; mix-blend-mode:soft-light;
+  content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
+  opacity:.13;
   background-image:radial-gradient(hsl(var(--foreground)/.22) .7px,transparent .7px);
   background-size:22px 22px;
 }
@@ -232,7 +233,7 @@ html { scrollbar-gutter: stable; }
 .ss-rec-wrap { overflow:hidden; position:relative;
   mask-image:linear-gradient(to right,transparent 0,#000 6%,#000 94%,transparent 100%);
   -webkit-mask-image:linear-gradient(to right,transparent 0,#000 6%,#000 94%,transparent 100%); }
-.ss-rec-track { display:flex; gap:.75rem; width:max-content; will-change:transform; }
+.ss-rec-track { display:flex; gap:.75rem; width:max-content; }
 .ss-rec-track .ss-card { width:148px; flex-shrink:0; }
 .ss-rec-track .ss-card .ss-card-img { overflow:hidden; }
 .ss-rec-track .ss-card .ss-card-img img { transform:none; }
@@ -367,7 +368,6 @@ html { scrollbar-gutter: stable; }
   touch-action:pan-y;
   transform:translateX(100%);
   transition:transform .35s cubic-bezier(.25,.46,.45,.94);
-  will-change:transform;
 }
 .ss-detail.open { transform:translateX(0); }
 .ss-detail.animating { transition:none; }
@@ -399,7 +399,7 @@ html { scrollbar-gutter: stable; }
 .ss-gal { position:relative; }
 .ss-gal-main {
   display:flex; overflow-x:auto; scroll-snap-type:x mandatory;
-  scroll-behavior:smooth; -webkit-overflow-scrolling:touch;
+  scroll-behavior:auto; -webkit-overflow-scrolling:touch;
   aspect-ratio:1/1; border-radius:1rem; overflow-x:auto; overflow-y:hidden;
   overscroll-behavior-x:contain; scroll-snap-stop:always; touch-action:pan-y pinch-zoom;
   background:linear-gradient(145deg,hsl(var(--card)),hsl(var(--muted)/.72));
@@ -408,7 +408,7 @@ html { scrollbar-gutter: stable; }
 .ss-gal-main::-webkit-scrollbar { display:none; }
 .ss-gal-slide { flex:0 0 100%; scroll-snap-align:start; }
 .ss-gal-slide { display:flex; align-items:center; justify-content:center; padding:.35rem; box-sizing:border-box; }
-.ss-gal-slide img { width:100%; height:100%; object-fit:contain; display:block; border-radius:.75rem; image-rendering:auto; backface-visibility:hidden; }
+.ss-gal-slide img { width:100%; height:100%; object-fit:contain; display:block; border-radius:.75rem; image-rendering:auto; filter:none; }
 .ss-gal-nav { position:absolute; top:0; bottom:0; z-index:5;
   width:3rem; height:3rem; top:50%; bottom:auto; transform:translateY(-50%);
   border:1px solid hsl(var(--foreground)/.16); cursor:pointer;
@@ -1115,6 +1115,9 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
 
 function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, allGroups: GroupedProduct[], onBack: () => void, variantMap?: Map<string, { items: VariantItem[]; groupId: string }>, showStock = false, initialGroupId?: string): void {
   const { settings: s } = data;
+  // A filter drawer can be closed by browser navigation; never carry its
+  // scroll lock into the catalog or product detail view.
+  document.body.style.overflow = '';
   document.title = `Каталог — ${s.store_name}`;
 
   // If a group filter was pre-selected, narrow the product list
@@ -1704,7 +1707,7 @@ function openDetail(
         ? `<div class="ss-gal"><div style="aspect-ratio:3/4;display:flex;align-items:center;justify-content:center;background:hsl(var(--muted)/.3);border-radius:1rem;color:hsl(var(--foreground)/.2)"><svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div></div>`
         : `<div class="ss-gal">
             <div class="ss-gal-main" id="ss-gal-main">
-              ${imgs.map(img => `<div class="ss-gal-slide"><img src="${esc(img)}" alt="photo" loading="lazy"></div>`).join('')}
+              ${imgs.map((img, i) => `<div class="ss-gal-slide"><img src="${esc(img)}" alt="photo" loading="${i === 0 ? 'eager' : 'lazy'}"${i === 0 ? ' fetchpriority="high"' : ''} decoding="async"></div>`).join('')}
             </div>
             ${imgs.length > 1 ? `
             <button class="ss-gal-nav ss-gal-nav-prev" id="ss-gal-prev" aria-label="Предыдущее фото">
