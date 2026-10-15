@@ -1205,6 +1205,11 @@ export class AllOrdersModule {
     const btn = (label: string, title: string, cls: string, action: string) =>
       `<button class="ord-quick-action ${cls}" title="${title}" aria-label="${title}" onclick="${stop}${action}">${label}</button>`;
 
+    // FBO/FBY are fulfilled by the marketplace warehouse. The seller cannot
+    // ship, print a label or cancel them from this workspace, so do not render
+    // misleading quick-action buttons in the order row.
+    if (o.scheme === 'FBO' || o.scheme === 'FBY') return '';
+
     if (o.marketplace === 'ozon') {
       const ship = ['awaiting_packaging', 'awaiting_deliver'].includes(o.status)
         ? btn('↗', 'Отгрузить', 'is-primary', `window.allOrdersModule.ozonShip('${oid}','${sid}')`) : '';
