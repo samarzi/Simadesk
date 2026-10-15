@@ -1724,8 +1724,9 @@ export class DocsModule {
       this.deferMount = false;
       host.innerHTML = '<div class="docs-loading"><div class="docs-loading-spin"></div><div class="docs-loading-txt">Открываем документ…</div></div>';
       clearTimeout(this.mountTimer);
-      // Двойной кадр: браузер успевает показать раздел до тяжёлой работы.
-      requestAnimationFrame(() => { this.mountTimer = window.setTimeout(() => { host.innerHTML = ''; mount(); }, 0); });
+      // Таймер, а не кадр анимации: в фоновой вкладке кадры не идут, и документ
+      // оставался бы на заглушке. 30 мс хватает, чтобы браузер показал раздел.
+      this.mountTimer = window.setTimeout(() => { host.innerHTML = ''; mount(); }, 30);
       return;
     }
     mount();

@@ -354,3 +354,9 @@ a.an-prod-name:hover { color: var(--accent-text); text-decoration: underline; }
 .an-hbar:has(.an-prod) { grid-template-columns: minmax(160px, 42%) 1fr auto; }
 .an-items { max-width: 340px; white-space: normal; }
 .an-kv > span .an-prod { min-width: 0; }
+
+/* Место под плавающую панель навигации внизу экрана (высота ~95px):
+   последняя строка таблицы должна прокручиваться выше неё. */
+.an-body { padding-bottom: 120px; }
+body:has(.dock.dock-autohide) .an-body { padding-bottom: 40px; }
+.an-drawer-body { padding-bottom: 110px; }

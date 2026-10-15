@@ -759,7 +759,7 @@ export class WordEditor {
     const BL = (act: string, icon: string, label: string, title = label) => `<button class="xr-btn xr-lbl" data-act="${act}" title="${esc(title)}">${icon}<span>${esc(label)}</span></button>`;
     const DD = (act: string, icon: string, title: string, label = '') => `<button class="xr-btn xr-dd${label ? ' xr-lbl' : ''}" data-dd="${act}" title="${esc(title)}">${icon}${label ? `<span>${esc(label)}</span>` : ''}${IC.chevron}</button>`;
     const SPLIT = (act: string, icon: string, title: string, bar = '') => `<span class="xr-split"><button class="xr-btn" data-act="${act}" title="${esc(title)}">${icon}${bar}</button><button class="xr-btn xr-arrow" data-dd="${act}" title="${esc(title)}">${IC.chevron}</button></span>`;
-    const G = (label: string, inner: string) => `<div class="xr-group"><div class="xr-items">${inner}</div><div class="xr-glabel">${label}</div></div>`;
+    const G = (label: string, inner: string) => `<div class="xr-group" title="${label}"><div class="xr-items">${inner}</div><div class="xr-glabel">${label}</div></div>`;
     const tabs: Array<[string, string]> = [['home', 'Главная'], ['insert', 'Вставка'], ['layout', 'Макет'], ['table', 'Таблица']];
     const W = {
       bullets: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="3" cy="4" r="1.1" fill="currentColor"/><circle cx="3" cy="8" r="1.1" fill="currentColor"/><circle cx="3" cy="12" r="1.1" fill="currentColor"/><path d="M6 4h8M6 8h8M6 12h8"/></svg>',

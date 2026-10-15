@@ -3169,7 +3169,7 @@ export class SheetEditor {
     const BL = (act: string, icon: string, label: string, title = label) => `<button class="xr-btn xr-lbl" data-act="${act}" title="${esc(title)}">${icon}<span>${esc(label)}</span></button>`;
     const DD = (act: string, icon: string, title: string, label = '') => `<button class="xr-btn xr-dd${label ? ' xr-lbl' : ''}" data-dd="${act}" title="${esc(title)}">${icon}${label ? `<span>${esc(label)}</span>` : ''}${IC.chevron}</button>`;
     const SPLIT = (act: string, icon: string, title: string, bar = '') => `<span class="xr-split"><button class="xr-btn" data-act="${act}" title="${esc(title)}">${icon}${bar}</button><button class="xr-btn xr-arrow" data-dd="${act}" title="${esc(title)}">${IC.chevron}</button></span>`;
-    const G = (label: string, inner: string) => `<div class="xr-group"><div class="xr-items">${inner}</div><div class="xr-glabel">${label}</div></div>`;
+    const G = (label: string, inner: string) => `<div class="xr-group" title="${label}"><div class="xr-items">${inner}</div><div class="xr-glabel">${label}</div></div>`;
     const font = this.book().font ?? { name: 'Calibri', size: 11 };
 
     let panel = '';

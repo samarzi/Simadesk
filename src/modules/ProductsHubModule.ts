@@ -16,12 +16,11 @@ import { dimensionsDb } from '@/services/dimensionsDb';
 import { mpTransactionsDb, type MpTransaction } from '@/services/mpTransactionsDb';
 import { producerDb, producerProductDb, producerMappingDb, producerFieldDb, type Producer, type ProducerProduct, type ProducerMapping, type ProducerFieldDef } from '@/services/producerDb';
 import { catalogCache, syncOzonStore, syncWbStore, syncYmStore, fmtSyncDate } from '@/services/catalogCache';
-import { toOzon, toWb, toYm } from '@/services/dimensionsUnit';
-import type { Dimensions } from '@/services/dimensionsUnit';
+import { toOzon, toWb, toYm, type Dimensions } from '@/services/dimensionsUnit';
 import { boxes } from '@/stores/appStore';
-import { RULE_LABELS } from '@/modules/repricer/types';
-import type { RepricerRule } from '@/modules/repricer/types';
+import { RULE_LABELS, type RepricerRule } from '@/modules/repricer/types';
 import { debug } from '@/utils/debug';
+import { dbFetch } from '@/services/dbClient';
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -110,6 +109,33 @@ interface Filters {
 
 type Tab = 'overview' | 'finance' | 'card-edit' | 'photos';
 
+/** Строка серверной сводки продаж (rpc product_sales_summary). */
+interface SalesRow {
+  store_id: string; marketplace: Mp; sku: string;
+  sold: number; returned: number; revenue: number; commission: number; payout: number;
+}
+
+/** Итоги товара за период — одна формула для таблицы, карточки и сортировки. */
+interface Totals {
+  sold: number; returned: number; netUnits: number;
+  revenue: number;
+  /** Комиссия маркетплейса (положительное = удержание). */
+  commission: number;
+  /** Логистика, эквайринг и прочие услуги (положительное = удержание). */
+  otherFees: number;
+  /** Перечислено маркетплейсом: выручка − все удержания. */
+  payout: number;
+  /** Себестоимость проданных штук; null — не задана. */
+  cogs: number | null;
+  /** Прибыль = перечислено − себестоимость. null — без себестоимости не считается. */
+  profit: number | null;
+  margin: number | null;
+  stock: number;
+  minPrice: number | null; maxPrice: number | null; avgPrice: number | null;
+}
+
+type SortKey = 'article' | 'name' | 'price' | 'stock' | 'sold' | 'revenue' | 'fees' | 'cost' | 'profit' | 'margin';
+
 interface EditState {
   mp: 'ozon' | 'wb' | 'yandex';
   name: string; brand: string; barcode: string; description: string; vat: string;
@@ -127,7 +153,7 @@ type PeriodDays = 7 | 30 | 90 | 180;
 // Constants
 // ═══════════════════════════════════════════════════════════════════
 
-const ROW_H     = 82;
+const ROW_H     = 60;
 const OVERSCAN  = 6;
 const HELP_KEY  = 'products_hub_help_v2';
 const PERIOD_KEY = 'products_hub_period';
@@ -189,6 +215,12 @@ function getSpecs(d: Record<string, any>): Record<string, string> {
   }
   return out;
 }
+function plural(n: number, forms: [string, string, string]): string {
+  const a = Math.abs(Math.trunc(n)) % 100, b = a % 10;
+  if (a > 10 && a < 20) return forms[2];
+  if (b > 1 && b < 5) return forms[1];
+  return b === 1 ? forms[0] : forms[2];
+}
 function pr(n: number | null | undefined): string {
   return n != null && Number.isFinite(n) ? Math.round(n).toLocaleString('ru') + ' ₽' : '—';
 }
@@ -212,7 +244,6 @@ export class ProductsHubModule {
   private selectedArticle: string | null = null;
   private activeTab: Tab = 'overview';
   private filters: Filters = { q: '', mp: '', store_id: '', no_cost: false, no_mp: false, no_repricer: false, status: '', stock: 'any', price_min: null, price_max: null };
-  private sortBy: 'article' | 'profit' | 'sales' | 'stock' | 'margin' = 'article';
   private filtersOpen = false;
   private loading = false;
   private listScrollTop = 0;
@@ -237,6 +268,9 @@ export class ProductsHubModule {
     ymOffer: new Map<string, string>(), // offer_id (lowercase) → article
   };
   private hadTransactions = false;
+  /** Серверная сводка продаж за период; null — запасной режим (операции на клиенте). */
+  private salesRows: SalesRow[] | null = null;
+  private allStoreIds: string[] = [];
   // ── Editor UX state
   private collapsedStores = new Set<string>();
   private editingCostPrice = false;
@@ -326,43 +360,51 @@ export class ProductsHubModule {
   // ─── Shell ──────────────────────────────────────────────────────
 
   private renderShell(): void {
-    this.el.className = 'ph-root';
+    this.el.className = 'ph-root ph2';
     this.el.style.position = 'relative';
     this.el.innerHTML = `
-      <div class="ph-topbar">
-        <div class="ph-search">
-          <span class="ph-search-icon">${I.search('', 14)}</span>
-          <input id="ph-search" placeholder="Артикул или название…" autocomplete="off">
+      <div class="ph2-head">
+        <div class="ph2-filters">
+          <h2 class="ph2-title">Товары</h2>
+          <div class="ph-search">
+            <span class="ph-search-icon">${I.search('', 14)}</span>
+            <input id="ph-search" placeholder="Артикул или название" autocomplete="off">
+          </div>
+          <div class="ph2-segs" id="ph2-mp"></div>
+          <select id="ph2-store" class="ph-select" title="Магазин" style="display:none"></select>
+          <select id="ph-period" class="ph-select" title="Период для продаж и прибыли">
+            ${PERIOD_OPTIONS.map(o => `<option value="${o.value}"${this.period === o.value ? ' selected' : ''}>Продажи за ${o.label}</option>`).join('')}
+          </select>
+          <span class="ph2-grow"></span>
+          <span id="ph-count" class="ph-count"></span>
+          <button id="ph-filters-btn" class="ph2-btn" title="Статус, цена, репрайсер">
+            ${I.filter('', 13)} Фильтры <span id="ph-filters-badge" class="ph-filters-badge" style="display:none">0</span>
+          </button>
+          <button id="ph-import-btn" class="ph2-icon" title="Импорт из Excel-шаблона">${I.upload('', 14)}</button>
+          <input  id="ph-import-input" type="file" accept=".xlsx" style="display:none">
+          <button id="ph-hidden-tab" class="ph2-btn" title="Показать скрытые товары">${I.eyeOff('', 13)} <span id="ph-hidden-tab-label">Скрытые</span></button>
+          <button id="ph-help-btn" class="ph2-icon" title="Как пользоваться">${I.help('', 15)}</button>
+          <button id="ph-reload"   class="ph2-icon" title="Обновить">${I.refresh('', 15)}</button>
         </div>
-
-        <button id="ph-filters-btn" class="ph-filters-btn">
-          ${I.filter('', 13)} Фильтры
-          <span id="ph-filters-badge" class="ph-filters-badge" style="display:none">0</span>
-        </button>
-
-        <select id="ph-period" class="ph-select" title="Период анализа продаж и финансов">
-          ${PERIOD_OPTIONS.map(o => `<option value="${o.value}"${this.period === o.value ? ' selected' : ''}>${o.label}</option>`).join('')}
-        </select>
-
-        <span id="ph-count" class="ph-count"></span>
-        <button id="ph-import-btn" class="ph-hidden-tab-btn" title="Импортировать Excel-шаблон">${I.upload('', 14)} <span>Импорт</span></button>
-        <input  id="ph-import-input" type="file" accept=".xlsx" style="display:none">
-        <button id="ph-hidden-tab" class="ph-hidden-tab-btn" title="Скрытые товары">${I.eyeOff('', 14)} <span id="ph-hidden-tab-label">Скрытые</span></button>
-        <button id="ph-help-btn" class="ph-iconbtn" title="Как пользоваться">${I.help('', 15)}</button>
-        <button id="ph-reload"   class="ph-iconbtn" title="Обновить">${I.refresh('', 15)}</button>
+        <div class="ph2-quick" id="ph2-quick"></div>
       </div>
 
       <div id="ph-filter-panel" class="ph-filter-panel" style="display:none"></div>
 
-      <div class="ph-body">
-        <div class="ph-list-wrap">
-          <div id="ph-list" class="ph-list">
-            <div id="ph-spacer" style="width:1px;pointer-events:none"></div>
-            <div id="ph-items" style="position:absolute;top:0;left:0;right:0"></div>
-          </div>
+      <div class="ph2-table">
+        <div class="ph2-thead" id="ph2-thead"></div>
+        <div id="ph-list" class="ph-list ph2-body">
+          <div id="ph-spacer" style="width:1px;pointer-events:none"></div>
+          <div id="ph-items" style="position:absolute;top:0;left:0;right:0"></div>
         </div>
-        <div id="ph-card" class="ph-card"></div>
+        <div class="ph2-tfoot" id="ph2-tfoot"></div>
       </div>
+
+      <div class="ph2-drawer-bg" id="ph2-drawer-bg" style="display:none"></div>
+      <aside class="ph2-drawer" id="ph2-drawer" style="display:none" aria-label="Карточка товара">
+        <button class="ph2-drawer-close" id="ph2-drawer-close" title="Закрыть (Esc)">✕</button>
+        <div id="ph-card" class="ph-card ph2-card"></div>
+      </aside>
 
       <div id="ph-selection-bar" class="ph-selection-bar" style="display:none">
         <span id="ph-sel-count" class="ph-sel-count">0 выбрано</span>
@@ -381,13 +423,12 @@ export class ProductsHubModule {
       <div id="ph-help" class="ph-help-bg" style="display:none">
         <div class="ph-help-modal">
           <button id="ph-help-close" class="ph-help-close" title="Закрыть">✕</button>
-          <div class="ph-help-title">Раздел «Товары» — как читать карточку</div>
+          <div class="ph-help-title">Раздел «Товары»</div>
           <div class="ph-help-body">
-            <div><b>Список слева</b> — все товары из ваших магазинов на маркетплейсах + группы. Цветные точки справа — индикаторы проблем: красная — нет себестоимости, оранжевая — нет на МП, жёлтая — нет правил репрайсера, серая — нет в группах.</div>
-            <div><b>Hero-метрики</b> — себестоимость, средняя цена, маржа за единицу и общий остаток. Маржа считается без учёта комиссий — реальную чистую прибыль смотрите во вкладке «Финансы».</div>
-            <div><b>Магазины</b> — каждая строка отдельный магазин на маркетплейсе (даже если их несколько на одной площадке), с ценой, остатком и продажами за выбранный период.</div>
-            <div><b>Финансы</b> — продажи, возвраты, комиссии, логистика и чистая прибыль агрегированы по всем магазинам (на основе реальных транзакций маркетплейсов). Период выбирается селектором в шапке.</div>
-            <div><b>Группы и характеристики</b> — связки с группами товаров и поставщиком, плюс характеристики, габариты и кастомные поля.</div>
+            <div><b>Таблица</b> — все товары из ваших магазинов. Сортировка — клик по заголовку колонки. Клик по строке открывает карточку товара справа.</div>
+            <div><b>Продажи и деньги</b> — по финансовым отчётам маркетплейсов за выбранный период. <b>Удержания</b> — комиссия, логистика, эквайринг и прочие услуги. <b>Прибыль</b> = перечислено маркетплейсом − себестоимость проданных штук (до налогов, рекламы и общих расходов — полный расчёт в «Аналитике»).</div>
+            <div><b>Себестоимость</b> можно ввести прямо в таблице — кликните по ячейке.</div>
+            <div><b>Быстрые фильтры</b> под строкой поиска показывают проблемные товары: без себестоимости, без остатка, без продаж.</div>
             <button class="ph-action primary" id="ph-help-ok" style="margin-top:8px;align-self:flex-start">Понятно</button>
           </div>
         </div>
@@ -397,6 +438,235 @@ export class ProductsHubModule {
     this.listEl = this.el.querySelector('#ph-list')!;
     this.cardEl = this.el.querySelector('#ph-card')!;
     this.bindEvents();
+    this.bindTable();
+  }
+
+  // ─── Итоги товара — единая формула ───────────────────────────────
+
+  /** Записи товара с учётом выбранной площадки и магазина. */
+  private scopedEntries(p: HubProduct): MpStoreEntry[] {
+    return p.mp_entries.filter(e =>
+      (!this.filters.mp || e.mp === this.filters.mp) && (!this.filters.store_id || e.store_id === this.filters.store_id));
+  }
+
+  private totals(p: HubProduct, entries = this.scopedEntries(p)): Totals {
+    let sold = 0, returned = 0, revenue = 0, commission = 0, payout = 0, stock = 0;
+    for (const e of entries) {
+      sold += e.sales_qty; returned += e.returns_qty; revenue += e.sales_revenue;
+      commission += -e.commission; payout += e.net_profit; stock += e.stock_total || 0;
+    }
+    const otherFees = revenue - commission - payout;
+    const netUnits = Math.max(0, sold - returned);
+    const cogs = p.cost_price != null ? p.cost_price * netUnits : null;
+    const profit = cogs != null ? payout - cogs : null;
+    const prices = entries.map(e => e.price).filter((x): x is number => x != null && x > 0);
+    return {
+      sold, returned, netUnits, revenue, commission, otherFees, payout, cogs, profit,
+      margin: profit != null && revenue > 0 ? profit / revenue * 100 : null,
+      stock,
+      minPrice: prices.length ? Math.min(...prices) : null,
+      maxPrice: prices.length ? Math.max(...prices) : null,
+      avgPrice: prices.length ? prices.reduce((a, b) => a + b, 0) / prices.length : null,
+    };
+  }
+
+  // ─── Таблица ──────────────────────────────────────────────────────
+
+  private sortKey: SortKey = 'revenue';
+  private sortDir: 1 | -1 = -1;
+  private totalsCache = new Map<string, Totals>();
+
+  private static readonly COLS: Array<{ key: SortKey | null; label: string; cls: string; title?: string }> = [
+    { key: null, label: '', cls: 'c-check' },
+    { key: 'name', label: 'Товар', cls: 'c-prod' },
+    { key: null, label: 'Площадки', cls: 'c-mps' },
+    { key: 'price', label: 'Цена', cls: 'c-num' },
+    { key: 'stock', label: 'Остаток', cls: 'c-num' },
+    { key: 'sold', label: 'Продано', cls: 'c-num', title: 'Продано и возвращено за период, шт' },
+    { key: 'revenue', label: 'Выручка', cls: 'c-num' },
+    { key: 'fees', label: 'Удержания', cls: 'c-num', title: 'Комиссия, логистика, эквайринг и прочие услуги маркетплейса' },
+    { key: 'cost', label: 'Себест./шт', cls: 'c-num', title: 'Себестоимость единицы — кликните, чтобы изменить' },
+    { key: 'profit', label: 'Прибыль', cls: 'c-num', title: 'Перечислено маркетплейсом − себестоимость проданных штук' },
+    { key: 'margin', label: 'Маржа', cls: 'c-num', title: 'Прибыль ÷ выручка' },
+  ];
+
+  private renderTableHead(): void {
+    const head = this.el.querySelector<HTMLElement>('#ph2-thead');
+    if (!head) return;
+    const allOn = this.filtered.length > 0 && this.filtered.every(p => this.selectedArticles.has(p.article));
+    head.innerHTML = `<div class="ph2-tr">${ProductsHubModule.COLS.map(c => {
+      if (c.cls === 'c-check') {
+        return `<div class="ph2-td c-check"><span class="ph-checkbox${allOn ? ' on' : ''}" data-ph2="check-all" title="Отметить все"></span></div>`;
+      }
+      const on = c.key && this.sortKey === c.key;
+      return `<div class="ph2-td ${c.cls}${c.key ? ' sortable' : ''}${on ? ' on' : ''}" ${c.key ? `data-sort="${c.key}"` : ''} ${c.title ? `title="${esc(c.title)}"` : ''}>
+        ${c.label}${on ? (this.sortDir < 0 ? ' ↓' : ' ↑') : ''}</div>`;
+    }).join('')}</div>`;
+  }
+
+  private renderTableFoot(): void {
+    const foot = this.el.querySelector<HTMLElement>('#ph2-tfoot');
+    if (!foot) return;
+    let sold = 0, returned = 0, revenue = 0, fees = 0, profit = 0, stock = 0, withProfit = 0;
+    for (const p of this.filtered) {
+      const t = this.totalsOf(p);
+      sold += t.sold; returned += t.returned; revenue += t.revenue; fees += t.commission + t.otherFees; stock += t.stock;
+      if (t.profit != null) { profit += t.profit; withProfit++; }
+    }
+    foot.innerHTML = `<div class="ph2-tr">
+      <div class="ph2-td c-check"></div>
+      <div class="ph2-td c-prod"><b>Итого</b> · ${num(this.filtered.length)} ${plural(this.filtered.length, ['товар', 'товара', 'товаров'])}</div>
+      <div class="ph2-td c-mps"></div>
+      <div class="ph2-td c-num"></div>
+      <div class="ph2-td c-num">${num(stock)}</div>
+      <div class="ph2-td c-num">${num(sold)}${returned ? `<small> / −${num(returned)}</small>` : ''}</div>
+      <div class="ph2-td c-num">${pr(revenue)}</div>
+      <div class="ph2-td c-num">${pr(fees)}</div>
+      <div class="ph2-td c-num"></div>
+      <div class="ph2-td c-num ${profit >= 0 ? 'pos' : 'neg'}" title="${withProfit < this.filtered.length ? `Без ${this.filtered.length - withProfit} товаров без себестоимости` : ''}">${pr(profit)}${withProfit < this.filtered.length ? '<small>*</small>' : ''}</div>
+      <div class="ph2-td c-num">${revenue > 0 ? `${(profit / revenue * 100).toFixed(1).replace('.', ',')}%` : '—'}</div>
+    </div>`;
+  }
+
+  private totalsOf(p: HubProduct): Totals {
+    let t = this.totalsCache.get(p.article);
+    if (!t) { t = this.totals(p); this.totalsCache.set(p.article, t); }
+    return t;
+  }
+
+  private renderMpSegs(): void {
+    const box = this.el.querySelector<HTMLElement>('#ph2-mp');
+    if (!box) return;
+    const mps = (['ozon', 'wb', 'yandex'] as Mp[]).filter(m => this.items.some(p => p.mp_entries.some(e => e.mp === m)));
+    if (mps.length < 2) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    const btn = (v: '' | Mp, label: string) => `<button class="ph2-seg${this.filters.mp === v ? ' on' : ''}" data-ph2-mp="${v}">${v ? `<span class="ph2-dot mp-${v}"></span>` : ''}${label}</button>`;
+    box.innerHTML = btn('', 'Все') + mps.map(m => btn(m, MP_FULL[m] === 'Яндекс Маркет' ? 'ЯМ' : MP_FULL[m] === 'Wildberries' ? 'WB' : 'Ozon')).join('');
+    const sel = this.el.querySelector<HTMLSelectElement>('#ph2-store');
+    if (sel) {
+      const stores = new Map<string, string>();
+      for (const p of this.items) for (const e of p.mp_entries) if (!this.filters.mp || e.mp === this.filters.mp) stores.set(e.store_id, e.store_name);
+      if (stores.size > 1) {
+        sel.style.display = '';
+        sel.innerHTML = `<option value="">Все магазины</option>${[...stores].sort((a, b) => a[1].localeCompare(b[1], 'ru'))
+          .map(([id, n]) => `<option value="${esc(id)}"${this.filters.store_id === id ? ' selected' : ''}>${esc(n)}</option>`).join('')}`;
+      } else sel.style.display = 'none';
+    }
+  }
+
+  private renderQuick(): void {
+    const box = this.el.querySelector<HTMLElement>('#ph2-quick');
+    if (!box) return;
+    const scope = this.items.filter(p => !this.hiddenArticles.has(p.article) && (!this.filters.mp || p.mp_entries.some(e => e.mp === this.filters.mp)));
+    const noCost = scope.filter(p => !p.has_cost).length;
+    const noStock = scope.filter(p => this.totals(p).stock === 0 && p.has_mp).length;
+    const noSales = scope.filter(p => this.totals(p).sold === 0 && p.has_mp).length;
+    const chip = (key: string, label: string, n: number, on: boolean, tone = '') =>
+      `<button class="ph2-chip ${tone}${on ? ' on' : ''}" data-ph2-quick="${key}">${label} <span>${num(n)}</span></button>`;
+    box.innerHTML = `
+      <span class="ph2-quick-label">Показать:</span>
+      ${chip('all', 'Все', scope.length, !this.filters.no_cost && this.filters.stock === 'any' && !this.quickNoSales)}
+      ${chip('no_cost', 'Без себестоимости', noCost, this.filters.no_cost, noCost ? 'warn' : '')}
+      ${chip('no_stock', 'Нет остатка', noStock, this.filters.stock === 'zero', noStock ? 'warn' : '')}
+      ${chip('no_sales', 'Без продаж за период', noSales, this.quickNoSales)}`;
+  }
+
+  private quickNoSales = false;
+
+  private bindTable(): void {
+    const head = this.el.querySelector<HTMLElement>('#ph2-thead');
+    head?.addEventListener('click', e => {
+      const t = e.target as HTMLElement;
+      if (t.closest('[data-ph2="check-all"]')) {
+        const allOn = this.filtered.length > 0 && this.filtered.every(p => this.selectedArticles.has(p.article));
+        if (allOn) this.clearSelection(); else this.selectAll();
+        this.renderTableHead();
+        return;
+      }
+      const col = t.closest<HTMLElement>('[data-sort]');
+      if (!col) return;
+      const key = col.dataset.sort as SortKey;
+      if (this.sortKey === key) this.sortDir = this.sortDir === -1 ? 1 : -1;
+      else { this.sortKey = key; this.sortDir = key === 'name' || key === 'article' ? 1 : -1; }
+      this.applyFilters();
+      this.renderList(true);
+    });
+    this.el.querySelector('#ph2-mp')?.addEventListener('click', e => {
+      const b = (e.target as HTMLElement).closest<HTMLElement>('[data-ph2-mp]');
+      if (!b) return;
+      this.filters.mp = (b.dataset.ph2Mp ?? '') as '' | Mp;
+      this.filters.store_id = '';
+      this.totalsCache.clear();
+      this.applyFilters();
+      this.renderList(true);
+    });
+    this.el.querySelector<HTMLSelectElement>('#ph2-store')?.addEventListener('change', e => {
+      this.filters.store_id = (e.target as HTMLSelectElement).value;
+      this.totalsCache.clear();
+      this.applyFilters();
+      this.renderList(true);
+    });
+    this.el.querySelector('#ph2-quick')?.addEventListener('click', e => {
+      const b = (e.target as HTMLElement).closest<HTMLElement>('[data-ph2-quick]');
+      if (!b) return;
+      const k = b.dataset.ph2Quick;
+      if (k === 'all') { this.filters.no_cost = false; this.filters.stock = 'any'; this.quickNoSales = false; }
+      if (k === 'no_cost') this.filters.no_cost = !this.filters.no_cost;
+      if (k === 'no_stock') this.filters.stock = this.filters.stock === 'zero' ? 'any' : 'zero';
+      if (k === 'no_sales') this.quickNoSales = !this.quickNoSales;
+      this.applyFilters();
+      this.renderList(true);
+    });
+    // Себестоимость прямо в таблице
+    this.listEl?.addEventListener('click', e => {
+      const cell = (e.target as HTMLElement).closest<HTMLElement>('[data-ph2-cost]');
+      if (!cell || cell.querySelector('input')) return;
+      e.stopPropagation();
+      const art = cell.dataset.ph2Cost!;
+      const p = this.items.find(x => x.article === art);
+      cell.innerHTML = `<input class="ph2-cost-inp" type="number" min="0" step="0.01" value="${p?.cost_price ?? ''}" placeholder="₽">`;
+      const inp = cell.querySelector<HTMLInputElement>('input')!;
+      inp.focus(); inp.select();
+      const done = (save: boolean) => {
+        if (save && inp.value.trim() !== '') this.saveCostPrice(art, +inp.value);
+        else this.renderListItems();
+      };
+      inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') done(true); if (ev.key === 'Escape') done(false); });
+      inp.addEventListener('blur', () => done(true), { once: true });
+      inp.addEventListener('click', ev => ev.stopPropagation());
+    });
+    this.el.querySelector('#ph2-drawer-close')?.addEventListener('click', () => this.closeCard());
+    this.el.querySelector('#ph2-drawer-bg')?.addEventListener('click', () => this.closeCard());
+    document.addEventListener('keydown', ev => {
+      if (ev.key !== 'Escape' || this.el.style.display === 'none' || !this.selectedArticle) return;
+      const lb = this.cardEl?.querySelector<HTMLElement>('#ph-lightbox');
+      if (lb && lb.style.display !== 'none') return;
+      this.closeCard();
+    });
+  }
+
+  /** Сохранить себестоимость из таблицы или карточки. */
+  private saveCostPrice(article: string, value: number): void {
+    if (!Number.isFinite(value) || value < 0) { this.renderListItems(); return; }
+    costPriceDb.set(article, value);
+    const p = this.items.find(x => x.article === article);
+    if (p) { p.cost_price = value; p.has_cost = true; }
+    this.totalsCache.delete(article);
+    this.renderListItems();
+    this.renderTableFoot();
+    this.renderQuick();
+    if (p && this.selectedArticle === article) this.renderCard(p);
+    showToast(`Себестоимость ${article}: ${pr(value)}`, 'success');
+  }
+
+  closeCard(): void {
+    this.selectedArticle = null;
+    this.editState.clear();
+    const d = this.el.querySelector<HTMLElement>('#ph2-drawer');
+    const bg = this.el.querySelector<HTMLElement>('#ph2-drawer-bg');
+    if (d) d.style.display = 'none';
+    if (bg) bg.style.display = 'none';
+    this.renderListItems();
   }
 
   private bindEvents(): void {
@@ -415,7 +685,7 @@ export class ProductsHubModule {
       const v = +(e.target as HTMLSelectElement).value as PeriodDays;
       if (!PERIOD_OPTIONS.some(o => o.value === v)) return;
       this.period = v;
-      try { localStorage.setItem(PERIOD_KEY, String(v)); } catch {}
+      try { localStorage.setItem(PERIOD_KEY, String(v)); } catch { /* не критично */ }
       this.reaggregateSales();
     });
 
@@ -603,7 +873,13 @@ export class ProductsHubModule {
           }
           this.editingCostPrice = false;
           const pp4 = this.items.find(x => x.article === this.selectedArticle);
-          if (pp4) this.renderCard(pp4);
+          if (pp4) {
+            this.totalsCache.delete(pp4.article);
+            this.renderCard(pp4);
+            this.renderListItems();
+            this.renderTableFoot();
+            this.renderQuick();
+          }
           break;
         }
       }
@@ -735,13 +1011,12 @@ export class ProductsHubModule {
       this.wbProds = wbProds as any[];
       this.ymProds = ymProds as any[];
 
-      // 3. Загружаем транзакции на максимальный поддерживаемый период (180 дней),
-      // потом локально фильтруем по this.period — селектор не дёргает сервер.
-      const MAX_DAYS = 180;
-      const dateTo   = new Date().toISOString();
-      const dateFrom = new Date(Date.now() - MAX_DAYS * 86400_000).toISOString();
+      // 3. Продажи: сервер сразу суммирует операции по товарам за период
+      // (rpc product_sales_summary). Раньше в браузер скачивались все операции
+      // за 180 дней с исходным JSON — десятки мегабайт при каждом открытии.
+      this.allStoreIds = allStoreIds;
       const [transactions, producers, producerProds, producerMaps, fieldDefs] = await Promise.all([
-        allStoreIds.length ? mpTransactionsDb.getByStores(allStoreIds, dateFrom, dateTo).catch(() => [] as MpTransaction[]) : Promise.resolve([]),
+        this.fetchSales(allStoreIds),
         producerDb.list().catch(() => [] as Producer[]),
         producerProductDb.list().catch(() => [] as ProducerProduct[]),
         producerMappingDb.list().catch(() => [] as ProducerMapping[]),
@@ -943,8 +1218,8 @@ export class ProductsHubModule {
       }
 
       // ── Save raw state for re-aggregation on period change
-      this.rawTransactions = transactions as MpTransaction[];
-      this.hadTransactions = (transactions as MpTransaction[]).length > 0;
+      this.rawTransactions = transactions;
+      this.hadTransactions = transactions.length > 0 || (this.salesRows?.length ?? 0) > 0;
       this.storeIdToMp.clear();
       this.storeSyncedAt.clear();
       for (const s of ozStores as any[]) { this.storeIdToMp.set(s.id, 'ozon');   if (s.synced_at) this.storeSyncedAt.set(s.id, s.synced_at); }
@@ -984,11 +1259,65 @@ export class ProductsHubModule {
    * из this.rawTransactions, ограниченных текущим периодом this.period.
    * Вызывается после загрузки и при смене периода.
    */
+  /**
+   * Сводка продаж за текущий период. Возвращает операции только в запасном
+   * режиме (функция на сервере ещё не применена) — тогда считаем на клиенте.
+   */
+  private async fetchSales(storeIds: string[]): Promise<MpTransaction[]> {
+    this.salesRows = null;
+    if (!storeIds.length) return [];
+    const to = new Date();
+    const from = new Date(to.getTime() - this.period * 86400_000);
+    try {
+      const rows = await dbFetch<SalesRow[]>('rpc/product_sales_summary', {
+        method: 'POST',
+        body: JSON.stringify({ p_store_ids: storeIds, p_from: from.toISOString(), p_to: to.toISOString() }),
+      });
+      this.salesRows = (rows ?? []).map(r => ({
+        ...r, sold: +r.sold || 0, returned: +r.returned || 0, revenue: +r.revenue || 0,
+        commission: +r.commission || 0, payout: +r.payout || 0,
+      }));
+      return [];
+    } catch (e) {
+      debug.warn('[ProductsHub] sales summary rpc unavailable, falling back to transactions', e);
+      const dateFrom = new Date(Date.now() - 180 * 86400_000).toISOString();
+      return mpTransactionsDb.getByStores(storeIds, dateFrom, to.toISOString()).catch(() => [] as MpTransaction[]);
+    }
+  }
+
+  private articleFor(mp: Mp, sku: string | number | undefined): string | null {
+    if (sku == null || sku === '') return null;
+    const s = String(sku);
+    if (mp === 'ozon') return this.skuMaps.ozon.get(s) ?? null;
+    if (mp === 'wb')   return this.skuMaps.wb.get(s) ?? null;
+    return this.skuMaps.ymSku.get(s) ?? this.skuMaps.ymOffer.get(s.toLowerCase()) ?? null;
+  }
+
   private aggregateSales(): void {
     // 1. Сбросить аггрегаты на всех entries
     for (const p of this.items) for (const e of p.mp_entries) {
       e.sales_qty = 0; e.sales_revenue = 0; e.returns_qty = 0;
       e.commission = 0; e.delivery = 0; e.services = 0; e.net_profit = 0;
+    }
+
+    // Сводка с сервера: деньги уже разнесены по SKU.
+    // commission/services храним со знаком «минус = удержание», net_profit = перечислено МП.
+    if (this.salesRows) {
+      const index = new Map<string, MpStoreEntry>();
+      for (const p of this.items) for (const e of p.mp_entries) index.set(`${e.mp}:${e.store_id}:${p.article.toLowerCase()}`, e);
+      for (const r of this.salesRows) {
+        const art = this.articleFor(r.marketplace, r.sku);
+        if (!art) continue;
+        const e = index.get(`${r.marketplace}:${r.store_id}:${art.toLowerCase()}`);
+        if (!e) continue;
+        e.sales_qty += r.sold;
+        e.returns_qty += r.returned;
+        e.sales_revenue += r.revenue;
+        e.commission -= r.commission;
+        e.services -= r.revenue - r.commission - r.payout;
+        e.net_profit += r.payout;
+      }
+      return;
     }
 
     if (!this.rawTransactions.length) return;
@@ -1079,8 +1408,11 @@ export class ProductsHubModule {
     }
   }
 
-  /** Пересчёт продаж/финансов при смене периода. Не дёргает сервер. */
-  private reaggregateSales(): void {
+  /** Пересчёт продаж/финансов при смене периода. */
+  private async reaggregateSales(): Promise<void> {
+    if (this.salesRows) {
+      this.rawTransactions = await this.fetchSales(this.allStoreIds);
+    }
     this.aggregateSales();
     this.applyFilters();
     this.renderList(false);
@@ -1131,24 +1463,32 @@ export class ProductsHubModule {
       return true;
     });
 
-    // Сортировка
-    if (this.sortBy === 'profit') {
-      this.filtered.sort((a, b) =>
-        b.mp_entries.reduce((s, e) => s + e.net_profit, 0) - a.mp_entries.reduce((s, e) => s + e.net_profit, 0));
-    } else if (this.sortBy === 'sales') {
-      this.filtered.sort((a, b) =>
-        b.mp_entries.reduce((s, e) => s + e.sales_qty, 0) - a.mp_entries.reduce((s, e) => s + e.sales_qty, 0));
-    } else if (this.sortBy === 'stock') {
-      this.filtered.sort((a, b) =>
-        b.mp_entries.reduce((s, e) => s + e.stock_total, 0) - a.mp_entries.reduce((s, e) => s + e.stock_total, 0));
-    } else if (this.sortBy === 'margin') {
-      const margin = (p: HubProduct) => {
-        const priced = p.mp_entries.filter(e => e.price != null);
-        const avg = priced.length ? priced.reduce((s, e) => s + (e.price ?? 0), 0) / priced.length : null;
-        return (p.cost_price != null && avg != null) ? avg - p.cost_price : -Infinity;
-      };
-      this.filtered.sort((a, b) => margin(b) - margin(a));
-    }
+    // Быстрый фильтр «без продаж за период»
+    this.totalsCache.clear();
+    if (this.quickNoSales) this.filtered = this.filtered.filter(p => p.has_mp && this.totalsOf(p).sold === 0);
+
+    // Сортировка по колонке таблицы
+    const val = (p: HubProduct): number | string => {
+      const t = this.totalsOf(p);
+      switch (this.sortKey) {
+        case 'name':    return (p.name || p.article).toLowerCase();
+        case 'article': return p.article.toLowerCase();
+        case 'price':   return t.minPrice ?? -1;
+        case 'stock':   return t.stock;
+        case 'sold':    return t.sold;
+        case 'revenue': return t.revenue;
+        case 'fees':    return t.commission + t.otherFees;
+        case 'cost':    return p.cost_price ?? -1;
+        case 'profit':  return t.profit ?? -Infinity;
+        case 'margin':  return t.margin ?? -Infinity;
+      }
+    };
+    const dir = this.sortDir;
+    this.filtered.sort((x, y) => {
+      const a1 = val(x), b1 = val(y);
+      if (typeof a1 === 'string' || typeof b1 === 'string') return String(a1).localeCompare(String(b1), 'ru') * dir;
+      return (a1 - b1) * dir || x.article.localeCompare(y.article, 'ru');
+    });
     // 'article' — уже отсортировано при загрузке
 
     const c = this.el.querySelector('#ph-count');
@@ -1169,7 +1509,11 @@ export class ProductsHubModule {
     if (reset) { this.listEl.scrollTop = 0; this.listScrollTop = 0; }
     spacer.style.height = `${this.filtered.length * ROW_H}px`;
     this.listContainerH = this.listEl.clientHeight || 600;
+    this.renderTableHead();
     this.renderListItems();
+    this.renderTableFoot();
+    this.renderMpSegs();
+    this.renderQuick();
   }
 
   private renderListItems(): void {
@@ -1177,7 +1521,7 @@ export class ProductsHubModule {
     if (!items) return;
     if (this.filtered.length === 0) {
       items.style.top = '0';
-      items.innerHTML = `<div class="ph-list-empty">Ничего не найдено</div>`;
+      items.innerHTML = this.loading ? '' : `<div class="ph-list-empty">${this.items.length ? 'Ничего не найдено — измените поиск или фильтры' : 'Товаров пока нет: подключите магазин и синхронизируйте каталог'}</div>`;
       return;
     }
     const start = Math.max(0, Math.floor(this.listScrollTop / ROW_H) - OVERSCAN);
@@ -1191,51 +1535,40 @@ export class ProductsHubModule {
     const active  = p.article === this.selectedArticle;
     const checked = this.selectedArticles.has(p.article);
     const safeArt = esc(p.article).replace(/'/g, '&#39;');
+    const t = this.totalsOf(p);
     const thumb = p.image_url
-      ? `<img class="ph-row-thumb" src="${esc(p.image_url)}" loading="lazy" onerror="this.style.display='none'">`
-      : `<div class="ph-row-thumb placeholder">${I.image('', 16)}</div>`;
-    const mps = (['ozon','wb','yandex'] as Mp[]).map(mp => {
+      ? `<img class="ph2-thumb" src="${esc(p.image_url)}" loading="lazy" onerror="this.style.visibility='hidden'">`
+      : `<div class="ph2-thumb empty">${I.image('', 16)}</div>`;
+    const mps = (['ozon', 'wb', 'yandex'] as Mp[]).map(mp => {
       const cnt = p.mp_entries.filter(e => e.mp === mp).length;
-      if (!cnt) return `<span class="ph-mp-dot" title="Нет на ${MP_FULL[mp]}"></span>`;
-      return `<span class="ph-mp-tag mp-${mp}" title="${esc(MP_FULL[mp])}${cnt > 1 ? ` — ${cnt} магазина` : ''}">${MP_LABEL[mp]}${cnt > 1 ? `×${cnt}` : ''}</span>`;
+      return cnt ? `<span class="ph-mp-tag mp-${mp}" title="${esc(MP_FULL[mp])}${cnt > 1 ? ` · ${cnt} магазина` : ''}">${MP_LABEL[mp]}${cnt > 1 ? `×${cnt}` : ''}</span>` : '';
     }).join('');
-    const dots: string[] = [];
-    if (!p.has_cost)     dots.push('<span class="ph-warn-dot cost"     title="Нет себестоимости"></span>');
-    if (!p.has_mp)       dots.push('<span class="ph-warn-dot mp"       title="Нет на маркетплейсах"></span>');
-    if (!p.has_repricer) dots.push('<span class="ph-warn-dot repricer" title="Нет правил репрайсера"></span>');
+    const price = t.minPrice == null ? '—'
+      : t.minPrice === t.maxPrice ? pr(t.minPrice) : `${Math.round(t.minPrice).toLocaleString('ru')}–${pr(t.maxPrice)}`;
+    const fees = t.commission + t.otherFees;
     return `
-      <div class="ph-row${active ? ' active' : ''}${checked ? ' checked' : ''}" style="height:${ROW_H}px"
+      <div class="ph2-tr ph2-row${active ? ' active' : ''}${checked ? ' checked' : ''}" style="height:${ROW_H}px"
         onclick="window.productsHubModule?.selectProduct('${safeArt}')">
-        <div class="ph-checkbox-wrap" onclick="event.stopPropagation();window.productsHubModule?.toggleCheck('${safeArt}')">
-          <div class="ph-checkbox${checked ? ' on' : ''}"></div>
+        <div class="ph2-td c-check" onclick="event.stopPropagation();window.productsHubModule?.toggleCheck('${safeArt}')">
+          <span class="ph-checkbox${checked ? ' on' : ''}"></span>
         </div>
-        ${thumb}
-        <div class="ph-row-main">
-          <div class="ph-row-line">
-            <span class="ph-row-article" title="${esc(p.article)}">${esc(p.article)}</span>
-            ${copyButton(p.article, 'Копировать артикул')}
-            <span class="ph-warn-dots">${dots.join('')}</span>
-          </div>
-          <div style="display:flex;align-items:center;gap:4px;min-width:0">
-            <div class="ph-row-name" style="min-width:0" title="${esc(p.name)}">${p.name ? esc(p.name) : '<i>без названия</i>'}</div>
-            ${p.name ? copyButton(p.name, 'Копировать название') : ''}
-          </div>
-          <div class="ph-row-bottom">
-            <div class="ph-row-mps">${mps}</div>
-            <div class="ph-row-quick">${(() => {
-              const priced = p.mp_entries.filter(e => e.price != null);
-              const stock  = p.mp_entries.reduce((s, e) => s + (e.stock_total || 0), 0);
-              const prices = priced.map(e => e.price!);
-              const minP = prices.length ? Math.min(...prices) : null;
-              const maxP = prices.length ? Math.max(...prices) : null;
-              const priceStr = minP == null ? '' :
-                minP === maxP ? `${Math.round(minP).toLocaleString('ru')} ₽` :
-                `${Math.round(minP).toLocaleString('ru')}–${Math.round(maxP!).toLocaleString('ru')} ₽`;
-              const stockStr = stock > 0 ? `${stock} шт.` : `<span class="ph-row-no-stock">0 шт.</span>`;
-              return [priceStr, stockStr].filter(Boolean).join(' · ');
-            })()}</div>
+        <div class="ph2-td c-prod">
+          ${thumb}
+          <div class="ph2-prod-text">
+            <div class="ph2-prod-name"><span title="${esc(p.name)}">${p.name ? esc(p.name) : '<i>без названия</i>'}</span>${p.name ? copyButton(p.name, 'Копировать название') : ''}</div>
+            <div class="ph2-prod-art"><span>${esc(p.article)}</span>${copyButton(p.article, 'Копировать артикул')}</div>
           </div>
         </div>
+        <div class="ph2-td c-mps">${mps || '<span class="ph2-muted">нет на МП</span>'}</div>
+        <div class="ph2-td c-num">${price}</div>
+        <div class="ph2-td c-num ${t.stock === 0 && p.has_mp ? 'neg' : ''}">${num(t.stock)}</div>
+        <div class="ph2-td c-num">${t.sold ? num(t.sold) : '<span class="ph2-muted">0</span>'}${t.returned ? `<small> / −${num(t.returned)}</small>` : ''}</div>
+        <div class="ph2-td c-num">${t.revenue ? pr(t.revenue) : '<span class="ph2-muted">—</span>'}</div>
+        <div class="ph2-td c-num">${fees ? pr(fees) : '<span class="ph2-muted">—</span>'}</div>
+        <div class="ph2-td c-num ph2-cost" data-ph2-cost="${esc(p.article)}" title="Кликните, чтобы изменить себестоимость">
+          ${p.cost_price != null ? pr(p.cost_price) : '<span class="ph2-addcost">+ указать</span>'}</div>
+        <div class="ph2-td c-num ${t.profit == null ? '' : t.profit >= 0 ? 'pos' : 'neg'}">${t.profit == null ? (t.sold ? '<span class="ph2-muted" title="Нет себестоимости">?</span>' : '<span class="ph2-muted">—</span>') : pr(t.profit)}</div>
+        <div class="ph2-td c-num">${t.margin == null ? '<span class="ph2-muted">—</span>' : `${t.margin.toFixed(1).replace('.', ',')}%`}</div>
       </div>`;
   }
 
@@ -1252,7 +1585,12 @@ export class ProductsHubModule {
     }
     this.renderListItems();
     const p = this.items.find(x => x.article === article);
-    if (p) this.renderCard(p);
+    if (!p) return;
+    const d = this.el.querySelector<HTMLElement>('#ph2-drawer');
+    const bg = this.el.querySelector<HTMLElement>('#ph2-drawer-bg');
+    if (d) { d.style.display = ''; d.scrollTop = 0; }
+    if (bg) bg.style.display = '';
+    this.renderCard(p);
   }
 
   setTab(tab: Tab): void {
@@ -1273,11 +1611,13 @@ export class ProductsHubModule {
   }
 
   private setCardHint(): void {
+    const d = this.el.querySelector<HTMLElement>('#ph2-drawer');
+    if (d && d.style.display === 'none') return;
     this.setCardEmpty(`
       <div class="ph-card-empty">
         <div class="ph-card-empty-icon">${I.package('', 38)}</div>
         <div class="ph-card-empty-title">Выберите товар</div>
-        <div class="ph-card-empty-text">Нажмите на любой товар в списке слева, чтобы увидеть подробную информацию.</div>
+        <div class="ph-card-empty-text">Нажмите на товар в таблице, чтобы открыть карточку.</div>
       </div>`);
   }
 
@@ -1344,135 +1684,79 @@ export class ProductsHubModule {
   private tplHead(p: HubProduct): string {
     const photos = this.allPhotos(p);
     const main = photos[0] ?? '';
-    const gallery = photos.length === 0
-      ? `<div class="ph-gallery"><div class="ph-gallery-main" style="display:flex;align-items:center;justify-content:center;color:var(--text3)">${I.image('', 28)}</div></div>`
-      : `<div class="ph-gallery">
-          <img class="ph-gallery-main" id="ph-gal-main" src="${esc(main)}" loading="lazy"
-            data-ph-action="open-lightbox" data-url="${esc(main)}"
-            onerror="this.style.opacity='.3'" style="cursor:zoom-in">
-          ${photos.length > 1 ? `
-            <div class="ph-gallery-strip">${photos.map((u, i) => `
-              <img class="ph-gallery-thumb${i === 0 ? ' active' : ''}" src="${esc(u)}" loading="lazy"
-                onclick="const m=document.getElementById('ph-gal-main');if(m){m.src='${esc(u)}';m.dataset.url='${esc(u)}';}
-                         this.parentElement.querySelectorAll('.ph-gallery-thumb').forEach(t=>t.classList.remove('active'));
-                         this.classList.add('active')"
-                onerror="this.style.display='none'">`).join('')}</div>` : ''}
-        </div>`;
+    const photo = main
+      ? `<img class="ph2-photo" src="${esc(main)}" loading="lazy" data-ph-action="open-lightbox" data-url="${esc(main)}"
+          onerror="this.style.opacity='.3'" title="${photos.length > 1 ? `${photos.length} фото — открыть` : 'Открыть фото'}">`
+      : `<div class="ph2-photo empty">${I.image('', 26)}</div>`;
 
-    const warnings: string[] = [];
-    if (!p.has_cost)     warnings.push(`<span class="ph-warn cost">${I.alertTriangle('', 11)} нет себестоимости</span>`);
-    if (!p.has_mp)       warnings.push(`<span class="ph-warn mp">${I.alertTriangle('', 11)} не на МП</span>`);
-    if (!p.has_repricer) warnings.push(`<span class="ph-warn repricer">${I.alertTriangle('', 11)} нет репрайсера</span>`);
-    // Проверка устаревших данных (>7 дней без синхронизации)
+    // Заполненность карточки: одной строкой, недостающее — в подсказке
+    const criteria: Array<[string, boolean]> = [
+      ['название', !!p.name], ['фото', photos.length > 0], ['описание', p.mp_entries.some(e => e.description)],
+      ['бренд', !!p.brand], ['штрихкод', !!p.barcode], ['габариты', !!(p.weight_kg && p.length_cm && p.width_cm && p.height_cm)],
+      ['себестоимость', p.has_cost], ['категория', !!p.category],
+    ];
+    const missing = criteria.filter(([, v]) => !v).map(([k]) => k);
     const STALE_MS = 7 * 24 * 3600 * 1000;
-    const staleStores = p.mp_entries.filter(e => {
+    const stale = p.mp_entries.some(e => {
       const t = catalogCache.getSyncedAt(e.store_id) ?? this.storeSyncedAt.get(e.store_id) ?? null;
       return !t || (Date.now() - new Date(t).getTime() > STALE_MS);
     });
-    if (staleStores.length) {
-      warnings.push(`<span class="ph-warn stale">${I.alertTriangle('', 11)} данные устарели · обновите синхронизацию</span>`);
-    }
+    const notes: string[] = [];
+    if (!p.has_cost) notes.push(`<span class="ph2-note warn">нет себестоимости</span>`);
+    if (!p.has_mp) notes.push(`<span class="ph2-note warn">нет на маркетплейсах</span>`);
+    if (missing.length) notes.push(`<span class="ph2-note" title="Не заполнено: ${esc(missing.join(', '))}">карточка заполнена на ${criteria.length - missing.length}/${criteria.length}</span>`);
+    if (stale) notes.push(`<span class="ph2-note" title="Каталог не синхронизировался больше 7 дней">данные каталога устарели</span>`);
 
-    const meta: string[] = [];
-    if (p.category) meta.push(`<span class="ph-meta-chip">Категория<b>${esc(p.category)}</b></span>`);
-    if (p.brand)    meta.push(`<span class="ph-meta-chip">Бренд<b>${esc(p.brand)}</b></span>`);
-    if (p.barcode)  meta.push(`<span class="ph-meta-chip">Штрихкод<b>${esc(p.barcode)}${copyButton(p.barcode, 'Копировать штрихкод')}</b></span>`);
-
-    // Completeness score
-    const criteria: Array<[string, boolean]> = [
-      ['Название',      !!p.name],
-      ['Фото',          photos.length > 0],
-      ['Описание',      p.mp_entries.some(e => e.description)],
-      ['Бренд',         !!p.brand],
-      ['Штрихкод',      !!p.barcode],
-      ['Размеры',       !!(p.weight_kg && p.length_cm && p.width_cm && p.height_cm)],
-      ['Себестоимость', p.has_cost],
-      ['Репрайсер',     p.has_repricer],
-      ['Категория',     !!p.category],
-    ];
-    const doneCount = criteria.filter(([, v]) => v).length;
-    const totalCount = criteria.length;
-    const pct = Math.round((doneCount / totalCount) * 100);
-    const completenessColor = pct >= 80 ? 'var(--green,#22c55e)' : pct >= 50 ? 'var(--yellow,#eab308)' : 'var(--red,#ef4444)';
-    const completenessBar = `<div class="ph-completeness">
-      <div class="ph-completeness-header">
-        <div class="ph-completeness-label">${doneCount}/${totalCount} заполнено</div>
-        <div class="ph-completeness-track"><div class="ph-completeness-fill" style="width:${pct}%;background:${completenessColor}"></div></div>
-      </div>
-      <div class="ph-completeness-chips">
-        ${criteria.map(([label, done]) => `<span class="ph-completeness-chip${done ? ' done' : ' miss'}">${done ? '✓' : '✗'} ${label}</span>`).join('')}
-      </div>
-    </div>`;
+    const meta = [
+      p.brand ? `Бренд: <b>${esc(p.brand)}</b>` : '',
+      p.category ? `Категория: <b>${esc(p.category)}</b>` : '',
+      p.barcode ? `Штрихкод: <b>${esc(p.barcode)}</b>${copyButton(p.barcode, 'Копировать штрихкод')}` : '',
+    ].filter(Boolean);
 
     return `
-      <div class="ph-card-head">
-        ${gallery}
-        <div class="ph-head-info">
-          ${completenessBar}
-          <div class="ph-head-title${p.name ? '' : ' ph-head-title-empty'}">${p.name ? esc(p.name) : 'Без названия'}${p.name ? copyButton(p.name, 'Копировать название') : ''}</div>
-          <div class="ph-head-article">
-            <span>${esc(p.article)}</span>
-            <button class="ph-head-article-copy" title="Копировать"
-              onclick="navigator.clipboard.writeText('${esc(p.article).replace(/'/g,"&#39;")}')">${I.copy('', 12)}</button>
-          </div>
-          ${meta.length ? `<div class="ph-head-meta">${meta.join('')}</div>` : ''}
-          ${warnings.length ? `<div class="ph-head-warnings">${warnings.join('')}</div>` : ''}
-          ${p.mp_entries.some(e => e.url) ? `<div class="ph-head-mp-links">${p.mp_entries.filter(e => e.url).map(e =>
-            `<a class="ph-mp-link mp-${e.mp}" href="${esc(e.url!)}" target="_blank" rel="noopener noreferrer">
-              <span class="ph-mp-link-label">${MP_LABEL[e.mp]}</span>
-              <span class="ph-mp-link-store">${esc(e.store_name)}</span>
-              ${I.externalLink('', 10)}
-            </a>`).join('')}</div>` : ''}
-          <div class="ph-head-actions">
-            <button class="ph-action" onclick="window.app?.navigateTo('analytics')">${I.chart('', 12)} Аналитика</button>
-            <button class="ph-action" onclick="window.app?.navigateTo('repricer')">${I.trendingUp('', 12)} Репрайсер</button>
-            <button class="ph-action primary" onclick="window.productsHubModule?.setTab('card-edit')">${I.edit('', 12)} Редактировать</button>
+      <div class="ph2-card-head">
+        ${photo}
+        <div class="ph2-card-info">
+          <div class="ph2-card-title">${p.name ? esc(p.name) : '<i>Без названия</i>'}${p.name ? copyButton(p.name, 'Копировать название') : ''}</div>
+          <div class="ph2-card-art">Артикул <b>${esc(p.article)}</b>${copyButton(p.article, 'Копировать артикул')}</div>
+          ${meta.length ? `<div class="ph2-card-meta">${meta.join('<span class="ph2-sep">·</span>')}</div>` : ''}
+          ${notes.length ? `<div class="ph2-card-notes">${notes.join('')}</div>` : ''}
+          <div class="ph2-card-links">
+            ${p.mp_entries.filter(e => e.url).map(e => `<a class="ph-mp-link mp-${e.mp}" href="${esc(e.url!)}" target="_blank" rel="noopener noreferrer" title="Открыть на маркетплейсе">${MP_LABEL[e.mp]} · ${esc(e.store_name)} ${I.externalLink('', 10)}</a>`).join('')}
+            <span class="ph2-grow"></span>
+            <button class="ph2-btn" onclick="window.app?.navigateTo('repricer')">${I.trendingUp('', 12)} Репрайсер</button>
+            <button class="ph2-btn primary" onclick="window.productsHubModule?.setTab('card-edit')">${I.edit('', 12)} Редактировать</button>
           </div>
         </div>
       </div>`;
   }
 
   private tplStats(p: HubProduct): string {
-    const priced = p.mp_entries.filter(e => e.price != null);
-    const avgPrice = priced.length
-      ? priced.reduce((s, e) => s + (e.price ?? 0), 0) / priced.length
-      : null;
-    const margin = (p.cost_price != null && avgPrice != null)
-      ? Math.round(avgPrice - p.cost_price) : null;
-    const marginPct = (margin != null && avgPrice != null && avgPrice > 0)
-      ? Math.round((margin / avgPrice) * 100) : null;
-    const totalStock = p.mp_entries.reduce((s, e) => s + (e.stock_total || 0), 0);
-    const totalSales30 = p.mp_entries.reduce((s, e) => s + e.sales_qty, 0);
-    const totalNet30 = p.mp_entries.reduce((s, e) => s + e.net_profit, 0);
-
-    const stat = (label: string, value: string, sub: string = '', cls = '') =>
-      `<div class="ph-stat">
-        <div class="ph-stat-label">${label}</div>
-        <div class="ph-stat-value ${cls}">${value}</div>
-        ${sub ? `<div class="ph-stat-sub">${sub}</div>` : ''}
-      </div>`;
-
+    const t = this.totals(p, p.mp_entries);
+    const stat = (label: string, value: string, sub = '', cls = '') =>
+      `<div class="ph-stat"><div class="ph-stat-label">${label}</div><div class="ph-stat-value ${cls}">${value}</div>${sub ? `<div class="ph-stat-sub">${sub}</div>` : ''}</div>`;
     const costCell = this.editingCostPrice
       ? `<div class="ph-stat">
           <div class="ph-stat-label">Себестоимость</div>
           <div class="ph-stat-cost-edit">
-            <input id="ph-cost-inp" class="ph-cost-inp" type="number" min="0" step="1"
-              value="${this.costPriceEditValue}" placeholder="0"
+            <input id="ph-cost-inp" class="ph-cost-inp" type="number" min="0" step="1" value="${this.costPriceEditValue}" placeholder="0"
               onkeydown="if(event.key==='Enter'){event.preventDefault();document.querySelector('[data-ph-action=cost-save]')?.click();}else if(event.key==='Escape'){document.querySelector('[data-ph-action=cost-cancel]')?.click();}">
             <button class="cmp-btn cmp-btn-xs cmp-btn-primary" data-ph-action="cost-save">✓</button>
             <button class="cmp-btn cmp-btn-xs" data-ph-action="cost-cancel">✕</button>
           </div>
         </div>`
-      : `<div class="ph-stat" style="cursor:pointer" data-ph-action="cost-edit" title="Нажмите чтобы изменить">
-          <div class="ph-stat-label">Себестоимость <span style="font-size:10px;opacity:.5">${I.edit('',10)}</span></div>
-          <div class="ph-stat-value ${p.cost_price == null ? 'muted' : ''}">${pr(p.cost_price)}</div>
+      : `<div class="ph-stat" style="cursor:pointer" data-ph-action="cost-edit" title="Нажмите, чтобы изменить">
+          <div class="ph-stat-label">Себестоимость ${I.edit('', 10)}</div>
+          <div class="ph-stat-value ${p.cost_price == null ? 'muted' : ''}">${p.cost_price == null ? 'указать' : pr(p.cost_price)}</div>
+          <div class="ph-stat-sub">за штуку</div>
         </div>`;
-
-    return `<div class="ph-stats">
+    const price = t.minPrice == null ? '—' : t.minPrice === t.maxPrice ? pr(t.minPrice) : `${Math.round(t.minPrice).toLocaleString('ru')}–${pr(t.maxPrice)}`;
+    return `<div class="ph-stats ph2-stats">
       ${costCell}
-      ${stat('Средняя цена', pr(avgPrice), priced.length ? `${priced.length} ${priced.length === 1 ? 'магазин' : 'магазинов'}` : '', avgPrice == null ? 'muted' : '')}
-      ${stat('Маржа за шт.', margin != null ? prSigned(margin) : '—', marginPct != null ? `${marginPct}% · без комиссий МП` : 'без комиссий МП', margin == null ? 'muted' : margin >= 0 ? 'pos' : 'neg')}
-      ${stat(`Прибыль ${this.period}д`, prSigned(totalNet30), `${totalSales30} продаж · остаток ${totalStock}`, totalNet30 === 0 ? 'muted' : totalNet30 > 0 ? 'pos' : 'neg')}
+      ${stat('Цена', price, `${p.mp_entries.length} ${plural(p.mp_entries.length, ['магазин', 'магазина', 'магазинов'])}`)}
+      ${stat('Остаток', num(t.stock), 'шт на всех складах', t.stock === 0 ? 'neg' : '')}
+      ${stat(`Продано за ${this.period} дн.`, num(t.sold), t.returned ? `возвратов ${num(t.returned)}` : 'без возвратов')}
+      ${stat('Прибыль', t.profit == null ? '—' : prSigned(t.profit), t.profit == null ? 'нужна себестоимость' : t.margin != null ? `маржа ${t.margin.toFixed(1).replace('.', ',')}%` : '', t.profit == null ? 'muted' : t.profit >= 0 ? 'pos' : 'neg')}
     </div>`;
   }
 
@@ -1616,142 +1900,42 @@ export class ProductsHubModule {
   // ─── Tab: Finance ───────────────────────────────────────────────
 
   private tplFinance(p: HubProduct): string {
-    const totalQty   = p.mp_entries.reduce((s, e) => s + e.sales_qty, 0);
-    const totalRet   = p.mp_entries.reduce((s, e) => s + e.returns_qty, 0);
-    const totalRev   = p.mp_entries.reduce((s, e) => s + e.sales_revenue, 0);
-    const totalComm  = p.mp_entries.reduce((s, e) => s + e.commission, 0);
-    const totalDel   = p.mp_entries.reduce((s, e) => s + e.delivery, 0);
-    const totalSvc   = p.mp_entries.reduce((s, e) => s + e.services, 0);
-    const totalNet   = p.mp_entries.reduce((s, e) => s + e.net_profit, 0);
-    const cogs = (p.cost_price != null) ? -p.cost_price * totalQty : 0;
-    const netWithCogs = totalNet + cogs;
-
-    const summary = `
-      <div class="ph-sales-block">
-        <div class="ph-sales-grid">
-          <div class="ph-sales-cell">
-            <div class="ph-sales-cell-label">Продаж</div>
-            <div class="ph-sales-cell-value">${num(totalQty)}</div>
-            <div class="ph-sales-cell-sub">шт. за ${this.period} дней</div>
-          </div>
-          <div class="ph-sales-cell">
-            <div class="ph-sales-cell-label">Возвратов</div>
-            <div class="ph-sales-cell-value${totalRet > 0 ? ' neg' : ''}">${num(totalRet)}</div>
-            <div class="ph-sales-cell-sub">${totalQty > 0 ? `${Math.round((totalRet / totalQty) * 100)}%` : '—'}</div>
-          </div>
-          <div class="ph-sales-cell">
-            <div class="ph-sales-cell-label">Оборот</div>
-            <div class="ph-sales-cell-value">${pr(totalRev)}</div>
-            <div class="ph-sales-cell-sub">валовая выручка</div>
-          </div>
-          <div class="ph-sales-cell">
-            <div class="ph-sales-cell-label">Чистая прибыль</div>
-            <div class="ph-sales-cell-value ${netWithCogs > 0 ? 'pos' : netWithCogs < 0 ? 'neg' : ''}">${prSigned(netWithCogs)}</div>
-            <div class="ph-sales-cell-sub">после себестоимости</div>
-          </div>
-        </div>
-      </div>`;
-
-    const breakdown = `
-      <div class="ph-fin-breakdown">
-        <div class="ph-fin-row"><span class="ph-fin-row-label">Выручка маркетплейсов</span><span class="ph-fin-row-value">${prSigned(totalRev)}</span></div>
-        <div class="ph-fin-row"><span class="ph-fin-row-label">Комиссия МП</span><span class="ph-fin-row-value neg">${prSigned(totalComm)}</span></div>
-        <div class="ph-fin-row"><span class="ph-fin-row-label">Логистика</span><span class="ph-fin-row-value neg">${prSigned(totalDel)}</span></div>
-        <div class="ph-fin-row"><span class="ph-fin-row-label">Прочие услуги</span><span class="ph-fin-row-value ${totalSvc < 0 ? 'neg' : ''}">${prSigned(totalSvc)}</span></div>
-        ${p.cost_price != null ? `<div class="ph-fin-row"><span class="ph-fin-row-label">Себестоимость (${num(totalQty)} × ${pr(p.cost_price)})</span><span class="ph-fin-row-value neg">${prSigned(cogs)}</span></div>` : ''}
-        <div class="ph-fin-row total"><span class="ph-fin-row-label">Чистая прибыль</span><span class="ph-fin-row-value ${netWithCogs >= 0 ? 'pos' : 'neg'}">${prSigned(netWithCogs)}</span></div>
-      </div>`;
-
-    const perStore = p.mp_entries.filter(e => e.sales_qty || e.returns_qty || e.net_profit).length === 0
-      ? `<div class="ph-empty">${this.hadTransactions
-            ? `За ${this.period} дней нет продаж этого товара. Попробуйте увеличить период.`
-            : `Нет данных о транзакциях. Зайдите в раздел «Аналитика» и синхронизируйте финансы маркетплейсов — после этого здесь появятся продажи, возвраты, комиссии и чистая прибыль.`}</div>`
-      : `<div class="ph-stores">${p.mp_entries.filter(e => e.sales_qty || e.returns_qty || e.net_profit).map(e => `
-          <div class="ph-store-row" style="grid-template-columns:60px 1fr 100px 110px 100px 36px">
-            <span class="ph-mp-tag mp-${e.mp}">${MP_LABEL[e.mp]}</span>
-            <div class="ph-store-name" title="${esc(e.store_name)}">${esc(e.store_name)}</div>
-            <div class="ph-store-stock"><b>${e.sales_qty}</b> прод.${e.returns_qty ? ` / <span style="color:#f87171">${e.returns_qty} в.</span>` : ''}</div>
-            <div class="ph-store-sales">${pr(e.sales_revenue)}</div>
-            <div class="ph-store-price ${e.net_profit >= 0 ? '' : ''}" style="color:${e.net_profit >= 0 ? '#4ade80' : '#f87171'}">${prSigned(e.net_profit)}</div>
-            <span></span>
-          </div>`).join('')}</div>`;
-
-    // Daily sparkline — revenue by day for this article
-    const sparklineHtml = (() => {
-      if (!this.rawTransactions.length) return '';
-      const art = p.article.toLowerCase();
-
-      // Precompute storeId → mp once — avoids O(stores) linear scan per transaction
-      const storeToMp = new Map<string, 'ozon' | 'wb' | 'yandex'>();
-      for (const s of this.ozStores) storeToMp.set((s as any).id, 'ozon');
-      for (const s of this.wbStores) storeToMp.set((s as any).id, 'wb');
-      for (const s of this.ymStores) storeToMp.set((s as any).id, 'yandex');
-
-      const dayMap = new Map<string, number>();
-      for (const tx of this.rawTransactions) {
-        const mp = tx.store_id ? storeToMp.get(tx.store_id) ?? null : null;
-        const items = tx.items_json ?? [];
-        let matched = false;
-        for (const item of items) {
-          const sku = String(item.sku ?? '');
-          let resolved: string | null | undefined = null;
-          if (mp === 'ozon')        resolved = this.skuMaps.ozon.get(sku);
-          else if (mp === 'wb')     resolved = this.skuMaps.wb.get(sku);
-          else if (mp === 'yandex') resolved = this.skuMaps.ymSku.get(sku) ?? this.skuMaps.ymOffer.get(sku.toLowerCase());
-          if (!resolved && item.vendor_code) resolved = item.vendor_code;
-          if (resolved && resolved.toLowerCase() === art) { matched = true; break; }
-        }
-        if (!matched) continue;
-        const day = (tx.operation_date ?? '').slice(0, 10);
-        if (!day) continue;
-        dayMap.set(day, (dayMap.get(day) ?? 0) + (tx.accruals_for_sale ?? 0));
-      }
-      if (!dayMap.size) return '';
-
-      // Fill all days in range
-      const days: string[] = [];
-      const now = new Date();
-      for (let i = this.period - 1; i >= 0; i--) {
-        const d = new Date(now); d.setDate(d.getDate() - i);
-        days.push(d.toISOString().slice(0, 10));
-      }
-      const vals = days.map(d => dayMap.get(d) ?? 0);
-      const maxV = Math.max(...vals, 1);
-      const W = 320, H = 52, pad = 4;
-      const pts = vals.map((v, i) => {
-        const x = pad + (i / Math.max(vals.length - 1, 1)) * (W - pad * 2);
-        const y = pad + (1 - v / maxV) * (H - pad * 2);
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      }).join(' ');
-      const area = `${pad},${H - pad} ` + pts + ` ${W - pad},${H - pad}`;
-      return `<div class="ph-section">
-        <div class="ph-section-head">${I.trendingUp('', 12)} Выручка по дням</div>
-        <div class="ph-sparkline-wrap">
-          <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:${H}px">
-            <polygon points="${area}" fill="var(--accent)" opacity="0.15"/>
-            <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
-          </svg>
-          <div class="ph-sparkline-labels">
-            <span>${days[0]?.slice(5)}</span><span>${days[Math.floor(days.length / 2)]?.slice(5)}</span><span>${days[days.length - 1]?.slice(5)}</span>
-          </div>
-        </div>
-      </div>`;
-    })();
-
+    const t = this.totals(p, p.mp_entries);
+    if (!t.sold && !t.returned && !t.revenue && !t.payout) {
+      return `<div class="ph-empty">${this.hadTransactions
+        ? `За ${this.period} дней продаж этого товара не было. Выберите период длиннее в шапке.`
+        : 'Нет финансовых отчётов маркетплейсов. Откройте «Аналитику» и нажмите «Обновить» — после этого здесь появятся продажи, удержания и прибыль.'}</div>`;
+    }
+    const pct = (v: number) => t.revenue > 0 ? `${(v / t.revenue * 100).toFixed(1).replace('.', ',')}%` : '';
+    const row = (label: string, v: number | null, cls = '', share = true) =>
+      `<div class="ph-fin-row ${cls}"><span class="ph-fin-row-label">${label}</span><span class="ph2-fin-pct">${v != null && share ? pct(Math.abs(v)) : ''}</span><span class="ph-fin-row-value">${v == null ? '—' : prSigned(v)}</span></div>`;
+    const stores = p.mp_entries.filter(e => e.sales_qty || e.returns_qty || e.sales_revenue);
     return `
       <div class="ph-section">
-        <div class="ph-section-head">${I.chart('', 12)} Итого за ${this.period} дней</div>
-        ${summary}
+        <div class="ph-section-head">${I.dollarSign('', 12)} Деньги за ${this.period} дней</div>
+        <div class="ph-fin-breakdown">
+          ${row(`Выручка · продано ${num(t.sold)} шт${t.returned ? `, возвратов ${num(t.returned)}` : ''}`, t.revenue, '', false)}
+          ${row('Комиссия маркетплейса', -t.commission, 'neg')}
+          ${row('Логистика, эквайринг и прочие услуги', -t.otherFees, t.otherFees > 0 ? 'neg' : 'pos')}
+          ${row('Перечислено маркетплейсом', t.payout, 'sub')}
+          ${t.cogs != null ? row(`Себестоимость · ${num(t.netUnits)} шт × ${pr(p.cost_price)}`, -t.cogs, 'neg') : `<div class="ph-fin-row"><span class="ph-fin-row-label">Себестоимость</span><span></span><span class="ph-fin-row-value"><button class="ph2-link" data-ph-action="cost-edit">указать</button></span></div>`}
+          ${row('Прибыль', t.profit, `total ${t.profit == null ? '' : t.profit >= 0 ? 'pos' : 'neg'}`)}
+        </div>
+        <div class="ph2-fin-note">Прибыль товара — до налогов, рекламы из рекламного кабинета и общих расходов. Полный расчёт — в «Аналитике».</div>
       </div>
-      ${sparklineHtml}
-      <div class="ph-section">
-        <div class="ph-section-head">${I.dollarSign('', 12)} Структура прибыли</div>
-        ${breakdown}
-      </div>
+      ${stores.length > 1 ? `
       <div class="ph-section">
         <div class="ph-section-head">${I.store('', 12)} По магазинам</div>
-        ${perStore}
-      </div>
+        <table class="ph2-mini-table">
+          <thead><tr><th>Магазин</th><th>Продано</th><th>Выручка</th><th>Удержания</th><th>Перечислено</th></tr></thead>
+          <tbody>${stores.map(e => `<tr>
+            <td><span class="ph-mp-tag mp-${e.mp}">${MP_LABEL[e.mp]}</span> ${esc(e.store_name)}</td>
+            <td>${num(e.sales_qty)}${e.returns_qty ? ` / −${num(e.returns_qty)}` : ''}</td>
+            <td>${pr(e.sales_revenue)}</td>
+            <td>${pr(-(e.commission + e.services))}</td>
+            <td>${pr(e.net_profit)}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>` : ''}
     `;
   }
 
@@ -2055,95 +2239,37 @@ export class ProductsHubModule {
 
   private tplFilterPanel(): string {
     const f = this.filters;
-    const s = this.sortBy;
     const activeCount = this.countActiveFilters();
-
-    // Collect unique stores from all products (respect active MP filter)
-    const storeMap = new Map<string, { name: string; mp: Mp }>();
-    for (const p of this.items) {
-      for (const e of p.mp_entries) {
-        if (f.mp && e.mp !== f.mp) continue;
-        if (!storeMap.has(e.store_id)) storeMap.set(e.store_id, { name: e.store_name, mp: e.mp });
-      }
-    }
-    const stores = [...storeMap.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
-
+    // Площадка, магазин, остаток, себестоимость и сортировка — в шапке, быстрых
+    // фильтрах и заголовках таблицы. Здесь только то, что нужно реже.
     return `
     <div class="ph-fp-inner">
       <div class="ph-fp-groups">
-
         <div class="ph-fp-group">
-          <div class="ph-fp-label">Маркетплейс</div>
+          <div class="ph-fp-label">Статус на маркетплейсе</div>
           <div class="ph-fp-chips">
-            ${this.chip('Все', f.mp === '', 'mp', '')}
-            ${this.chip('Ozon', f.mp === 'ozon', 'mp', 'ozon')}
-            ${this.chip('WB', f.mp === 'wb', 'mp', 'wb')}
-            ${this.chip('ЯМ', f.mp === 'yandex', 'mp', 'yandex')}
-          </div>
-        </div>
-
-        ${stores.length > 1 ? `<div class="ph-fp-group">
-          <div class="ph-fp-label">Магазин</div>
-          <div class="ph-fp-chips">
-            ${this.chip('Все', f.store_id === '', 'store', '')}
-            ${stores.map(([sid, st]) => this.chip(st.name, f.store_id === sid, 'store', sid)).join('')}
-          </div>
-        </div>` : ''}
-
-        <div class="ph-fp-group">
-          <div class="ph-fp-label">Статус</div>
-          <div class="ph-fp-chips">
-            ${this.chip('Все', f.status === '', 'status', '')}
+            ${this.chip('Любой', f.status === '', 'status', '')}
             ${this.chip('В продаже', f.status === 'В продаже', 'status', 'В продаже')}
             ${this.chip('Нет в наличии', f.status === 'Нет в наличии', 'status', 'Нет в наличии')}
-            ${this.chip('В архиве / Скрыт', f.status === 'В архиве', 'status', 'В архиве')}
+            ${this.chip('В архиве / скрыт', f.status === 'В архиве', 'status', 'В архиве')}
           </div>
         </div>
-
         <div class="ph-fp-group">
-          <div class="ph-fp-label">Остаток</div>
-          <div class="ph-fp-chips">
-            ${this.chip('Любой', f.stock === 'any', 'stock', 'any')}
-            ${this.chip('Только 0', f.stock === 'zero', 'stock', 'zero')}
-            ${this.chip('Есть остаток', f.stock === 'pos', 'stock', 'pos')}
-          </div>
-        </div>
-
-        <div class="ph-fp-group">
-          <div class="ph-fp-label">Цена (₽)</div>
+          <div class="ph-fp-label">Цена, ₽</div>
           <div class="ph-fp-price">
             <input id="ph-f-pmin" type="number" class="ph-fp-inp" placeholder="от" value="${f.price_min ?? ''}">
             <span class="ph-fp-sep">—</span>
             <input id="ph-f-pmax" type="number" class="ph-fp-inp" placeholder="до" value="${f.price_max ?? ''}">
           </div>
         </div>
-
         <div class="ph-fp-group">
-          <div class="ph-fp-label">Сортировка</div>
+          <div class="ph-fp-label">Ещё</div>
           <div class="ph-fp-chips">
-            ${this.chip('Артикул А→Я', s === 'article', 'sort', 'article')}
-            ${this.chip('Прибыль ↓', s === 'profit', 'sort', 'profit')}
-            ${this.chip('Продажи ↓', s === 'sales', 'sort', 'sales')}
-            ${this.chip('Остаток ↓', s === 'stock', 'sort', 'stock')}
-            ${this.chip('Маржа ↓', s === 'margin', 'sort', 'margin')}
+            ${this.chip('Нет на маркетплейсах', f.no_mp, 'toggle', 'no_mp')}
+            ${this.chip('Без правил репрайсера', f.no_repricer, 'toggle', 'no_repricer')}
           </div>
         </div>
-
-      </div>
-
-      <div class="ph-fp-divider"></div>
-
-      <div class="ph-fp-groups ph-fp-groups--bottom">
-        <div class="ph-fp-group">
-          <div class="ph-fp-label">Проблемы</div>
-          <div class="ph-fp-chips">
-            ${this.chip('Без себестоимости', f.no_cost, 'toggle', 'no_cost')}
-            ${this.chip('Нет на МП', f.no_mp, 'toggle', 'no_mp')}
-            ${this.chip('Без репрайсера', f.no_repricer, 'toggle', 'no_repricer')}
-          </div>
-        </div>
-
-        ${activeCount > 0 ? `<button class="ph-f-reset" id="ph-f-reset">✕ Сбросить всё</button>` : ''}
+        ${activeCount > 0 ? `<button class="ph-f-reset" id="ph-f-reset">✕ Сбросить</button>` : ''}
       </div>
     </div>`;
   }
@@ -2162,7 +2288,6 @@ export class ProductsHubModule {
         if (f === 'store')  this.filters.store_id = val;
         if (f === 'status') this.filters.status  = val;
         if (f === 'stock')  this.filters.stock   = val as any;
-        if (f === 'sort')   this.sortBy          = val as any;
         if (f === 'toggle') {
           const key = val as keyof Filters;
           (this.filters as any)[key] = !(this.filters as any)[key];
@@ -2173,11 +2298,8 @@ export class ProductsHubModule {
         return;
       }
       if ((e.target as HTMLElement).id === 'ph-f-reset') {
-        this.filters = { q: '', mp: '', store_id: '', no_cost: false, no_mp: false, no_repricer: false, status: '', stock: 'any', price_min: null, price_max: null };
-        this.sortBy = 'article';
-        // clear search input too
-        const si = this.el.querySelector<HTMLInputElement>('#ph-search');
-        if (si) si.value = '';
+        // Сбрасываем только фильтры этой панели — площадка, поиск и быстрые фильтры остаются.
+        Object.assign(this.filters, { no_mp: false, no_repricer: false, status: '', price_min: null, price_max: null });
         this.applyFilters();
         this.renderList(true);
         this.refreshFilterPanel();
@@ -2222,8 +2344,7 @@ export class ProductsHubModule {
 
   private countActiveFilters(): number {
     const f = this.filters;
-    return [f.mp, f.store_id, f.status, f.stock !== 'any', f.price_min != null, f.price_max != null,
-      f.no_cost, f.no_mp, f.no_repricer].filter(Boolean).length;
+    return [f.status, f.price_min != null, f.price_max != null, f.no_mp, f.no_repricer].filter(Boolean).length;
   }
 
   private updateFilterBadge(): void {
@@ -2732,7 +2853,7 @@ export class ProductsHubModule {
   // ─── Hide / unhide ──────────────────────────────────────────────
 
   private saveHiddenToStorage(): void {
-    try { localStorage.setItem('ph_hidden_articles', JSON.stringify([...this.hiddenArticles])); } catch {}
+    try { localStorage.setItem('ph_hidden_articles', JSON.stringify([...this.hiddenArticles])); } catch { /* не критично */ }
   }
 
   private hideSelected(): void {
@@ -2914,7 +3035,7 @@ export class ProductsHubModule {
         // Себестоимость
         const cost = numC(row, 'Себестоимость');
         if (cost !== null && cost !== p.cost_price) {
-          try { costPriceDb.set(article, cost); } catch {}
+          try { costPriceDb.set(article, cost); } catch { /* не критично */ }
           p.cost_price = cost; p.has_cost = true;
         }
 
@@ -2970,7 +3091,7 @@ export class ProductsHubModule {
         for (const cf of p.custom_fields) {
           const val = strC(row, cf.label);
           if (val !== null && val !== String(cf.value ?? '')) {
-            try { customColumnsDb.setValue(article, cf.id, val); } catch {}
+            try { customColumnsDb.setValue(article, cf.id, val); } catch { /* не критично */ }
             cf.value = val;
           }
         }
@@ -3125,7 +3246,7 @@ export class ProductsHubModule {
         if (fields.name)     p.name    = fields.name;
         if (fields.brand)    p.brand   = fields.brand;
         if (fields.barcode)  p.barcode = fields.barcode;
-        if (n('cost') !== null) { try { costPriceDb.set(article, n('cost')!); } catch {} p.cost_price = n('cost'); p.has_cost = true; }
+        if (n('cost') !== null) { try { costPriceDb.set(article, n('cost')!); } catch { /* не критично */ } p.cost_price = n('cost'); p.has_cost = true; }
         if (n('weight_kg') !== null) p.weight_kg = n('weight_kg');
         if (n('length_cm') !== null) p.length_cm = n('length_cm');
         if (n('width_cm')  !== null) p.width_cm  = n('width_cm');
@@ -3139,7 +3260,7 @@ export class ProductsHubModule {
           const store = stores.find((s: any) => s.name === entry.store_name);
           if (!store) continue;
           const storeId: string = store.id;
-          let st = this.editState.get(storeId);
+          const st = this.editState.get(storeId);
           if (!st) continue;
           let dirty = false;
           const np = n(`price:${mp}`);
@@ -3161,7 +3282,7 @@ export class ProductsHubModule {
         for (const [field, val] of Object.entries(fields)) {
           if (!field.startsWith('cf:')) continue;
           const cfId = field.slice(3);
-          try { customColumnsDb.setValue(article, cfId, val); } catch {}
+          try { customColumnsDb.setValue(article, cfId, val); } catch { /* не критично */ }
           const cf = p.custom_fields.find(c => c.id === cfId);
           if (cf) cf.value = val;
         }

@@ -160,7 +160,10 @@ export function accrualToTransaction(a: any, typeName: TypeName, storeId: string
     operation_type_name: name,
     operation_date: date,
     posting_number: postingNumber ? String(postingNumber) : null,
-    items_json: products.length ? products.map(p => ({
+    items_json: !products.length && Array.isArray(a?.item_fees?.fees) && a.item_fees.fees.some((f: any) => f?.sku)
+      // Сборы по товару (эквайринг): привязываем к SKU, чтобы они вошли в прибыль товара.
+      ? a.item_fees.fees.filter((f: any) => f?.sku).map((f: any) => ({ name: '', sku: Number(f.sku) || 0, quantity: Number(f.quantity ?? 1) || 1 }))
+      : products.length ? products.map(p => ({
       name: String(p?.name ?? p?.item?.name ?? ''),
       sku: Number(p?.sku ?? p?.item?.sku ?? p?.product?.sku) || 0,
       vendor_code: p?.offer_id ?? p?.item?.offer_id ?? undefined,

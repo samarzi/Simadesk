@@ -322,3 +322,35 @@ select.xd-inp[size] { height: auto; padding: 4px; }
 .xr-stack .xr-lbl svg { width: 15px; height: 15px; }
 .xr-stack .xr-dd svg:last-child { width: 8px; height: 8px; margin-left: auto; }
 .xr-stack .xr-glabel { padding-top: 3px; }
+
+/* ══ Компактная лента (15.10.2026) ════════════════════════════════════
+   Было: крупные кнопки с подписью под иконкой, двухэтажные столбики и
+   подписи групп — лента ~150px, справа пустота. Стало: инструменты в одну
+   строку (на узком экране переносятся), подписи групп — в подсказке,
+   лента ~76px. Разметка не менялась — только раскладка. */
+.xl-ribbon, .dw-ribbon { padding: 4px 8px 6px; }
+.xl-ribbon .xr-tabs, .dw-ribbon .xr-tabs { padding: 0 0 4px; max-width: none; }
+.xr-tab { padding: 4px 10px; font-size: 12.5px; }
+.xr-panel {
+  width: auto; max-width: 100%; min-height: 0;
+  padding: 3px 4px; flex-wrap: wrap; row-gap: 3px; align-items: center;
+  overflow: visible;
+}
+.xr-group { flex-direction: row; align-items: center; padding: 0 6px; min-height: 32px; }
+.xr-glabel { display: none; }
+.xr-items { gap: 2px; align-items: center; }
+.xr-col, .xr-col2, .xr-stack { flex-direction: row; align-items: center; gap: 2px; }
+.xr-row { gap: 1px; }
+.xr-btn { height: 28px; min-width: 28px; }
+.xr-lbl, .xr-row .xr-lbl, .xr-stack .xr-lbl {
+  flex-direction: row; min-height: 28px; height: 28px; max-width: none;
+  padding: 0 6px; gap: 4px; font-size: 12px; white-space: nowrap;
+}
+.xr-lbl svg, .xr-row .xr-lbl svg, .xr-stack .xr-lbl svg { width: 16px; height: 16px; }
+.xr-sel { height: 28px; }
+/* Место под плавающую панель навигации (высота ~95px) */
+.docs-shell:not(.docs-fullscreen) { padding-bottom: 108px; }
+body:has(.dock.dock-autohide) .docs-shell:not(.docs-fullscreen) { padding-bottom: 24px; }
+/* Вставка из буфера — значок с подсказкой «Вставить (Ctrl+V)», без текста */
+.xr-btn[data-dd="paste"] > span { display: none; }
+.xr-group { padding: 0 4px; }
