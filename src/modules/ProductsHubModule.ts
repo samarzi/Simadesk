@@ -273,8 +273,6 @@ export class ProductsHubModule {
   private allStoreIds: string[] = [];
   // ── Editor UX state
   private collapsedStores = new Set<string>();
-  private editingCostPrice = false;
-  private costPriceEditValue = '';
 
   // ── Raw stores & products (needed for edit/save)
   private ozStores: any[] = [];
@@ -742,8 +740,6 @@ export class ProductsHubModule {
         }
       } else if (t.id === 'ph-photo-url-input') {
         this.photoAddUrlValue = t.value;
-      } else if (t.id === 'ph-cost-inp') {
-        this.costPriceEditValue = t.value;
       }
     });
 
@@ -844,42 +840,6 @@ export class ProductsHubModule {
           const arrow = this.cardEl?.querySelector<HTMLElement>(`[data-section-store="${storeId}"] .cmp-section-arrow`);
           if (body)  body.style.display  = this.collapsedStores.has(storeId) ? 'none' : '';
           if (arrow) arrow.textContent   = this.collapsedStores.has(storeId) ? '▶' : '▼';
-          break;
-        }
-        // ── Inline cost price editing
-        case 'cost-edit': {
-          const pp = this.items.find(x => x.article === this.selectedArticle);
-          this.editingCostPrice = true;
-          this.costPriceEditValue = String(pp?.cost_price ?? '');
-          if (pp) this.renderCard(pp);
-          setTimeout(() => this.cardEl?.querySelector<HTMLInputElement>('#ph-cost-inp')?.focus(), 30);
-          break;
-        }
-        case 'cost-cancel': {
-          this.editingCostPrice = false;
-          const pp2 = this.items.find(x => x.article === this.selectedArticle);
-          if (pp2) this.renderCard(pp2);
-          break;
-        }
-        case 'cost-save': {
-          const pp3 = this.items.find(x => x.article === this.selectedArticle);
-          if (pp3) {
-            const v = parseFloat(this.costPriceEditValue);
-            if (!isNaN(v) && v >= 0) {
-              await costPriceDb.set(pp3.article, v);
-              pp3.cost_price = v;
-              pp3.has_cost = true;
-            }
-          }
-          this.editingCostPrice = false;
-          const pp4 = this.items.find(x => x.article === this.selectedArticle);
-          if (pp4) {
-            this.totalsCache.delete(pp4.article);
-            this.renderCard(pp4);
-            this.renderListItems();
-            this.renderTableFoot();
-            this.renderQuick();
-          }
           break;
         }
       }
@@ -1579,7 +1539,6 @@ export class ProductsHubModule {
     this.editState.clear();
     this.collapsedStores.clear();
     this.photoAddStoreId = null;
-    this.editingCostPrice = false;
     if (this.activeTab === 'card-edit' || this.activeTab === 'photos') {
       this.activeTab = 'overview';
     }
@@ -1620,15 +1579,6 @@ export class ProductsHubModule {
         <div class="ph-card-empty-title">Выберите товар</div>
         <div class="ph-card-empty-text">Нажмите на товар в таблице, чтобы открыть карточку.</div>
       </div>`);
-  }
-
-  private renderCard(p: HubProduct): void {
-    if (!this.cardEl) return;
-    this.cardEl.innerHTML = this.tplHead(p)
-      + this.tplStats(p)
-      + this.tplTabsHead(p)
-      + `<div class="ph-tab-content">${this.tplTabContent(p)}</div>`
-      + this.tplLightbox();
   }
 
   private tplLightbox(): string {
@@ -1682,97 +1632,188 @@ export class ProductsHubModule {
     return [...new Set(all)].slice(0, 24);
   }
 
+  // ═══ Карточка товара (15.10.2026, с нуля) ═════════════════════════
+  //  Шапка: фото, название, артикул/штрихкод, магазины, действия.
+  //  «Требует внимания» — что мешает товару, с кнопкой исправить.
+  //  Четыре цифры: цена, остаток, продажи, прибыль. Вкладки ниже.
+
+  private renderCard(p: HubProduct): void {
+    if (!this.cardEl) return;
+    this.cardEl.innerHTML = `<div class="pc">
+      ${this.tplHead(p)}
+      ${this.tplTodo(p)}
+      ${this.tplStats(p)}
+      ${this.tplTabsHead(p)}
+      <div class="pc-body">${this.tplTabContent(p)}</div>
+    </div>` + this.tplLightbox();
+  }
+
+  /** Себестоимость из поля в карточке: сохранить и пересчитать прибыль. */
+  async setCost(raw: string): Promise<void> {
+    const p = this.items.find(x => x.article === this.selectedArticle);
+    if (!p) return;
+    const s = String(raw ?? '').trim().replace(',', '.');
+    const v = s === '' ? null : parseFloat(s);
+    if (v == null || isNaN(v) || v < 0) { showToast('Введите себестоимость числом, например 450', 'warning'); return; }
+    if (v === p.cost_price) return;
+    try {
+      await costPriceDb.set(p.article, v);
+    } catch (e) {
+      showToast(`Не удалось сохранить: ${e instanceof Error ? e.message : String(e)}`, 'error');
+      return;
+    }
+    p.cost_price = v;
+    p.has_cost = true;
+    this.totalsCache.delete(p.article);
+    this.renderCard(p);
+    this.renderListItems();
+    this.renderTableFoot();
+    this.renderQuick();
+    showToast('Себестоимость сохранена', 'success');
+  }
+
+  /** Перейти к полю себестоимости и поставить в него курсор. */
+  focusCost(): void {
+    const inp = this.cardEl?.querySelector<HTMLInputElement>('#pc-cost');
+    if (!inp) return;
+    inp.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    setTimeout(() => inp.focus(), 150);
+  }
+
+  private static vatLabel(v: string): string {
+    if (!v) return '';
+    if (v === '0' || v === 'NO_VAT' || v === '0.00') return 'Без НДС';
+    const m: Record<string, string> = { '0.05': '5%', '0.07': '7%', '0.1': '10%', '0.10': '10%', 'VAT_10': '10%', '0.2': '20%', '0.20': '20%', 'VAT_20': '20%', '0.22': '22%', 'VAT_22': '22%' };
+    return m[v] ?? v;
+  }
+
   private tplHead(p: HubProduct): string {
     const photos = this.allPhotos(p);
     const main = photos[0] ?? '';
-    const photo = main
-      ? `<img class="ph2-photo" src="${esc(main)}" loading="lazy" data-ph-action="open-lightbox" data-url="${esc(main)}"
-          onerror="this.style.opacity='.3'" title="${photos.length > 1 ? `${photos.length} фото — открыть` : 'Открыть фото'}">`
-      : `<div class="ph2-photo empty">${I.image('', 26)}</div>`;
+    const thumbs = photos.slice(1, 4);
+    const more = photos.length - 1 - thumbs.length;
+    const gallery = main
+      ? `<div class="pc-gallery">
+          <img class="pc-photo" src="${esc(main)}" alt="" loading="lazy" data-ph-action="open-lightbox" data-url="${esc(main)}" onerror="this.classList.add('broken')">
+          ${thumbs.length ? `<div class="pc-thumbs">${thumbs.map((u, i) => `
+            <button class="pc-thumb" data-ph-action="open-lightbox" data-url="${esc(u)}" title="Открыть фото">
+              <img src="${esc(u)}" alt="" loading="lazy" onerror="this.parentElement.style.display='none'">
+              ${i === thumbs.length - 1 && more > 0 ? `<span>+${more}</span>` : ''}
+            </button>`).join('')}</div>` : ''}
+        </div>`
+      : `<button class="pc-gallery pc-photo-empty" onclick="window.productsHubModule?.setTab('photos')" title="Добавить фото">
+          ${I.image('', 26)}<span>Нет фото</span></button>`;
 
-    // Заполненность карточки: одной строкой, недостающее — в подсказке
-    const criteria: Array<[string, boolean]> = [
-      ['название', !!p.name], ['фото', photos.length > 0], ['описание', p.mp_entries.some(e => e.description)],
-      ['бренд', !!p.brand], ['штрихкод', !!p.barcode], ['габариты', !!(p.weight_kg && p.length_cm && p.width_cm && p.height_cm)],
-      ['себестоимость', p.has_cost], ['категория', !!p.category],
-    ];
-    const missing = criteria.filter(([, v]) => !v).map(([k]) => k);
-    const STALE_MS = 7 * 24 * 3600 * 1000;
-    const stale = p.mp_entries.some(e => {
-      const t = catalogCache.getSyncedAt(e.store_id) ?? this.storeSyncedAt.get(e.store_id) ?? null;
-      return !t || (Date.now() - new Date(t).getTime() > STALE_MS);
-    });
-    const notes: string[] = [];
-    if (!p.has_cost) notes.push(`<span class="ph2-note warn">нет себестоимости</span>`);
-    if (!p.has_mp) notes.push(`<span class="ph2-note warn">нет на маркетплейсах</span>`);
-    if (missing.length) notes.push(`<span class="ph2-note" title="Не заполнено: ${esc(missing.join(', '))}">карточка заполнена на ${criteria.length - missing.length}/${criteria.length}</span>`);
-    if (stale) notes.push(`<span class="ph2-note" title="Каталог не синхронизировался больше 7 дней">данные каталога устарели</span>`);
+    const idChip = (label: string, value: string, title: string) =>
+      `<span class="pc-id"><span class="pc-id-k">${label}</span><span class="pc-id-v">${esc(value)}</span>${copyButton(value, title)}</span>`;
 
-    const meta = [
-      p.brand ? `Бренд: <b>${esc(p.brand)}</b>` : '',
-      p.category ? `Категория: <b>${esc(p.category)}</b>` : '',
-      p.barcode ? `Штрихкод: <b>${esc(p.barcode)}</b>${copyButton(p.barcode, 'Копировать штрихкод')}` : '',
-    ].filter(Boolean);
+    const stores = p.mp_entries.map(e => {
+      const inner = `<span class="pc-mp pc-mp-${e.mp}">${MP_LABEL[e.mp]}</span>${esc(e.store_name)}`;
+      return e.url
+        ? `<a class="pc-store-chip" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer" title="Открыть товар на ${MP_FULL[e.mp]}">${inner}${I.externalLink('', 11)}</a>`
+        : `<span class="pc-store-chip">${inner}</span>`;
+    }).join('');
 
     return `
-      <div class="ph2-card-head">
-        ${photo}
-        <div class="ph2-card-info">
-          <div class="ph2-card-title">${p.name ? esc(p.name) : '<i>Без названия</i>'}${p.name ? copyButton(p.name, 'Копировать название') : ''}</div>
-          <div class="ph2-card-art">Артикул <b>${esc(p.article)}</b>${copyButton(p.article, 'Копировать артикул')}</div>
-          ${meta.length ? `<div class="ph2-card-meta">${meta.join('<span class="ph2-sep">·</span>')}</div>` : ''}
-          ${notes.length ? `<div class="ph2-card-notes">${notes.join('')}</div>` : ''}
-          <div class="ph2-card-links">
-            ${p.mp_entries.filter(e => e.url).map(e => `<a class="ph-mp-link mp-${e.mp}" href="${esc(e.url!)}" target="_blank" rel="noopener noreferrer" title="Открыть на маркетплейсе">${MP_LABEL[e.mp]} · ${esc(e.store_name)} ${I.externalLink('', 10)}</a>`).join('')}
-            <span class="ph2-grow"></span>
-            <button class="ph2-btn" onclick="window.app?.navigateTo('repricer')">${I.trendingUp('', 12)} Репрайсер</button>
-            <button class="ph2-btn primary" onclick="window.productsHubModule?.setTab('card-edit')">${I.edit('', 12)} Редактировать</button>
+      <header class="pc-hero">
+        ${gallery}
+        <div class="pc-hero-main">
+          <h2 class="pc-title">${p.name ? esc(p.name) : '<span class="pc-muted">Без названия</span>'}${p.name ? copyButton(p.name, 'Копировать название') : ''}</h2>
+          <div class="pc-ids">
+            ${idChip('Артикул', p.article, 'Копировать артикул')}
+            ${p.barcode ? idChip('Штрихкод', p.barcode, 'Копировать штрихкод') : ''}
+          </div>
+          ${p.brand || p.category ? `<div class="pc-sub">${[p.brand ? esc(p.brand) : '', p.category ? esc(p.category) : ''].filter(Boolean).join('<i>·</i>')}</div>` : ''}
+          ${stores ? `<div class="pc-stores">${stores}</div>` : '<div class="pc-sub pc-warn-text">Товара нет ни в одном магазине</div>'}
+          <div class="pc-actions">
+            <button class="pc-btn primary" onclick="window.productsHubModule?.setTab('card-edit')">${I.edit('', 14)} Редактировать</button>
+            <button class="pc-btn" onclick="window.app?.navigateTo('repricer')">${I.trendingUp('', 14)} Репрайсер</button>
           </div>
         </div>
-      </div>`;
+      </header>`;
+  }
+
+  /** Что мешает товару — коротко и с кнопкой, которая это исправляет. */
+  private tplTodo(p: HubProduct): string {
+    const photos = this.allPhotos(p);
+    const t = this.totals(p, p.mp_entries);
+    const items: Array<{ tone: 'warn' | 'info'; text: string; action: string }> = [];
+    if (p.cost_price == null) {
+      items.push({ tone: 'warn', text: '<b>Не указана себестоимость</b> — без неё не считаются прибыль и маржа',
+        action: `<button class="pc-todo-btn" onclick="window.productsHubModule?.focusCost()">Указать</button>` });
+    }
+    if (p.has_mp && t.stock === 0) {
+      items.push({ tone: 'warn', text: '<b>Нет остатка</b> — товар не продаётся, пока не пополните склад',
+        action: `<button class="pc-todo-btn" onclick="window.app?.navigateTo('supply')">Поставки</button>` });
+    }
+    const missing = [
+      ['фото', photos.length > 0], ['описание', p.mp_entries.some(e => e.description)], ['бренд', !!p.brand],
+      ['штрихкод', !!p.barcode], ['габариты', !!(p.weight_kg && p.length_cm && p.width_cm && p.height_cm)],
+    ].filter(([, ok]) => !ok).map(([k]) => k as string);
+    if (missing.length && p.has_mp) {
+      items.push({ tone: 'info', text: `<b>Карточка неполная</b> — не заполнено: ${missing.join(', ')}`,
+        action: `<button class="pc-todo-btn" onclick="window.productsHubModule?.setTab('${missing.length === 1 && missing[0] === 'фото' ? 'photos' : 'card-edit'}')">Заполнить</button>` });
+    }
+    const STALE_MS = 7 * 24 * 3600 * 1000;
+    const stale = p.mp_entries.find(e => {
+      const at = catalogCache.getSyncedAt(e.store_id) ?? this.storeSyncedAt.get(e.store_id) ?? null;
+      return !at || Date.now() - new Date(at).getTime() > STALE_MS;
+    });
+    if (stale) {
+      const busy = !!this.syncing.get(stale.store_id);
+      items.push({ tone: 'info', text: `<b>Данные «${esc(stale.store_name)}» устарели</b> — каталог не обновлялся больше недели`,
+        action: `<button class="pc-todo-btn" data-ph-action="sync-store" data-store-id="${esc(stale.store_id)}" data-mp="${stale.mp}" ${busy ? 'disabled' : ''}>${busy ? 'Обновляю…' : 'Обновить'}</button>` });
+    }
+    if (!items.length) return '';
+    return `<section class="pc-todo" aria-label="Требует внимания">${items.map(i => `
+      <div class="pc-todo-row ${i.tone}">
+        <span class="pc-todo-ico">${i.tone === 'warn' ? I.alertTriangle('', 14) : I.info('', 14)}</span>
+        <span class="pc-todo-text">${i.text}</span>
+        ${i.action}
+      </div>`).join('')}</section>`;
   }
 
   private tplStats(p: HubProduct): string {
     const t = this.totals(p, p.mp_entries);
-    const stat = (label: string, value: string, sub = '', cls = '') =>
-      `<div class="ph-stat"><div class="ph-stat-label">${label}</div><div class="ph-stat-value ${cls}">${value}</div>${sub ? `<div class="ph-stat-sub">${sub}</div>` : ''}</div>`;
-    const costCell = this.editingCostPrice
-      ? `<div class="ph-stat">
-          <div class="ph-stat-label">Себестоимость</div>
-          <div class="ph-stat-cost-edit">
-            <input id="ph-cost-inp" class="ph-cost-inp" type="number" min="0" step="1" value="${this.costPriceEditValue}" placeholder="0"
-              onkeydown="if(event.key==='Enter'){event.preventDefault();document.querySelector('[data-ph-action=cost-save]')?.click();}else if(event.key==='Escape'){document.querySelector('[data-ph-action=cost-cancel]')?.click();}">
-            <button class="cmp-btn cmp-btn-xs cmp-btn-primary" data-ph-action="cost-save">✓</button>
-            <button class="cmp-btn cmp-btn-xs" data-ph-action="cost-cancel">✕</button>
-          </div>
-        </div>`
-      : `<div class="ph-stat" style="cursor:pointer" data-ph-action="cost-edit" title="Нажмите, чтобы изменить">
-          <div class="ph-stat-label">Себестоимость ${I.edit('', 10)}</div>
-          <div class="ph-stat-value ${p.cost_price == null ? 'muted' : ''}">${p.cost_price == null ? 'указать' : pr(p.cost_price)}</div>
-          <div class="ph-stat-sub">за штуку</div>
-        </div>`;
-    const price = t.minPrice == null ? '—' : t.minPrice === t.maxPrice ? pr(t.minPrice) : `${Math.round(t.minPrice).toLocaleString('ru')}–${pr(t.maxPrice)}`;
-    return `<div class="ph-stats ph2-stats">
-      ${costCell}
-      ${stat('Цена', price, `${p.mp_entries.length} ${plural(p.mp_entries.length, ['магазин', 'магазина', 'магазинов'])}`)}
-      ${stat('Остаток', num(t.stock), 'шт на всех складах', t.stock === 0 ? 'neg' : '')}
-      ${stat(`Продано за ${this.period} дн.`, num(t.sold), t.returned ? `возвратов ${num(t.returned)}` : 'без возвратов')}
-      ${stat('Прибыль', t.profit == null ? '—' : prSigned(t.profit), t.profit == null ? 'нужна себестоимость' : t.margin != null ? `маржа ${t.margin.toFixed(1).replace('.', ',')}%` : '', t.profit == null ? 'muted' : t.profit >= 0 ? 'pos' : 'neg')}
-    </div>`;
+    const tile = (label: string, value: string, sub: string, cls = '') =>
+      `<div class="pc-kpi ${cls}"><div class="pc-kpi-k">${label}</div><div class="pc-kpi-v">${value}</div><div class="pc-kpi-s">${sub}</div></div>`;
+
+    const price = t.minPrice == null ? '—'
+      : t.minPrice === t.maxPrice ? pr(t.minPrice)
+      : `${Math.round(t.minPrice).toLocaleString('ru')} – ${pr(t.maxPrice)}`;
+    const old = p.mp_entries.map(e => e.old_price ?? 0).filter(x => t.minPrice != null && x > (t.minPrice ?? 0));
+    const priceSub = old.length ? `<s>${pr(Math.max(...old))}</s> до скидки` : `${p.mp_entries.length} ${plural(p.mp_entries.length, ['магазин', 'магазина', 'магазинов'])}`;
+
+    const fbs = p.mp_entries.reduce((s, e) => s + (e.mp === 'ozon' ? e.stock_fbs : 0), 0);
+    const fbo = p.mp_entries.reduce((s, e) => s + (e.mp === 'ozon' ? e.stock_fbo : 0), 0);
+    const hasOz = p.mp_entries.some(e => e.mp === 'ozon');
+    const stockSub = hasOz && p.mp_entries.length === 1 ? `FBO ${num(fbo)} · FBS ${num(fbs)}` : 'шт на всех складах';
+
+    const salesSub = t.sold ? `${pr(t.revenue)}${t.returned ? ` · возвр. ${num(t.returned)}` : ''}` : 'продаж не было';
+
+    const profit = t.profit == null
+      ? tile('Прибыль', '—', '<button class="pc-linkbtn" onclick="window.productsHubModule?.focusCost()">укажите себестоимость</button>', 'muted')
+      : tile('Прибыль', prSigned(t.profit), t.margin != null ? `маржа ${t.margin.toFixed(1).replace('.', ',')}%` : 'за период', t.profit >= 0 ? 'pos' : 'neg');
+
+    return `<section class="pc-kpis">
+      ${tile('Цена', price, priceSub)}
+      ${tile('Остаток', `${num(t.stock)} <small>шт</small>`, stockSub, t.stock === 0 ? 'neg' : '')}
+      ${tile(`Продано за ${this.period} дн.`, `${num(t.sold)} <small>шт</small>`, salesSub)}
+      ${profit}
+    </section>`;
   }
 
-  private tplTabsHead(_p: HubProduct): string {
-    const tab = (id: Tab, label: string, icon: string, badge?: number | string) => `
-      <button class="ph-tab${this.activeTab === id ? ' active' : ''}"
-        onclick="window.productsHubModule?.setTab('${id}')">
-        ${icon}${label}${badge != null ? `<span class="ph-tab-badge">${badge}</span>` : ''}
-      </button>`;
-    return `<div class="ph-tabs">
-      ${tab('overview',   'Обзор',         I.info('', 13))}
-      ${tab('finance',    'Финансы',        I.dollarSign('', 13))}
-      ${tab('card-edit',  'Редактировать',  I.edit('', 13))}
-      ${tab('photos',     'Фото',           I.image('', 13))}
-    </div>`;
+  private tplTabsHead(p: HubProduct): string {
+    const photos = this.allPhotos(p).length;
+    const tab = (id: Tab, label: string, badge = '') =>
+      `<button class="pc-tab${this.activeTab === id ? ' on' : ''}" role="tab" aria-selected="${this.activeTab === id}"
+        onclick="window.productsHubModule?.setTab('${id}')">${label}${badge ? `<span>${badge}</span>` : ''}</button>`;
+    return `<nav class="pc-tabs" role="tablist">
+      ${tab('overview', 'Обзор')}
+      ${tab('finance', 'Экономика')}
+      ${tab('card-edit', 'Редактирование')}
+      ${tab('photos', 'Фото', photos ? String(photos) : '')}
+    </nav>`;
   }
 
   private tplTabContent(p: HubProduct): string {
@@ -1784,212 +1825,216 @@ export class ProductsHubModule {
     }
   }
 
-  // ─── Tab: Overview ──────────────────────────────────────────────
+  // ─── Обзор ──────────────────────────────────────────────────────
 
   private tplOverview(p: HubProduct): string {
+    const sec = (title: string, body: string, extra = '') =>
+      `<section class="pc-sec"><div class="pc-sec-h"><h3>${title}</h3>${extra}</div>${body}</section>`;
+
+    // Где продаётся
     const stores = p.mp_entries.length
-      ? this.tplStoresTable(p, false)
-      : `<div class="ph-empty">Товар не найден ни на одном маркетплейсе</div>`;
+      ? `<div class="pc-shops">${p.mp_entries.map(e => this.tplShop(e)).join('')}</div>`
+      : `<div class="pc-empty">Товар не найден ни в одном магазине. Если он там есть — обновите каталог в «Редактировании».</div>`;
 
-    const dimsInfo: Array<{ label: string; value: string }> = [];
-    if (p.weight_kg) dimsInfo.push({ label: 'Вес', value: `${p.weight_kg} кг` });
-    if (p.length_cm || p.width_cm || p.height_cm) {
-      dimsInfo.push({ label: 'Размеры (Д×Ш×В)', value: `${p.length_cm ?? 0}×${p.width_cm ?? 0}×${p.height_cm ?? 0} см` });
-    }
-    const volume = (p.length_cm && p.width_cm && p.height_cm)
-      ? (p.length_cm * p.width_cm * p.height_cm) / 1000 : null;
-    if (volume != null) dimsInfo.push({ label: 'Объём', value: `${volume.toFixed(2)} л` });
+    // Характеристики — всё, что известно о товаре, одной сеткой
+    const vat = [...new Set(p.mp_entries.map(e => ProductsHubModule.vatLabel(e.vat)).filter(Boolean))].join(', ');
+    const dims = p.length_cm || p.width_cm || p.height_cm ? `${p.length_cm ?? 0} × ${p.width_cm ?? 0} × ${p.height_cm ?? 0} см` : '';
+    const volume = p.length_cm && p.width_cm && p.height_cm ? `${(p.length_cm * p.width_cm * p.height_cm / 1000).toFixed(2).replace('.', ',')} л` : '';
+    const facts: Array<[string, string]> = [
+      ['Бренд', p.brand ? esc(p.brand) : ''],
+      ['Категория', p.category ? esc(p.category) : ''],
+      ['Штрихкод', p.barcode ? `<span class="pc-mono">${esc(p.barcode)}</span>${copyButton(p.barcode, 'Копировать штрихкод')}` : ''],
+      ['НДС', esc(vat)],
+      ['Вес', p.weight_kg ? `${String(p.weight_kg).replace('.', ',')} кг` : ''],
+      ['Габариты', dims],
+      ['Объём', volume],
+      ...p.custom_fields.map(f => [esc(f.label), esc(String(f.value ?? ''))] as [string, string]),
+    ];
+    const factsHtml = `<dl class="pc-facts">${facts.map(([k, v]) =>
+      `<div><dt>${k}</dt><dd>${v || '<span class="pc-muted">не указано</span>'}</dd></div>`).join('')}</dl>`;
 
-    const dimsHtml = dimsInfo.length
-      ? `<div class="ph-info-grid">${dimsInfo.map(i =>
-          `<div class="ph-info-item"><span class="ph-info-item-label">${esc(i.label)}</span><span class="ph-info-item-value">${esc(i.value)}</span></div>`
-        ).join('')}</div>`
-      : `<div class="ph-empty">Габариты не заполнены</div>`;
-
-    const repHtml = p.repricer_rules.length
-      ? p.repricer_rules.map(r => this.tplRule(r)).join('')
-      : `<div class="ph-empty">Нет активных правил репрайсера</div>`;
-
-    const supplierHtml = p.supplier && (p.supplier.producer || p.supplier.product)
-      ? this.tplSupplier(p.supplier)
-      : `<div class="ph-empty">Поставщик не задан</div>`;
-
-    const customHtml = p.custom_fields.length
-      ? `<div class="ph-info-grid">${p.custom_fields.map(f =>
-          `<div class="ph-info-item"><span class="ph-info-item-label">${esc(f.label)}</span><span class="ph-info-item-value">${esc(String(f.value))}</span></div>`
-        ).join('')}</div>`
+    // Характеристики WB (если пришли из каталога)
+    const chars = p.mp_entries.flatMap(e => e.characteristics ?? []).filter(c => c.name && c.value);
+    const charsHtml = chars.length
+      ? `<details class="pc-more"><summary>Характеристики маркетплейса · ${chars.length}</summary>
+          <dl class="pc-facts">${chars.slice(0, 60).map(c => `<div><dt>${esc(c.name)}</dt><dd>${esc(c.value)}</dd></div>`).join('')}</dl></details>`
       : '';
 
-    // Extra product info per store (description, barcode, vat, commission)
-    const extraRows = p.mp_entries.map(e => {
-      const items: string[] = [];
-      if (e.description) items.push(`<span class="ph-extra-key">Описание:</span> <span class="ph-extra-val">${esc(e.description.slice(0, 120))}${e.description.length > 120 ? '…' : ''}</span>`);
-      if (e.barcode)     items.push(`<span class="ph-extra-key">Штрихкод:</span> <span class="ph-extra-val">${esc(e.barcode)}</span>`);
-      if (e.vat)         items.push(`<span class="ph-extra-key">НДС:</span> <span class="ph-extra-val">${esc(e.vat === '0' || e.vat === 'NO_VAT' ? 'Без НДС' : e.vat === '0.1' || e.vat === 'VAT_10' ? '10%' : e.vat === '0.2' || e.vat === 'VAT_20' ? '20%' : e.vat)}</span>`);
-      const commPct = e.sales_revenue > 0 ? Math.abs(e.commission) / e.sales_revenue * 100 : null;
-      if (commPct != null) items.push(`<span class="ph-extra-key">Комиссия МП:</span> <span class="ph-extra-val">${commPct.toFixed(1)}%</span>`);
-      if (!items.length) return '';
-      const mpLabel = e.mp === 'ozon' ? 'OZ' : e.mp === 'wb' ? 'WB' : 'ЯМ';
-      return `<div class="ph-extra-row"><span class="cmp-mp-badge cmp-mp-badge--${e.mp}" style="font-size:10px;padding:1px 5px">${mpLabel}</span><span class="ph-extra-store">${esc(e.store_name)}</span><div class="ph-extra-items">${items.join('')}</div></div>`;
-    }).filter(Boolean);
+    // Описание
+    const desc = p.mp_entries.map(e => e.description).find(Boolean) ?? '';
+    const descHtml = desc
+      ? `<div class="pc-desc${desc.length > 360 ? ' clamp' : ''}">${esc(desc)}</div>
+         ${desc.length > 360 ? `<button class="pc-linkbtn" onclick="this.previousElementSibling.classList.remove('clamp');this.remove()">Показать полностью</button>` : ''}`
+      : `<div class="pc-empty">Описания нет. <button class="pc-linkbtn" onclick="window.productsHubModule?.setTab('card-edit')">Добавить</button></div>`;
+
+    // Репрайсер и поставщик — короткими карточками
+    const rep = p.repricer_rules.length
+      ? p.repricer_rules.map(r => this.tplRule(r)).join('')
+      : `<div class="pc-empty">Цена меняется вручную. <button class="pc-linkbtn" onclick="window.app?.navigateTo('repricer')">Настроить репрайсер</button></div>`;
+    const sup = p.supplier && (p.supplier.producer || p.supplier.product)
+      ? this.tplSupplier(p.supplier)
+      : `<div class="pc-empty">Не привязан. <button class="pc-linkbtn" onclick="window.app?.navigateTo('producers')">Выбрать поставщика</button></div>`;
 
     return `
-      <div class="ph-section">
-        <div class="ph-section-head">${I.store('', 12)} Магазины и цены</div>
-        ${stores}
-      </div>
-      ${extraRows.length ? `<div class="ph-section">
-        <div class="ph-section-head">${I.info('', 12)} Данные товара по магазинам</div>
-        <div class="ph-extra-list">${extraRows.join('')}</div>
-      </div>` : ''}
-      <div class="ph-section">
-        <div class="ph-section-head">${I.scale('', 12)} Габариты</div>
-        ${dimsHtml}
-      </div>
-      <div class="ph-section">
-        <div class="ph-section-head">${I.trendingUp('', 12)} Репрайсер</div>
-        ${repHtml}
-      </div>
-      <div class="ph-section">
-        <div class="ph-section-head">${I.users('', 12)} Поставщик</div>
-        ${supplierHtml}
-      </div>
-      ${customHtml ? `<div class="ph-section">
-        <div class="ph-section-head">${I.tag('', 12)} Кастомные поля</div>
-        ${customHtml}
-      </div>` : ''}
-    `;
-  }
-
-  private tplStoresTable(p: HubProduct, compactSub: boolean): string {
-    return `<div class="ph-stores">${p.mp_entries.map(e => {
-      const stockText = e.mp === 'ozon'
-        ? `FBS ${e.stock_fbs} · FBO ${e.stock_fbo}`
-        : e.mp === 'wb'
-          ? `Остаток ${e.stock_total}`
-          : `Доступно ${e.stock_available} · Всего ${e.stock_total}`;
-      const stockLow = (e.stock_total === 0);
-      const priceHtml = (e.old_price && e.price && e.old_price > e.price)
-        ? `<span class="ph-store-price-old">${pr(e.old_price)}</span>${pr(e.price)}`
-        : pr(e.price);
-      const salesHtml = e.sales_qty > 0
-        ? `<b>${e.sales_qty}</b> шт · ${pr(e.sales_revenue)}`
-        : '<span style="color:var(--text3)">нет продаж</span>';
-      const subParts: string[] = [];
-      if (!compactSub) {
-        if (e.images.length) subParts.push(`${e.images.length} фото`);
-      }
-      return `<div class="ph-store-row">
-        <span class="ph-mp-tag mp-${e.mp}">${MP_LABEL[e.mp]}</span>
-        <div style="min-width:0">
-          <div class="ph-store-name" title="${esc(e.store_name)}">
-            ${esc(e.store_name)}${copyButton(e.store_name, 'Копировать название магазина')}
-            ${e.status ? `<span class="ph-status-pill ${e.status.includes('продаже') ? 'ok' : e.status.includes('наличии') ? 'danger' : e.status.includes('Архив') || e.status.includes('архиве') || e.status.includes('Скрыт') ? 'warn' : ''}">${esc(e.status)}</span>` : ''}
-          </div>
-          ${subParts.length ? `<div class="ph-store-sub">${subParts.join(' · ')}</div>` : ''}
-        </div>
-        <div class="ph-store-stock${stockLow ? ' low' : ''}">${stockText}</div>
-        <div class="ph-store-sales">${salesHtml}</div>
-        <div class="ph-store-price">${priceHtml}</div>
-        ${e.url
-          ? `<a class="ph-store-link" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer" title="Открыть на маркетплейсе">${I.externalLink('', 13)}</a>`
-          : `<span class="ph-store-link disabled" title="Ссылка недоступна">${I.externalLink('', 13)}</span>`}
+      ${sec('Где продаётся', stores)}
+      ${sec('О товаре', factsHtml + charsHtml, `<button class="pc-linkbtn" onclick="window.productsHubModule?.setTab('card-edit')">Изменить</button>`)}
+      ${sec('Описание', descHtml)}
+      <div class="pc-split">
+        ${sec('Репрайсер', rep)}
+        ${sec('Поставщик', sup)}
       </div>`;
-    }).join('')}</div>`;
   }
 
-  // ─── Tab: Finance ───────────────────────────────────────────────
+  /** Один магазин: статус, цена, остатки и продажи. */
+  private tplShop(e: MpStoreEntry): string {
+    const st = e.status ?? '';
+    const tone = /продаже/i.test(st) ? 'ok' : /нет в наличии|заблок|ошибка|не прош/i.test(st) ? 'bad' : st ? 'mid' : '';
+    const disc = e.old_price && e.price && e.old_price > e.price ? Math.round((1 - e.price / e.old_price) * 100) : 0;
+    const stock = e.mp === 'ozon'
+      ? [['FBO', e.stock_fbo], ['FBS', e.stock_fbs]]
+      : e.mp === 'yandex'
+        ? [['Доступно', e.stock_available], ['Всего', e.stock_total]]
+        : [['На складах', e.stock_total]];
+    return `<article class="pc-shop">
+      <div class="pc-shop-top">
+        <span class="pc-mp pc-mp-${e.mp}">${MP_LABEL[e.mp]}</span>
+        <span class="pc-shop-name" title="${esc(e.store_name)}">${esc(e.store_name)}</span>
+        ${st ? `<span class="pc-status ${tone}">${esc(st)}</span>` : ''}
+        <span class="pc-grow"></span>
+        ${e.url ? `<a class="pc-icon-btn" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer" title="Открыть на ${MP_FULL[e.mp]}">${I.externalLink('', 14)}</a>` : ''}
+      </div>
+      <div class="pc-shop-grid">
+        <div><span>Цена</span><b>${pr(e.price)}</b>${disc ? `<em><s>${pr(e.old_price)}</s> −${disc}%</em>` : ''}</div>
+        <div><span>Остаток</span><b class="${e.stock_total === 0 ? 'neg' : ''}">${num(e.stock_total)} шт</b><em>${stock.map(([k, v]) => `${k} ${num(v as number)}`).join(' · ')}</em></div>
+        <div><span>Продано за ${this.period} дн.</span><b>${num(e.sales_qty)} шт</b><em>${e.sales_qty ? pr(e.sales_revenue) : 'продаж нет'}${e.returns_qty ? ` · возвр. ${num(e.returns_qty)}` : ''}</em></div>
+      </div>
+    </article>`;
+  }
+
+  // ─── Экономика ──────────────────────────────────────────────────
 
   private tplFinance(p: HubProduct): string {
     const t = this.totals(p, p.mp_entries);
+    const costField = `
+      <label class="pc-cost">
+        <span class="pc-cost-k">Себестоимость одной штуки</span>
+        <span class="pc-cost-in">
+          <input id="pc-cost" type="number" inputmode="decimal" min="0" step="1" value="${p.cost_price ?? ''}" placeholder="например, 450"
+            onchange="window.productsHubModule?.setCost(this.value)" onkeydown="if(event.key==='Enter'){this.blur()}">
+          <span>₽</span>
+        </span>
+        <span class="pc-cost-s">Закупка, упаковка, доставка до склада. Сохраняется сразу и учитывается везде — в таблице и «Аналитике».</span>
+      </label>`;
+
     if (!t.sold && !t.returned && !t.revenue && !t.payout) {
-      return `<div class="ph-empty">${this.hadTransactions
-        ? `За ${this.period} дней продаж этого товара не было. Выберите период длиннее в шапке.`
-        : 'Нет финансовых отчётов маркетплейсов. Откройте «Аналитику» и нажмите «Обновить» — после этого здесь появятся продажи, удержания и прибыль.'}</div>`;
+      return `<section class="pc-sec">${costField}</section>
+        <div class="pc-empty big">${this.hadTransactions
+          ? `За ${this.period} дней продаж не было — экономику считать не из чего. Выберите период длиннее в шапке раздела.`
+          : 'Нет финансовых отчётов маркетплейсов. Откройте «Аналитику» и нажмите «Обновить» — здесь появятся выручка, удержания и прибыль.'}</div>`;
     }
-    const pct = (v: number) => t.revenue > 0 ? `${(v / t.revenue * 100).toFixed(1).replace('.', ',')}%` : '';
-    const row = (label: string, v: number | null, cls = '', share = true) =>
-      `<div class="ph-fin-row ${cls}"><span class="ph-fin-row-label">${label}</span><span class="ph2-fin-pct">${v != null && share ? pct(Math.abs(v)) : ''}</span><span class="ph-fin-row-value">${v == null ? '—' : prSigned(v)}</span></div>`;
+
+    // На одну проданную штуку
+    const units = Math.max(1, t.netUnits || t.sold);
+    const per = (v: number) => v / units;
+    const unitPrice = per(t.revenue);
+    const parts = [
+      { k: 'Комиссия', v: per(t.commission), c: 'c1' },
+      { k: 'Логистика и услуги', v: per(t.otherFees), c: 'c2' },
+      ...(p.cost_price != null ? [{ k: 'Себестоимость', v: p.cost_price, c: 'c3' }] : []),
+    ];
+    const profitUnit = p.cost_price != null ? unitPrice - parts.reduce((s, x) => s + x.v, 0) : null;
+    const scale = Math.max(unitPrice, parts.reduce((s, x) => s + Math.max(0, x.v), 0)) || 1;
+    const share = (v: number) => unitPrice > 0 ? `${(v / unitPrice * 100).toFixed(0)}%` : '';
+    const segs = [...parts.filter(x => x.v > 0), ...(profitUnit != null && profitUnit > 0 ? [{ k: 'Прибыль', v: profitUnit, c: 'pos' }] : [])];
+    const bar = `<div class="pc-bar" role="img" aria-label="Из чего состоит цена">${segs.map(s =>
+      `<i class="${s.c}" style="width:${(s.v / scale * 100).toFixed(2)}%" title="${s.k}: ${pr(s.v)} (${share(s.v)})"></i>`).join('')}</div>`;
+
+    const unitRows = `
+      <div class="pc-ue-row head"><span>Цена продажи (средняя)</span><b>${pr(unitPrice)}</b><em>100%</em></div>
+      ${parts.map(x => `<div class="pc-ue-row"><span><i class="pc-dot ${x.c}"></i>${x.k}</span><b>−${pr(Math.abs(x.v))}</b><em>${share(Math.abs(x.v))}</em></div>`).join('')}
+      ${p.cost_price == null ? `<div class="pc-ue-row"><span><i class="pc-dot c3"></i>Себестоимость</span><b><button class="pc-linkbtn" onclick="window.productsHubModule?.focusCost()">указать</button></b><em></em></div>` : ''}
+      <div class="pc-ue-row total ${profitUnit == null ? '' : profitUnit >= 0 ? 'pos' : 'neg'}"><span>Прибыль с одной штуки</span><b>${profitUnit == null ? '—' : prSigned(profitUnit)}</b><em>${profitUnit == null ? '' : share(profitUnit)}</em></div>`;
+
+    const line = (k: string, v: number | null, cls = '', signed = true) =>
+      `<div class="pc-ue-row ${cls}"><span>${k}</span><b>${v == null ? '—' : signed ? prSigned(v) : pr(v)}</b><em></em></div>`;
     const stores = p.mp_entries.filter(e => e.sales_qty || e.returns_qty || e.sales_revenue);
+
     return `
-      <div class="ph-section">
-        <div class="ph-section-head">${I.dollarSign('', 12)} Деньги за ${this.period} дней</div>
-        <div class="ph-fin-breakdown">
-          ${row(`Выручка · продано ${num(t.sold)} шт${t.returned ? `, возвратов ${num(t.returned)}` : ''}`, t.revenue, '', false)}
-          ${row('Комиссия маркетплейса', -t.commission, 'neg')}
-          ${row('Логистика, эквайринг и прочие услуги', -t.otherFees, t.otherFees > 0 ? 'neg' : 'pos')}
-          ${row('Перечислено маркетплейсом', t.payout, 'sub')}
-          ${t.cogs != null ? row(`Себестоимость · ${num(t.netUnits)} шт × ${pr(p.cost_price)}`, -t.cogs, 'neg') : `<div class="ph-fin-row"><span class="ph-fin-row-label">Себестоимость</span><span></span><span class="ph-fin-row-value"><button class="ph2-link" data-ph-action="cost-edit">указать</button></span></div>`}
-          ${row('Прибыль', t.profit, `total ${t.profit == null ? '' : t.profit >= 0 ? 'pos' : 'neg'}`)}
+      <section class="pc-sec">
+        <div class="pc-sec-h"><h3>Из чего состоит цена</h3><span class="pc-muted">на 1 шт · по отчётам за ${this.period} дн.</span></div>
+        ${bar}
+        <div class="pc-legend">${segs.map(s => `<span><i class="pc-dot ${s.c}"></i>${s.k}</span>`).join('')}</div>
+        <div class="pc-ue">${unitRows}</div>
+      </section>
+      <section class="pc-sec">${costField}</section>
+      <section class="pc-sec">
+        <div class="pc-sec-h"><h3>Итого за ${this.period} дней</h3><span class="pc-muted">продано ${num(t.sold)} шт${t.returned ? `, возвратов ${num(t.returned)}` : ''}</span></div>
+        <div class="pc-ue">
+          ${line('Выручка', t.revenue, 'head', false)}
+          ${line('Комиссия маркетплейса', -t.commission)}
+          ${line('Логистика, эквайринг и прочие услуги', -t.otherFees)}
+          ${line('Перечислено маркетплейсом', t.payout, 'sub', false)}
+          ${line(t.cogs != null ? `Себестоимость · ${num(t.netUnits)} шт` : 'Себестоимость', t.cogs != null ? -t.cogs : null)}
+          ${line('Прибыль', t.profit, `total ${t.profit == null ? '' : t.profit >= 0 ? 'pos' : 'neg'}`)}
         </div>
-        <div class="ph2-fin-note">Прибыль товара — до налогов, рекламы из рекламного кабинета и общих расходов. Полный расчёт — в «Аналитике».</div>
-      </div>
+        <p class="pc-note">До налогов, рекламы из рекламного кабинета и общих расходов. Полный расчёт — в «Аналитике».</p>
+      </section>
       ${stores.length > 1 ? `
-      <div class="ph-section">
-        <div class="ph-section-head">${I.store('', 12)} По магазинам</div>
-        <table class="ph2-mini-table">
+      <section class="pc-sec">
+        <div class="pc-sec-h"><h3>По магазинам</h3></div>
+        <div class="pc-table-wrap"><table class="pc-table">
           <thead><tr><th>Магазин</th><th>Продано</th><th>Выручка</th><th>Удержания</th><th>Перечислено</th></tr></thead>
           <tbody>${stores.map(e => `<tr>
-            <td><span class="ph-mp-tag mp-${e.mp}">${MP_LABEL[e.mp]}</span> ${esc(e.store_name)}</td>
-            <td>${num(e.sales_qty)}${e.returns_qty ? ` / −${num(e.returns_qty)}` : ''}</td>
+            <td><span class="pc-mp pc-mp-${e.mp}">${MP_LABEL[e.mp]}</span> ${esc(e.store_name)}</td>
+            <td>${num(e.sales_qty)}${e.returns_qty ? ` <span class="pc-muted">/ −${num(e.returns_qty)}</span>` : ''}</td>
             <td>${pr(e.sales_revenue)}</td>
-            <td>${pr(-(e.commission + e.services))}</td>
+            <td>${pr(e.sales_revenue - e.net_profit)}</td>
             <td>${pr(e.net_profit)}</td></tr>`).join('')}</tbody>
-        </table>
-      </div>` : ''}
-    `;
+        </table></div>
+      </section>` : ''}`;
   }
 
-  // ─── Repricer rule card ─────────────────────────────────────────
+  // ─── Правило репрайсера ─────────────────────────────────────────
 
   private tplRule(r: RepricerRule): string {
     const mp = r.marketplace?.toLowerCase() as Mp | undefined;
     const active = r.status === 'active';
-    return `<div class="ph-rule-card">
-      <div class="ph-rule-head">
-        ${mp ? `<span class="ph-mp-tag mp-${mp}">${MP_LABEL[mp]}</span>` : ''}
-        <span class="ph-rule-title">${RULE_LABELS[r.type] ?? r.type}</span>
-        <span class="ph-status-pill ${active ? 'ok' : ''}">${active ? 'Активно' : 'На паузе'}</span>
+    const f = (k: string, v: number | null | undefined) => v != null ? `<span>${k} <b>${pr(v)}</b></span>` : '';
+    return `<div class="pc-mini">
+      <div class="pc-mini-top">
+        ${mp && MP_LABEL[mp] ? `<span class="pc-mp pc-mp-${mp}">${MP_LABEL[mp]}</span>` : ''}
+        <b>${RULE_LABELS[r.type] ?? r.type}</b>
+        <span class="pc-status ${active ? 'ok' : 'mid'}">${active ? 'работает' : 'на паузе'}</span>
       </div>
-      <div class="ph-rule-fields">
-        ${r.minPrice != null ? `<div class="ph-rule-field">Мин<b>${pr(r.minPrice)}</b></div>` : ''}
-        ${r.maxPrice != null ? `<div class="ph-rule-field">Макс<b>${pr(r.maxPrice)}</b></div>` : ''}
-        ${r.lastAppliedPrice != null ? `<div class="ph-rule-field">Применено<b>${pr(r.lastAppliedPrice)}</b></div>` : ''}
-      </div>
+      <div class="pc-mini-f">${f('мин', r.minPrice)}${f('макс', r.maxPrice)}${f('сейчас', r.lastAppliedPrice)}</div>
     </div>`;
   }
 
-  // ─── Supplier ──────────────────────────────────────────────────
+  // ─── Поставщик ──────────────────────────────────────────────────
 
   private tplSupplier(s: SupplierLink): string {
     const isUuid = (v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
-    const fields: Array<{ label: string; value: string }> = [];
+    const fields: Array<[string, string]> = [];
     if (s.product) {
-      if (s.product.internal_id != null) fields.push({ label: 'Внутр. ID', value: '#' + s.product.internal_id });
-      if (s.quantity) fields.push({ label: 'Кол-во в упак.', value: String(s.quantity) });
-      // Resolve UUID field keys → human-readable names via fieldDefNames map
+      if (s.product.internal_id != null) fields.push(['Внутр. ID', '#' + s.product.internal_id]);
+      if (s.quantity) fields.push(['В упаковке', String(s.quantity)]);
       for (const [k, v] of Object.entries(s.product.field_values ?? {})) {
         const label = this.fieldDefNames.get(k) ?? (isUuid(k) ? null : k);
-        if (!label) continue;
         const val = String(v ?? '').trim();
-        if (val) fields.push({ label, value: val });
+        if (label && val) fields.push([label, val]);
       }
-      if (s.product.comment?.trim()) fields.push({ label: 'Комментарий', value: s.product.comment.trim() });
+      if (s.product.comment?.trim()) fields.push(['Комментарий', s.product.comment.trim()]);
     }
-    if (s.producer?.contacts?.trim()) fields.push({ label: 'Контакты', value: s.producer.contacts.trim() });
-
+    if (s.producer?.contacts?.trim()) fields.push(['Контакты', s.producer.contacts.trim()]);
     const producerName = s.producer?.name && !isUuid(s.producer.name) ? s.producer.name : (s.producer ? 'Поставщик' : 'Без названия');
-    const productName  = s.product?.name  && !isUuid(s.product.name)  ? ` — ${esc(s.product.name)}` : '';
-    return `<div class="ph-supplier">
-      <div class="ph-supplier-name">
-        ${I.users('', 14)} ${esc(producerName)}${productName}
-        <button class="ph-supplier-link" onclick="window.app?.navigateTo('producers')" title="Перейти к поставщику">${I.externalLink('', 11)} Открыть</button>
+    const productName = s.product?.name && !isUuid(s.product.name) ? s.product.name : '';
+    return `<div class="pc-mini">
+      <div class="pc-mini-top">
+        <b>${esc(producerName)}</b>${productName ? `<span class="pc-muted">${esc(productName)}</span>` : ''}
+        <span class="pc-grow"></span>
+        <button class="pc-linkbtn" onclick="window.app?.navigateTo('producers')">Открыть</button>
       </div>
-      ${fields.length
-        ? `<div class="ph-info-grid">${fields.map(f =>
-            `<div class="ph-info-item"><span class="ph-info-item-label">${esc(f.label)}</span><span class="ph-info-item-value">${esc(f.value)}</span></div>`
-          ).join('')}</div>`
-        : ''}
+      ${fields.length ? `<dl class="pc-facts tight">${fields.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>` : ''}
     </div>`;
   }
 
