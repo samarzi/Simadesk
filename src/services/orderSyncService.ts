@@ -14,6 +14,7 @@
  * Текущий месяц никогда не кэшируется — всегда тянется свежим из API.
  */
 
+import { perfMark } from '@/utils/perfLog';
 import { ozonDb }          from '@/services/ozonDb';
 import { wbDb }            from '@/services/wbDb';
 import { yandexDb }        from '@/services/yandexDb';
@@ -120,6 +121,7 @@ class OrderSyncService {
    */
   async init(): Promise<void> {
     if (this._running) return;
+    perfMark('фоновая синхронизация заказов');
     const gen = ++this._initGen;
     this._running = true;
     try {

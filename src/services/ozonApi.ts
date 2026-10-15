@@ -1446,20 +1446,31 @@ export const ozonApi = {
     creds: Creds,
     states?: string[],
   ): Promise<number[]> {
+    // Ozon v3 ждёт limit на верхнем уровне запроса («SupplyOrderListRequest.Limit
+    // must be inside range [1, 100]»): во вложенном paging он не виден и
+    // считается нулём — запрос падал с 400. Курсор поддерживаем в обоих видах.
     const all: number[] = [];
     let fromId = 0;
+    let lastId = '';
     for (let page = 0; page < 50; page++) {
-      const body: Record<string, unknown> = { paging: { from_supply_order_id: fromId, limit: 100 } };
+      const body: Record<string, unknown> = {
+        limit: 100,
+        ...(lastId ? { last_id: lastId } : {}),
+        paging: { from_supply_order_id: fromId, limit: 100 },
+      };
       if (states?.length) body.filter = { states };
       const resp = await ozonPost<any>('/v3/supply-order/list', body, creds);
       const raw = resp?.result ?? resp ?? {};
-      const ids: number[] = (raw.supply_order_id ?? raw.supply_order_ids ?? []).map(Number);
+      const ids: number[] = (raw.supply_order_id ?? raw.supply_order_ids ?? raw.order_ids ?? []).map(Number);
       all.push(...ids);
-      const last = Number(raw.last_supply_order_id ?? 0);
-      if (!ids.length || !last || ids.length < 100) break;
-      fromId = last;
+      const nextLast = raw.last_id != null ? String(raw.last_id) : '';
+      const lastNum = Number(raw.last_supply_order_id ?? 0);
+      if (!ids.length || ids.length < 100 || (!nextLast && !lastNum)) break;
+      if (nextLast === lastId && lastNum === fromId) break;
+      lastId = nextLast;
+      fromId = lastNum;
     }
-    return all;
+    return [...new Set(all)];
   },
 
   /**

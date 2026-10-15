@@ -1,3 +1,5 @@
+import { installPerfLog, perfTime } from './utils/perfLog';
+installPerfLog();
 import './styles/main.css';
 import './styles/ozon.css';
 import './styles/auth.css';
@@ -104,7 +106,7 @@ window.addEventListener('unhandledrejection', (e) => {
 // ── Helper: register a section module ─────────────────────────────────────────
 const init = <T>(id: string, factory: (el: HTMLElement) => T, key: string): void => {
   const el = document.getElementById(id);
-  if (el) (window as any)[key] = factory(el);
+  if (el) (window as any)[key] = perfTime(`создание модуля ${key}`, () => factory(el), 30);
 };
 
 // ── Bootstrap the full app (called after auth + company are selected) ─────────
@@ -119,7 +121,8 @@ function bootApp(): void {
 
   app.init();
 
-  init('ozon-content',           (el) => { const m = new OzonModule(el); m.init(); return m; }, 'ozonModule');
+  // Каталог Ozon грузится при открытии раздела (OzonModule.show → init), не при запуске.
+  init('ozon-content',           (el) => new OzonModule(el), 'ozonModule');
   init('yandex-content',         (el) => new YandexModule(el),         'yandexModule');
   init('wb-content',             (el) => new WbModule(el),             'wbModule');
   init('orders-ozon-section',    (el) => new OzonOrdersModule(el),     'ozonOrdersModule');
@@ -167,8 +170,14 @@ init('producers-section',      (el) => new ProducersModule(el),       'producers
     document.getElementById('app-dock')?.classList.add('dock-autohide');
   }
 
-  // Запускаем фоновую синхронизацию заказов (не блокирует UI)
-  orderSyncService.init().catch(e => debug.warn('[boot] orderSyncService:', e));
+  // Фоновая синхронизация заказов разбирает заказы всех магазинов в главном
+  // потоке. Запускаем её, когда страница уже открылась и браузер свободен,
+  // а не одновременно с первой отрисовкой.
+  const startOrderSync = () => orderSyncService.init().catch(e => debug.warn('[boot] orderSyncService:', e));
+  setTimeout(() => {
+    const ric = (window as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => void) | undefined;
+    if (ric) ric(startOrderSync, { timeout: 10_000 }); else startOrderSync();
+  }, 15_000);
 
   // Проверяем действительность API-ключей всех маркетплейсов после загрузки приложения
   setTimeout(() => {

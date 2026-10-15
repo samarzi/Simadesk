@@ -615,6 +615,7 @@ export class ProductModalModule {
     box: import('../types').Box,
   ): Promise<void> {
     const ozonModule = (window as any).ozonModule;
+    await ozonModule?.ensureLoaded?.().catch(() => {});
     const store = ozonModule?.stores?.find((s: any) => s.id === box.ozon_store_id);
     if (!store) return;
 

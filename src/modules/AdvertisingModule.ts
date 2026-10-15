@@ -353,9 +353,11 @@ export class AdvertisingModule {
     this.dateFrom = new Date(now.getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
     this.injectStyles();
     this.buildShell();
-    this.loadStores();
-    this.loadMpAvailability();
+    // Данные грузим при первом открытии раздела, а не при запуске приложения:
+    // раньше реклама ходила в API на каждой загрузке любой страницы.
   }
+
+  private started = false;
 
   // ─── styles ──────────────────────────────────────────────────────────────────
 
@@ -2357,6 +2359,13 @@ export class AdvertisingModule {
     });
   }
 
-  show() { this.el.style.display = 'flex'; }
+  show() {
+    this.el.style.display = 'flex';
+    if (!this.started) {
+      this.started = true;
+      this.loadStores();
+      this.loadMpAvailability();
+    }
+  }
   hide() { this.el.style.display = 'none'; }
 }

@@ -182,8 +182,10 @@ export class SupplyManagementModule {
     this.el.style.cssText = 'display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden';
     this.injectStyles();
     this.buildShell();
-    this.init();
+    // Заявки грузим при первом открытии раздела, а не при запуске приложения.
   }
+
+  private started = false;
 
   // ── Shell ────────────────────────────────────────────────────────────────────
 
@@ -2412,6 +2414,9 @@ export class SupplyManagementModule {
     document.head.appendChild(s);
   }
 
-  show(): void { this.el.style.display = 'flex'; }
+  show(): void {
+    this.el.style.display = 'flex';
+    if (!this.started) { this.started = true; void this.init(); }
+  }
   hide(): void { this.el.style.display = 'none'; }
 }

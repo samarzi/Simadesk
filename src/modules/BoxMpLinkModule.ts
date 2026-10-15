@@ -348,6 +348,8 @@ export class BoxMpLinkModule {
     if (!box?.ozon_store_id) { this.app.toast('Группа не привязана к Ozon', 'error'); return; }
 
     const ozonModule = (window as any).ozonModule;
+    // Каталог Ozon больше не грузится при запуске приложения — догружаем по требованию.
+    await ozonModule?.ensureLoaded?.().catch(() => {});
     if (!ozonModule?.products?.length) {
       this.app.toast('Нет данных Ozon. Сначала синхронизируйте магазины в разделе Ozon.', 'error');
       return;

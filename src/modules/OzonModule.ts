@@ -22,6 +22,17 @@ export class OzonModule {
 
   constructor(container: HTMLElement) { this.container = container; }
 
+  private dataPromise: Promise<void> | null = null;
+
+  /** Загрузить магазины и каталог один раз — для тех, кто берёт данные модуля без открытия раздела. */
+  ensureLoaded(): Promise<void> {
+    if (this.stores.length || this.products.length) return Promise.resolve();
+    return this.dataPromise ??= (async () => {
+      this.stores = await ozonDb.getStores();
+      this.products = await ozonDb.getProducts();
+    })().finally(() => { this.dataPromise = null; });
+  }
+
   async init(): Promise<void> {
     this.stores = await ozonDb.getStores();
     this.products = await ozonDb.getProducts();

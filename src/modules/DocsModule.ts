@@ -12,6 +12,7 @@
 import * as XLSX from 'xlsx';
 import { aiPage, type AiPageCapability, type AiActionResult } from '@/services/aiPageContext';
 import { debug } from '@/utils/debug';
+import { perfMark, perfTime } from '@/utils/perfLog';
 import { selectionCtx } from '@/services/selectionContext';
 import { dbFetch } from '@/services/dbClient';
 import { companyService } from '@/services/companyService';
@@ -253,6 +254,10 @@ export class DocsModule {
   }
 
   private save(): void {
+    perfTime('редактор: сохранение в браузер', () => this.saveNow(), 50);
+  }
+
+  private saveNow(): void {
     for (const doc of this.docs) {
       if (this.pendingContent.has(doc.id)) continue;
       if (this.cachedContent.get(doc.id) === doc.content) continue;   // не менялся — не пишем
@@ -432,6 +437,7 @@ export class DocsModule {
    * свежее серверное, если на этом ПК оно старее.
    */
   private async syncFromDb(): Promise<void> {
+    perfMark('редактор: синхронизация с сервером');
     const companyId = companyService.getActiveId();
     if (!companyId) { this.markContentLoadError(); return; }
     try {
@@ -1717,8 +1723,10 @@ export class DocsModule {
     if (!host) return;
     const mount = () => {
       if (!host.isConnected || this.activeId !== doc.id) return;
-      if (doc.type === 'word') this.mountWord(doc, host);
-      else this.mountSheet(doc, host);
+      perfTime(`редактор: открытие «${doc.title}» (${Math.round(doc.content.length / 1024)} КБ)`, () => {
+        if (doc.type === 'word') this.mountWord(doc, host);
+        else this.mountSheet(doc, host);
+      });
     };
     if (this.deferMount) {
       this.deferMount = false;
