@@ -53,3 +53,7 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION product_sales_summary(uuid[], timestamptz, timestamptz) TO authenticated;
+-- Функции в Postgres по умолчанию доступны всем (PUBLIC). Вызов без входа
+-- данных не раскрыл бы (политика mp_transactions), но закрываем его явно.
+REVOKE EXECUTE ON FUNCTION product_sales_summary(uuid[], timestamptz, timestamptz) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION product_sales_summary(uuid[], timestamptz, timestamptz) TO authenticated;
