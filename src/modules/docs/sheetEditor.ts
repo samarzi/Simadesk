@@ -12,6 +12,7 @@
  *    правке не ломается, формулы можно набирать кликом по ячейкам.
  */
 
+import { validationIndexFor } from './validation';
 import {
   type CellData, type ChartKind, type ChartSpec, type ExcelContent, type FloatImage, type MergeRange, type SheetData,
   colLetter, letterToCol, parseRangeRef, rangeToRef, ensureSize, emptyCell, uid, XL_DEF_COL_PX, XL_DEF_ROW_PX,
@@ -537,18 +538,9 @@ export class SheetEditor {
     return `<td data-r="${r}" data-c="${c}"${spanA}${cls.length ? ` class="${cls.join(' ')}"` : ''}${style ? ` style="${esc(style)}"` : ''}${title ? ` title="${esc(title)}"` : ''}>${content}</td>`;
   }
 
-  /** Правило проверки данных для ячейки. ExcelJS хранит dv по адресу диапазона. */
+  /** Правило проверки данных для ячейки — через индекс, без перебора всех правил. */
   private validationAt(sh: SheetData, r: number, c: number): any | null {
-    const dv = (sh.xl as any)?.dv;
-    if (!dv || typeof dv !== 'object') return null;
-    for (const [sqref, rule] of Object.entries(dv)) {
-      for (const part of String(sqref).split(/\s+/)) {
-        const ref = part.includes('!') ? part.slice(part.lastIndexOf('!') + 1) : part;
-        const rg = parseRangeRef(ref.replace(/\$/g, ''));
-        if (rg && r >= rg.r1 && r <= rg.r2 && c >= rg.c1 && c <= rg.c2) return rule;
-      }
-    }
-    return null;
+    return validationIndexFor((sh.xl as any)?.dv)?.at(r, c) ?? null;
   }
 
   private validationValues(rule: any): string[] {

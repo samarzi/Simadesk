@@ -13,6 +13,7 @@
  * умолчанию, своя индексная палитра), дочитываем и дописываем прямо в zip.
  */
 
+import { compactValidations } from './validation';
 import {
   type CellData, type ChartKind, type ChartSeries, type ChartSpec, type ExcelContent, type FloatImage,
   type MergeRange, type SheetData,
@@ -408,7 +409,8 @@ export async function readXlsx(buf: ArrayBuffer, opts: { maxRows?: number } = {}
     const xl: Record<string, unknown> = {};
     if (ws.model?.conditionalFormattings?.length) xl.cf = ws.model.conditionalFormattings;
     const dv = ws.dataValidations?.model;
-    if (dv && Object.keys(dv).length) xl.dv = dv;
+    // ExcelJS раскладывает список на каждую ячейку — сводим обратно в диапазоны.
+    if (dv && Object.keys(dv).length) xl.dv = compactValidations(dv);
     if (ws.pageSetup) xl.pageSetup = ws.pageSetup;
     if (ws.headerFooter && Object.values(ws.headerFooter).some(v => v)) xl.headerFooter = ws.headerFooter;
     if (Object.keys(xl).length) sheet.xl = JSON.parse(JSON.stringify(xl));
@@ -569,7 +571,13 @@ export async function writeXlsxBytes(ec: ExcelContent, help: WriteHelpers): Prom
     const xl = (sh.xl ?? {}) as any;
     if (Array.isArray(xl.cf)) for (const cf of xl.cf) { try { ws.addConditionalFormatting(cf); } catch { /* ignore */ } }
     if (xl.dv && typeof xl.dv === 'object') {
-      for (const [addr, rule] of Object.entries(xl.dv)) { try { ws.dataValidations.add(addr, rule); } catch { /* ignore */ } }
+      // Ключ может содержать несколько диапазонов через пробел («B2:B50 B60:B70») —
+      // ExcelJS понимает только один диапазон на запись, поэтому добавляем по частям.
+      for (const [addr, rule] of Object.entries(xl.dv)) {
+        for (const part of String(addr).split(/\s+/).filter(Boolean)) {
+          try { ws.dataValidations.add(part.replace(/\$/g, ''), rule as any); } catch { /* ignore */ }
+        }
+      }
     }
     if (xl.pageSetup) { try { Object.assign(ws.pageSetup, xl.pageSetup); } catch { /* ignore */ } }
     if (xl.headerFooter) { try { Object.assign(ws.headerFooter, xl.headerFooter); } catch { /* ignore */ } }

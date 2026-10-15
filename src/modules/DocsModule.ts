@@ -13,6 +13,7 @@ import * as XLSX from 'xlsx';
 import { aiPage, type AiPageCapability, type AiActionResult } from '@/services/aiPageContext';
 import { debug } from '@/utils/debug';
 import { perfMark, perfTime } from '@/utils/perfLog';
+import { compactValidations } from './docs/validation';
 import { selectionCtx } from '@/services/selectionContext';
 import { dbFetch } from '@/services/dbClient';
 import { companyService } from '@/services/companyService';
@@ -984,6 +985,10 @@ export class DocsModule {
             };
             delete sheet.styles;
             if (!sheet.data.length) sheet.data = [[{ v: '' }]];
+            // Документы, импортированные до 15.10.2026, хранят проверку данных по
+            // ячейкам (десятки тысяч копий одного правила) — сжимаем при открытии.
+            const xl = sheet.xl as any;
+            if (xl?.dv && typeof xl.dv === 'object') xl.dv = compactValidations(xl.dv);
             return sheet;
           }),
         };
