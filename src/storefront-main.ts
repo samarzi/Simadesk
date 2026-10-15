@@ -1733,17 +1733,20 @@ function openDetail(
         const i = parseInt((el as HTMLElement).dataset.gi ?? '0', 10);
         galMain.scrollTo({ left: i * galMain.clientWidth, behavior:'smooth' });
         syncIdx(i);
+        window.setTimeout(() => syncIdx(i), 260);
       });
     });
     panel.querySelector('#ss-gal-prev')?.addEventListener('click', () => {
       const idx = (galIdx - 1 + imgs.length) % imgs.length;
       galMain.scrollTo({ left: idx * galMain.clientWidth, behavior:'smooth' });
       syncIdx(idx);
+      window.setTimeout(() => syncIdx(idx), 260);
     });
     panel.querySelector('#ss-gal-next')?.addEventListener('click', () => {
       const idx = (galIdx + 1) % imgs.length;
       galMain.scrollTo({ left: idx * galMain.clientWidth, behavior:'smooth' });
       syncIdx(idx);
+      window.setTimeout(() => syncIdx(idx), 260);
     });
 
     // Touch swipe on gallery
@@ -1770,6 +1773,7 @@ function openDetail(
         : (galIdx - 1 + imgs.length) % imgs.length;
       galMain.scrollTo({ left: idx * galMain.clientWidth, behavior: 'smooth' });
       syncIdx(idx);
+      window.setTimeout(() => syncIdx(idx), 260);
     }, { passive: true });
   }
 
