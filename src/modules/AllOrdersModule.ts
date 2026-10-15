@@ -470,7 +470,9 @@ export class AllOrdersModule {
             status: o.status,
             statusLabel: WB_STATUS_LABELS[o.status] ?? o.status,
             statusCss: WB_STATUS_CSS[o.status] ?? 'ord-s-cancelled',
-            scheme: 'FBW',
+            // The supplier-orders feed is shown as WB orders.  FBW means
+            // fulfilment by the WB warehouse and is incorrect here.
+            scheme: 'WB',
             created_at: o.created_at,
             storeName: store.name,
             storeId: store.id,
@@ -865,7 +867,7 @@ export class AllOrdersModule {
     this.actionLoading = false;
   }
 
-  /** WB: Download sticker PDF */
+  /** WB: Download sticker SVG */
   async wbSticker(orderId: string, storeId: string): Promise<void> {
     if (this.actionLoading) return;
     const store = this.wbStores.find(s => s.id === storeId);
@@ -873,8 +875,10 @@ export class AllOrdersModule {
     this.actionLoading = true;
     this.updateActionBar('Загрузка стикера…');
     try {
-      const blob = await wbApi.getOrderStickers(store.api_key, [parseInt(orderId)], 'pdf');
-      downloadBlob(blob, `wb-sticker-${orderId}.pdf`);
+      // WB returns PNG/SVG/ZPL, not PDF.  Keep the returned SVG intact so the
+      // downloaded file is usable instead of a mislabeled image/svg+xml blob.
+      const blob = await wbApi.getOrderStickers(store.api_key, [parseInt(orderId)], 'svg');
+      downloadBlob(blob, `wb-sticker-${orderId}.svg`);
     } catch (e: unknown) {
       alert('Ошибка загрузки стикера: ' + ((e instanceof Error ? e.message : String(e)) || e));
     }
@@ -1284,6 +1288,14 @@ export class AllOrdersModule {
           o.firstName.toLowerCase().includes(q),
         );
       }
+      if (this.dateFrom || this.dateTo) {
+        const fromTs = this.dateFrom ? new Date(this.dateFrom + 'T00:00:00').getTime() : 0;
+        const toTs = this.dateTo ? new Date(this.dateTo + 'T23:59:59').getTime() : Infinity;
+        list = list.filter(o => {
+          const t = parseDateTs(o.created_at);
+          return t >= fromTs && t <= toTs;
+        });
+      }
       return list;
     })();
 
@@ -1297,7 +1309,7 @@ export class AllOrdersModule {
       }
       return list;
     })();
-    const schemes: Scheme[] = ['FBO', 'FBS', 'FBW', 'DBS', 'FBY'];
+    const schemes: Scheme[] = ['FBO', 'FBS', 'FBW', 'DBS', 'FBY', 'WB'];
     const schemeCounts = schemes.map(s => ({ scheme: s, count: ordersForSchemeCounts.filter(o => o.scheme === s).length })).filter(s => s.count > 0);
 
     // Status category counts — только по текущему МП/схеме/поиску
@@ -1350,7 +1362,7 @@ export class AllOrdersModule {
         <div class="ord-scheme-bar" style="margin-top:2px">
           <button class="oz-tab ${this.filterStatus === '' ? 'active' : ''}"
             onclick="window.allOrdersModule.setStatusFilter('')">
-            Все статусы<span class="oz-tab-cnt">${this.orders.length}</span>
+            Все статусы<span class="oz-tab-cnt">${ordersForStatusCounts.length}</span>
           </button>
           ${statusCounts.map(s => `
             <button class="oz-tab ${this.filterStatus === s.cat ? 'active' : ''}"

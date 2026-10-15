@@ -948,7 +948,10 @@ export async function fetchAllYandexOrders(
   // в выборку не попадают. Сдвигаем на +1 день, чтобы диапазон [fromDate, toDate]
   // был инклюзивным — иначе заказы «за сегодня» видны только на следующие сутки.
   const end   = new Date(parseDate(toDate).getTime() + 86400_000);
-  const CHUNK_DAYS = 29; // ЯМ лимит ~30 дней
+  // `toDate` is exclusive.  Use a 30-day half-open interval and start the
+  // next chunk exactly at the previous exclusive boundary; advancing by one
+  // more day would silently drop every boundary day (30 Jun, 30 Jul, ...).
+  const CHUNK_DAYS = 30; // ЯМ лимит ~30 дней
 
   const all: YandexOrder[] = [];
   let chunkStart = new Date(start);
@@ -968,8 +971,8 @@ export async function fetchAllYandexOrders(
       token = nextPageToken;
     }
 
-    // Следующий чанк начинается со следующего дня
-    chunkStart = new Date(chunkEnd.getTime() + 86400_000);
+    // chunkEnd is exclusive, so it is also the next chunk's start.
+    chunkStart = chunkEnd;
   }
   return all;
 }

@@ -59,4 +59,13 @@ describe('fetchAllYandexOrders — граница диапазона дат', ()
     expect(ranges[0].from).toBe('01-06-2026');
     expect(ranges[ranges.length - 1].to).toBe('21-08-2026');
   });
+
+  it('не пропускает день на границе 30-дневных чанков', async () => {
+    await fetchAllYandexOrders(store, '01-06-2026', '20-08-2026');
+
+    const ranges = requestedRanges();
+    expect(ranges[0]).toEqual({ from: '01-06-2026', to: '01-07-2026' });
+    expect(ranges[1]).toEqual({ from: '01-07-2026', to: '31-07-2026' });
+    expect(ranges[2]).toEqual({ from: '31-07-2026', to: '21-08-2026' });
+  });
 });

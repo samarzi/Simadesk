@@ -5391,3 +5391,144 @@
   font-size: 14px;
 }
 .cmd-nt-empty-sub { font-size: 12px; margin-top: 4px; opacity: 0.7; }
+
+/* ══════════════════════════════════════════════════════════════
+   ALL ORDERS — визуальная настройка единого рабочего экрана
+   ══════════════════════════════════════════════════════════════ */
+
+#orders-section .oz-wrap {
+  background:
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--accent) 5%, transparent), transparent 34%),
+    var(--bg);
+}
+
+#orders-section .oz-topbar {
+  padding: 16px 24px;
+  background: color-mix(in srgb, var(--bg) 92%, var(--bg2));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+#orders-section .oz-brand-icon {
+  padding: 5px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #005bff 12%, transparent);
+}
+
+#orders-section .ord-scheme-bar {
+  gap: 5px;
+  padding: 9px 24px 0;
+  background: color-mix(in srgb, var(--bg) 94%, var(--bg2));
+}
+
+#orders-section .ord-scheme-bar .oz-tab {
+  min-height: 32px;
+  border-radius: 9px 9px 0 0;
+}
+
+#orders-section .oz-filter-bar {
+  padding: 12px 24px;
+  background: color-mix(in srgb, var(--bg) 96%, var(--bg2));
+  box-shadow: 0 3px 12px rgba(0,0,0,.04);
+}
+
+#orders-section .oz-filter-group {
+  min-height: 30px;
+  padding: 3px 7px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg2) 65%, transparent);
+}
+
+#orders-section .oz-filter-sep {
+  height: 24px;
+  margin: 0 2px;
+  border-left-color: color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+#orders-section .oz-filter-count {
+  margin-left: auto;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text-2);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+#orders-section .search-wrap {
+  width: 230px !important;
+}
+
+#orders-section .search-input {
+  height: 34px;
+  background: var(--bg2);
+  border-color: color-mix(in srgb, var(--border) 85%, transparent);
+}
+
+#orders-section .oz-body {
+  padding: 8px 24px 90px !important;
+}
+
+#orders-section .oz-table-wrap {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg2) 45%, transparent);
+  box-shadow: 0 8px 28px rgba(0,0,0,.05);
+}
+
+#orders-section .oz-table thead {
+  background: color-mix(in srgb, var(--bg2) 92%, var(--accent));
+}
+
+#orders-section .oz-table th {
+  padding: 11px 14px;
+  border-bottom-color: color-mix(in srgb, var(--accent) 18%, var(--border));
+}
+
+#orders-section .oz-table td {
+  padding: 12px 14px;
+}
+
+#orders-section .oz-row:nth-child(odd) {
+  background: color-mix(in srgb, var(--bg2) 18%, transparent);
+}
+
+#orders-section .oz-row:hover {
+  background: color-mix(in srgb, var(--accent) 7%, var(--hover));
+}
+
+#orders-section .ord-date-group-row td {
+  padding: 13px 14px 5px;
+}
+
+#orders-section .ord-date-group-label {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+#orders-section .oz-badge {
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+}
+
+#orders-section .mp-badge {
+  box-shadow: 0 1px 2px rgba(0,0,0,.08);
+}
+
+#orders-section .ozo-modal {
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+}
+
+@media (max-width: 800px) {
+  #orders-section .oz-topbar,
+  #orders-section .oz-filter-bar,
+  #orders-section .ord-scheme-bar { padding-left: 14px; padding-right: 14px; }
+  #orders-section .oz-body { padding-left: 14px !important; padding-right: 14px !important; }
+  #orders-section .oz-filter-count { width: 100%; margin-left: 0; }
+  #orders-section .search-wrap { width: 100% !important; }
+  #orders-section .oz-table-wrap { overflow-x: auto; }
+  #orders-section .oz-table { min-width: 760px; }
+}
