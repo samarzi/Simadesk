@@ -1759,6 +1759,7 @@ function openDetail(
   const galMain = panel.querySelector('#ss-gal-main') as HTMLElement|null;
   if (galMain && imgs.length > 1) {
     let galIdx = 0;
+    let programmaticUntil = 0;
     const syncIdx = (rawIdx: number, keepThumbVisible = false) => {
       const idx = Math.max(0, Math.min(imgs.length - 1, rawIdx));
       const changed = idx !== galIdx;
@@ -1772,11 +1773,13 @@ function openDetail(
       if (count) count.textContent = `${idx + 1} / ${imgs.length}`;
     };
     galMain.addEventListener('scroll', () => {
+      if (performance.now() < programmaticUntil) return;
       syncIdx(Math.round(galMain.scrollLeft / Math.max(1, galMain.clientWidth)));
     }, { passive:true });
     panel.querySelectorAll('.ss-gal-dot,.ss-gal-thumb').forEach(el => {
       el.addEventListener('click', () => {
         const i = parseInt((el as HTMLElement).dataset.gi ?? '0', 10);
+        programmaticUntil = performance.now() + 460;
         galMain.scrollTo({ left: i * galMain.clientWidth, behavior:'smooth' });
         syncIdx(i, true);
         window.setTimeout(() => syncIdx(i), 260);
@@ -1784,12 +1787,14 @@ function openDetail(
     });
     panel.querySelector('#ss-gal-prev')?.addEventListener('click', () => {
       const idx = (galIdx - 1 + imgs.length) % imgs.length;
+      programmaticUntil = performance.now() + 460;
       galMain.scrollTo({ left: idx * galMain.clientWidth, behavior:'smooth' });
       syncIdx(idx, true);
       window.setTimeout(() => syncIdx(idx), 260);
     });
     panel.querySelector('#ss-gal-next')?.addEventListener('click', () => {
       const idx = (galIdx + 1) % imgs.length;
+      programmaticUntil = performance.now() + 460;
       galMain.scrollTo({ left: idx * galMain.clientWidth, behavior:'smooth' });
       syncIdx(idx, true);
       window.setTimeout(() => syncIdx(idx), 260);
@@ -1817,6 +1822,7 @@ function openDetail(
       const idx = dx < 0
         ? (galIdx + 1) % imgs.length
         : (galIdx - 1 + imgs.length) % imgs.length;
+      programmaticUntil = performance.now() + 460;
       galMain.scrollTo({ left: idx * galMain.clientWidth, behavior: 'smooth' });
       syncIdx(idx, true);
       window.setTimeout(() => syncIdx(idx), 260);
