@@ -82,7 +82,10 @@
    Explicit colors and sizes imported on each cell still take precedence. */
 .xl-app .xl-grid td { color: #000; font-size: inherit; }
 .xl-app .xl-grid tbody tr { cursor: cell; border-bottom: 0; }
-.xl-nogrid .xl-grid td { box-shadow: var(--sbt, 0 0 #0000), var(--sbb, 0 0 #0000), var(--sbl, 0 0 #0000), var(--sbr, 0 0 #0000); }
+/* Some workbooks disable Excel's sheet gridlines. Keep that setting for
+   export, while retaining a light vertical guide in the editor so column
+   boundaries remain visible when a cell has no explicit border of its own. */
+.xl-nogrid .xl-grid td { box-shadow: inset -1px 0 0 var(--xl-grid), var(--sbt, 0 0 #0000), var(--sbb, 0 0 #0000), var(--sbl, 0 0 #0000), var(--sbr, 0 0 #0000); }
 .xl-grid thead th { position: sticky; top: 0; z-index: 4; height: 22px; background: var(--xl-hdr); color: var(--xl-hdr-text); font: 11px 'Segoe UI', Arial, sans-serif; text-align: center; vertical-align: middle;
   box-shadow: inset -1px -1px 0 #d4d4d4; cursor: s-resize; }
 .xl-grid thead th.xl-fc { z-index: 6; }
