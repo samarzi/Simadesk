@@ -182,6 +182,16 @@ html { scrollbar-gutter: stable; }
   50%  { background-position:100% 50%; }
   100% { background-position:0% 50%; }
 }
+.ss-store-shell {
+  min-height:100vh;
+  background:
+    radial-gradient(42rem 28rem at 5% -8%,hsl(var(--primary)/.16),transparent 68%),
+    radial-gradient(38rem 26rem at 96% 4%,hsl(var(--accent)/.28),transparent 70%),
+    radial-gradient(34rem 24rem at 50% 108%,hsl(var(--primary)/.09),transparent 72%),
+    linear-gradient(155deg,hsl(var(--background)),hsl(var(--muted)/.42) 54%,hsl(var(--background)));
+  background-attachment:fixed;
+}
+.ss-store-shell > * { position:relative; z-index:1; }
 .ss-header-brand {
   font-weight:800;
   background:linear-gradient(90deg,hsl(var(--primary)),hsl(var(--foreground)/.72),hsl(var(--primary)));
@@ -342,7 +352,10 @@ html { scrollbar-gutter: stable; }
 
 .ss-detail {
   position:fixed; inset:0; z-index:100;
-  background:hsl(var(--background));
+  background:
+    radial-gradient(36rem 24rem at 4% 0%,hsl(var(--primary)/.12),transparent 70%),
+    radial-gradient(34rem 22rem at 96% 8%,hsl(var(--accent)/.2),transparent 72%),
+    hsl(var(--background));
   overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain;
   transform:translateX(100%);
   transition:transform .35s cubic-bezier(.25,.46,.45,.94);
@@ -379,18 +392,25 @@ html { scrollbar-gutter: stable; }
 .ss-gal-main {
   display:flex; overflow-x:auto; scroll-snap-type:x mandatory;
   scroll-behavior:smooth; -webkit-overflow-scrolling:touch;
-  aspect-ratio:1/1; border-radius:1rem; overflow:hidden;
+  aspect-ratio:1/1; border-radius:1rem; overflow-x:auto; overflow-y:hidden;
 }
 @media(min-width:640px) { .ss-gal-main { aspect-ratio:3/4; } }
 .ss-gal-main::-webkit-scrollbar { display:none; }
 .ss-gal-slide { flex:0 0 100%; scroll-snap-align:start; }
 .ss-gal-slide img { width:100%; height:100%; object-fit:cover; display:block; }
 .ss-gal-nav { position:absolute; top:0; bottom:0; z-index:5;
-  width:30%; border:none; cursor:pointer;
-  background:transparent; color:transparent;
+  width:3rem; height:3rem; top:50%; bottom:auto; transform:translateY(-50%);
+  border:1px solid hsl(var(--border)/.7); cursor:pointer;
+  background:hsl(var(--background)/.72); color:hsl(var(--foreground));
+  border-radius:50%; display:flex; align-items:center; justify-content:center;
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  box-shadow:0 6px 18px rgba(0,0,0,.22); transition:background .15s,transform .15s,box-shadow .15s;
   -webkit-tap-highlight-color:transparent; }
-.ss-gal-nav-prev { left:0; }
-.ss-gal-nav-next { right:0; }
+.ss-gal-nav:hover { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); box-shadow:0 8px 24px hsl(var(--primary)/.3); }
+.ss-gal-nav-prev { left:.75rem; }
+.ss-gal-nav-next { right:.75rem; }
+.ss-gal-nav:focus-visible { outline:3px solid hsl(var(--ring)/.5); outline-offset:2px; }
+.ss-gal-count { position:absolute; left:50%; bottom:.75rem; transform:translateX(-50%); z-index:6; padding:.25rem .55rem; border-radius:999px; background:hsl(var(--background)/.72); border:1px solid hsl(var(--border)/.55); color:hsl(var(--foreground)); font-size:.68rem; font-weight:800; backdrop-filter:blur(8px); }
 .ss-gal-dots { display:flex; justify-content:center; gap:.35rem; margin-top:.5rem; }
 .ss-gal-dot { width:5px; height:5px; border-radius:50%; background:hsl(var(--foreground)/.2); transition:background .2s,transform .2s; cursor:pointer; border:none; padding:0; }
 .ss-gal-dot.active { background:hsl(var(--primary)); transform:scale(1.4); }
@@ -400,6 +420,7 @@ html { scrollbar-gutter: stable; }
 .ss-gal-thumb { flex:0 0 4rem; height:4rem; border-radius:.5rem; overflow:hidden; cursor:pointer; border:2px solid transparent; transition:border-color .15s; background:hsl(var(--muted)/.3); }
 .ss-gal-thumb.active { border-color:hsl(var(--primary)); }
 .ss-gal-thumb img { width:100%; height:100%; object-fit:cover; }
+@media (max-width:639px) { .ss-gal-nav { width:2.5rem; height:2.5rem; } .ss-gal-nav-prev{left:.5rem}.ss-gal-nav-next{right:.5rem} }
 
 .ss-det-body { padding:1rem 1rem 7rem; max-width:1240px; width:100%; margin:0 auto; box-sizing:border-box; }
 @media (min-width:1024px) {
@@ -624,6 +645,7 @@ html { scrollbar-gutter: stable; }
 .ss-hiw-connector { width:1px; height:.75rem; background:linear-gradient(to bottom,hsl(var(--primary)/.4),transparent); margin:.15rem auto; }
 /* Theme surface overrides. Inline marketplace colors remain recognizable, while the store chrome follows the selected cabinet theme. */
 html[data-store-theme="classic"] body{background:#f4f4f4;color:#111}
+html[data-store-theme="classic"] .ss-store-shell{background:radial-gradient(40rem 22rem at 0% -8%,hsl(var(--primary)/.06),transparent 70%),radial-gradient(34rem 24rem at 100% 0%,hsl(var(--accent)/.42),transparent 72%),linear-gradient(155deg,#f7f7f7,#ececec 56%,#fafafa)}
 html[data-store-theme="classic"] .nav-modern{background:rgba(255,255,255,.94);border-color:#d8d8d8}
 html[data-store-theme="classic"] .ss-header-brand{background:linear-gradient(90deg,#111,#555);-webkit-background-clip:text;background-clip:text}
 html[data-store-theme="classic"] .ss-logo-init{background:#111;color:#fff}
@@ -932,7 +954,7 @@ function mountHomePage(root: HTMLElement, data: StoreData, _slug: string, groups
   if (s.logo_url) setFavicon(s.logo_url);
 
   root.innerHTML = `
-<div class="ss-store-shell" style="min-height:100vh;background:hsl(var(--background));color:hsl(var(--foreground))">
+<div class="ss-store-shell" style="color:hsl(var(--foreground))">
   ${headerHtml(s, false)}
 
   ${mobContacts ? `<div class="ss-mob-contacts">${mobContacts}</div>` : ''}
@@ -1070,7 +1092,7 @@ function mountCatalogPage(root: HTMLElement, data: StoreData, _slug: string, all
   const hasSrc = (src: string) => groups.some(g => g.entries.some(e => e.source === src));
 
   root.innerHTML = `
-<div class="ss-store-shell" style="min-height:100vh;background:hsl(var(--background));color:hsl(var(--foreground))">
+<div class="ss-store-shell" style="color:hsl(var(--foreground))">
   ${headerHtml(s, true, 'Главная')}
 
   <div style="max-width:1400px;margin:0 auto;padding:.75rem .75rem 4rem">
@@ -1650,6 +1672,7 @@ function openDetail(
             <button class="ss-gal-nav ss-gal-nav-next" id="ss-gal-next" aria-label="Следующее фото">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
             </button>` : ''}
+            ${imgs.length > 1 ? `<span class="ss-gal-count" id="ss-gal-count">1 / ${imgs.length}</span>` : ''}
             <div class="ss-gal-dots" id="ss-gal-dots">
               ${imgs.map((_,i) => `<button class="ss-gal-dot${i===0?' active':''}" data-gi="${i}"></button>`).join('')}
             </div>
@@ -1699,6 +1722,8 @@ function openDetail(
       galIdx = idx;
       panel.querySelectorAll('.ss-gal-dot').forEach((d,i) => d.classList.toggle('active', i===idx));
       panel.querySelectorAll('.ss-gal-thumb').forEach((t,i) => t.classList.toggle('active', i===idx));
+      const count = panel.querySelector('#ss-gal-count');
+      if (count) count.textContent = `${idx + 1} / ${imgs.length}`;
     };
     galMain.addEventListener('scroll', () => {
       syncIdx(Math.round(galMain.scrollLeft / galMain.clientWidth));
