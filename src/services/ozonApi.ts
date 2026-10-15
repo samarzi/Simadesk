@@ -1015,7 +1015,7 @@ export const ozonApi = {
   async updateProduct(
     creds: Creds,
     item: Record<string, unknown>,
-  ): Promise<void> {
+  ): Promise<number | null> {
     const payload = { ...item };
     // Do NOT force attributes:[] — sending an empty array wipes all product attributes on Ozon.
     // Attributes are only sent when explicitly provided (e.g. during full product creation).
@@ -1025,6 +1025,108 @@ export const ozonApi = {
     if (taskErrors.length) {
       throw new Error(taskErrors.map((e: any) => e.message ?? e.error ?? JSON.stringify(e)).join('; '));
     }
+    return Number(resp?.result?.task_id ?? resp?.task_id) || null;
+  },
+
+  /**
+   * Дождаться результата задачи импорта (/v3/product/import, /v1/product/attributes/update).
+   * Ozon применяет правки асинхронно: «принято» ещё не значит «сохранено» — ошибки
+   * модерации (неверный НДС, слишком длинное название) приходят только здесь.
+   * 'imported' — применено, 'pending' — ещё в очереди; при ошибке бросает исключение.
+   */
+  async waitImportTask(creds: Creds, taskId: number, tries = 8): Promise<'imported' | 'pending'> {
+    for (let i = 0; i < tries; i++) {
+      await new Promise(r => setTimeout(r, i === 0 ? 1500 : 2500));
+      const resp = await ozonPost<any>('/v1/product/import/info', { task_id: taskId }, creds, 2, true).catch(() => null);
+      const items: any[] = resp?.result?.items ?? [];
+      if (!items.length) continue;
+      const errs = items.flatMap((it: any) => (it.errors ?? []).filter((e: any) => (e.level ?? 'error') !== 'warning' && e.level !== 'ERROR_LEVEL_WARNING'));
+      if (items.some((it: any) => it.status === 'failed') || errs.length) {
+        const text = errs.map((e: any) => e.description || e.message || e.code || JSON.stringify(e)).filter(Boolean).join('; ');
+        throw new Error(`Ozon отклонил изменения: ${text || 'без пояснений'}`);
+      }
+      if (items.every((it: any) => it.status === 'imported' || it.status === 'skipped')) return 'imported';
+    }
+    return 'pending';
+  },
+
+  /**
+   * Изменить карточку Ozon, не теряя остального: /v3/product/import перезаписывает
+   * карточку тем, что пришло, поэтому берём текущую целиком (/v4/product/info/attributes:
+   * характеристики, фото, габариты) и меняем только нужные поля. Возвращает task_id.
+   */
+  async updateCardMerged(
+    creds: Creds,
+    offerId: string,
+    productId: number | null,
+    changes: {
+      name?: string; vat?: string; description?: string; price?: string; old_price?: string;
+      weight_g?: number | null; depth_mm?: number | null; width_mm?: number | null; height_mm?: number | null;
+    },
+  ): Promise<number | null> {
+    const [cur] = await this.getProductAttributes(offerId, creds);
+    if (!cur) throw new Error('Не удалось получить текущую карточку Ozon — попробуйте ещё раз через минуту');
+    const info = await this.getFullProductInfo(offerId, productId, creds).catch(() => null) as any;
+
+    let attributes: any[] = (cur.attributes ?? []).map((a: any) => ({
+      id: a.id ?? a.attribute_id, complex_id: a.complex_id ?? 0,
+      values: (a.values ?? []).map((v: any) => ({
+        ...(v.dictionary_value_id ? { dictionary_value_id: v.dictionary_value_id } : {}), value: v.value,
+      })),
+    }));
+    if (changes.description !== undefined) {
+      attributes = attributes.filter(a => a.id !== 4191);
+      if (changes.description.trim()) attributes.push({ id: 4191, complex_id: 0, values: [{ value: changes.description }] });
+    }
+    const images: string[] = (cur.images ?? []).map((i: any) => typeof i === 'string' ? i : i?.file_name ?? i?.url).filter(Boolean);
+
+    // Габариты — в единицах самой карточки переводим из мм/г
+    const dimUnit = cur.dimension_unit || 'mm';
+    const wUnit = cur.weight_unit || 'g';
+    const fromMm = (mm: number) => dimUnit === 'cm' ? +(mm / 10).toFixed(1) : dimUnit === 'in' ? +(mm / 25.4).toFixed(2) : Math.round(mm);
+    const fromG = (g: number) => wUnit === 'kg' ? +(g / 1000).toFixed(3) : wUnit === 'lb' ? +(g / 453.592).toFixed(3) : Math.round(g);
+
+    const item: Record<string, unknown> = {
+      offer_id: offerId,
+      name: changes.name ?? cur.name,
+      description_category_id: cur.description_category_id ?? info?.description_category_id,
+      type_id: cur.type_id ?? info?.type_id,
+      attributes,
+      complex_attributes: cur.complex_attributes ?? [],
+      images,
+      ...(cur.primary_image ? { primary_image: cur.primary_image } : {}),
+      ...(cur.color_image ? { color_image: cur.color_image } : {}),
+      ...(cur.barcode ? { barcode: cur.barcode } : {}),
+      price: changes.price ?? String(info?.price ?? ''),
+      old_price: changes.old_price ?? String(info?.old_price ?? '0'),
+      vat: changes.vat ?? String(info?.vat ?? '0'),
+      currency_code: info?.currency_code || 'RUB',
+      depth: changes.depth_mm != null ? fromMm(changes.depth_mm) : cur.depth,
+      width: changes.width_mm != null ? fromMm(changes.width_mm) : cur.width,
+      height: changes.height_mm != null ? fromMm(changes.height_mm) : cur.height,
+      dimension_unit: dimUnit,
+      weight: changes.weight_g != null ? fromG(changes.weight_g) : cur.weight,
+      weight_unit: wUnit,
+    };
+    if (!item.price) delete item.price;
+    return this.updateProduct(creds, item);
+  },
+
+  /** Обновить характеристики одного товара (например, описание — атрибут 4191). Возвращает task_id. */
+  async updateOfferAttributes(
+    creds: Creds,
+    offerId: string,
+    attributes: Array<{ id: number; values: Array<{ value: string }> }>,
+  ): Promise<number | null> {
+    const resp = await ozonPost<any>('/v1/product/attributes/update', {
+      items: [{ offer_id: offerId, attributes: attributes.map(a => ({ complex_id: 0, ...a })) }],
+    }, creds);
+    return Number(resp?.task_id ?? resp?.result?.task_id) || null;
+  },
+
+  /** Заменить фото товара целиком (порядок = порядок в массиве, первое — главное). */
+  async importPictures(creds: Creds, productId: number, images: string[]): Promise<void> {
+    await ozonPost<any>('/v1/product/pictures/import', { product_id: productId, images }, creds);
   },
 
   // ── Update product barcode via /v1/product/update/barcodes ───────────────

@@ -16,7 +16,7 @@ import { dimensionsDb } from '@/services/dimensionsDb';
 import { mpTransactionsDb, type MpTransaction } from '@/services/mpTransactionsDb';
 import { producerDb, producerProductDb, producerMappingDb, producerFieldDb, type Producer, type ProducerProduct, type ProducerMapping, type ProducerFieldDef } from '@/services/producerDb';
 import { catalogCache, syncOzonStore, syncWbStore, syncYmStore, fmtSyncDate } from '@/services/catalogCache';
-import { toOzon, toWb, toYm, type Dimensions } from '@/services/dimensionsUnit';
+import { toWb, toYm, type Dimensions } from '@/services/dimensionsUnit';
 import { boxes } from '@/stores/appStore';
 import { RULE_LABELS, type RepricerRule } from '@/modules/repricer/types';
 import { debug } from '@/utils/debug';
@@ -144,6 +144,8 @@ interface EditState {
   photos: string[];
   priceLocked: boolean;
   saving: boolean; saveError: string; saveOk: boolean;
+  /** Пояснение после сохранения (например, «Ozon ещё обрабатывает»). */
+  saveNote: string;
   extraLoaded: boolean; extraLoading: boolean;
   dirtyFields: Set<string>;
 }
@@ -290,11 +292,13 @@ export class ProductsHubModule {
   private photoAddUrlValue = '';
   private syncing = new Map<string, boolean>();
   private syncErr = new Map<string, string>();
-  private dragSrcIdx: number | null = null;
-  private dragSrcStoreId: string | null = null;
   // lockedByMp: article (lowercase) → Set of MPs where repricer is active
   private lockedByMp = new Map<string, Set<Mp>>();
   private storeSyncedAt = new Map<string, string>(); // storeId → synced_at from Supabase
+  /** Когда товары магазина последний раз приходили из API (max synced_at строк каталога). */
+  private productSyncAt = new Map<string, number>();
+  private autoSyncing = false;
+  private static readonly AUTO_SYNC_MS = 3 * 3600 * 1000;
   // field def UUID → human-readable name
   private fieldDefNames = new Map<string, string>();
 
@@ -318,12 +322,7 @@ export class ProductsHubModule {
     if (!(e.ctrlKey || e.metaKey) || e.key !== 's') return;
     if (this.activeTab !== 'card-edit' || !this.selectedArticle) return;
     e.preventDefault();
-    const article = this.selectedArticle;
-    for (const [storeId, st] of this.editState) {
-      if (st.dirtyFields.size > 0 && !st.saving) {
-        this.doSaveCard(article, storeId, st.mp);
-      }
-    }
+    this.saveAllDirty();
   };
   constructor(private el: HTMLElement) {
     const saved = +(localStorage.getItem(PERIOD_KEY) ?? '0') as PeriodDays;
@@ -340,11 +339,12 @@ export class ProductsHubModule {
     this.updateSelectionBar();
     if (!this.listEl) {
       this.renderShell();
-      this.load();
+      this.load().then(() => this.autoSyncStale());
       if (!localStorage.getItem(HELP_KEY)) this.showHelp();
     } else {
       this.applyFilters();
       this.renderList();
+      this.autoSyncStale();
     }
   }
 
@@ -656,7 +656,96 @@ export class ProductsHubModule {
     showToast(`Себестоимость ${article}: ${pr(value)}`, 'success');
   }
 
+  /** Последнее обновление каталога магазина из любого источника, мс. */
+  private lastSyncAt(storeId: string): number | null {
+    let ls: string | null = null;
+    try { ls = localStorage.getItem(`ph_autosync_${storeId}`); } catch { /* ignore */ }
+    const vals = [catalogCache.getSyncedAt(storeId), this.storeSyncedAt.get(storeId), ls]
+      .map(v => v ? Date.parse(v) : NaN)
+      .concat(this.productSyncAt.get(storeId) ?? NaN)
+      .filter(v => isFinite(v));
+    return vals.length ? Math.max(...vals) : null;
+  }
+
+  /**
+   * При входе в раздел каталог магазинов, не обновлявшийся дольше 3 часов,
+   * подтягивается из API сам — в фоне, по одному магазину. Раньше это делалось
+   * только кнопкой, и карточки показывали «данные устарели».
+   */
+  private async autoSyncStale(): Promise<void> {
+    if (this.autoSyncing || this.loading) return;
+    const all: Array<{ s: any; mp: Mp }> = [
+      ...this.ozStores.map((s: any) => ({ s, mp: 'ozon' as Mp })),
+      ...this.wbStores.map((s: any) => ({ s, mp: 'wb' as Mp })),
+      ...this.ymStores.filter((s: any) => s.business_id).map((s: any) => ({ s, mp: 'yandex' as Mp })),
+    ];
+    const stale = all.filter(({ s }) => {
+      if (this.syncing.get(s.id)) return false;
+      const t = this.lastSyncAt(s.id);
+      return !t || Date.now() - t > ProductsHubModule.AUTO_SYNC_MS;
+    });
+    if (!stale.length) return;
+    this.autoSyncing = true;
+    const btn = this.el.querySelector<HTMLElement>('#ph-reload');
+    btn?.classList.add('spinning');
+    btn?.setAttribute('title', 'Обновляю каталог из маркетплейсов…');
+    for (const { s } of stale) this.syncing.set(s.id, true);
+    this.refreshOpenCardChrome();
+    try {
+      for (const { s, mp } of stale) {
+        this.syncErr.delete(s.id);
+        try {
+          if (mp === 'ozon') await syncOzonStore(s);
+          else if (mp === 'wb') await syncWbStore(s);
+          else await syncYmStore(s);
+          try { localStorage.setItem(`ph_autosync_${s.id}`, new Date().toISOString()); } catch { /* ignore */ }
+        } catch (e) {
+          this.syncErr.set(s.id, (e instanceof Error ? e.message : String(e)).slice(0, 120) || 'ошибка');
+        } finally {
+          this.syncing.set(s.id, false);
+        }
+      }
+      await this.load({ quiet: true });
+    } finally {
+      this.autoSyncing = false;
+      btn?.classList.remove('spinning');
+      btn?.setAttribute('title', 'Обновить');
+      this.refreshOpenCardChrome();
+    }
+  }
+
+  /** Перерисовать блок «Требует внимания» и шапки магазинов в открытой карточке. */
+  private refreshOpenCardChrome(): void {
+    const p = this.selectedArticle ? this.items.find(x => x.article === this.selectedArticle) : undefined;
+    if (!p || !this.cardEl) return;
+    const todo = this.cardEl.querySelector<HTMLElement>('.pc-todo');
+    const html = this.tplTodo(p);
+    if (todo) todo.outerHTML = html || '<span class="pc-todo-slot"></span>';
+    else this.cardEl.querySelector('.pc-todo-slot')?.replaceWith(document.createRange().createContextualFragment(html || '<span class="pc-todo-slot"></span>'));
+    for (const e of p.mp_entries) {
+      const head = this.cardEl.querySelector<HTMLElement>(`[data-section-store="${CSS.escape(e.store_id)}"] .pe-head`);
+      if (head) head.outerHTML = this.peHead(e, this.editState.get(e.store_id));
+    }
+  }
+
+  /** После фоновой перезагрузки данных — обновить открытую карточку, не теряя правок. */
+  private refreshOpenCard(): void {
+    const p = this.selectedArticle ? this.items.find(x => x.article === this.selectedArticle) : undefined;
+    if (!p) return;
+    if (!this.hasUnsaved()) this.editState.clear();
+    const d = this.el.querySelector<HTMLElement>('#ph2-drawer');
+    const top = d?.scrollTop ?? 0;
+    this.renderCard(p);
+    if (d) d.scrollTop = top;
+    if (this.activeTab === 'card-edit') this.loadExtraDataForEdit(p).catch(() => {});
+  }
+
+  private hasUnsaved(): boolean {
+    return [...this.editState.values()].some(s => s.dirtyFields.size > 0 || s.saving);
+  }
+
   closeCard(): void {
+    if (this.hasUnsaved() && !confirm('В карточке есть несохранённые изменения. Закрыть без сохранения?')) return;
     this.selectedArticle = null;
     this.editState.clear();
     const d = this.el.querySelector<HTMLElement>('#ph2-drawer');
@@ -729,14 +818,22 @@ export class ProductsHubModule {
         const st = this.editState.get(sid);
         if (st) {
           (st as unknown as Record<string, unknown>)[field] = t.value;
+          const firstChange = !st.dirtyFields.size;
           st.dirtyFields.add(field);
-          // Mark section dirty without full re-render
+          st.saveOk = false; st.saveNote = '';
+          t.classList.add('pe-dirty');
+          // Отметить магазин без полной перерисовки (иначе пропадёт курсор)
           const section = this.cardEl?.querySelector<HTMLElement>(`[data-section-store="${sid}"]`);
           if (section) {
             section.classList.add('dirty');
             const chip = section.querySelector<HTMLElement>('.cmp-edit-dirty-chip');
             if (chip) chip.style.display = '';
+            const pv = section.querySelector<HTMLElement>('.pe-preview');
+            if (pv && ['price', 'old_price', 'min_price', 'discount'].includes(field)) pv.innerHTML = this.pricePreview(st);
+            const cnt = section.querySelector<HTMLElement>('[data-count-for]');
+            if (cnt && field === 'description') cnt.textContent = `${t.value.length.toLocaleString('ru')} симв.`;
           }
+          if (firstChange) this.updateSaveBar();
         }
       } else if (t.id === 'ph-photo-url-input') {
         this.photoAddUrlValue = t.value;
@@ -754,6 +851,7 @@ export class ProductsHubModule {
         try {
           const url = await uploadPhoto(f, this.selectedArticle);
           st.photos.push(url);
+          st.dirtyFields.add('photos');
         } catch (err: unknown) {
           st.saveError = (err instanceof Error ? err.message : String(err)) ?? 'Ошибка загрузки фото';
         }
@@ -774,6 +872,17 @@ export class ProductsHubModule {
         case 'save-card':
           if (mp) await this.doSaveCard(this.selectedArticle, storeId, mp);
           break;
+        case 'save-all':
+          this.saveAllDirty();
+          break;
+        case 'edit-reset': {
+          const pr0 = this.items.find(x => x.article === this.selectedArticle);
+          if (!pr0) break;
+          this.initEditState(pr0, storeId);
+          this.refreshEditTab();
+          this.loadExtraDataForEdit(pr0).catch(() => {});
+          break;
+        }
         case 'sync-store':
           await this.doSync(storeId, mp ?? '');
           break;
@@ -791,7 +900,7 @@ export class ProductsHubModule {
           const url = this.photoAddUrlValue.trim();
           if (url) {
             const st = this.editState.get(storeId);
-            if (st) { st.photos.push(url); this.photoAddUrlValue = ''; this.photoAddStoreId = null; }
+            if (st) { st.photos.push(url); st.dirtyFields.add('photos'); this.photoAddUrlValue = ''; this.photoAddStoreId = null; }
           }
           this.refreshPhotosTab2();
           break;
@@ -802,7 +911,7 @@ export class ProductsHubModule {
         case 'photo-delete': {
           const idx = +(el.getAttribute('data-idx') ?? -1);
           const st = this.editState.get(storeId);
-          if (st && idx >= 0) { st.photos.splice(idx, 1); this.refreshPhotosTab2(); }
+          if (st && idx >= 0) { st.photos.splice(idx, 1); st.dirtyFields.add('photos'); this.refreshPhotosTab2(); }
           break;
         }
         case 'open-lightbox': {
@@ -845,39 +954,8 @@ export class ProductsHubModule {
       }
     });
 
-    // ── Drag & drop photo reorder
-    this.cardEl!.addEventListener('dragstart', e => {
-      const cell = (e.target as HTMLElement).closest<HTMLElement>('.cmp-photo-cell[draggable]');
-      if (!cell) return;
-      this.dragSrcIdx     = +(cell.dataset.dragIdx ?? -1);
-      this.dragSrcStoreId = cell.dataset.dragStoreId ?? null;
-      (e as DragEvent).dataTransfer!.effectAllowed = 'move';
-    });
-    this.cardEl!.addEventListener('dragover', e => {
-      if (this.dragSrcIdx === null) return;
-      e.preventDefault(); // must be unconditional so drop fires even in grid gaps
-      const cell = (e.target as HTMLElement).closest<HTMLElement>('.cmp-photo-cell[draggable]');
-      if (cell) (e as DragEvent).dataTransfer!.dropEffect = 'move';
-    });
-    this.cardEl!.addEventListener('dragend', () => {
-      this.dragSrcIdx = null; this.dragSrcStoreId = null;
-    });
-    this.cardEl!.addEventListener('drop', e => {
-      e.preventDefault();
-      const cell = (e.target as HTMLElement).closest<HTMLElement>('.cmp-photo-cell[draggable]');
-      if (!cell || this.dragSrcIdx === null || !this.dragSrcStoreId) return;
-      const dstIdx     = +(cell.dataset.dragIdx ?? -1);
-      const dstStoreId = cell.dataset.dragStoreId ?? null;
-      if (dstStoreId === this.dragSrcStoreId && dstIdx !== this.dragSrcIdx) {
-        const st = this.editState.get(this.dragSrcStoreId);
-        if (st) {
-          const [moved] = st.photos.splice(this.dragSrcIdx, 1);
-          st.photos.splice(dstIdx, 0, moved);
-          this.refreshPhotosTab2();
-        }
-      }
-      this.dragSrcIdx = null; this.dragSrcStoreId = null;
-    });
+    // ── Перестановка фото: зажать и тащить (мышь и палец)
+    this.cardEl!.addEventListener('pointerdown', e => this.photoDragStart(e));
 
     // ── Selection bar
     get('ph-sel-export').addEventListener('click', () => this.exportSelected());
@@ -911,15 +989,17 @@ export class ProductsHubModule {
 
   // ─── Data loading ───────────────────────────────────────────────
 
-  private async load(): Promise<void> {
+  private async load(opts: { quiet?: boolean } = {}): Promise<void> {
     if (this.loading) return;
     this.loading = true;
 
-    this.setCardEmpty(`<div class="ph-loader">${I.loader('', 18)} Загружаем все данные…</div>`);
     const items = this.el.querySelector<HTMLElement>('#ph-items');
-    const spacer = this.el.querySelector<HTMLElement>('#ph-spacer');
-    if (spacer) spacer.style.height = '40px';
-    if (items) items.innerHTML = `<div class="ph-loader">${I.loader('', 16)}</div>`;
+    if (!opts.quiet) {
+      this.setCardEmpty(`<div class="ph-loader">${I.loader('', 18)} Загружаем все данные…</div>`);
+      const spacer = this.el.querySelector<HTMLElement>('#ph-spacer');
+      if (spacer) spacer.style.height = '40px';
+      if (items) items.innerHTML = `<div class="ph-loader">${I.loader('', 16)}</div>`;
+    }
 
     try {
       // 1. Refresh small caches in parallel
@@ -970,6 +1050,11 @@ export class ProductsHubModule {
       this.ozProds = ozProds as any[];
       this.wbProds = wbProds as any[];
       this.ymProds = ymProds as any[];
+      this.productSyncAt.clear();
+      for (const r of [...this.ozProds, ...this.wbProds, ...this.ymProds]) {
+        const t = r?.synced_at ? Date.parse(r.synced_at) : NaN;
+        if (isFinite(t) && t > (this.productSyncAt.get(r.store_id) ?? 0)) this.productSyncAt.set(r.store_id, t);
+      }
 
       // 3. Продажи: сервер сразу суммирует операции по товарам за период
       // (rpc product_sales_summary). Раньше в браузер скачивались все операции
@@ -1201,8 +1286,9 @@ export class ProductsHubModule {
       this.items = [...map.values()].sort((a, b) => a.article.localeCompare(b.article, 'ru'));
       this.aggregateSales();
       this.applyFilters();
-      this.renderList(true);
+      this.renderList(!opts.quiet);
       if (!this.selectedArticle) this.setCardHint();
+      else if (opts.quiet) this.refreshOpenCard();
       else this.selectProduct(this.selectedArticle);
     } catch (e) {
       debug.warn('[ProductsHub] load failed', e);
@@ -1535,6 +1621,7 @@ export class ProductsHubModule {
   // ─── Select & render card ───────────────────────────────────────
 
   selectProduct(article: string): void {
+    if (article !== this.selectedArticle && this.hasUnsaved() && !confirm('В открытой карточке есть несохранённые изменения. Перейти к другому товару без сохранения?')) return;
     this.selectedArticle = article;
     this.editState.clear();
     this.collapsedStores.clear();
@@ -1641,7 +1728,7 @@ export class ProductsHubModule {
     if (!this.cardEl) return;
     this.cardEl.innerHTML = `<div class="pc">
       ${this.tplHead(p)}
-      ${this.tplTodo(p)}
+      ${this.tplTodo(p) || '<span class="pc-todo-slot"></span>'}
       ${this.tplStats(p)}
       ${this.tplTabsHead(p)}
       <div class="pc-body">${this.tplTabContent(p)}</div>
@@ -1754,15 +1841,16 @@ export class ProductsHubModule {
       items.push({ tone: 'info', text: `<b>Карточка неполная</b> — не заполнено: ${missing.join(', ')}`,
         action: `<button class="pc-todo-btn" onclick="window.productsHubModule?.setTab('${missing.length === 1 && missing[0] === 'фото' ? 'photos' : 'card-edit'}')">Заполнить</button>` });
     }
-    const STALE_MS = 7 * 24 * 3600 * 1000;
-    const stale = p.mp_entries.find(e => {
-      const at = catalogCache.getSyncedAt(e.store_id) ?? this.storeSyncedAt.get(e.store_id) ?? null;
-      return !at || Date.now() - new Date(at).getTime() > STALE_MS;
-    });
-    if (stale) {
-      const busy = !!this.syncing.get(stale.store_id);
-      items.push({ tone: 'info', text: `<b>Данные «${esc(stale.store_name)}» устарели</b> — каталог не обновлялся больше недели`,
-        action: `<button class="pc-todo-btn" data-ph-action="sync-store" data-store-id="${esc(stale.store_id)}" data-mp="${stale.mp}" ${busy ? 'disabled' : ''}>${busy ? 'Обновляю…' : 'Обновить'}</button>` });
+    // Каталог обновляется сам при входе в раздел; здесь — только ход и ошибки
+    const syncingNow = p.mp_entries.filter(e => this.syncing.get(e.store_id));
+    if (syncingNow.length) {
+      items.push({ tone: 'info', text: `Загружаю свежие данные из ${[...new Set(syncingNow.map(e => MP_FULL[e.mp]))].join(', ')}…`, action: '' });
+    }
+    for (const e of p.mp_entries) {
+      const err = this.syncErr.get(e.store_id);
+      if (!err || this.syncing.get(e.store_id)) continue;
+      items.push({ tone: 'warn', text: `<b>Не удалось обновить «${esc(e.store_name)}»</b> — ${esc(err)}. Проверьте ключ API в настройках магазина`,
+        action: `<button class="pc-todo-btn" data-ph-action="sync-store" data-store-id="${esc(e.store_id)}" data-mp="${e.mp}">Повторить</button>` });
     }
     if (!items.length) return '';
     return `<section class="pc-todo" aria-label="Требует внимания">${items.map(i => `
@@ -2040,12 +2128,13 @@ export class ProductsHubModule {
 
   // ─── Tab: Card Edit ─────────────────────────────────────────────
 
-  private initEditState(p: HubProduct): void {
-    this.editState.clear();
+  private initEditState(p: HubProduct, onlyStoreId?: string): void {
+    if (!onlyStoreId) this.editState.clear();
     const art = p.article.toLowerCase();
     const lockedMps = this.lockedByMp.get(art) ?? new Set<Mp>();
 
     for (const entry of p.mp_entries) {
+      if (onlyStoreId && entry.store_id !== onlyStoreId) continue;
       const locked = lockedMps.has(entry.mp);
       if (entry.mp === 'ozon') {
         const store = this.ozStores.find((s: any) => s.id === entry.store_id);
@@ -2066,7 +2155,7 @@ export class ProductsHubModule {
           width_cm:  prod.width_cm  ? String(prod.width_cm)  : (p.width_cm  ? String(p.width_cm)  : ''),
           height_cm: prod.height_cm ? String(prod.height_cm) : (p.height_cm ? String(p.height_cm) : ''),
           photos: [...(prod.images ?? [])],
-          priceLocked: locked, saving: false, saveError: '', saveOk: false,
+          priceLocked: locked, saving: false, saveError: '', saveOk: false, saveNote: '',
           extraLoaded: false, extraLoading: false, // description still fetched on-demand
           dirtyFields: new Set(),
         });
@@ -2089,7 +2178,7 @@ export class ProductsHubModule {
           length_cm: prod.length_cm ? String(prod.length_cm) : '', width_cm: prod.width_cm ? String(prod.width_cm) : '',
           height_cm: prod.height_cm ? String(prod.height_cm) : '',
           photos: [...(prod.pictures ?? [])],
-          priceLocked: locked, saving: false, saveError: '', saveOk: false,
+          priceLocked: locked, saving: false, saveError: '', saveOk: false, saveNote: '',
           extraLoaded: true, extraLoading: false, // description from DB — no API call needed
           dirtyFields: new Set(),
         });
@@ -2112,7 +2201,7 @@ export class ProductsHubModule {
           length_cm: prod.length_cm ? String(prod.length_cm) : '', width_cm: prod.width_cm ? String(prod.width_cm) : '',
           height_cm: prod.height_cm ? String(prod.height_cm) : '',
           photos: [...(prod.pictures ?? [])],
-          priceLocked: locked, saving: false, saveError: '', saveOk: false,
+          priceLocked: locked, saving: false, saveError: '', saveOk: false, saveNote: '',
           extraLoaded: true, extraLoading: false, // all extra data from DB
           dirtyFields: new Set(),
         });
@@ -2120,160 +2209,207 @@ export class ProductsHubModule {
     }
   }
 
-  private tplEditSection(entry: MpStoreEntry): string {
-    const st = this.editState.get(entry.store_id);
-    if (!st) return `<div class="cmp-edit-section"><div class="ph-empty">Магазин не найден — сначала синхронизируйте данные</div></div>`;
-    const mp = entry.mp;
-    const mpLabel = mp === 'ozon' ? 'OZ' : mp === 'wb' ? 'WB' : 'ЯМ';
-    const roIcon = `<span class="cmp-field-ro" title="Нельзя редактировать через API">${I.alertTriangle('', 12)}</span>`;
-    const vatOzonOpts = [['0','Без НДС'],['0.1','10%'],['0.2','20%']];
-    const vatYmOpts   = [['NO_VAT','Без НДС'],['VAT_10','10%'],['VAT_20','20%']];
-    const collapsed = this.collapsedStores.has(entry.store_id);
-    const isDirty = st.dirtyFields.size > 0;
-    return `
-    <div class="cmp-edit-section${isDirty ? ' dirty' : ''}" data-section-store="${entry.store_id}">
-      <div class="cmp-edit-head" data-ph-action="toggle-section" data-store-id="${entry.store_id}" style="cursor:pointer;user-select:none">
-        <span class="cmp-mp-badge cmp-mp-badge--${mp}">${mpLabel}</span>
-        <span class="cmp-edit-store">${esc(entry.store_name)}</span>
-        <span class="cmp-edit-dirty-chip"${isDirty ? '' : ' style="display:none"'}>● несохранено</span>
-        <span class="cmp-section-arrow" style="margin-left:auto;font-size:11px;color:var(--text3)">${collapsed ? '▶' : '▼'}</span>
-      </div>
-      <div class="cmp-edit-body"${collapsed ? ' style="display:none"' : ''}>
-      <div class="cmp-edit-grid">
-        <label class="cmp-edit-field cmp-edit-field--wide"><span class="cmp-edit-label">Название</span>
-          <input type="text" class="cmp-edit-input" data-ph-field="name" data-store-id="${entry.store_id}" value="${esc(st.name)}" placeholder="—"></label>
+  // ─── Вкладка «Редактирование» (15.10.2026, с нуля) ──────────────────
+  //  По магазину — карточка с группами: основное, цена, вес и габариты, описание.
+  //  Изменённые поля подсвечены, внизу — общая панель «Сохранить всё».
 
-        ${mp === 'wb' || mp === 'yandex' ? `<label class="cmp-edit-field"><span class="cmp-edit-label">Бренд</span>
-          <input type="text" class="cmp-edit-input" data-ph-field="brand" data-store-id="${entry.store_id}" value="${esc(st.brand)}" placeholder="—"></label>` : ''}
-        ${mp === 'ozon' ? `<div class="cmp-edit-field"><span class="cmp-edit-label">Бренд ${roIcon}</span>
-          <div class="cmp-edit-ro">${esc(st.brand) || '—'}</div></div>` : ''}
+  private static readonly VAT_OZON: Array<[string, string]> = [['0', 'Без НДС'], ['0.05', '5%'], ['0.07', '7%'], ['0.1', '10%'], ['0.2', '20%'], ['0.22', '22%']];
+  private static readonly VAT_YM: Array<[string, string]> = [['NO_VAT', 'Без НДС'], ['VAT_0', '0%'], ['VAT_10', '10%'], ['VAT_20', '20%']];
 
-        ${mp === 'ozon' || mp === 'yandex' ? `<label class="cmp-edit-field"><span class="cmp-edit-label">Штрихкод</span>
-          <input type="text" class="cmp-edit-input" data-ph-field="barcode" data-store-id="${entry.store_id}" value="${esc(st.barcode)}" placeholder="—"></label>` : ''}
-        ${mp === 'wb' ? `<div class="cmp-edit-field"><span class="cmp-edit-label">Штрихкод ${roIcon}</span>
-          <div class="cmp-edit-ro">${esc(st.barcode) || '—'}</div></div>` : ''}
+  private peInput(st: EditState, storeId: string, field: keyof EditState & string, o: { type?: string; step?: string; suffix?: string; ph?: string; ro?: boolean; min?: string; max?: string } = {}): string {
+    const v = String((st as unknown as Record<string, unknown>)[field] ?? '');
+    return `<span class="pe-input${o.ro ? ' ro' : ''}">
+      <input class="pe-in${st.dirtyFields.has(field) ? ' pe-dirty' : ''}" type="${o.type ?? 'text'}" ${o.type === 'number' ? 'inputmode="decimal"' : ''}
+        ${o.step ? `step="${o.step}"` : ''} ${o.min ? `min="${o.min}"` : ''} ${o.max ? `max="${o.max}"` : ''}
+        data-ph-field="${field}" data-store-id="${esc(storeId)}" value="${esc(v)}" placeholder="${esc(o.ph ?? '')}" ${o.ro ? 'readonly tabindex="-1"' : ''}>
+      ${o.suffix ? `<span class="pe-suffix">${o.suffix}</span>` : ''}
+    </span>`;
+  }
 
-        ${mp === 'ozon' ? `<label class="cmp-edit-field"><span class="cmp-edit-label">НДС</span>
-          <select class="cmp-edit-input" data-ph-field="vat" data-store-id="${entry.store_id}">
-            ${vatOzonOpts.map(([v,l]) => `<option value="${v}" ${st.vat === v ? 'selected' : ''}>${l}</option>`).join('')}
-          </select></label>` : ''}
-        ${mp === 'yandex' ? `<label class="cmp-edit-field"><span class="cmp-edit-label">НДС</span>
-          <select class="cmp-edit-input" data-ph-field="vat" data-store-id="${entry.store_id}">
-            ${vatYmOpts.map(([v,l]) => `<option value="${v}" ${st.vat === v ? 'selected' : ''}>${l}</option>`).join('')}
-          </select></label>` : ''}
+  private peField(label: string, control: string, o: { wide?: boolean; hint?: string } = {}): string {
+    return `<label class="pe-field${o.wide ? ' wide' : ''}"><span class="pe-label">${label}</span>${control}${o.hint ? `<span class="pe-hint">${o.hint}</span>` : ''}</label>`;
+  }
 
-        <label class="cmp-edit-field"><span class="cmp-edit-label">Цена (₽)${st.priceLocked ? ` <span class="cmp-lock-tag" title="Репрайсер">${I.lock('', 12)}</span>` : ''}${mp === 'yandex' ? ` <span class="cmp-field-note" title="Устанавливается на уровне бизнеса — одинакова для всех кампаний">бизнес-уровень</span>` : ''}</span>
-          <input type="number" class="cmp-edit-input${st.priceLocked ? ' cmp-edit-input--locked' : ''}"
-            data-ph-field="price" data-store-id="${entry.store_id}"
-            value="${esc(st.price)}" ${st.priceLocked ? 'readonly data-price-locked="true"' : ''} placeholder="—"></label>
-        ${mp === 'ozon' && !st.priceLocked ? `
-        <label class="cmp-edit-field"><span class="cmp-edit-label">Старая цена (₽) <span style="color:var(--text3);font-weight:400">зачёркнутая</span></span>
-          <input type="number" class="cmp-edit-input" data-ph-field="old_price" data-store-id="${entry.store_id}" value="${esc(st.old_price)}" placeholder="—"></label>
-        <label class="cmp-edit-field"><span class="cmp-edit-label">Мин. цена (₽) <span style="color:var(--text3);font-weight:400">для репрайсера</span></span>
-          <input type="number" class="cmp-edit-input" data-ph-field="min_price" data-store-id="${entry.store_id}" value="${esc(st.min_price)}" placeholder="—"></label>` : ''}
-        ${mp === 'wb' ? `<label class="cmp-edit-field"><span class="cmp-edit-label">Скидка (%)</span>
-          <input type="number" min="0" max="99" class="cmp-edit-input" data-ph-field="discount" data-store-id="${entry.store_id}" value="${esc(st.discount)}" placeholder="0"></label>` : ''}
+  private peGroup(title: string, body: string, note = ''): string {
+    return `<div class="pe-group"><div class="pe-group-h"><span>${title}</span>${note ? `<em>${note}</em>` : ''}</div><div class="pe-grid">${body}</div></div>`;
+  }
 
-        <label class="cmp-edit-field"><span class="cmp-edit-label">Вес (кг)</span>
-          <input type="number" step="0.001" class="cmp-edit-input" data-ph-field="weight_kg" data-store-id="${entry.store_id}" value="${esc(st.weight_kg)}" placeholder="0.000"></label>
-        <label class="cmp-edit-field"><span class="cmp-edit-label">Длина (см)</span>
-          <input type="number" step="0.1" class="cmp-edit-input" data-ph-field="length_cm" data-store-id="${entry.store_id}" value="${esc(st.length_cm)}" placeholder="0.0"></label>
-        <label class="cmp-edit-field"><span class="cmp-edit-label">Ширина (см)</span>
-          <input type="number" step="0.1" class="cmp-edit-input" data-ph-field="width_cm" data-store-id="${entry.store_id}" value="${esc(st.width_cm)}" placeholder="0.0"></label>
-        <label class="cmp-edit-field"><span class="cmp-edit-label">Высота (см)</span>
-          <input type="number" step="0.1" class="cmp-edit-input" data-ph-field="height_cm" data-store-id="${entry.store_id}" value="${esc(st.height_cm)}" placeholder="0.0"></label>
+  /** Что увидит покупатель — пересчитывается на лету при вводе цены. */
+  private pricePreview(st: EditState): string {
+    const n = (v: string) => { const x = parseFloat(String(v).replace(',', '.')); return isFinite(x) && x > 0 ? x : null; };
+    const price = n(st.price);
+    if (price == null) return 'Укажите цену';
+    if (st.mp === 'wb') {
+      const d = n(st.discount) ?? 0;
+      return d > 0 ? `Цена со скидкой продавца: <b>${pr(Math.round(price * (1 - d / 100)))}</b> · без скидки ${pr(price)} (без учёта СПП)` : `Покупатель увидит <b>${pr(price)}</b> (без учёта СПП)`;
+    }
+    if (st.mp === 'ozon') {
+      const old = n(st.old_price);
+      const min = n(st.min_price);
+      const disc = old && old > price ? Math.round((1 - price / old) * 100) : 0;
+      return `На витрине <b>${pr(price)}</b>${disc ? `, зачёркнуто ${pr(old)} (−${disc}%)` : ''}${min ? ` · акции не опустят ниже ${pr(min)}` : ''}`;
+    }
+    return `Цена для покупателя <b>${pr(price)}</b> — общая для всех кампаний бизнеса`;
+  }
 
-        <label class="cmp-edit-field cmp-edit-field--wide"><span class="cmp-edit-label">Описание${st.extraLoading ? ' <span class="cmp-spinner-sm"></span>' : ''}</span>
-          <textarea class="cmp-edit-input cmp-edit-textarea" data-ph-field="description" data-store-id="${entry.store_id}" rows="4" ${st.extraLoading ? 'disabled' : ''} placeholder="—">${esc(st.description)}</textarea></label>
-
-        ${mp === 'wb' && entry.characteristics?.length ? `<div class="cmp-edit-field cmp-edit-field--wide">
-          <span class="cmp-edit-label">Характеристики ${roIcon}</span>
-          <div class="cmp-edit-chars">${entry.characteristics.map(ch => `<span class="cmp-char-item"><b>${esc(ch.name)}:</b> ${esc(ch.value)}</span>`).join('')}</div>
-        </div>` : ''}
-      </div>
-      ${st.saveOk ? `<div class="cmp-edit-ok">✓ Сохранено</div>` : st.saveError ? `<div class="cmp-edit-error${st.saveError.startsWith('✓') ? ' cmp-edit-pending' : ''}">${esc(st.saveError)}</div>` : ''}
-      <div class="cmp-edit-foot">
-        <button class="cmp-btn cmp-btn-primary${st.saving ? ' loading' : ''}"
-          data-ph-action="save-card" data-store-id="${entry.store_id}" data-mp="${mp}" ${st.saving ? 'disabled' : ''}>
-          ${st.saving ? '<span class="cmp-spinner-sm"></span> Сохранение…' : 'Сохранить'}
-        </button>
-        ${isDirty ? `<span style="font-size:11px;color:var(--text3);margin-left:8px">Ctrl+S — сохранить все</span>` : ''}
-      </div>
-      </div>
+  private peFoot(st: EditState, entry: MpStoreEntry, label = `Сохранить в ${MP_FULL[entry.mp]}`): string {
+    const msg = st.saving ? `<span class="pe-msg">${I.loader('', 13)} Сохраняю…${entry.mp === 'ozon' ? ' Ozon проверяет изменения, это до 20 секунд' : ''}</span>`
+      : st.saveError ? `<span class="pe-msg err">${I.alertTriangle('', 13)} ${esc(st.saveError)}</span>`
+      : st.saveOk ? `<span class="pe-msg ok">${I.check('', 13)} Сохранено${st.saveNote ? `. ${esc(st.saveNote)}` : ''}</span>`
+      : st.saveNote ? `<span class="pe-msg">${esc(st.saveNote)}</span>` : '';
+    return `<div class="pe-foot">
+      ${msg}
+      <span class="pc-grow"></span>
+      <button class="pc-btn pe-reset" data-ph-action="edit-reset" data-store-id="${esc(entry.store_id)}" ${st.saving ? 'disabled' : ''}>Отменить</button>
+      <button class="pc-btn primary" data-ph-action="save-card" data-store-id="${esc(entry.store_id)}" data-mp="${entry.mp}" ${st.saving ? 'disabled' : ''}>
+        ${st.saving ? 'Сохраняю…' : label}</button>
     </div>`;
   }
 
-  /** Compact YM section for secondary campaigns (same business): only price. */
+  private peHead(entry: MpStoreEntry, st: EditState | undefined, extra = ''): string {
+    const collapsed = this.collapsedStores.has(entry.store_id);
+    const syncing = !!this.syncing.get(entry.store_id);
+    const at = this.lastSyncAt(entry.store_id);
+    return `<header class="pe-head" data-ph-action="toggle-section" data-store-id="${esc(entry.store_id)}">
+      <span class="pc-mp pc-mp-${entry.mp}">${MP_LABEL[entry.mp]}</span>
+      <b class="pe-store-name">${esc(entry.store_name)}</b>
+      ${extra}
+      <span class="pe-dirty-chip cmp-edit-dirty-chip"${st && [...st.dirtyFields].some(f => f !== 'photos') ? '' : ' style="display:none"'}>не сохранено</span>
+      <span class="pc-grow"></span>
+      <span class="pe-synced" title="Когда данные магазина последний раз загружались из ${MP_FULL[entry.mp]}">${syncing ? 'обновляю…' : `данные: ${at ? fmtSyncDate(new Date(at).toISOString()) : 'нет'}`}</span>
+      <button class="pe-icon" data-ph-action="sync-store" data-store-id="${esc(entry.store_id)}" data-mp="${entry.mp}" title="Загрузить свежие данные из ${MP_FULL[entry.mp]}" ${syncing ? 'disabled' : ''}>${I.refresh('', 13)}</button>
+      <span class="cmp-section-arrow pe-arrow">${collapsed ? '▶' : '▼'}</span>
+    </header>`;
+  }
+
+  private tplEditSection(entry: MpStoreEntry): string {
+    const st = this.editState.get(entry.store_id);
+    if (!st) {
+      return `<section class="pe-store">${this.peHead(entry, undefined)}
+        <div class="pe-body"><div class="pc-empty">Товара нет в загруженном каталоге магазина. Нажмите ${I.refresh('', 12)} справа, чтобы загрузить свежие данные.</div></div></section>`;
+    }
+    const mp = entry.mp;
+    const sid = entry.store_id;
+    const collapsed = this.collapsedStores.has(sid);
+    const ro = (text: string, why: string) => `<span class="pe-input ro" title="${esc(why)}"><span class="pe-ro">${text ? esc(text) : '—'}</span>${I.lock('', 12)}</span>`;
+    const select = (field: 'vat', opts: Array<[string, string]>) => {
+      const cur = st[field];
+      const all = cur && !opts.some(([v]) => v === cur) ? [...opts, [cur, cur] as [string, string]] : opts;
+      return `<span class="pe-input"><select class="pe-in${st.dirtyFields.has(field) ? ' pe-dirty' : ''}" data-ph-field="${field}" data-store-id="${esc(sid)}">
+        ${all.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('')}</select></span>`;
+    };
+
+    const main = [
+      this.peField('Название', this.peInput(st, sid, 'name', { ph: 'Название товара' }), { wide: true, hint: mp === 'wb' ? 'WB показывает до 60 символов' : '' }),
+      mp === 'ozon'
+        ? this.peField('Бренд', ro(st.brand, 'На Ozon бренд — характеристика товара, меняется в личном кабинете'))
+        : this.peField('Бренд', this.peInput(st, sid, 'brand', { ph: 'Бренд' })),
+      mp === 'wb'
+        ? this.peField('Штрихкод', ro(st.barcode, 'Штрихкоды WB меняются в личном кабинете'))
+        : this.peField('Штрихкод', this.peInput(st, sid, 'barcode', { ph: '4600000000000' })),
+      mp === 'ozon' ? this.peField('НДС', select('vat', ProductsHubModule.VAT_OZON)) : '',
+      mp === 'yandex' ? this.peField('НДС', select('vat', ProductsHubModule.VAT_YM)) : '',
+    ].join('');
+
+    const lock = st.priceLocked ? `${I.lock('', 12)} цену ведёт репрайсер` : '';
+    const price = [
+      this.peField(mp === 'wb' ? 'Цена до скидки' : 'Цена', this.peInput(st, sid, 'price', { type: 'number', step: '1', min: '0', suffix: '₽', ro: st.priceLocked })),
+      mp === 'ozon' ? this.peField('Зачёркнутая цена', this.peInput(st, sid, 'old_price', { type: 'number', step: '1', min: '0', suffix: '₽', ph: 'нет', ro: st.priceLocked })) : '',
+      mp === 'ozon' ? this.peField('Минимальная цена', this.peInput(st, sid, 'min_price', { type: 'number', step: '1', min: '0', suffix: '₽', ph: 'не задана', ro: st.priceLocked }), { hint: 'ниже неё Ozon не опустит цену в акциях' }) : '',
+      mp === 'wb' ? this.peField('Скидка продавца', this.peInput(st, sid, 'discount', { type: 'number', step: '1', min: '0', max: '95', suffix: '%', ph: '0', ro: st.priceLocked })) : '',
+      `<div class="pe-preview wide" data-preview-store="${esc(sid)}">${this.pricePreview(st)}</div>`,
+    ].join('');
+
+    const dims = [
+      this.peField('Вес', this.peInput(st, sid, 'weight_kg', { type: 'number', step: '0.001', min: '0', suffix: 'кг', ph: '0,000' })),
+      this.peField('Длина', this.peInput(st, sid, 'length_cm', { type: 'number', step: '0.1', min: '0', suffix: 'см', ph: '0' })),
+      this.peField('Ширина', this.peInput(st, sid, 'width_cm', { type: 'number', step: '0.1', min: '0', suffix: 'см', ph: '0' })),
+      this.peField('Высота', this.peInput(st, sid, 'height_cm', { type: 'number', step: '0.1', min: '0', suffix: 'см', ph: '0' })),
+    ].join('');
+
+    const desc = `<label class="pe-field wide">
+      <textarea class="pe-in pe-area${st.dirtyFields.has('description') ? ' pe-dirty' : ''}" data-ph-field="description" data-store-id="${esc(sid)}" rows="6"
+        ${st.extraLoading ? 'disabled placeholder="Загружаю описание из Ozon…"' : 'placeholder="Опишите товар: материал, размеры, для кого и зачем"'}>${esc(st.description)}</textarea>
+      <span class="pe-hint" data-count-for="${esc(sid)}">${st.description.length.toLocaleString('ru')} симв.</span>
+    </label>
+    ${mp === 'wb' && entry.characteristics?.length ? `<details class="pc-more wide"><summary>Характеристики WB · ${entry.characteristics.length} (меняются в кабинете WB)</summary>
+      <dl class="pc-facts">${entry.characteristics.map(c => `<div><dt>${esc(c.name)}</dt><dd>${esc(c.value)}</dd></div>`).join('')}</dl></details>` : ''}`;
+
+    return `
+    <section class="pe-store${[...st.dirtyFields].some(f => f !== 'photos') ? ' dirty' : ''}" data-section-store="${esc(sid)}">
+      ${this.peHead(entry, st)}
+      <div class="cmp-edit-body pe-body"${collapsed ? ' style="display:none"' : ''}>
+        ${this.peGroup('Основное', main)}
+        ${this.peGroup('Цена', price, lock)}
+        ${this.peGroup('Вес и габариты в упаковке', dims)}
+        ${this.peGroup('Описание', desc)}
+        ${this.peFoot(st, entry)}
+      </div>
+    </section>`;
+  }
+
+  /** Кампания Яндекс Маркета того же бизнеса: карточка общая — здесь только цена. */
   private tplEditSectionYmCompact(entry: MpStoreEntry, primaryName: string): string {
     const st = this.editState.get(entry.store_id);
     if (!st) return '';
+    const sid = entry.store_id;
     return `
-    <div class="cmp-edit-section cmp-edit-section--compact">
-      <div class="cmp-edit-head">
-        <span class="cmp-mp-badge cmp-mp-badge--yandex">ЯМ</span>
-        <span class="cmp-edit-store">${esc(entry.store_name)}</span>
-        <span class="cmp-edit-shared-note">карточка общая с «${esc(primaryName)}»</span>
+    <section class="pe-store${st.dirtyFields.size ? ' dirty' : ''}" data-section-store="${esc(sid)}">
+      ${this.peHead(entry, st, `<span class="pe-shared">общая карточка с «${esc(primaryName)}»</span>`)}
+      <div class="cmp-edit-body pe-body"${this.collapsedStores.has(sid) ? ' style="display:none"' : ''}>
+        <p class="pe-note">Название, описание и фото общие для всего бизнеса — меняйте их в «${esc(primaryName)}». Цена тоже общая: Яндекс Маркет не даёт задать разные цены кампаниям через API.</p>
+        ${this.peGroup('Цена', this.peField('Цена', this.peInput(st, sid, 'price', { type: 'number', step: '1', min: '0', suffix: '₽', ro: st.priceLocked })))}
+        ${this.peFoot(st, entry, 'Сохранить цену')}
       </div>
-      <div class="cmp-edit-compact-note">Название, описание и фото управляются из раздела «${esc(primaryName)}» выше (общие для всего бизнеса). <span style="color:var(--warn,#fbbf24)">Цена тоже общая для бизнеса — Яндекс Маркет не поддерживает разные цены по кампаниям через API.</span></div>
-      <div class="cmp-edit-grid">
-        <label class="cmp-edit-field"><span class="cmp-edit-label">Цена (₽)${st.priceLocked ? ` <span class="cmp-lock-tag">${I.lock('', 12)}</span>` : ''}</span>
-          <input type="number" class="cmp-edit-input${st.priceLocked ? ' cmp-edit-input--locked' : ''}"
-            data-ph-field="price" data-store-id="${entry.store_id}"
-            value="${esc(st.price)}" ${st.priceLocked ? 'readonly' : ''} placeholder="—"></label>
-      </div>
-      ${st.saveError ? `<div class="cmp-edit-error">${esc(st.saveError)}</div>` : ''}
-      <div class="cmp-edit-foot">
-        <button class="cmp-btn cmp-btn-primary${st.saving ? ' loading' : ''}"
-          data-ph-action="save-card" data-store-id="${entry.store_id}" data-mp="yandex" ${st.saving ? 'disabled' : ''}>
-          ${st.saving ? '<span class="cmp-spinner-sm"></span> Сохранение…' : 'Сохранить цену'}
-        </button>
-      </div>
-    </div>`;
+    </section>`;
   }
 
-  private tplCardEdit(p: HubProduct): string {
-    if (!this.editState.size) this.initEditState(p);
-    if (!p.mp_entries.length) return `<div class="ph-empty">Товар не найден ни на одном маркетплейсе</div>`;
-
-    const syncBar = this.tplSyncBar(p);
+  private editSectionsHtml(p: HubProduct): string {
     const nonYm = p.mp_entries.filter(e => e.mp !== 'yandex');
     const ymGroups = this.ymBusinessGroups(p.mp_entries.filter(e => e.mp === 'yandex'));
-
-    const sections = [
+    return [
       ...nonYm.map(e => this.tplEditSection(e)),
       ...ymGroups.flatMap(({ primary, secondary }) => [
         this.tplEditSection(primary),
         ...secondary.map(e => this.tplEditSectionYmCompact(e, primary.store_name)),
       ]),
-    ].join('');
-
-    return `
-      ${syncBar ? `<div class="ph-section"><div class="ph-section-head">${I.refresh('', 12)} Синхронизация с МП</div><div class="cmp-sync-bar ph-sync-bar">${syncBar}</div></div>` : ''}
-      <div class="cmp-tab-card" id="ph-card-edit-content">${sections}</div>`;
+    ].join('') + this.tplSaveBar();
   }
 
-  private tplSyncBar(p?: HubProduct): string {
-    const productStoreIds = p ? new Set(p.mp_entries.map(e => e.store_id)) : null;
-    const all = [
-      ...this.ozStores.map((s: any) => ({ id: s.id, name: s.name ?? 'Ozon',   mp: 'ozon',   label: 'OZ' })),
-      ...this.wbStores.map((s: any) => ({ id: s.id, name: s.name ?? 'WB',     mp: 'wb',     label: 'WB' })),
-      ...this.ymStores.map((s: any) => ({ id: s.id, name: s.name ?? 'ЯМ',     mp: 'yandex', label: 'ЯМ' })),
-    ];
-    const stores = productStoreIds ? all.filter(s => productStoreIds.has(s.id)) : all;
-    if (!stores.length) return '';
-    return stores.map(s => {
-      const isSyncing = !!this.syncing.get(s.id);
-      const err = this.syncErr.get(s.id);
-      const date = fmtSyncDate(catalogCache.getSyncedAt(s.id));
-      return `<div class="cmp-sync-item">
-        <span class="cmp-mp-badge cmp-mp-badge--${s.mp}">${s.label}</span>
-        <span class="cmp-sync-name">${esc(s.name)}</span>
-        <span class="cmp-sync-date ${err ? 'err' : ''}">${err ? esc(err) : date}</span>
-        <button class="cmp-sync-btn" data-ph-action="sync-store" data-store-id="${s.id}" data-mp="${s.mp}" ${isSyncing ? 'disabled' : ''}>
-          ${isSyncing ? '<span class="cmp-spinner-sm"></span>' : '↻'} ${isSyncing ? 'Синхр…' : 'Обновить'}
-        </button>
-      </div>`;
-    }).join('');
+  /** Плавающая панель «есть несохранённые изменения». */
+  private tplSaveBar(): string {
+    const dirty = [...this.editState.entries()].filter(([, s]) => s.dirtyFields.size && [...s.dirtyFields].some(f => f !== 'photos'));
+    if (!dirty.length) return '<div class="pe-savebar" id="pe-savebar" hidden></div>';
+    const p = this.items.find(x => x.article === this.selectedArticle);
+    const names = dirty.map(([sid]) => p?.mp_entries.find(e => e.store_id === sid)?.store_name ?? '').filter(Boolean);
+    const saving = dirty.some(([, s]) => s.saving);
+    return `<div class="pe-savebar" id="pe-savebar">
+      <span>${I.edit('', 14)} Не сохранено: ${esc(names.join(', '))}</span>
+      <span class="pc-grow"></span>
+      <span class="pe-kbd">${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+S</span>
+      <button class="pc-btn primary" data-ph-action="save-all" ${saving ? 'disabled' : ''}>${saving ? 'Сохраняю…' : dirty.length > 1 ? 'Сохранить всё' : 'Сохранить'}</button>
+    </div>`;
+  }
+
+  private updateSaveBar(): void {
+    const bar = this.cardEl?.querySelector<HTMLElement>('#pe-savebar');
+    if (bar) bar.outerHTML = this.tplSaveBar();
+  }
+
+  /** Сохранить все магазины с изменениями (кнопка на панели и ⌘S). */
+  private saveAllDirty(): void {
+    const article = this.selectedArticle;
+    if (!article) return;
+    for (const [storeId, st] of this.editState) {
+      if (st.saving) continue;
+      if ([...st.dirtyFields].some(f => f !== 'photos')) this.doSaveCard(article, storeId, st.mp);
+    }
+  }
+
+  private tplCardEdit(p: HubProduct): string {
+    if (!this.editState.size) this.initEditState(p);
+    if (!p.mp_entries.length) return `<div class="pc-empty big">Товара нет ни в одном магазине — редактировать нечего.</div>`;
+    return `<div class="pe" id="ph-card-edit-content">${this.editSectionsHtml(p)}</div>`;
   }
 
   // ─── Filter panel ────────────────────────────────────────────────
@@ -2422,24 +2558,26 @@ export class ProductsHubModule {
     const mpLabel = mp === 'ozon' ? 'OZ' : mp === 'wb' ? 'WB' : 'ЯМ';
     const photos = st.photos;
     const isAdding = this.photoAddStoreId === primaryStoreId;
-    const syncedAt = fmtSyncDate(catalogCache.getSyncedAt(primaryStoreId));
+    const lastAt = this.lastSyncAt(primaryStoreId);
+    const syncedAt = fmtSyncDate(lastAt ? new Date(lastAt).toISOString() : null);
     const storeLabel = [entry.store_name, ...extraNames].join(' · ');
     return `
     <div class="cmp-photo-section">
       <div class="cmp-photo-hdr">
         <span class="cmp-mp-badge cmp-mp-badge--${mp}">${mpLabel}</span>
         <span class="cmp-photo-store">${esc(storeLabel)}</span>
-        <span class="cmp-photo-sync">· обновлено ${syncedAt}</span>
+        <span class="cmp-photo-sync">· данные: ${syncedAt}</span>
         ${extraNames.length ? `<span class="cmp-photo-shared-note">общая карточка</span>` : ''}
+        ${st.dirtyFields.has('photos') ? '<span class="pe-dirty-chip">не сохранено</span>' : ''}
         ${st.saving ? '<span class="cmp-spinner-sm"></span>' : ''}
         ${st.saveError ? `<span class="cmp-photo-err">${esc(st.saveError)}</span>` : ''}
       </div>
       <div class="cmp-photo-grid">
         ${photos.length === 0 ? '<div class="cmp-photo-none">Фото нет</div>' : ''}
         ${photos.map((url, idx) => `
-          <div class="cmp-photo-cell" draggable="true" data-drag-idx="${idx}" data-drag-store-id="${primaryStoreId}">
+          <div class="cmp-photo-cell" data-drag-idx="${idx}" data-drag-store-id="${primaryStoreId}" title="Зажмите и перетащите, чтобы поменять порядок">
             <div class="cmp-photo-wrap" data-ph-action="open-lightbox" data-url="${esc(url)}">
-              <img src="${esc(url)}" loading="lazy" alt="">
+              <img src="${esc(url)}" loading="lazy" alt="" draggable="false">
               <span class="cmp-photo-num">${idx + 1}</span>
             </div>
             <div class="cmp-photo-ctrl">
@@ -2449,11 +2587,12 @@ export class ProductsHubModule {
           </div>`).join('')}
       </div>
       <div class="cmp-photo-acts">
-        <button class="cmp-btn cmp-btn-sm" data-ph-action="photo-add-toggle" data-store-id="${primaryStoreId}">+ Добавить</button>
+        <button class="pc-btn" data-ph-action="photo-add-toggle" data-store-id="${primaryStoreId}">${I.plus('', 14)} Добавить фото</button>
+        <span class="pe-hint">${photos.length > 1 ? 'Первое фото — главное. Зажмите фото и перетащите, чтобы поменять порядок' : ''}</span>
+        <span class="pc-grow"></span>
         ${photos.length > 0 ? `
-          <button class="cmp-btn cmp-btn-sm cmp-btn-primary${st.saving ? ' loading' : ''}"
-            data-ph-action="save-photos" data-store-id="${primaryStoreId}" data-mp="${mp}" ${st.saving ? 'disabled' : ''}>
-            ${st.saving ? '<span class="cmp-spinner-sm"></span>' : 'Сохранить фото'}
+          <button class="pc-btn primary" data-ph-action="save-photos" data-store-id="${primaryStoreId}" data-mp="${mp}" ${st.saving || !st.dirtyFields.has('photos') ? 'disabled' : ''}>
+            ${st.saving ? 'Сохраняю…' : st.dirtyFields.has('photos') ? `Сохранить в ${MP_FULL[mp]}` : 'Сохранено'}
           </button>` : ''}
       </div>
       ${isAdding ? `
@@ -2476,6 +2615,108 @@ export class ProductsHubModule {
     </div>`;
   }
 
+  /**
+   * Перестановка фото. Раньше было HTML5 drag-and-drop: тащилась сама картинка
+   * (ссылка), бросить можно было только точно на другое фото, и до отпускания
+   * не было видно, куда встанет. Теперь фото едет за курсором, соседи
+   * раздвигаются на лету, а порядок сохраняется при отпускании.
+   */
+  private photoDragStart(e: PointerEvent): void {
+    if (e.button !== 0) return;
+    const cell = (e.target as HTMLElement).closest<HTMLElement>('.cmp-photo-cell');
+    if (!cell || (e.target as HTMLElement).closest('button')) return;
+    const grid = cell.parentElement!;
+    const storeId = cell.dataset.dragStoreId ?? '';
+    const st = this.editState.get(storeId);
+    if (!st || st.saving) return;
+    const x0 = e.clientX, y0 = e.clientY;
+    const drawer = this.el.querySelector<HTMLElement>('#ph2-drawer');
+    let ghost: HTMLElement | null = null;
+    let dx = 0, dy = 0;
+    let raf = 0, lastX = x0, lastY = y0;
+
+    const cells = () => [...grid.querySelectorAll<HTMLElement>('.cmp-photo-cell')];
+    const flip = (move: () => void) => {
+      const before = new Map(cells().map(c => [c, c.getBoundingClientRect()]));
+      move();
+      for (const c of cells()) {
+        if (c === cell) continue;
+        const a = before.get(c); const b = c.getBoundingClientRect();
+        if (!a || (a.left === b.left && a.top === b.top)) continue;
+        c.animate([{ transform: `translate(${a.left - b.left}px, ${a.top - b.top}px)` }, { transform: 'none' }], { duration: 160, easing: 'ease-out' });
+      }
+    };
+    const begin = () => {
+      const r = cell.getBoundingClientRect();
+      dx = x0 - r.left; dy = y0 - r.top;
+      ghost = cell.cloneNode(true) as HTMLElement;
+      ghost.classList.add('pe-ghost');
+      Object.assign(ghost.style, { width: `${r.width}px`, height: `${r.height}px`, left: '0', top: '0' });
+      document.body.appendChild(ghost);
+      cell.classList.add('pe-placeholder');
+      document.body.classList.add('pe-dragging');
+    };
+    const step = () => {
+      raf = 0;
+      if (!ghost) return;
+      ghost.style.transform = `translate(${lastX - dx}px, ${lastY - dy}px) rotate(2deg) scale(1.04)`;
+      // Автопрокрутка у краёв карточки
+      if (drawer) {
+        const r = drawer.getBoundingClientRect();
+        if (lastY < r.top + 60) drawer.scrollTop -= 12;
+        else if (lastY > r.bottom - 60) drawer.scrollTop += 12;
+      }
+      // Ближайшее фото под курсором → встаём перед ним или после
+      let best: HTMLElement | null = null, bestD = Infinity;
+      for (const c of cells()) {
+        if (c === cell) continue;
+        const b = c.getBoundingClientRect();
+        const d = Math.hypot(lastX - (b.left + b.width / 2), lastY - (b.top + b.height / 2));
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      if (best && bestD < best.getBoundingClientRect().width) {
+        const b = best.getBoundingClientRect();
+        const after = lastX > b.left + b.width / 2;
+        const ref = after ? best.nextElementSibling : best;
+        if (ref !== cell && ref !== cell.nextElementSibling) flip(() => grid.insertBefore(cell, ref));
+      }
+      if (ghost) raf = requestAnimationFrame(step);
+    };
+    const move = (ev: PointerEvent) => {
+      lastX = ev.clientX; lastY = ev.clientY;
+      if (!ghost) {
+        if (Math.hypot(lastX - x0, lastY - y0) < 6) return;
+        begin();
+      }
+      ev.preventDefault();
+      if (!raf) raf = requestAnimationFrame(step);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      if (!ghost) return;
+      cancelAnimationFrame(raf); raf = 0;
+      ghost.remove(); ghost = null;
+      cell.classList.remove('pe-placeholder');
+      document.body.classList.remove('pe-dragging');
+      // Клик после перетаскивания не должен открывать просмотр фото
+      const eat = (ev: MouseEvent) => { ev.stopPropagation(); ev.preventDefault(); };
+      window.addEventListener('click', eat, { capture: true });
+      setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 60);
+      const order = cells().map(c => +(c.dataset.dragIdx ?? -1)).filter(i => i >= 0);
+      if (order.some((v, i) => v !== i)) {
+        st.photos = order.map(i => st.photos[i]);
+        st.dirtyFields.add('photos');
+        st.saveError = '';
+      }
+      this.refreshPhotosTab2();
+    };
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }
+
   private tplPhotosTab(p: HubProduct): string {
     if (!this.editState.size) this.initEditState(p);
     if (!p.mp_entries.length) return `<div class="ph-empty">Товар не найден ни на одном маркетплейсе</div>`;
@@ -2496,19 +2737,11 @@ export class ProductsHubModule {
   // ─── Refresh helpers ─────────────────────────────────────────────
 
   private refreshEditTab(): void {
-    if (this.activeTab !== 'card-edit' || !this.selectedArticle) return;
+    if (this.activeTab !== 'card-edit' || !this.selectedArticle) { this.updateSaveBar(); return; }
     const p = this.items.find(x => x.article === this.selectedArticle);
     const el = this.cardEl?.querySelector<HTMLElement>('#ph-card-edit-content');
     if (!p || !el) return;
-    const nonYm = p.mp_entries.filter(e => e.mp !== 'yandex');
-    const ymGroups = this.ymBusinessGroups(p.mp_entries.filter(e => e.mp === 'yandex'));
-    el.innerHTML = [
-      ...nonYm.map(e => this.tplEditSection(e)),
-      ...ymGroups.flatMap(({ primary, secondary }) => [
-        this.tplEditSection(primary),
-        ...secondary.map(e => this.tplEditSectionYmCompact(e, primary.store_name)),
-      ]),
-    ].join('');
+    el.innerHTML = this.editSectionsHtml(p);
   }
 
   private refreshPhotosTab2(): void {
@@ -2537,7 +2770,8 @@ export class ProductsHubModule {
         const s = this.ymStores.find((x: any) => x.id === storeId);
         if (s) await syncYmStore(s);
       }
-      await this.load();
+      try { localStorage.setItem(`ph_autosync_${storeId}`, new Date().toISOString()); } catch { /* ignore */ }
+      await this.load({ quiet: true });
     } catch (e: unknown) {
       this.syncErr.set(storeId, (e instanceof Error ? e.message : String(e))?.slice(0, 60) ?? 'Ошибка');
     } finally {
@@ -2547,188 +2781,234 @@ export class ProductsHubModule {
   }
 
   private updateSyncBarInCard(): void {
-    const el = this.el.querySelector<HTMLElement>('.ph-sync-bar');
-    if (!el) return;
-    const p = this.selectedArticle ? this.items.find(x => x.article === this.selectedArticle) : undefined;
-    el.innerHTML = this.tplSyncBar(p);
+    this.refreshOpenCardChrome();
   }
 
   // ─── Save card ────────────────────────────────────────────────────
 
+  /**
+   * Сохранить карточку в магазин. Отправляем ТОЛЬКО изменённые поля:
+   * раньше каждое сохранение заново слало цену (а на Ozon ещё и мин. цену = цене)
+   * и всю карточку — даже если поменяли одну букву в названии.
+   */
   private async doSaveCard(article: string, storeId: string, mp: 'ozon' | 'wb' | 'yandex'): Promise<void> {
     const st = this.editState.get(storeId);
-    if (!st) return;
-    st.saving = true; st.saveError = ''; st.saveOk = false;
+    if (!st || st.saving) return;
+    const d = new Set([...st.dirtyFields].filter(f => f !== 'photos'));
+    if (!d.size) { st.saveOk = false; st.saveError = ''; st.saveNote = 'Изменений нет'; this.refreshEditTab(); return; }
+
+    const has = (...f: string[]) => f.some(x => d.has(x));
+    const numOrNull = (v: string) => { const n = parseFloat(String(v).replace(',', '.')); return isFinite(n) ? n : null; };
+    // Проверка до отправки — понятная ошибка вместо отказа маркетплейса
+    const problems: string[] = [];
+    if (has('name') && !st.name.trim()) problems.push('название не может быть пустым');
+    if (has('price', 'old_price', 'min_price', 'discount')) {
+      const price = numOrNull(st.price);
+      if (price == null || price <= 0) problems.push('укажите цену больше нуля');
+      const old = st.old_price ? numOrNull(st.old_price) : null;
+      if (mp === 'ozon' && old != null && price != null && old > 0 && old <= price) problems.push('старая цена должна быть больше текущей (или оставьте поле пустым)');
+      const min = st.min_price ? numOrNull(st.min_price) : null;
+      if (mp === 'ozon' && min != null && price != null && min > price) problems.push('минимальная цена не может быть больше цены');
+      const disc = st.discount ? numOrNull(st.discount) : 0;
+      if (mp === 'wb' && (disc == null || disc < 0 || disc > 95)) problems.push('скидка WB — от 0 до 95%');
+    }
+    for (const f of ['weight_kg', 'length_cm', 'width_cm', 'height_cm'] as const) {
+      if (d.has(f) && st[f] && !(numOrNull(st[f])! > 0)) problems.push('вес и габариты — положительные числа');
+    }
+    if (problems.length) {
+      st.saveError = `Не сохранено: ${[...new Set(problems)].join('; ')}`;
+      st.saveOk = false; st.saveNote = '';
+      this.refreshEditTab();
+      return;
+    }
+
+    st.saving = true; st.saveError = ''; st.saveOk = false; st.saveNote = '';
     this.refreshEditTab();
+    const sentFields = new Set(d);
     try {
-      // Use null for empty fields — 0 would overwrite real marketplace data with zero.
+      const n = (v: string) => numOrNull(v);
+      const dimsDirty = has('weight_kg', 'length_cm', 'width_cm', 'height_cm');
       const dims: Dimensions = {
-        weight_g:  st.weight_kg ? Math.round(+st.weight_kg * 1000) : null,
-        length_mm: st.length_cm ? Math.round(+st.length_cm * 10)   : null,
-        width_mm:  st.width_cm  ? Math.round(+st.width_cm  * 10)   : null,
-        height_mm: st.height_cm ? Math.round(+st.height_cm * 10)   : null,
+        weight_g:  st.weight_kg ? Math.round(n(st.weight_kg)! * 1000) : null,
+        length_mm: st.length_cm ? Math.round(n(st.length_cm)! * 10)   : null,
+        width_mm:  st.width_cm  ? Math.round(n(st.width_cm)!  * 10)   : null,
+        height_mm: st.height_cm ? Math.round(n(st.height_cm)! * 10)   : null,
       };
+      const hubEntry = () => this.items.find(x => x.article.toLowerCase() === article.toLowerCase())?.mp_entries.find(e => e.store_id === storeId);
+      const priceDirty = has('price', 'old_price', 'min_price', 'discount') && !st.priceLocked;
 
       if (mp === 'ozon') {
         const store = this.ozStores.find((s: any) => s.id === storeId);
         const prod  = this.ozProds.find((x: any) => x.store_id === storeId && String(x.offer_id ?? '').trim().toLowerCase() === article.toLowerCase());
-        if (!store || !prod) throw new Error('Магазин или товар не найден — синхронизируйте данные');
+        if (!store || !prod) throw new Error('Товар не найден в каталоге магазина — обновите каталог');
         const creds = { client_id: store.client_id, api_key: store.api_key };
-        const oz = toOzon(dims);
-        let typeId = prod.type_id ?? 0;
-        let catId  = prod.description_category_id ?? 0;
-        if (!typeId || !catId) {
-          const info = await ozonApi.getFullProductInfo(article, prod.product_id ?? null, creds);
-          typeId = info?.type_id ?? 0;
-          catId  = info?.description_category_id ?? 0;
-          if (typeId) prod.type_id = typeId;
-          if (catId)  prod.description_category_id = catId;
+        const tasks: number[] = [];
+
+        // Название, НДС, габариты и описание — одной задачей, поверх текущей карточки
+        const descDirty = has('description') && st.extraLoaded;
+        if (has('name', 'vat') || dimsDirty || descDirty) {
+          const t = await ozonApi.updateCardMerged(creds, article, prod.product_id ?? null, {
+            ...(has('name') ? { name: st.name.trim() } : {}),
+            ...(has('vat') ? { vat: st.vat } : {}),
+            ...(descDirty ? { description: st.description } : {}),
+            // Новая цена — и в импорт, иначе он может вернуть старую поверх обновления цен
+            ...(priceDirty ? { price: String(n(st.price)), old_price: st.old_price ? String(n(st.old_price)) : '0' } : {}),
+            ...(dimsDirty ? { weight_g: dims.weight_g, depth_mm: dims.length_mm, width_mm: dims.width_mm, height_mm: dims.height_mm } : {}),
+          });
+          if (t) tasks.push(t);
         }
-        const item: Record<string, unknown> = { offer_id: article };
-        // Only include dimensions if at least one value is set — avoids overwriting with zeros.
-        if (oz.weight != null) { item.weight = oz.weight; item.weight_unit = oz.weight_unit; }
-        if (oz.depth != null || oz.width != null || oz.height != null) {
-          item.depth = oz.depth ?? 0; item.width = oz.width ?? 0; item.height = oz.height ?? 0;
-          item.dimension_unit = oz.dimension_unit;
+        if (has('barcode') && st.barcode && st.barcode !== (prod.barcode ?? '')) {
+          if (!prod.sku) throw new Error('У товара ещё нет SKU Ozon — штрихкод можно поменять после модерации');
+          await ozonApi.updateBarcode(creds, prod.sku, st.barcode.trim());
+          prod.barcode = st.barcode.trim();
         }
-        if (typeId > 0) item.type_id = typeId;
-        if (catId  > 0) item.description_category_id = catId;
-        if (st.name) item.name = st.name;
-        if (st.vat) item.vat = st.vat;
-        if (st.extraLoaded && st.description) item.description = st.description;
-        await ozonApi.updateProduct(creds, item);
-        if (st.barcode && st.barcode !== (prod.barcode ?? '') && prod.sku) {
-          await ozonApi.updateBarcode(creds, prod.sku, st.barcode);
-        }
-        if (!st.priceLocked && st.price) {
+        if (priceDirty) {
           await ozonApi.updatePrices(creds, [{
             offer_id: article,
-            price: st.price,
-            old_price: st.old_price || st.price,
-            min_price: st.min_price || st.price,
+            price: String(n(st.price)),
+            old_price: st.old_price ? String(n(st.old_price)) : '0',
+            ...(st.min_price ? { min_price: String(n(st.min_price)) } : {}),
           }]);
-          const entry = this.items.find(x => x.article.toLowerCase() === article.toLowerCase())
-            ?.mp_entries.find(e => e.store_id === storeId);
-          if (entry) entry.price = +st.price;
+          const e = hubEntry();
+          if (e) { e.price = n(st.price); e.old_price = st.old_price ? n(st.old_price) : null; }
+          prod.price = n(st.price); prod.old_price = st.old_price ? n(st.old_price) : null;
+          if (st.min_price) prod.min_price = n(st.min_price);
         }
-        prod.weight_kg = st.weight_kg ? +st.weight_kg : prod.weight_kg;
-        prod.length_cm = st.length_cm ? +st.length_cm : prod.length_cm;
-        prod.width_cm  = st.width_cm  ? +st.width_cm  : prod.width_cm;
-        prod.height_cm = st.height_cm ? +st.height_cm : prod.height_cm;
-        if (st.name) prod.name = st.name;
-        if (st.barcode) prod.barcode = st.barcode;
+        // Ждём, что Ozon реально принял правки, — ошибки модерации показываем
+        let pending = false;
+        for (const t of tasks) if (await ozonApi.waitImportTask(creds, t) === 'pending') pending = true;
+        if (has('name')) prod.name = st.name.trim();
+        if (has('vat')) prod.vat = st.vat;
+        if (dimsDirty) {
+          prod.weight_kg = st.weight_kg ? n(st.weight_kg) : prod.weight_kg;
+          prod.length_cm = st.length_cm ? n(st.length_cm) : prod.length_cm;
+          prod.width_cm  = st.width_cm  ? n(st.width_cm)  : prod.width_cm;
+          prod.height_cm = st.height_cm ? n(st.height_cm) : prod.height_cm;
+        }
+        if (pending) st.saveNote = 'Ozon принял изменения и ещё обрабатывает их — на сайте появятся через несколько минут';
 
       } else if (mp === 'wb') {
         const store = this.wbStores.find((s: any) => s.id === storeId);
         const prod  = this.wbProds.find((x: any) => x.store_id === storeId &&
           String(x.vendor_code ?? x.nm_id ?? '').trim().toLowerCase() === article.toLowerCase());
-        if (!store || !prod) throw new Error('Магазин или товар не найден');
-        if (!prod.nm_id) throw new Error('Нет nmID — невозможно сохранить карточку WB');
-        const wb = toWb(dims);
-        // Only include non-null dims to avoid overwriting existing card data with zeros.
-        const wbCardUpdate: Parameters<typeof wbApi.updateCard>[2] = {
-          title: st.name || undefined,
-          brand: st.brand || undefined,
-          description: st.description || undefined,
-        };
-        if (wb.length != null || wb.width != null || wb.height != null) {
-          wbCardUpdate.dimensions = {
-            length: wb.length != null ? Math.round(wb.length) : 0,
-            width:  wb.width  != null ? Math.round(wb.width)  : 0,
-            height: wb.height != null ? Math.round(wb.height) : 0,
-          };
-        }
-        if (wb.weight_kg != null) wbCardUpdate.weightBrutto = wb.weight_kg;
-        await wbApi.updateCard(store.api_key, prod.nm_id, wbCardUpdate);
-        if (!st.priceLocked && st.price) {
-          const discount = st.discount ? Math.round(+st.discount) : 0;
-          await updateWbPrices(store.api_key, [{ nmID: prod.nm_id, price: Math.round(+st.price), discount: discount || undefined }]);
-          const entry = this.items.find(x => x.article.toLowerCase() === article.toLowerCase())
-            ?.mp_entries.find(e => e.store_id === storeId);
-          if (entry) {
-            // WB entry.price = покупательская цена (со скидкой), entry.old_price = базовая
-            const base = +st.price;
-            if (discount > 0) {
-              entry.old_price = base;
-              entry.price = Math.round(base * (1 - discount / 100));
-            } else {
-              entry.price = base;
-              entry.old_price = null;
+        if (!store || !prod) throw new Error('Товар не найден в каталоге магазина — обновите каталог');
+        if (!prod.nm_id) throw new Error('У товара нет nmID — обновите каталог WB');
+        if (has('name', 'brand', 'description') || dimsDirty) {
+          const upd: Parameters<typeof wbApi.updateCard>[2] = {};
+          if (has('name')) upd.title = st.name.trim();
+          if (has('brand')) upd.brand = st.brand.trim();
+          if (has('description')) upd.description = st.description;
+          if (dimsDirty) {
+            const wb = toWb(dims);
+            if (wb.length != null || wb.width != null || wb.height != null) {
+              upd.dimensions = {
+                length: wb.length != null ? Math.round(wb.length) : 0,
+                width:  wb.width  != null ? Math.round(wb.width)  : 0,
+                height: wb.height != null ? Math.round(wb.height) : 0,
+              };
             }
+            if (wb.weight_kg != null) upd.weightBrutto = wb.weight_kg;
           }
+          await wbApi.updateCard(store.api_key, prod.nm_id, upd);
         }
-        prod.weight_kg = st.weight_kg ? +st.weight_kg : prod.weight_kg;
-        prod.length_cm = st.length_cm ? +st.length_cm : prod.length_cm;
-        prod.width_cm  = st.width_cm  ? +st.width_cm  : prod.width_cm;
-        prod.height_cm = st.height_cm ? +st.height_cm : prod.height_cm;
-        if (st.name) prod.title = st.name;
-        if (st.brand) prod.brand = st.brand;
-        if (st.discount) prod.discount = +st.discount;
+        if (priceDirty) {
+          const discount = st.discount ? Math.round(n(st.discount)!) : 0;
+          await updateWbPrices(store.api_key, [{ nmID: prod.nm_id, price: Math.round(n(st.price)!), discount }]);
+          const e = hubEntry();
+          if (e) {
+            // WB: entry.price — цена покупателя (со скидкой), entry.old_price — базовая
+            const base = Math.round(n(st.price)!);
+            e.old_price = discount > 0 ? base : null;
+            e.price = discount > 0 ? Math.round(base * (1 - discount / 100)) : base;
+          }
+          prod.price = n(st.price); prod.discount = discount;
+        }
+        if (dimsDirty) {
+          prod.weight_kg = st.weight_kg ? n(st.weight_kg) : prod.weight_kg;
+          prod.length_cm = st.length_cm ? n(st.length_cm) : prod.length_cm;
+          prod.width_cm  = st.width_cm  ? n(st.width_cm)  : prod.width_cm;
+          prod.height_cm = st.height_cm ? n(st.height_cm) : prod.height_cm;
+        }
+        if (has('name')) prod.title = st.name.trim();
+        if (has('brand')) prod.brand = st.brand.trim();
+        if (has('description')) prod.description = st.description;
+        st.saveNote = 'WB обновит карточку на сайте в течение нескольких минут';
 
       } else {
         const store = this.ymStores.find((s: any) => s.id === storeId);
         const prod  = this.ymProds.find((x: any) => x.store_id === storeId &&
           String(x.offer_id ?? x.vendor_code ?? '').trim().toLowerCase() === article.toLowerCase());
-        if (!store || !prod) throw new Error('Магазин или товар не найден');
-        const ym = toYm(dims);
-        const offer: Record<string, unknown> = { offerId: article };
-        // Only include weightDimensions if at least one value is filled.
-        if (ym.length != null || ym.width != null || ym.height != null || ym.weight != null) {
-          const wd: Record<string, number> = {};
-          if (ym.length != null) wd.length = ym.length;
-          if (ym.width  != null) wd.width  = ym.width;
-          if (ym.height != null) wd.height = ym.height;
-          if (ym.weight != null) wd.weight = ym.weight;
-          offer.weightDimensions = wd;
+        if (!store || !prod) throw new Error('Товар не найден в каталоге магазина — обновите каталог');
+        if (!store.business_id) throw new Error('У магазина Яндекс Маркета не указан business_id — переподключите магазин');
+        if (has('name', 'brand', 'description', 'barcode', 'vat') || dimsDirty) {
+          const offer: Record<string, unknown> = { offerId: article };
+          if (dimsDirty) {
+            const ym = toYm(dims);
+            const wd: Record<string, number> = {};
+            if (ym.length != null) wd.length = ym.length;
+            if (ym.width  != null) wd.width  = ym.width;
+            if (ym.height != null) wd.height = ym.height;
+            if (ym.weight != null) wd.weight = ym.weight;
+            if (Object.keys(wd).length) offer.weightDimensions = wd;
+          }
+          if (has('name')) offer.name = st.name.trim();
+          if (has('brand')) offer.vendor = st.brand.trim();
+          if (has('description')) offer.description = st.description;
+          if (has('barcode') && st.barcode) offer.barcodes = [st.barcode.trim()];
+          if (has('vat') && st.vat) offer.tax = { vatType: st.vat };
+          await yandexApi.updateOffer(store.api_key, store.business_id, offer);
         }
-        if (st.name) offer.name = st.name;
-        if (st.brand) offer.vendor = st.brand;
-        if (st.description) offer.description = st.description;
-        if (st.barcode) offer.barcodes = [st.barcode];
-        if (st.vat) offer.tax = { vatType: st.vat };
-        await yandexApi.updateOffer(store.api_key, store.business_id!, offer);
-        // YM price is set at business level — all campaigns in the business share it.
-        if (!st.priceLocked && st.price && store.business_id) {
-          await yandexApi.updateOfferPrices(store.api_key, String(store.campaign_id ?? ''), [{ offerId: article, price: +st.price }]);
-          // Update price in all YM entries that share this business
+        // Цена в Яндекс Маркете общая для всего бизнеса — обновляем во всех его кампаниях
+        if (priceDirty) {
+          await yandexApi.updateOfferPrices(store.api_key, String(store.campaign_id ?? ''), [{ offerId: article, price: n(st.price)! }]);
           const bid = store.business_id;
           this.items.find(x => x.article.toLowerCase() === article.toLowerCase())
-            ?.mp_entries.filter(e => {
-              const s = (this.ymStores as any[]).find(s => s.id === e.store_id);
-              return e.mp === 'yandex' && s?.business_id === bid;
-            })
-            .forEach(e => { e.price = +st.price; });
+            ?.mp_entries.filter(e => e.mp === 'yandex' && (this.ymStores as any[]).find(s => s.id === e.store_id)?.business_id === bid)
+            .forEach(e => { e.price = n(st.price); });
+          prod.basic_price = n(st.price);
         }
-        prod.weight_kg = st.weight_kg ? +st.weight_kg : prod.weight_kg;
-        prod.length_cm = st.length_cm ? +st.length_cm : prod.length_cm;
-        prod.width_cm  = st.width_cm  ? +st.width_cm  : prod.width_cm;
-        prod.height_cm = st.height_cm ? +st.height_cm : prod.height_cm;
-        if (st.name) prod.name = st.name;
-        if (st.brand) prod.vendor = st.brand;
+        if (dimsDirty) {
+          prod.weight_kg = st.weight_kg ? n(st.weight_kg) : prod.weight_kg;
+          prod.length_cm = st.length_cm ? n(st.length_cm) : prod.length_cm;
+          prod.width_cm  = st.width_cm  ? n(st.width_cm)  : prod.width_cm;
+          prod.height_cm = st.height_cm ? n(st.height_cm) : prod.height_cm;
+        }
+        if (has('name')) prod.name = st.name.trim();
+        if (has('brand')) prod.vendor = st.brand.trim();
+        if (has('description')) prod.description = st.description;
+        if (has('barcode')) prod.barcode = st.barcode.trim();
+        if (has('vat')) prod.vat = st.vat;
       }
 
-      // Update HubProduct dims from first non-null source
+      // Карточка в разделе — сразу с новыми данными
       const hub = this.items.find(x => x.article.toLowerCase() === article.toLowerCase());
       if (hub) {
-        if (dims.weight_g)  hub.weight_kg = dims.weight_g / 1000;
-        if (dims.length_mm) hub.length_cm = dims.length_mm / 10;
-        if (dims.width_mm)  hub.width_cm  = dims.width_mm / 10;
-        if (dims.height_mm) hub.height_cm = dims.height_mm / 10;
+        if (dimsDirty) {
+          if (dims.weight_g)  hub.weight_kg = dims.weight_g / 1000;
+          if (dims.length_mm) hub.length_cm = dims.length_mm / 10;
+          if (dims.width_mm)  hub.width_cm  = dims.width_mm / 10;
+          if (dims.height_mm) hub.height_cm = dims.height_mm / 10;
+        }
+        if (has('name') && st.name.trim()) hub.name = st.name.trim();
+        if (has('barcode') && st.barcode.trim()) hub.barcode = st.barcode.trim();
+        const e = hub.mp_entries.find(x => x.store_id === storeId);
+        if (e) {
+          if (has('description')) e.description = st.description;
+          if (has('vat')) e.vat = st.vat;
+          if (has('barcode')) e.barcode = st.barcode.trim();
+        }
       }
       if (st.extraLoaded) {
         const ck = `${storeId}:${article}`;
         const extra = mp === 'ozon' ? { vat: st.vat } : { description: st.description };
         this.extraDataCache.set(ck, { ...this.extraDataCache.get(ck), ...extra });
       }
+      for (const f of sentFields) st.dirtyFields.delete(f);
       st.saveOk = true;
-      st.dirtyFields.clear();
-      // Ozon processes imports asynchronously — changes appear on the marketplace in a few minutes.
-      if (mp === 'ozon') {
-        st.saveError = '✓ Принято — изменения появятся на Ozon через несколько минут';
-        st.saveOk = false;
-      }
+      this.totalsCache.delete(article);
+      this.renderListItems();
     } catch (e: unknown) {
-      st.saveError = (e instanceof Error ? e.message : String(e)) ?? 'Ошибка сохранения';
+      st.saveError = (e instanceof Error ? e.message : String(e)) || 'Ошибка сохранения';
     } finally {
       st.saving = false;
       this.refreshEditTab();
@@ -2760,7 +3040,9 @@ export class ProductsHubModule {
         const store = this.ozStores.find((s: any) => s.id === storeId);
         const prod  = this.ozProds.find((x: any) => x.store_id === storeId && String(x.offer_id ?? '').trim().toLowerCase() === article.toLowerCase());
         if (!store || !prod) throw new Error('Магазин не найден');
-        await ozonApi.updateProduct({ client_id: store.client_id, api_key: store.api_key }, { offer_id: article, images: urls });
+        if (!prod.product_id) throw new Error('Нет ID товара Ozon — обновите каталог');
+        // Отдельный метод для фото: импорт карточки с одними фото мог затереть остальное
+        await ozonApi.importPictures({ client_id: store.client_id, api_key: store.api_key }, prod.product_id, urls);
         prod.images = urls;
       } else if (mp === 'wb') {
         const store = this.wbStores.find((s: any) => s.id === storeId);
@@ -2790,6 +3072,13 @@ export class ProductsHubModule {
 
       if (mp !== 'yandex') catalogCache.setPhotos(storeId, article, urls);
       st.photos = [...urls, ...pendingLocal];
+      if (!pendingLocal.length) st.dirtyFields.delete('photos');
+      // Главное фото в карточке и таблице — сразу новое
+      const hub = this.items.find(x => x.article.toLowerCase() === article.toLowerCase());
+      const he = hub?.mp_entries.find(e => e.store_id === storeId);
+      if (he) he.images = [...urls];
+      if (hub && urls[0]) hub.image_url = urls[0];
+      showToast(mp === 'ozon' ? 'Фото отправлены в Ozon — обновятся после обработки' : 'Фото сохранены', 'success');
       if (pendingLocal.length > 0) {
         st.saveError = `${pendingLocal.length} фото не удалось загрузить — попробуйте ещё раз`;
       }
