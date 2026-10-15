@@ -7,6 +7,7 @@ import asyncio
 import io
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import sys
 import edge_tts
 
 class Handler(BaseHTTPRequestHandler):
@@ -36,6 +37,8 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(audio)
         except Exception as e:
+            # Раньше ошибки нигде не писались — поломку синтеза не было видно в логах
+            print(f'[tts] synth failed voice={voice} len={len(text)}: {e}', file=sys.stderr, flush=True)
             self.send_response(502)
             self._cors()
             self.send_header('Content-Type', 'application/json')

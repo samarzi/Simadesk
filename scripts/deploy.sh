@@ -107,6 +107,16 @@ for SQL in migrations/*.sql backend/migrations/*.sql; do
   $SSH "$VPS" "docker exec -i simadesk-db-1 psql -U postgres -d postgres" < "$SQL" 2>/dev/null || true
 done
 
+# ── Сервер озвучки (edge-tts) — пересобираем, только если менялась его папка ──
+TTS_HASH=$(cat backend/tts-server/* | shasum -a 256 | cut -d' ' -f1)
+TTS_DEPLOYED=$($SSH "$VPS" "cat /opt/simadesk-tts-server.hash 2>/dev/null" || true)
+if [ "$TTS_HASH" != "$TTS_DEPLOYED" ]; then
+  log "Пересборка сервера озвучки (tts-server)"
+  $SSH "$VPS" "cd $APP_DIR && docker compose build tts-server && docker compose up -d --no-deps --force-recreate tts-server && echo $TTS_HASH > /opt/simadesk-tts-server.hash"
+else
+  echo "   Сервер озвучки не менялся"
+fi
+
 log "Готово!"
 echo ""
 echo "  Сайт:   https://${DOMAIN}"
