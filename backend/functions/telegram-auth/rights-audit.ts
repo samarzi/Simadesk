@@ -253,30 +253,54 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
       refProof.push({ id: ref.id, ...refImage.proof });
     } catch (e) { refProof.push({ id: ref.id, status: 'failed', error: e instanceof Error ? e.message : 'Эталон не загружен' }); }
   }
-  // One vision call receives the whole photo set; card text remains a separate pass.
-  const photoContent: Record<string, unknown>[] = files.flatMap((file, i) => [
-    { type: 'text', text: `ФОТО ТОВАРА №${photoUrls.indexOf(file.proof.url) + 1}` },
-    { type: 'image_url', image_url: { url: file.dataUrl } },
-  ]);
-  const imageResults = files.map((file, i) => ({ proof: file.proof, photo_number: photoUrls.indexOf(file.proof.url) + 1, file_index: i }));
-  const results = await Promise.allSettled([
-    files.length ? complete({ model, max_tokens: 9000, reasoning: { effort: 'low' }, temperature: 0, messages: [{ role: 'system', content: VISUAL_PROMPT },
-      { role: 'user', content: [...photoContent, ...refContent] }] }) : Promise.resolve(null),
-    complete({ model, max_tokens: 3500, reasoning: { effort: 'low' }, temperature: 0, messages: [{ role: 'system', content: TEXT_PROMPT },
-      { role: 'user', content: JSON.stringify({ title: input.title, description: input.description }) }] }),
-  ]);
+  // Follow Sima Agent's proven vision flow: one product photo per request, a
+  // small bounded answer, and retries on the same model before the caller
+  // switches to another free model. A large gallery in a single prompt often
+  // exhausts free models' output budget, so they omit a photo or truncate JSON.
+  const photoCalls: PromiseSettledResult<{ body: Completion; data: { photo: Record<string, unknown>; reference_matches?: unknown } }>[] = [];
+  for (const file of files) {
+    const photoNumber = photoUrls.indexOf(file.proof.url) + 1;
+    let lastError: unknown = new Error('Модель не описала фото');
+    let completed: { body: Completion; data: { photo: Record<string, unknown>; reference_matches?: unknown } } | null = null;
+    for (let attempt = 0; attempt < 3 && !completed; attempt++) {
+      if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 700 * attempt));
+      try {
+        const body = await complete({ model, max_tokens: 3000, reasoning: { effort: 'low' }, temperature: 0,
+          messages: [{ role: 'system', content: VISUAL_PROMPT }, { role: 'user', content: [
+            { type: 'text', text: `Проверь только это фото товара №${photoNumber}. Верни один объект photos с photo_number ${photoNumber}.` },
+            { type: 'image_url', image_url: { url: file.dataUrl } }, ...refContent,
+          ] }] });
+        const data = parseAnswer(body);
+        const listed = Array.isArray(data.photos) ? data.photos.filter(p => p && typeof p === 'object') as Record<string, unknown>[] : [];
+        const photo = listed.find(p => p.photo_number === photoNumber) ?? listed[0] ??
+          (data.image_observed === true ? data : null);
+        if (photo && photo.image_observed === true && text(photo.visual_description, 3000))
+          completed = { body, data: { photo: { ...photo, photo_number: photoNumber }, reference_matches: data.reference_matches } };
+        else
+          lastError = new Error(`Модель не подтвердила просмотр фото №${photoNumber}`);
+      } catch (error) { lastError = error; }
+    }
+    photoCalls.push(completed ? { status: 'fulfilled', value: completed } : { status: 'rejected', reason: lastError });
+  }
+  const textCalls = await Promise.allSettled([complete({ model, max_tokens: 2500, reasoning: { effort: 'low' }, temperature: 0, messages: [{ role: 'system', content: TEXT_PROMPT },
+    { role: 'user', content: JSON.stringify({ title: input.title, description: input.description }) }] })]);
+  const results = [...photoCalls, ...textCalls];
   const failures: string[] = [];
   const answers = results.map((r,i) => {
-    if (r.status === 'rejected') { failures.push(`${i ? 'Текст' : 'Фото'}: ${r.reason instanceof Error ? r.reason.message : 'ошибка ИИ'}`); return null; }
+    if (r.status === 'rejected') { failures.push(`${i < files.length ? `Фото ${photoUrls.indexOf(files[i].proof.url) + 1}` : 'Текст'}: ${r.reason instanceof Error ? r.reason.message : 'ошибка ИИ'}`); return null; }
     if (!r.value) return null;
+    if (i < files.length) return r.value;
     try { return { body: r.value, data: parseAnswer(r.value) }; }
-    catch (e) { failures.push(`${i ? 'Текст' : 'Фото'}: ${e instanceof Error ? e.message : 'неверный JSON'}`); return null; }
+    catch (e) { failures.push(`Текст: ${e instanceof Error ? e.message : 'неверный JSON'}`); return null; }
   });
-  const [vision, cardText] = answers;
-  const visualPhotos = Array.isArray(vision?.data.photos) ? vision.data.photos.filter(p => p && typeof p === 'object') as Record<string, unknown>[] : [];
-  // Accept the legacy single-image response during rolling deployments.
-  if (vision && !visualPhotos.length && files.length === 1 && vision.data.image_observed === true)
-    visualPhotos.push({ ...vision.data, photo_number: 1 });
+  const photoAnswers = answers.slice(0, files.length).filter((a): a is { body: Completion; data: { photo: Record<string, unknown>; reference_matches?: unknown } } => Boolean(a));
+  const cardText = answers[files.length] as { body: Completion; data: Record<string, unknown> } | null;
+  const vision = photoAnswers.length ? { body: photoAnswers[0].body, data: {
+    photos: photoAnswers.map(a => a.data.photo),
+    detected_text: photoAnswers.map(a => text(a.data.photo.detected_text, 1000)).filter(Boolean).join('\n'),
+    reference_matches: photoAnswers.flatMap(a => Array.isArray(a.data.reference_matches) ? a.data.reference_matches : []),
+  } } : null;
+  const visualPhotos = photoAnswers.map(a => a.data.photo);
   const photoResults = photoUrls.map((url, i) => {
     const proof = photoProofs.find(p => p.url === url) ?? { status: 'failed' as const, url, error: 'Фото не передано модели' };
     const visual = visualPhotos.find(p => p.photo_number === i + 1) ?? visualPhotos[i];
@@ -295,11 +319,17 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
   const risk = incomplete ? 'insufficient' : assess(objects, image, observed, russianCases);
   const referenceMatches = (Array.isArray(vision?.data.reference_matches) ? vision.data.reference_matches : []).filter(r =>
     r && typeof r === 'object' && refProof.some(p => p.id === r.reference_id && p.status === 'sent')).slice(0, 3);
-  const actualModels = results.flatMap(r => r.status === 'fulfilled' && r.value?.model ? [r.value.model] : []);
+  const actualModels = results.flatMap(r => {
+    if (r.status !== 'fulfilled') return [];
+    const response = (r.value as { body?: Completion })?.body ?? r.value as Completion;
+    return response?.model ? [response.model] : [];
+  });
   const usage: Record<string, number> = {};
-  for (const r of results) if (r.status === 'fulfilled' && r.value?.usage) {
+  for (const r of results) if (r.status === 'fulfilled') {
+    const used = (r.value as { body?: Completion })?.body ?? r.value as Completion;
+    if (!used?.usage) continue;
     for (const k of ['prompt_tokens','completion_tokens','total_tokens','cost']) {
-      const v = r.value.usage[k]; if (typeof v === 'number' && Number.isFinite(v)) usage[k] = (usage[k] ?? 0) + v;
+      const v = used.usage[k]; if (typeof v === 'number' && Number.isFinite(v)) usage[k] = (usage[k] ?? 0) + v;
     }
   }
   const error = [image.error, ...photoProofs.filter(p => p.status !== 'sent').map(p => p.error), ...failures,

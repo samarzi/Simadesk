@@ -25,22 +25,20 @@ beforeEach(() => {
   vi.mocked(analysisAiFetch).mockResolvedValue(new Response(JSON.stringify({ model: 'actual/free:free', choices: [{ message: { content: JSON.stringify({ risk: 'insufficient', reason: 'Нет фото', object_name: 'Пример', details: { audit_version: 'ru-photo-v3' } }) } }] })));
 });
 
-it('runs Auto without loading a catalog, respects selected stores and prevents duplicate starts', async () => {
+it('respects selected stores, avoids duplicate starts and does not send cards without photos to AI', async () => {
   const cards = [1,2].map(i => ({ uid: `c${i}`, mp: 'wb' as const, storeId: `s${i}`, storeName: `Store ${i}`, vendorCode: `A${i}`, name: 'Товар с упоминанием объекта', photoUrls: [] }));
   const audit = new IpAudit(() => cards, async () => 'Описание товара', vi.fn());
   await audit.load(); audit.toggleStore('s2');
   const running = audit.start('sample');
   await audit.start('sample'); await running;
   expect(loadAiCatalog).not.toHaveBeenCalled();
-  expect(analysisAiFetch).toHaveBeenCalledOnce();
-  const request = vi.mocked(analysisAiFetch).mock.calls[0][0] as any;
-  expect(request.model).toBe('auto');
-  expect(request.rights_audit).toMatchObject({ description: 'Описание товара', title: 'Товар с упоминанием объекта', photo_url: null });
+  expect(analysisAiFetch).not.toHaveBeenCalled();
   const runs = vi.mocked(dbFetch).mock.calls.filter(([path]) => path === 'ip_audit_runs');
   expect(runs).toHaveLength(1);
   expect(JSON.parse(String(runs[0][1]?.body))).toMatchObject({ total: 1, product_keys: ['c1'], model_id: 'auto' });
-  expect(audit.findings[0].details.actual_model).toBe('actual/free:free');
-  expect(audit.runs[0].status).toBe('completed');
+  expect(audit.findings[0].risk).toBe('insufficient');
+  expect(audit.findings[0].error).toContain('Нет фото для анализа');
+  expect(audit.runs[0].status).toBe('paused');
 });
 
 it('still analyses the photo if fetching the marketplace description fails', async () => {

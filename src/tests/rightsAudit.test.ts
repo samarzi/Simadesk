@@ -87,6 +87,28 @@ it('runs independent visual and text passes, sends bytes, reports grounding and 
   expect(result.usage.total_tokens).toBe(60);
 });
 
+it('checks a gallery one photo at a time, retries a transient free-model failure and keeps one card result', async () => {
+  const secondPhoto = 'https://basket-45.wbbasket.ru/photo-2.webp';
+  let firstPhotoFailures = 0;
+  const complete = vi.fn(async (body: Record<string, unknown>) => {
+    const raw = JSON.stringify(body);
+    if (raw.includes('image_url')) {
+      const images = (body.messages as { content: { type?: string }[] }[])[1].content.filter(part => part.type === 'image_url');
+      expect(images).toHaveLength(1);
+      if (raw.includes('фото товара №1') && firstPhotoFailures++ === 0) throw new Error('429 rate limit');
+      const photoNumber = raw.includes('фото товара №2') ? 2 : 1;
+      return answer({ photos: [{ photo_number: photoNumber, image_observed: true, visual_description: `Фото ${photoNumber}: изображение рассмотрено`, detected_text: '', objects: [] }] });
+    }
+    return answer({ objects: [] });
+  });
+  const result = await runRightsAudit({ photo_urls: [PHOTO, secondPhoto], title: 'Товар' }, 'auto', complete, fetcher as typeof fetch);
+  const finding = JSON.parse(result.choices[0].message.content);
+  expect(complete).toHaveBeenCalledTimes(4); // два фото, один повтор, один текстовый проход
+  expect(finding.risk).toBe('none');
+  expect(finding.details.photo_results.map((photo: { model_observed: boolean }) => photo.model_observed)).toEqual([true, true]);
+  expect(finding.details.summary.checked[0]).toBe('Фото просмотрены моделью: 2/2');
+});
+
 it('keeps title findings when photo download fails, without claiming visual success', async () => {
   const complete = vi.fn(async () => answer({ objects: [{ name: 'Рик и Морти', type: 'название', source: 'title', evidence: 'Рик и Морти', confidence: .9 }] }));
   const result = await runRightsAudit({ photo_url: 'https://localhost/secret', title: 'Рик и Морти' }, 'auto', complete, fetcher as typeof fetch);
