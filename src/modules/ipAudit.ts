@@ -142,7 +142,7 @@ export class IpAudit {
       cards = balanced;
     }
     if (scope === 'new') {
-      const done = new Set(this.findings.filter(f => !f.error && f.details?.audit_version === 'ru-photo-v3').map(f => `${f.marketplace}:${f.store_id}:${f.product_id}`));
+      const done = new Set(this.findings.filter(f => !f.error && f.details?.audit_version === 'ru-photo-v4' && f.photo_index === -1).map(f => `${f.marketplace}:${f.store_id}:${f.product_id}`));
       cards = cards.filter(c => !done.has(`${c.mp}:${c.storeId}:${c.uid}`));
     }
     if (!cards.length) { this.message = 'Нет карточек для выбранной проверки.'; this.paint(); return; }
@@ -172,8 +172,8 @@ export class IpAudit {
     const targets = new Set(run.product_keys ?? []);
     const cards = this.cards().filter(c => {
       if (!targets.has(c.uid)) return false;
-      const photos = c.photoUrls.length ? c.photoUrls.length : 1;
-      return this.findings.filter(f => f.run_id === id && f.marketplace === c.mp && f.store_id === c.storeId && f.product_id === c.uid && !f.error).length < photos;
+      const saved = this.findings.filter(f => f.run_id === id && f.marketplace === c.mp && f.store_id === c.storeId && f.product_id === c.uid && !f.error);
+      return !saved.some(f => f.photo_index === -1) && saved.length < (c.photoUrls.length || 1);
     });
     await this.execute(run, cards);
   }
@@ -183,7 +183,11 @@ export class IpAudit {
     this.busy = true; this.stop = false; this.message = 'Проверяем карточки последовательно…'; this.paint();
     try {
       await this.patchRun(run, { status: 'running' });
-      const completed = new Set(this.cards().filter(c => (run.product_keys ?? []).includes(c.uid) && this.findings.filter(f => f.run_id === run.id && f.product_id === c.uid).length >= (c.photoUrls.length || 1)).map(c => c.uid));
+      const completed = new Set(this.cards().filter(c => {
+        if (!(run.product_keys ?? []).includes(c.uid)) return false;
+        const saved = this.findings.filter(f => f.run_id === run.id && f.marketplace === c.mp && f.store_id === c.storeId && f.product_id === c.uid && !f.error);
+        return saved.some(f => f.photo_index === -1) || saved.length >= (c.photoUrls.length || 1);
+      }).map(c => c.uid));
       let transientErrors = 0;
       let consecutiveErrors = 0;
       for (const c of cards) {
@@ -193,37 +197,36 @@ export class IpAudit {
           let desc = '', descriptionError = '';
           try { desc = await this.description(c); }
           catch (e) { descriptionError = `Описание маркетплейса не загружено: ${e instanceof Error ? e.message : String(e)}`; }
-          const photos = c.photoUrls.length ? c.photoUrls : [null];
-          for (let i = 0; i < photos.length; i++) {
-            if (this.stop || runCompany !== companyService.getActiveId()) break;
-            const photo = photos[i];
-            if (this.findings.some(f => f.run_id === run.id && f.marketplace === c.mp && f.store_id === c.storeId && f.product_id === c.uid && f.photo_index === (photo ? i : -1) && !f.error)) continue;
-            const fingerprint = await this.hash(`ru-photo-v3\n${run.id}\n${run.model_id}\n${JSON.stringify(this.references)}\n${c.name}\n${desc}\n${photo ?? ''}`);
-            // Re-read image bytes in each run: a CDN URL can keep its name while the photo changes.
-            const result = await this.analyze(c, desc, photo, run.model_id);
-            if (descriptionError) {
-              result.details.description_error = descriptionError;
-              result.error = [result.error, descriptionError].filter(Boolean).join('; ');
-              if (result.risk === 'none' || result.risk === 'low') result.risk = 'insufficient';
-            }
-            if (runCompany !== companyService.getActiveId()) { this.stop = true; break; }
-            const row = { company_id: runCompany, run_id: run.id, marketplace: c.mp, store_id: c.storeId,
-              product_id: c.uid, vendor_code: c.vendorCode, product_name: c.name, product_brand: '',
-              product_description: desc, product_url: productLink(c), photo_url: photo, photo_index: photo ? i : -1,
-              fingerprint, ...result };
-            const saved = await dbFetch<Finding[]>('ip_audit_findings?on_conflict=run_id,marketplace,store_id,product_id,photo_index', {
-              method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body: JSON.stringify(row),
-            });
-            this.findings = this.findings.filter(f => f.id !== saved[0].id);
-            this.findings.unshift(saved[0]);
-            if (result.error) cardHadError = true;
-            this.paint();
-            await pause(450);
+          if (this.findings.some(f => f.run_id === run.id && f.marketplace === c.mp && f.store_id === c.storeId && f.product_id === c.uid && f.photo_index === -1 && !f.error)) {
+            completed.add(c.uid);
+            continue;
           }
+          const photos = [...new Set(c.photoUrls.filter(safeUrl))];
+          const fingerprint = await this.hash(`ru-photo-v4\n${run.id}\n${run.model_id}\n${JSON.stringify(this.references)}\n${c.name}\n${desc}\n${photos.join('\n')}`);
+          // Send the complete photo set in one model request and save one card-level result.
+          const result = await this.analyze(c, desc, photos, run.model_id);
+          if (descriptionError) {
+            result.details.description_error = descriptionError;
+            result.error = [result.error, descriptionError].filter(Boolean).join('; ');
+            if (result.risk === 'none' || result.risk === 'low') result.risk = 'insufficient';
+          }
+          if (runCompany !== companyService.getActiveId()) { this.stop = true; break; }
+          const row = { company_id: runCompany, run_id: run.id, marketplace: c.mp, store_id: c.storeId,
+            product_id: c.uid, vendor_code: c.vendorCode, product_name: c.name, product_brand: '',
+            product_description: desc, product_url: productLink(c), photo_url: photos[0] ?? null, photo_index: -1,
+            fingerprint, ...result };
+          const saved = await dbFetch<Finding[]>('ip_audit_findings?on_conflict=run_id,marketplace,store_id,product_id,photo_index', {
+            method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body: JSON.stringify(row),
+          });
+          this.findings = this.findings.filter(f => f.id !== saved[0].id);
+          this.findings.unshift(saved[0]);
+          if (result.error) cardHadError = true;
+          this.paint();
+          await pause(450);
         } catch (e) { transientErrors++; cardHadError = true; this.message = `Ошибка карточки ${c.vendorCode}: ${e instanceof Error ? e.message : String(e)}`; }
         if (runCompany !== companyService.getActiveId()) { this.stop = true; break; }
         run.errors = this.findings.filter(f => f.run_id === run.id && f.error).length + transientErrors;
-        if (this.findings.filter(f => f.run_id === run.id && f.marketplace === c.mp && f.store_id === c.storeId && f.product_id === c.uid).length >= (c.photoUrls.length || 1)) completed.add(c.uid);
+        if (this.findings.some(f => f.run_id === run.id && f.marketplace === c.mp && f.store_id === c.storeId && f.product_id === c.uid && f.photo_index === -1 && !f.error)) completed.add(c.uid);
         run.processed = completed.size;
         await this.patchRun(run, { processed: run.processed, errors: run.errors });
         this.paint();
@@ -247,11 +250,11 @@ export class IpAudit {
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
     return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join('');
   }
-  private async analyze(c: AuditCard, desc: string, photo: string | null, modelId: string): Promise<Pick<Finding, 'risk'|'object_type'|'object_name'|'rights_holder'|'reason'|'confidence'|'detected_text'|'details'|'error'>> {
-    if (photo && !safeUrl(photo)) return { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Недопустимый URL фотографии', confidence: null, detected_text: '', details: {}, error: 'Недоступный URL' };
+  private async analyze(c: AuditCard, desc: string, photos: string[], modelId: string): Promise<Pick<Finding, 'risk'|'object_type'|'object_name'|'rights_holder'|'reason'|'confidence'|'detected_text'|'details'|'error'>> {
+    if (photos.some(photo => !safeUrl(photo))) return { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Недопустимый URL фотографии', confidence: null, detected_text: '', details: {}, error: 'Недоступный URL' };
     try {
       const res = await analysisAiFetch({ model: modelId, rights_audit: {
-        photo_url: photo, title: c.name, description: desc, marketplace: c.mp,
+        photo_urls: photos, title: c.name, description: desc, marketplace: c.mp,
         references: this.references.slice(0, 100),
       } }, undefined, 'rights');
       if (!res.ok) {
@@ -264,7 +267,7 @@ export class IpAudit {
       const raw = body.choices?.[0]?.message?.content;
       if (typeof raw !== 'string') throw new Error('Пустой ответ ИИ');
       const data = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, ''));
-      if (data.details?.audit_version !== 'ru-photo-v3') throw new Error('Сервер не подтвердил проверку фото и источников для РФ. Обновите страницу и повторите.');
+      if (data.details?.audit_version !== 'ru-photo-v4') throw new Error('Сервер не подтвердил проверку всех фото и источников для РФ. Обновите страницу и повторите.');
       const risk: Risk = ['high','medium','low','none','insufficient'].includes(data.risk) ? data.risk : 'insufficient';
       return { risk, object_type: String(data.object_type ?? ''), object_name: String(data.object_name ?? ''),
         rights_holder: '', reason: String(data.reason ?? ''),
@@ -331,10 +334,12 @@ export class IpAudit {
   async export(onlyRisk: boolean): Promise<void> {
     const list = this.findings.filter(f => (!this.selectedRun || f.run_id === this.selectedRun) && (!onlyRisk || ['high','medium','low','insufficient'].includes(f.risk)));
     await exportXlsx(exportFileName('ip-audit', 'xlsx'), [{ name: 'Аудит прав', rows: [
-      ['МП','Артикул','Название','Фото','Объект','Тип','Правообладатель','Приоритет проверки','Основание','Источник','Ручная проверка','Комментарий','Дата','Юрисдикция','Фото передано','SHA-256 фото','Публичные упоминания агентств','Источники агентств','Правовой статус'],
-      ...list.map(f => [f.marketplace, f.vendor_code, f.product_name, f.photo_url, f.object_name, f.object_type,
+      ['МП','Артикул','Название','Все фото карточки','Объект','Тип','Правообладатель','Приоритет проверки','Основание','Источник','Ручная проверка','Комментарий','Дата','Юрисдикция','Фото передано','Контрольные суммы фото','Публичные упоминания агентств','Источники агентств','Правовой статус'],
+      ...list.map(f => [f.marketplace, f.vendor_code, f.product_name,
+        (Array.isArray(f.details?.photo_results) ? (f.details.photo_results as { url?: string }[]).map(p => p.url).filter(Boolean).join('; ') : f.photo_url), f.object_name, f.object_type,
         f.rights_holder, RISK_LABEL[f.risk], f.reason, f.evidence_url, REVIEW_LABEL[f.review_status], f.review_comment, f.created_at,
-        String(f.details?.jurisdiction || ''), (f.details?.image as { status?: string })?.status || '', (f.details?.image as { sha256?: string })?.sha256 || '',
+        String(f.details?.jurisdiction || ''), (f.details?.image as { status?: string })?.status || '',
+        (Array.isArray(f.details?.photo_results) ? (f.details.photo_results as { sha256?: string }[]).map(p => p.sha256).filter(Boolean).join('; ') : (f.details?.image as { sha256?: string })?.sha256) || '',
         ((f.details?.agencies as { matches?: { agency: string; name: string }[] })?.matches || []).map(m => `${m.agency}: ${m.name}`).join('; '),
         ((f.details?.agencies as { matches?: { url: string }[] })?.matches || []).map(m => m.url).join('; '), 'Права, лицензия и полномочия представителя не проверены']),
     ] }]);
@@ -367,7 +372,7 @@ export class IpAudit {
     let out = `<div class="ca-body ip-audit">${this.message ? `<div class="ip-notice" role="status">${clean(this.message)}</div>` : ''}`;
     if (this.section === 'overview') {
       out += `<div class="ca-intro"><div><span class="ca-eyebrow">РОССИЯ · ФОТО · НАЗВАНИЕ · ОПИСАНИЕ</span><h1>Проверьте, что требует внимания</h1><p>Распознавание каждого фото, проверка текста и сопоставление с открытыми источниками MegaLicense и BrandMonitor. Сохраняйте документы и результат проверки.</p></div><div class="ip-shield">◇</div></div>
-        <div class="ca-metrics"><div><span>Карточек в выборе</span><b>${count}</b></div><div><span>Проверено фотографий</span><b>${latest.length}</b></div><div><span>Требуют внимания</span><b class="ca-warning">${risks}</b></div><div><span>Сохранённых проверок</span><b>${this.runs.length}</b></div></div>
+        <div class="ca-metrics"><div><span>Карточек в выборе</span><b>${count}</b></div><div><span>Проверено карточек</span><b>${latest.length}</b></div><div><span>Требуют внимания</span><b class="ca-warning">${risks}</b></div><div><span>Сохранённых проверок</span><b>${this.runs.length}</b></div></div>
         <section class="ca-surface">${this.renderStores()}<div class="ca-launch"><select id="ip-scope" class="ca-search" aria-label="Объём проверки"><option value="sample">Пробная · до 50 карточек</option><option value="new">Только новые карточки</option><option value="all" ${!this.runs.some(r => r.scope === 'sample' && r.status === 'completed') ? 'disabled' : ''}>Весь выбранный каталог</option></select><button class="ca-primary" onclick="window.myAnalysisModule?.ipStart(document.getElementById('ip-scope').value)" ${this.busy || !count ? 'disabled' : ''}>${this.busy ? 'Проверяем…' : 'Начать проверку'} <span>→</span></button></div></section>
         <section class="ca-surface ip-single"><div><b>Проверить конкретный товар</b><p>Артикул продавца в выбранных магазинах</p></div><input id="ip-article" class="ca-search" placeholder="Артикул"><button class="ca-btn" onclick="window.myAnalysisModule?.ipStart('selected',document.getElementById('ip-article').value)" ${this.busy ? 'disabled' : ''}>Проверить</button></section>
         ${run ? `<section class="ca-surface ip-last-run"><div><small>ПОСЛЕДНЯЯ ПРОВЕРКА</small><b>${date(run.created_at)} · ${status[run.status] || clean(run.status)}</b><span>${run.processed} из ${run.total} карточек · ошибок ${run.errors}</span></div><button class="ca-btn" onclick="window.myAnalysisModule?.ipChooseRun('${run.id}')">Открыть результаты →</button></section>` : ''}
@@ -391,7 +396,9 @@ export class IpAudit {
     const ref = this.references.find(r => r.id === f.details?.reference_id);
     const sources = Array.isArray(f.details?.search_sources) ? f.details.search_sources as string[] : [];
     const matchScore = f.details?.match_score;
-    return `<article class="ip-finding"><div class="ip-finding-select"><input type="checkbox" aria-label="Выбрать результат" ${this.selectedFindings.has(f.id) ? 'checked' : ''} onchange="window.myAnalysisModule?.ipToggleSelect('${f.id}')"></div><details data-key="finding-${f.id}"><summary>${safeUrl(f.photo_url) ? `<img src="${clean(f.photo_url)}" loading="lazy" alt="">` : '<span class="ip-no-photo">◇</span>'}<span class="ip-finding-title"><b>${clean(f.product_name)}</b><small>${clean(f.marketplace.toUpperCase())} · ${clean(f.vendor_code)} · ${f.photo_index >= 0 ? `фото ${f.photo_index + 1}` : 'без фото'}</small><span>${clean(f.object_name || f.reason || 'Объект не определён')}</span></span><span class="ip-risk ip-risk-${f.risk}">${RISK_LABEL[f.risk]}</span><span class="ip-expand">⌄</span></summary>
+    const cardPhotos = Array.isArray(f.details?.photo_results) ? f.details.photo_results as { photo_number: number; url: string; status: string; model_observed: boolean }[] : [];
+    const photoLabel = f.photo_index === -1 && f.details?.audit_version === 'ru-photo-v4' ? `вся карточка · ${cardPhotos.length ? `${cardPhotos.length} фото` : 'без фото'}` : f.photo_index >= 0 ? `фото ${f.photo_index + 1}` : 'без фото';
+    return `<article class="ip-finding"><div class="ip-finding-select"><input type="checkbox" aria-label="Выбрать результат" ${this.selectedFindings.has(f.id) ? 'checked' : ''} onchange="window.myAnalysisModule?.ipToggleSelect('${f.id}')"></div><details data-key="finding-${f.id}"><summary>${safeUrl(f.photo_url) ? `<img src="${clean(f.photo_url)}" loading="lazy" alt="">` : '<span class="ip-no-photo">◇</span>'}<span class="ip-finding-title"><b>${clean(f.product_name)}</b><small>${clean(f.marketplace.toUpperCase())} · ${clean(f.vendor_code)} · ${photoLabel}</small><span>${clean(f.object_name || f.reason || 'Объект не определён')}</span></span><span class="ip-risk ip-risk-${f.risk}">${RISK_LABEL[f.risk]}</span><span class="ip-expand">⌄</span></summary>
       <div class="ip-finding-body"><div class="ip-evidence"><div>${safeUrl(f.photo_url) ? `<a href="${clean(f.photo_url)}" target="_blank" rel="noopener noreferrer"><img src="${clean(f.photo_url)}" loading="lazy" alt="Фото товара"></a><small>Фото товара</small>` : ''}</div>${ref && safeUrl(ref.image_url) ? `<div><img src="${clean(ref.image_url)}" loading="lazy" alt="Эталон"><small>${clean(ref.name)}</small></div>` : ''}<div class="ip-reason"><b>${clean(f.object_name || 'Объект не назван')}</b><p>${clean(f.reason)}</p>${f.error ? `<p class="ca-error">${clean(f.error)}</p>` : ''}<small>${clean(f.object_type)} · ${clean(f.rights_holder || 'Правообладатель не установлен')}</small>${matchScore != null ? `<small>Оценка сходства ИИ: ${Math.round(Number(matchScore)*100)}%</small>` : ''}<small>${clean(f.detected_text)}</small></div></div>
       ${this.renderAuditEvidence(f)}
       ${f.details?.visual_description ? `<p><b>Что увидела модель:</b> ${clean(f.details.visual_description)}</p>` : ''}${f.details?.additional_checks ? `<details class="ip-legal-checks"><summary>Что проверить по правам в РФ</summary><p>${clean(f.details.additional_checks)}</p></details>` : ''}
@@ -400,16 +407,18 @@ export class IpAudit {
       <div class="ip-review"><label>Результат проверки<select id="ip-status-${f.id}">${Object.entries(REVIEW_LABEL).map(([v,l]) => `<option value="${v}" ${f.review_status === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label><label>Комментарий<input id="ip-comment-${f.id}" value="${clean(f.review_comment)}" placeholder="Ваш вывод"></label><label>Документ или источник<input id="ip-evidence-${f.id}" value="${clean(f.evidence_url)}" placeholder="https://…"></label><button class="ca-btn" onclick="window.myAnalysisModule?.ipReview('${f.id}')">Сохранить</button><button class="ca-text-btn" onclick="window.myAnalysisModule?.ipSearchSource('${f.id}')">Подготовить поиск ↗</button></div></div></details></article>`;
   }
   private renderAuditEvidence(f: Finding): string {
-    if (f.details?.audit_version !== 'ru-photo-v3') return `<div class="ip-proof ip-proof-warning">${f.error ? 'Проверка не завершена: фото и источники по РФ не подтверждены. Повторите проверку.' : 'Предыдущая версия проверки: загрузка фото и источники по РФ не подтверждены. Запустите новую проверку этого товара.'}</div>`;
+    if (f.details?.audit_version !== 'ru-photo-v3' && f.details?.audit_version !== 'ru-photo-v4') return `<div class="ip-proof ip-proof-warning">${f.error ? 'Проверка не завершена: фото и источники по РФ не подтверждены. Повторите проверку.' : 'Предыдущая версия проверки: загрузка фото и источники по РФ не подтверждены. Запустите новую проверку этого товара.'}</div>`;
     const image = f.details.image as { status: string; bytes?: number; sha256?: string; model_observed?: boolean };
     const objects = f.details.objects as { name: string; type: string; source: string; evidence: string; location?: string; ru_checks?: string }[];
     const agencies = f.details.agencies as { matches: { agency: string; name: string; url: string; kind: string; note: string }[]; catalog_status: string; checked_at: string; coverage: string; sources: { url: string; status: string }[] };
     const refs = f.details.reference_images as { id: string; status: string; error?: string }[];
     const laws = f.details.legal_sources as { title: string; url: string }[];
     const models = f.details.actual_models as string[];
+    const photos = Array.isArray(f.details.photo_results) ? f.details.photo_results as { photo_number: number; url: string; status: string; model_observed: boolean; visual_description?: string; detected_text?: string; error?: string }[] : [];
     const date = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v)) ? new Date(v).toLocaleString('ru-RU') : 'не установлена';
     return `<div class="ip-proof ${image?.status === 'sent' && image.model_observed ? '' : 'ip-proof-warning'}"><b>РФ · ${image?.status === 'sent' && image.model_observed ? 'Файл фото передан, модель описала изображение' : 'Визуальная проверка не завершена'}</b><span>${image?.bytes ? `${Math.round(image.bytes / 1024)} КБ · ` : ''}${date(f.details.checked_at)}</span>${image?.sha256 ? `<small title="Контрольная сумма переданного файла">SHA-256: ${clean(image.sha256)}</small>` : ''}${models?.length ? `<small>Фото / текст: ${models.map(m => clean(m)).join(' / ')}</small>` : ''}</div>
-      ${objects?.length ? `<div class="ip-object-grid">${objects.map(o => `<div><small>${o.source === 'photo' ? 'НА ФОТО' : o.source === 'title' ? 'В НАЗВАНИИ' : 'В ОПИСАНИИ'} · ${clean(o.type)}</small><b>${clean(o.name)}</b><p>${clean(o.evidence)}</p>${o.location ? `<small>${clean(o.location)}</small>` : ''}${o.ru_checks ? `<p><b>Проверка для РФ</b>${clean(o.ru_checks)}</p>` : ''}</div>`).join('')}</div>` : ''}
+      ${photos.length ? `<div class="ip-object-grid ip-photo-results">${photos.map(p => `<div>${safeUrl(p.url) ? `<a href="${clean(p.url)}" target="_blank" rel="noopener noreferrer"><img src="${clean(p.url)}" loading="lazy" alt="Фото ${p.photo_number}"></a>` : ''}<small>ФОТО ${p.photo_number} · ${p.status === 'sent' && p.model_observed ? 'просмотрено моделью' : 'не проверено'}</small>${p.visual_description ? `<p>${clean(p.visual_description)}</p>` : ''}${p.detected_text ? `<small>Текст на фото: ${clean(p.detected_text)}</small>` : ''}${p.error ? `<p class="ca-error">${clean(p.error)}</p>` : ''}</div>`).join('')}</div>` : ''}
+      ${objects?.length ? `<div class="ip-object-grid">${objects.map(o => `<div><small>${o.source === 'photo' ? `ФОТО ${Number((o as { photo_number?: number }).photo_number || 0) || '—'}` : o.source === 'title' ? 'В НАЗВАНИИ' : 'В ОПИСАНИИ'} · ${clean(o.type)}</small><b>${clean(o.name)}</b><p>${clean(o.evidence)}</p>${o.location ? `<small>${clean(o.location)}</small>` : ''}${o.ru_checks ? `<p><b>Проверка для РФ</b>${clean(o.ru_checks)}</p>` : ''}</div>`).join('')}</div>` : ''}
       <div class="ip-agencies"><b>Представители и публичные источники</b>${agencies?.matches?.length ? agencies.matches.map(m => `<div><a href="${clean(safeUrl(m.url))}" target="_blank" rel="noopener noreferrer">${clean(m.agency)} · ${clean(m.name)} ↗</a><span>${m.kind === 'portfolio' ? 'Есть в открытом каталоге' : 'Есть поимённый отзыв на сайте'}</span><p>${clean(m.note)}</p></div>`).join('') : '<p>Связь найденных объектов с MegaLicense или BrandMonitor по доступным публичным сведениям не установлена. Это не означает отсутствия прав или разрешение на продажу.</p>'}<small>Данные каталога: ${date(agencies?.checked_at)}${agencies?.catalog_status !== 'live' ? ' · часть источников недоступна или сведения устарели' : ''}. ${clean(agencies?.coverage)}</small><p class="ip-source-links">${(agencies?.sources || []).map(s => `<a href="${clean(safeUrl(s.url))}" target="_blank" rel="noopener noreferrer">${s.url.includes('megalicense') ? 'MegaLicense' : 'BrandMonitor'} · ${s.status === 'live' ? 'источник загружен' : 'недоступен'} ↗</a>`).join('')}</p><small>Охрана объекта, действующий правообладатель, лицензия и полномочия на претензии не установлены автоматически.</small></div>
       ${refs?.length ? `<details class="ip-legal-checks"><summary>Эталонные изображения</summary>${refs.map(r => `<p>${clean(this.references.find(x => x.id === r.id)?.name || r.id)}: ${r.status === 'sent' ? 'файл передан для сравнения' : clean(r.error || 'не загружен')}</p>`).join('')}</details>` : ''}
       <p class="ip-source-links">${(laws || []).map(l => `<a href="${clean(safeUrl(l.url))}" target="_blank" rel="noopener noreferrer">${clean(l.title)} ↗</a>`).join('')}</p>`;
