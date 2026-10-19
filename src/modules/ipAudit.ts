@@ -30,6 +30,24 @@ const clean = (s: unknown): string => String(s ?? '').replace(/[&<>"']/g, c => (
 const safeUrl = (s: string | null | undefined) => /^https:\/\//i.test(s ?? '') ? s || '' : '';
 const productLink = (c: AuditCard): string => c.mp === 'wb' && c.nmId ? `https://www.wildberries.ru/catalog/${c.nmId}/detail.aspx` : '';
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const MODEL_STABILITY_KEY = 'sd_ip_free_model_stability_v1';
+interface ModelStability { ok: number; failed: number; avgMs: number; lastFailure?: number; }
+function readModelStability(): Record<string, ModelStability> {
+  try { const raw = JSON.parse(localStorage.getItem(MODEL_STABILITY_KEY) || '{}'); return raw && typeof raw === 'object' ? raw : {}; }
+  catch { return {}; }
+}
+function updateModelStability(id: string, ok: boolean, elapsed: number): void {
+  const state = readModelStability(); const previous = state[id] ?? { ok: 0, failed: 0, avgMs: elapsed };
+  state[id] = { ok: Math.min(30, previous.ok + (ok ? 1 : 0)), failed: Math.min(30, previous.failed + (ok ? 0 : 1)),
+    avgMs: previous.avgMs ? previous.avgMs * .7 + elapsed * .3 : elapsed, lastFailure: ok ? previous.lastFailure : Date.now() };
+  try { localStorage.setItem(MODEL_STABILITY_KEY, JSON.stringify(state)); } catch { /* optional cross-run learning */ }
+}
+function modelStabilityScore(modelId: string, state: Record<string, ModelStability>): number {
+  const m = state[modelId]; if (!m) return 0;
+  const reliability = (m.ok + 2) / (m.ok + m.failed + 4);
+  const recentPenalty = m.lastFailure && Date.now() - m.lastFailure < 30 * 60_000 ? .15 : 0;
+  return reliability - Math.min(.12, m.avgMs / 120_000) - recentPenalty;
+}
 
 export class IpAudit {
   runs: Run[] = [];
@@ -44,6 +62,7 @@ export class IpAudit {
   private stop = false;
   private skipCurrentRequested = false;
   private currentCard: AuditCard | null = null;
+  private currentStage = '';
   private currentAbort: AbortController | null = null;
   private companyId = '';
   private selectedStores: Set<string> | null = null;
@@ -200,30 +219,43 @@ export class IpAudit {
       }).map(c => c.uid));
       let transientErrors = 0;
       let consecutiveErrors = 0;
+      let unresolvedVendor = '';
       for (const c of cards) {
         if (this.stop || runCompany !== companyService.getActiveId()) break;
-        this.currentCard = c; this.skipCurrentRequested = false; this.currentAbort = new AbortController();
+        this.currentCard = c; this.currentStage = 'Загружаю сведения карточки'; this.skipCurrentRequested = false; this.currentAbort = new AbortController();
         this.message = `Проверяем карточку ${c.vendorCode} · ${completed.size + 1} из ${run.total}`;
         this.paint();
         let cardHadError = false;
+        let cardNeedsRetry = false;
         try {
+          this.currentStage = 'Загружаю название и описание товара'; this.paint();
           let desc = '', descriptionError = '';
           try { desc = await this.description(c); }
           catch (e) { descriptionError = `Описание маркетплейса не загружено: ${e instanceof Error ? e.message : String(e)}`; }
           const photos = [...new Set(c.photoUrls.filter(safeUrl))];
           const fingerprint = await this.hash(`ru-photo-v5\n${run.id}\n${run.model_id}\n${JSON.stringify(this.references)}\n${c.name}\n${desc}\n${photos.join('\n')}`);
           // Send the complete photo set in one model request and save one card-level result.
-          const result = await this.analyze(c, desc, photos, run.model_id, this.currentAbort.signal);
+          this.currentStage = `Передаю ${photos.length} фото и текст на проверку`; this.paint();
+          const result = await this.analyze(c, desc, photos, run.model_id, this.currentAbort.signal, stage => { this.currentStage = stage; this.paint(); });
           if (this.skipCurrentRequested) {
             result.risk = 'insufficient'; result.object_type = ''; result.object_name = '';
             result.reason = 'Проверка карточки пропущена пользователем.'; result.confidence = null; result.detected_text = ''; result.error = null;
             result.details = { audit_version: 'ru-photo-v5', skipped: true, checked_at: new Date().toISOString(),
               photo_results: photos.map((url, index) => ({ photo_number: index + 1, url, status: 'skipped', model_observed: false })) };
           }
-          if (descriptionError) {
+          if (descriptionError && !this.skipCurrentRequested) {
             result.details.description_error = descriptionError;
             result.error = [result.error, descriptionError].filter(Boolean).join('; ');
             if (result.risk === 'none' || result.risk === 'low') result.risk = 'insufficient';
+          }
+          if (!this.skipCurrentRequested && (result.risk === 'insufficient' || !!result.error)) {
+            result.risk = 'insufficient';
+            result.error = [result.error, 'Недостаточно подтверждённых данных после повторов; карточка не отмечена проверенной.'].filter(Boolean).join('; ');
+            result.details.retry_pending = true;
+            result.details.retry_reason = result.reason;
+            cardHadError = true; cardNeedsRetry = true;
+            unresolvedVendor = c.vendorCode;
+            this.message = `Недостаточно данных по ${c.vendorCode}. Карточка осталась в очереди, обход приостановлен.`;
           }
           if (runCompany !== companyService.getActiveId()) { this.stop = true; break; }
           const row = { company_id: runCompany, run_id: run.id, marketplace: c.mp, store_id: c.storeId,
@@ -254,19 +286,20 @@ export class IpAudit {
             this.findings = this.findings.filter(f => f.id !== saved[0].id); this.findings.unshift(saved[0]);
             this.message = `Карточка ${c.vendorCode} пропущена.`;
           } else { transientErrors++; cardHadError = true; this.message = `Ошибка карточки ${c.vendorCode}: ${e instanceof Error ? e.message : String(e)}`; }
-        } finally { this.currentCard = null; this.currentAbort = null; this.paint(); }
+        } finally { this.currentCard = null; this.currentStage = ''; this.currentAbort = null; this.paint(); }
         if (runCompany !== companyService.getActiveId()) { this.stop = true; break; }
         run.errors = this.findings.filter(f => f.run_id === run.id && f.error).length + transientErrors;
         if (this.findings.some(f => f.run_id === run.id && f.marketplace === c.mp && f.store_id === c.storeId && f.product_id === c.uid && f.photo_index === -1 && !f.error)) completed.add(c.uid);
         run.processed = completed.size;
         await this.patchRun(run, { processed: run.processed, errors: run.errors });
         this.paint();
+        if (cardNeedsRetry) { this.stop = true; break; }
         consecutiveErrors = cardHadError ? consecutiveErrors + 1 : 0;
         if (consecutiveErrors >= 5) throw new Error('Пять карточек подряд завершились ошибкой. Проверьте доступ к ИИ и фото, затем продолжите.');
       }
       const complete = !this.stop && run.processed >= run.total;
       await this.patchRun(run, { status: complete ? 'completed' : 'paused', finished_at: complete ? new Date().toISOString() : null });
-      this.message = complete ? run.errors ? `Обход завершён. Ошибок: ${run.errors}. Повторите незавершённые проверки кнопкой «Продолжить».` : 'Проверка завершена.' : 'Проверка приостановлена. Её можно продолжить.';
+      this.message = complete ? run.errors ? `Обход завершён. Ошибок: ${run.errors}. Повторите незавершённые проверки кнопкой «Продолжить».` : 'Проверка завершена.' : unresolvedVendor ? `Карточка ${unresolvedVendor} не отмечена проверенной: после перебора стабильных бесплатных моделей данных всё ещё недостаточно. Нажмите «Продолжить», чтобы повторить позже.` : 'Проверка приостановлена. Её можно продолжить.';
     } catch (e) {
       this.message = `Проверка прервана: ${e instanceof Error ? e.message : String(e)}`;
       await this.patchRun(run, { status: 'paused' }).catch(() => {});
@@ -281,20 +314,32 @@ export class IpAudit {
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
     return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join('');
   }
-  private async analyze(c: AuditCard, desc: string, photos: string[], modelId: string, signal?: AbortSignal): Promise<Pick<Finding, 'risk'|'object_type'|'object_name'|'rights_holder'|'reason'|'confidence'|'detected_text'|'details'|'error'>> {
+  private async analyze(c: AuditCard, desc: string, photos: string[], modelId: string, signal?: AbortSignal,
+    onStage: (stage: string) => void = () => {}): Promise<Pick<Finding, 'risk'|'object_type'|'object_name'|'rights_holder'|'reason'|'confidence'|'detected_text'|'details'|'error'>> {
+    if (!photos.length) return { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'В карточке нет доступных фото для визуальной проверки.', confidence: null, detected_text: '', details: {}, error: 'Нет фото для анализа' };
     if (photos.some(photo => !safeUrl(photo))) return { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Недопустимый URL фотографии', confidence: null, detected_text: '', details: {}, error: 'Недоступный URL' };
-    const catalog = modelId === AI_AUTO ? await loadAiCatalog().catch(() => null) : null;
+    const catalog = await loadAiCatalog().catch(() => null);
+    const selected = catalog?.models.find(m => m.id === modelId);
+    const freeMode = modelId === AI_AUTO || selected?.free === true || isFreeAiModel(modelId);
+    const stability = readModelStability();
     const freeVision = catalog?.models.filter(m => m.free && modelCompatible(m, { vision: true })) ?? [];
-    const providers = new Set<string>();
-    const diverseFreeVision = freeVision.filter(m => {
+    freeVision.sort((a, b) => modelStabilityScore(b.id, stability) - modelStabilityScore(a.id, stability) || (b.context ?? 0) - (a.context ?? 0));
+    const selectedProvider = modelId.includes('/') ? modelId.split('/')[0] : modelId;
+    const seenProviders = new Set<string>();
+    if (modelId !== AI_AUTO) seenProviders.add(selectedProvider);
+    const alternatives = freeVision.filter(m => {
       const provider = m.id.includes('/') ? m.id.split('/')[0] : m.id;
-      if (providers.has(provider)) return false;
-      providers.add(provider); return true;
-    });
-    // Automatic mode rotates through a few free vision models to recover from provider overloads.
-    const models = [...new Set([modelId, ...diverseFreeVision.map(m => m.id)])].slice(0, modelId === AI_AUTO ? 4 : 1);
+      if (seenProviders.has(provider)) return false;
+      seenProviders.add(provider); return true;
+    }).map(m => m.id);
+    // Retry with the most reliable free vision providers first. An explicitly chosen paid model stays selected.
+    const models = [...new Set([modelId, ...(freeMode ? alternatives : [])])].slice(0, freeMode ? 5 : 1);
     let last: Pick<Finding, 'risk'|'object_type'|'object_name'|'rights_holder'|'reason'|'confidence'|'detected_text'|'details'|'error'> | null = null;
-    for (const candidate of models) {
+    for (let index = 0; index < models.length; index++) {
+      const candidate = models[index];
+      const modelName = catalog?.models.find(m => m.id === candidate)?.name || candidate;
+      onStage(index === 0 ? `Проверяю все фото и текст · ${modelName}` : `Повтор ${index + 1}/${models.length} · переключил на ${modelName}`);
+      const startedAt = Date.now();
       try {
         const res = await analysisAiFetch({ model: candidate, rights_audit: {
           photo_urls: photos, title: c.name, description: desc, marketplace: c.mp,
@@ -320,18 +365,23 @@ export class IpAudit {
           detected_text: String(data.detected_text ?? ''),
           details: { ...(data.details && typeof data.details === 'object' ? data.details : {}), actual_model: body.model || candidate },
           error: typeof data.error === 'string' ? data.error : null };
-        if (!last.error) return last;
+        const complete = !last.error && risk !== 'insufficient';
+        if (!signal?.aborted) updateModelStability(candidate, complete, Date.now() - startedAt);
+        if (complete) return last;
+        if (index < models.length - 1) onStage(`${modelName}: недостаточно данных. Повторяю на другой бесплатной модели…`);
       } catch (e) {
-        last = { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Анализ не завершён', confidence: null, detected_text: '', details: {}, error: e instanceof Error ? e.message : String(e) };
+        if (signal?.aborted) break;
+        updateModelStability(candidate, false, Date.now() - startedAt);
+        last = { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Модель не завершила проверку карточки', confidence: null, detected_text: '', details: {}, error: e instanceof Error ? e.message : String(e) };
+        if (index < models.length - 1) onStage(`${modelName} не справилась. Переключаюсь на следующую бесплатную модель…`);
       }
       if (signal?.aborted) break;
-      if (models.indexOf(candidate) < models.length - 1 && last?.error && /overload|overloaded|перегруж|did not respond|timeout|временно недоступ|429|502|503|504/i.test(last.error)) {
-        await new Promise<void>(resolve => { const timer = setTimeout(resolve, 350); signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true }); });
-        continue;
-      }
-      break;
+      if (index < models.length - 1) await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, 300);
+        signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+      });
     }
-    return last ?? { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Анализ не завершён', confidence: null, detected_text: '', details: {}, error: 'Нет доступной модели' };
+    return last ?? { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Проверка не завершена', confidence: null, detected_text: '', details: {}, error: signal?.aborted ? 'Проверка остановлена' : 'Нет доступной модели с поддержкой фото' };
   }
 
   async review(id: string, status: Review, comment: string, evidence: string): Promise<void> {
@@ -440,15 +490,20 @@ export class IpAudit {
     } else if (this.section === 'references') {
       out += `<div class="ca-page-heading"><div><h2>Ваши эталоны</h2><p>Объекты и источники, с которыми нужно сопоставлять товары.</p></div><span>${this.references.length} объектов</span></div><details class="ca-surface" data-key="new-reference"><summary>+ Добавить объект</summary><form class="ip-ref-form" onsubmit="event.preventDefault();window.myAnalysisModule?.ipAddReference(this)"><label>Объект<input name="name" required placeholder="Название объекта"></label><label>Правообладатель<input name="rights_holder" placeholder="Если известен"></label><label>Тип<input name="object_type" placeholder="Бренд, персонаж, принт"></label><label>Источник<input name="source_url" type="url" placeholder="https://…"></label><label>Эталонное фото<input name="image_url" type="url" placeholder="https://…"></label><label>Заметки<input name="notes" placeholder="На что обратить внимание"></label><button class="ca-primary">Добавить эталон</button></form></details><div class="ip-reference-list">${this.references.map(r => `<article class="ca-surface ip-reference">${safeUrl(r.image_url) ? `<img src="${clean(r.image_url)}" loading="lazy" alt="">` : '<span class="ip-ref-symbol">◇</span>'}<div><b>${clean(r.name)}</b><small>${clean(r.object_type)} · ${clean(r.rights_holder || 'Правообладатель не указан')}</small>${r.notes ? `<p>${clean(r.notes)}</p>` : ''}</div>${safeUrl(r.source_url) ? `<a href="${clean(r.source_url)}" target="_blank" rel="noopener noreferrer">Источник ↗</a>` : ''}</article>`).join('')}</div><p class="ca-footnote">Эталоны — предоставленные вами материалы. Их сведения не считаются подтверждёнными автоматически.</p>`;
     } else {
-      const filtered = this.filteredFindings();
+      const filtered = this.filteredFindings().filter(f => !this.currentCard || f.marketplace !== this.currentCard.mp || f.store_id !== this.currentCard.storeId || f.product_id !== this.currentCard.uid);
       out += `<div class="ip-results-toolbar"><input id="ip-search" type="search" class="ca-search" placeholder="Артикул, товар или объект…" value="${clean(this.search)}" oninput="window.myAnalysisModule?.ipSearch(this.value)"><select class="ca-search" aria-label="Уровень риска" onchange="window.myAnalysisModule?.ipFilter(this.value)">${[['all','Все результаты'],...Object.entries(RISK_LABEL)].map(([v,l]) => `<option value="${v}" ${this.filter === v ? 'selected' : ''}>${l}</option>`).join('')}</select><button class="ca-btn" onclick="window.myAnalysisModule?.ipExport(false)">Экспорт Excel</button>${this.busy ? '<button class="ca-btn" onclick="window.myAnalysisModule?.ipStop()">Остановить</button>' : run && (run.status !== 'completed' || run.errors > 0) ? `<button class="ca-btn" onclick="window.myAnalysisModule?.ipResume('${run.id}')">Продолжить</button>` : ''}</div>
-        ${this.currentCard ? `<article class="ip-current-card"><img src="${clean(safeUrl(this.currentCard.photoUrls[0]) || '')}" alt="" loading="lazy"><div><b>Сейчас проверяется</b><strong>${clean(this.currentCard.name)}</strong><span>${clean(this.currentCard.mp.toUpperCase())} · ${clean(this.currentCard.storeName)} · артикул ${clean(this.currentCard.vendorCode)}</span><small>Фото и сведения карточки обрабатываются вместе</small></div><span class="ip-current-spinner" aria-label="Проверка выполняется"></span><button class="ca-btn" onclick="window.myAnalysisModule?.ipSkipCard()">Пропустить →</button></article>` : ''}
         ${run ? `<div class="ip-progress"><div><b>${status[run.status] || clean(run.status)}</b><span>${run.processed} из ${run.total} карточек · ${latest.length} результатов · ошибок ${run.errors}</span></div><progress max="${Math.max(1,run.total)}" value="${run.processed}"></progress></div>` : ''}
         ${filtered.length ? `<div class="ip-bulk-actions"><label><input type="checkbox" onchange="window.myAnalysisModule?.ipSelectAll()" ${filtered.every(f => this.selectedFindings.has(f.id)) ? 'checked' : ''}> Выбрать все</label><span>${this.selectedFindings.size} выбрано · ${filtered.length} результатов</span>${this.selectedFindings.size ? `<select id="ip-bulk-status">${Object.entries(REVIEW_LABEL).map(([v,l]) => `<option value="${v}">${l}</option>`).join('')}</select><input id="ip-bulk-comment" placeholder="Общий комментарий"><button class="ca-btn" onclick="window.myAnalysisModule?.ipBulkReview()">Применить</button>` : ''}</div>` : ''}
-        <div class="ip-result-list">${filtered.slice(0,this.shown).map(f => this.renderFinding(f)).join('') || '<div class="ca-empty"><b>Результатов пока нет</b><p>Запустите проверку или измените фильтры.</p></div>'}</div>${filtered.length > this.shown ? '<button class="ca-btn ca-more" onclick="window.myAnalysisModule?.ipMore()">Показать ещё 100</button>' : ''}`;
+        <div class="ip-result-list">${this.currentCard ? this.renderCurrentCard() : ''}${filtered.slice(0,this.shown).map(f => this.renderFinding(f)).join('') || (!this.currentCard ? '<div class="ca-empty"><b>Результатов пока нет</b><p>Запустите проверку или измените фильтры.</p></div>' : '')}</div>${filtered.length > this.shown ? '<button class="ca-btn ca-more" onclick="window.myAnalysisModule?.ipMore()">Показать ещё 100</button>' : ''}`;
     }
     return out + '</div>';
   }
+  private renderCurrentCard(): string {
+    const c = this.currentCard;
+    if (!c) return '';
+    return `<article class="ip-finding ip-current-card" aria-live="polite"><div class="ip-finding-select"></div>${safeUrl(c.photoUrls[0]) ? `<img src="${clean(safeUrl(c.photoUrls[0]))}" loading="lazy" alt="">` : '<span class="ip-no-photo">◇</span>'}<div class="ip-current-info"><b>${clean(c.name)}</b><small>${clean(c.mp.toUpperCase())} · ${clean(c.storeName)} · артикул ${clean(c.vendorCode)}</small><span>${clean(this.currentStage || 'Выполняю проверку карточки')}</span></div><span class="ip-current-state"><i class="ip-current-spinner" aria-hidden="true"></i> Проверяется</span><button class="ca-btn" onclick="window.myAnalysisModule?.ipSkipCard()" ${this.skipCurrentRequested ? 'disabled' : ''}>${this.skipCurrentRequested ? 'Пропускаю…' : 'Пропустить'}</button></article>`;
+  }
+
   private renderFinding(f: Finding): string {
     const ref = this.references.find(r => r.id === f.details?.reference_id);
     const sources = Array.isArray(f.details?.search_sources) ? f.details.search_sources as string[] : [];
