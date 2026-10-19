@@ -10,6 +10,7 @@ BEGIN
   ) THEN
     ALTER TABLE company_members
       ADD CONSTRAINT company_members_user_id_fk_public
-      FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+      FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE
+      NOT VALID;
   END IF;
 END $$;
