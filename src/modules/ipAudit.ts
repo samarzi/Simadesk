@@ -149,6 +149,7 @@ export class IpAudit {
     } catch (e) { this.message = `Не удалось открыть результаты: ${e instanceof Error ? e.message : String(e)}`; }
     finally { if (this.loadingRun === runId) this.loadingRun = ''; this.paint(); }
   }
+  requestStop(): void { this.stop = true; this.currentAbort?.abort(); this.message = 'Останавливаем…'; this.paint(); }
   async deleteRun(id: string): Promise<void> {
     if (this.busy) return;
     const run = this.runs.find(r => r.id === id);
