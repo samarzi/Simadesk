@@ -52,15 +52,15 @@ describe('aiTokenQuota — лимит по стоимости', () => {
     expect(modelLimitMultiplier('anthropic/claude-opus-5')).toBeCloseTo(5);
   });
 
-  it('бесплатный бюджет = 50К токенов базовой модели', () => {
+  it('расход сохраняется, но дневной остаток больше не блокирует ИИ', () => {
     recordAiSpend({ prompt: 0, completion: 0, total: 0, cost: FREE_DAILY_TOKENS * BASE_USD_PER_TOKEN * 0.99 }, 'x');
     expect(hasQuota()).toBe(true);
     recordAiSpend({ prompt: 0, completion: 0, total: 0, cost: FREE_DAILY_TOKENS * BASE_USD_PER_TOKEN * 0.02 }, 'x');
-    expect(hasQuota()).toBe(false);
+    expect(hasQuota()).toBe(true);
   });
 
   it('расход, записанный до перехода на стоимость, не обнуляется', () => {
     localStorage.setItem('sd_ai_daily_' + today(), String(FREE_DAILY_TOKENS));
-    expect(hasQuota()).toBe(false);
+    expect(hasQuota()).toBe(true);
   });
 });

@@ -9,7 +9,7 @@ import { aiModelButton } from '@/components/aiModelPicker';
  * было смешано:
  *  • Дашборд — сводные показатели и графики роста
  *  • Пользователи / Компании — управление аккаунтами
- *  • Тарифы — тарифная шкала и цены пакетов AI (было частью «Настроек»)
+ *  • Тарифы — тарифная шкала для доступа к площадке
  *  • Подписки — назначение/продление доступа по компаниям
  *  • Промокоды — скидочные коды
  *  • Бухгалтерия — новый раздел: доход платформы (MRR, ARPU), доход по
@@ -39,7 +39,6 @@ import { debug } from '@/utils/debug';
 import { supportChatService, supportErrorText, AdminSupportChat, SupportAttachment } from '@/services/supportChatService';
 import { reportAiUsage } from '@/services/aiUsage';
 import { aiFetch, SERVER_AI_KEY } from '@/services/aiProxy';
-import { AI_BOOST_PACKAGES, setAiBoostPriceOverrides } from '@/services/aiTokenQuota';
 import { icon } from './admin/icons';
 import { areaChart, groupedBars, hBars, donut } from './admin/charts';
 
@@ -59,7 +58,7 @@ const TAB_META: Record<AdminTab, TabMeta> = {
   overview:      { title: 'Дашборд',       icon: 'dashboard', desc: 'Ключевые показатели и динамика роста платформы' },
   users:         { title: 'Пользователи',  icon: 'users',     desc: 'Все зарегистрированные аккаунты, блокировки и пробный период' },
   companies:     { title: 'Компании',      icon: 'building',  desc: 'Организации на платформе, их оборот и подписки' },
-  plans:         { title: 'Тарифы',        icon: 'card',      desc: 'Тарифная шкала и цены пакетов AI-токенов' },
+  plans:         { title: 'Тарифы',        icon: 'card',      desc: 'Тарифная шкала и цены подписки' },
   subscriptions: { title: 'Подписки',      icon: 'calendar',  desc: 'Назначение тарифов и продление доступа по компаниям' },
   promos:        { title: 'Промокоды',     icon: 'tag',       desc: 'Создание скидочных кодов и статистика их использования' },
   accounting:    { title: 'Бухгалтерия',   icon: 'ruble',     desc: 'Доход платформы, ближайшие продления, эффект промокодов' },
@@ -122,7 +121,6 @@ export class AdminModule {
 
   /* тарифы */
   private plans: PlanConfig[] = [];
-  private aiBoostPrices: Record<string, number> = {};
 
   /* подписки */
   private apiCompanies: AdminCompanyWithApi[] = [];
@@ -246,8 +244,7 @@ export class AdminModule {
           this.companies = r.companies; this.companiesTotal = r.total; break;
         }
         case 'plans': {
-          const [plans, prices] = await Promise.all([adminService.getPlanConfigs(), adminService.getAiBoostPrices()]);
-          this.plans = plans; this.aiBoostPrices = prices; break;
+          this.plans = await adminService.getPlanConfigs(); break;
         }
         case 'subscriptions': {
           const [plans, apiCos] = await Promise.all([
@@ -661,26 +658,6 @@ export class AdminModule {
                     </tr>`;
                   }).join('')}
               </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="ap-card">
-          <div class="ap-card-title">Цены пакетов AI-токенов</div>
-          <div class="ap-card-desc">Сохраняются в Supabase и сразу отображаются на странице «Тариф и оплата».</div>
-          <div class="ap-table-wrap" style="margin-top:14px">
-            <table class="ap-table">
-              <thead><tr><th>Пакет</th><th>Токенов/день</th><th>Цена/мес, ₽</th><th style="width:110px"></th></tr></thead>
-              <tbody>${AI_BOOST_PACKAGES.map(pkg => {
-                const price = this.aiBoostPrices[pkg.key] ?? pkg.priceRub;
-                const dayK = Math.round(pkg.tokensPerDay / 1000);
-                return `<tr class="ap-tr">
-                  <td><span class="ap-badge violet">${this.esc(pkg.label)}</span></td>
-                  <td class="ap-td-muted">${dayK.toLocaleString('ru')}К</td>
-                  <td><input class="ap-input ap-input-sm" id="ai-boost-price-${pkg.key}" type="number" value="${price}" min="0" style="width:100px"></td>
-                  <td><button class="ap-btn ap-btn-primary ap-btn-sm" data-action="save-ai-boost-price" data-pkg="${pkg.key}">Сохранить</button></td>
-                </tr>`;
-              }).join('')}</tbody>
             </table>
           </div>
         </div>
@@ -2458,22 +2435,6 @@ ${this.SIMADESK_KNOWLEDGE}
         try {
           await adminService.updatePlan(planKey, price, min, max);
           showToast('Тариф обновлён', 'success');
-        } catch (e) { showToast('Ошибка: ' + this.errText(e), 'error'); }
-        return;
-      }
-
-      case 'save-ai-boost-price': {
-        const pkgKey = btn.dataset.pkg ?? '';
-        if (!pkgKey) return;
-        const price = parseInt(this.val(`#ai-boost-price-${pkgKey}`) || '0', 10);
-        if (isNaN(price) || price < 0) { showToast('Некорректная цена', 'error'); return; }
-        try {
-          const current = await adminService.getAiBoostPrices();
-          const updated = { ...current, [pkgKey]: price };
-          await adminService.updateAiBoostPrices(updated);
-          this.aiBoostPrices = updated;
-          setAiBoostPriceOverrides(updated);
-          showToast('Цена пакета обновлена', 'success');
         } catch (e) { showToast('Ошибка: ' + this.errText(e), 'error'); }
         return;
       }

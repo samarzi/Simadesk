@@ -2,7 +2,7 @@ import { dbFetch, dbFetchAll } from '@/services/dbClient';
 import { analysisAiFetch } from '@/services/aiProxy';
 import { companyService } from '@/services/companyService';
 import { reportAiUsage } from '@/services/aiUsage';
-import { hasQuota, recordAiSpend } from '@/services/aiTokenQuota';
+import { recordAiSpend } from '@/services/aiTokenQuota';
 import { exportXlsx, exportFileName } from './analytics/services/exporter';
 import { AI_AUTO, loadAiCatalog, modelCompatible, selectedAiModel } from '@/services/aiModels';
 import { aiModelButton } from '@/components/aiModelPicker';
@@ -188,7 +188,6 @@ export class IpAudit {
       let consecutiveErrors = 0;
       for (const c of cards) {
         if (this.stop || runCompany !== companyService.getActiveId()) break;
-        if (!hasQuota()) throw new Error('Дневной лимит ИИ исчерпан. Продолжите проверку позже.');
         let cardHadError = false;
         try {
           let desc = '', descriptionError = '';
@@ -250,7 +249,6 @@ export class IpAudit {
   }
   private async analyze(c: AuditCard, desc: string, photo: string | null, modelId: string): Promise<Pick<Finding, 'risk'|'object_type'|'object_name'|'rights_holder'|'reason'|'confidence'|'detected_text'|'details'|'error'>> {
     if (photo && !safeUrl(photo)) return { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Недопустимый URL фотографии', confidence: null, detected_text: '', details: {}, error: 'Недоступный URL' };
-    if (!hasQuota()) throw new Error('Дневной лимит ИИ исчерпан. Продолжите позже.');
     try {
       const res = await analysisAiFetch({ model: modelId, rights_audit: {
         photo_url: photo, title: c.name, description: desc, marketplace: c.mp,

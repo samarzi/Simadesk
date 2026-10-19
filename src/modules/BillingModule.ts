@@ -3,7 +3,7 @@ import { adminService } from '@/services/adminService';
 import { companyService } from '@/services/companyService';
 import { showToast } from '@/utils/toast';
 import { hasAnyStoreConnected } from './NavigationModule';
-import { AI_BOOST_PACKAGES, getAiBoostPackages, getActiveBoostPackage, setActiveBoostPackage, setAiBoostPriceOverrides, getQuotaInfo, FREE_DAILY_TOKENS } from '@/services/aiTokenQuota';
+import { AI_BOOST_PACKAGES, setActiveBoostPackage, getDailyTokensUsed } from '@/services/aiTokenQuota';
 
 export class BillingModule {
   private el: HTMLElement;
@@ -24,11 +24,6 @@ export class BillingModule {
     this.loading = true;
     this.render();
     await this.checkReturnFromPayment();
-
-    // Load AI boost price overrides from Supabase (best-effort, non-blocking)
-    adminService.getAiBoostPrices().then(prices => {
-      if (Object.keys(prices).length) setAiBoostPriceOverrides(prices);
-    }).catch(() => {});
 
     const company = companyService.getActive();
     const [adminInfo, trial, sub, rev, hasStore] = await Promise.all([
@@ -74,7 +69,7 @@ export class BillingModule {
         if (isAiBoost && planKey) {
           setActiveBoostPackage(planKey);
           const pkg = AI_BOOST_PACKAGES.find(p => p.key === planKey);
-          showToast(`✅ Пакет AI-токенов «${pkg?.label ?? planKey}» активирован!`, 'success');
+          showToast(`Платёж за пакет «${pkg?.label ?? planKey}» обработан. Дневных ограничений ИИ больше нет.`, 'success');
         } else {
           showToast('Оплата прошла успешно! Подписка активирована.', 'success');
         }
@@ -128,7 +123,7 @@ export class BillingModule {
       ${this.renderStatus()}
       ${this.renderRevenueTable()}
       ${this.renderPromoBlock()}
-      ${this.renderAiBoostPackages()}
+      ${this.renderAiStatus()}
     `;
   }
 
@@ -447,50 +442,13 @@ export class BillingModule {
       </div>`;
   }
 
-  private renderAiBoostPackages(): string {
-    const q = getQuotaInfo();
-    const active = getActiveBoostPackage();
-    const freeDayK = Math.round(FREE_DAILY_TOKENS / 1000);
-    const usedPct = q.pct;
-    const warn = usedPct >= 70;
-
-    const cards = getAiBoostPackages().map(pkg => {
-      const isActive = active?.key === pkg.key;
-      const dayK = Math.round(pkg.tokensPerDay / 1000);
-      return `
-        <div class="bill-ai-pkg${isActive ? ' active' : ''}" data-pkg="${pkg.key}">
-          <div class="bill-ai-pkg-badge">${pkg.badge}</div>
-          <div class="bill-ai-pkg-name">${pkg.label}</div>
-          <div class="bill-ai-pkg-tokens">≈${dayK.toLocaleString('ru')}К токенов/день на Claude Haiku</div>
-          <div class="bill-ai-pkg-price">${pkg.priceRub.toLocaleString('ru')} ₽/мес</div>
-          <button class="bill-ai-pkg-btn${isActive ? ' active' : ''}" data-pkg-key="${pkg.key}">
-            ${isActive ? '✓ Активен' : 'Подключить'}
-          </button>
-        </div>`;
-    }).join('');
-
+  private renderAiStatus(): string {
+    const tokensK = (getDailyTokensUsed() / 1000).toLocaleString('ru', { maximumFractionDigits: 1 });
     return `
       <div class="bill-section">
-        <div class="bill-section-title">Пакеты AI-токенов (Сима)</div>
-        <div class="bill-section-sub">
-          Ежедневный лимит обновляется каждые сутки. Лимит считается по стоимости запросов:
-          дорогие модели (например, Claude Opus) расходуют его быстрее, дешёвые (DeepSeek, GPT-4o-mini) — медленнее.
-          ${warn ? `<span style="color:#f59e0b">Использовано ${usedPct}% дневного лимита</span>` : ''}
-        </div>
-        <div class="bill-ai-quota-row">
-          <span class="bill-ai-quota-lbl">Сегодня: ${usedPct}% лимита · ${(q.tokens / 1000).toLocaleString('ru', { maximumFractionDigits: 1 })}К токенов</span>
-          <div class="bill-ai-quota-track">
-            <div class="bill-ai-quota-fill" style="width:${usedPct}%"></div>
-          </div>
-        </div>
-        <div class="bill-ai-free-note">
-          🎁 Бесплатно: <b>${freeDayK}К токенов/день</b> на Claude Haiku — включено в любой тариф
-        </div>
-        <div class="bill-ai-pkgs">${cards}</div>
-        ${active ? `<div class="bill-ai-deactivate"><button class="bill-link-btn" id="bill-ai-deactivate">Отключить пакет</button></div>` : ''}
-        <div class="bill-ai-note">
-          💡 Пакет AI-токенов — дополнительная услуга к основному тарифу. Оплата через ЮKassa, активация сразу после оплаты.
-        </div>
+        <div class="bill-section-title">Использование ИИ</div>
+        <div class="bill-section-sub">Дневных ограничений на запросы к ИИ нет.</div>
+        <div class="bill-ai-quota-row"><span class="bill-ai-quota-lbl">Сегодня использовано: ${tokensK}К токенов</span></div>
       </div>`;
   }
 
@@ -565,45 +523,6 @@ export class BillingModule {
     });
     document.getElementById('bill-promo-check')?.addEventListener('click', () => this.checkPromo());
 
-    // AI boost package buttons — real YooKassa payment
-    this.el.querySelectorAll<HTMLButtonElement>('.bill-ai-pkg-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const key = btn.dataset.pkgKey;
-        if (!key) return;
-        const current = getActiveBoostPackage();
-        if (current?.key === key) return;
-        const company = companyService.getActive();
-        if (!company) { showToast('Нет активной компании', 'error'); return; }
-        const pkg = getAiBoostPackages().find(p => p.key === key);
-        if (!pkg) return;
-        btn.disabled = true;
-        btn.textContent = 'Создаём платёж…';
-        const res = await billingService.createPayment(company.id, pkg.key, pkg.priceRub);
-        if ('error' in res) {
-          showToast(res.error, 'error');
-          btn.disabled = false;
-          btn.textContent = 'Подключить';
-          return;
-        }
-        const confirmUrl = res.confirmation_url;
-        if (!confirmUrl?.startsWith('https://')) {
-          showToast('Некорректный URL оплаты', 'error');
-          btn.disabled = false;
-          btn.textContent = 'Подключить';
-          return;
-        }
-        localStorage.setItem('yk_payment_id', res.payment_id);
-        localStorage.setItem('yk_plan_key', pkg.key);
-        window.location.href = confirmUrl;
-      });
-    });
-
-    document.getElementById('bill-ai-deactivate')?.addEventListener('click', () => {
-      setActiveBoostPackage(null);
-      showToast('Пакет AI-токенов отключён — применён бесплатный лимит', 'info');
-      this.render();
-      this.bindEvents();
-    });
   }
 
   async checkPromo(): Promise<void> {

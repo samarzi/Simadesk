@@ -15,7 +15,7 @@ import { selectionCtx } from '@/services/selectionContext';
 import { imageAttachments } from '@/services/imageAttachments';
 import { reportAiUsage } from '@/services/aiUsage';
 import { SupportSpamGuard } from '@/services/supportSpamGuard';
-import { hasQuota, getQuotaInfo, recordAiSpend, getDailyLimit, modelLimitMultiplier, FREE_DAILY_TOKENS, type AiSpend } from '@/services/aiTokenQuota';
+import { getDailyTokensUsed, recordAiSpend, type AiSpend } from '@/services/aiTokenQuota';
 import { loadRecentNews, countUnread, markAllRead, formatNewsForContext, type MpNews } from '@/services/mpNewsService';
 import { loadSimaMemory, searchMemory, formatMemoryForPrompt, type SimaMemoryEntry } from '@/services/simaMemoryService';
 import { loadSimaConfig, getConfigValue, type SimaConfigEntry } from '@/services/simaConfigService';
@@ -1452,9 +1452,6 @@ export class AssistantModule {
   private attachedFiles: AttachedFile[] = [];
   private fileInputEl: HTMLInputElement | null = null;
   private aiKey = '';
-  private aiModel = '';
-  /** Является ли текущий пользователь платформенным администратором (нет лимитов). */
-  private isAdminUser = false;
   private aiEnabled = localStorage.getItem('sd_sima_ai_enabled') !== 'false';
   private ttsEnabled = localStorage.getItem('sd_tts_enabled') !== 'false';
   private paletteEl: HTMLElement | null = null;
@@ -1563,7 +1560,6 @@ export class AssistantModule {
     try {
       const cfg = await loadAiConfig();
       this.aiKey   = cfg.key;
-      this.aiModel = cfg.model;
       // If key found after async load — hide the key-setup block that was shown pre-load
       if (this.aiKey && this.panel) {
         const keySetup = this.panel.querySelector<HTMLElement>('.sd-ap-key-setup');
@@ -1571,22 +1567,18 @@ export class AssistantModule {
       }
     } catch { /* key stays empty; shown as "not configured" error on first use */ }
 
-    // Check admin status for token quota bypass and cost display
+    // Check admin status for AI usage cost display
     try {
       const { adminService } = await import('@/services/adminService');
       const role = await adminService.checkAdmin();
-      this.isAdminUser = role.is_admin;
       (window as any).__sdAdminUser = role.is_admin;
-    } catch { this.isAdminUser = false; }
+    } catch { (window as any).__sdAdminUser = false; }
 
     // Listen for config updates from admin panel (updateConfig() is called directly, but
     // the event fires for other potential listeners — read from session cache as fallback)
     window.addEventListener('sd_ai_config_updated', () => {
       this.aiKey   = sessionStorage.getItem('sd_ai_key') || this.aiKey;
-      this.aiModel = selectedAiModel('assistant');
     });
-
-    window.addEventListener('sd_ai_model_changed', () => { this.aiModel = selectedAiModel('assistant'); this.renderQuotaBar(); });
 
     // Запуск фонового мониторинга
     this.startBackgroundMonitor();
@@ -1777,7 +1769,6 @@ export class AssistantModule {
   /** Called by admin panel to update config without page reload */
   updateConfig(key: string, model: string): void {
     this.aiKey   = key;
-    this.aiModel = selectedAiModel('assistant');
     void model;
   }
 
@@ -4702,35 +4693,18 @@ export class AssistantModule {
     this.hidePalette();
   }
 
-  /** Обновить полосу использования токенов под лентой сообщений. */
+  /** Показать расход токенов за сегодня под лентой сообщений. */
   renderQuotaBar(): void {
-    if (this.isAdminUser) return; // у администратора нет лимитов — не показываем
     const bar = this.panel?.querySelector<HTMLElement>('#sd-ap-quota-bar');
     if (!bar) return;
-    const q = getQuotaInfo();
-    const tokensK = (q.tokens / 1000).toLocaleString('ru', { maximumFractionDigits: 1 });
-    const freeLimitK = Math.round(FREE_DAILY_TOKENS / 1000);
-    const warn = q.pct >= 80;
-    const critical = q.pct >= 95;
-    const isFree = getDailyLimit() === FREE_DAILY_TOKENS;
-    const mult = modelLimitMultiplier(this.aiModel);
-    const multNote = mult && (mult > 1.5 || mult < 0.67)
-      ? ` · модель ×${mult >= 10 ? Math.round(mult) : mult.toFixed(1).replace(/\.0$/, '')}`
-      : '';
+    const tokensK = (getDailyTokensUsed() / 1000).toLocaleString('ru', { maximumFractionDigits: 1 });
     bar.innerHTML = `
-      <div class="sd-ap-quota${warn ? ' warn' : ''}${critical ? ' crit' : ''}">
+      <div class="sd-ap-quota">
         <div class="sd-ap-quota-row">
-          <span class="sd-ap-quota-lbl" title="Лимит считается по стоимости запросов: дорогие модели расходуют его быстрее, дешёвые — медленнее">Лимит AI сегодня: ${q.pct}%</span>
-          <span class="sd-ap-quota-nums">${tokensK}К токенов${multNote}</span>
+          <span class="sd-ap-quota-lbl">Использовано ИИ сегодня</span>
+          <span class="sd-ap-quota-nums">${tokensK}К токенов</span>
         </div>
-        <div class="sd-ap-quota-track">
-          <div class="sd-ap-quota-fill" style="width:${q.pct}%"></div>
-        </div>
-        ${isFree && q.pct >= 50 ? `<div class="sd-ap-quota-hint">Нужно больше? <a class="sd-ap-quota-link" data-nav="billing">Пакеты AI</a> (от 290 ₽/мес · лимит ×5–×20: ${freeLimitK}К → ${freeLimitK * 5}К–${freeLimitK * 20}К токенов/день на Claude Haiku)</div>` : ''}
       </div>`;
-    bar.querySelector<HTMLElement>('.sd-ap-quota-link')?.addEventListener('click', () => {
-      (window as any).app?.navigateTo?.('billing');
-    });
   }
 
   // ── Send ─────────────────────────────────────────────────────────────────────
@@ -5474,23 +5448,6 @@ export class AssistantModule {
       return;
     }
 
-    // Daily token quota check
-    if (!this.isAdminUser && !hasQuota()) {
-      const q = getQuotaInfo();
-      const tokensK = Math.round(q.tokens / 1000);
-      const mult = modelLimitMultiplier(this.aiModel);
-      this.addAssistantMessage(
-        `Дневной лимит AI исчерпан (сегодня потрачено ${tokensK}К токенов). ` +
-        `Лимит считается по стоимости запросов: дорогие модели расходуют его быстрее` +
-        (mult && mult > 1.5 ? ` — текущая модель примерно в ${Math.round(mult)} раз(а) дороже базовой` : '') +
-        `. Лимит обновится завтра. ` +
-        (q.boostPackage
-          ? `Ваш пакет ${q.boostPackage.label} уже активен.`
-          : `Увеличьте лимит — перейдите в **Тариф и оплата → Пакеты AI**.`)
-      );
-      return;
-    }
-
     this.isLoading = true;
     this.setStatus('Думаю…', 'thinking');
     const typing = this.addTypingIndicator();
@@ -5726,8 +5683,7 @@ export class AssistantModule {
   }
 
   /**
-   * Грубая оценка токенов, если провайдер не прислал usage: иначе такой
-   * запрос прошёл бы мимо лимита бесплатно. ~3 символа на токен для русского.
+   * Грубая оценка токенов, если провайдер не прислал usage. ~3 символа на токен для русского.
    */
   private roughUsage(messages: ChatMessage[], reply: string): AiSpend {
     const promptChars = messages.reduce((n, m) => n + (typeof m.content === 'string' ? m.content.length : 0), 0);
@@ -5798,8 +5754,7 @@ export class AssistantModule {
         max_tokens: 1500,
         temperature: 0.7,
         stream: useStream,
-        // Учёт OpenRouter: в usage приходит реальная стоимость запроса ($),
-        // по ней списывается дневной лимит
+        // Учёт OpenRouter: в usage приходит реальная стоимость запроса ($).
         usage: { include: true },
         // stream_options не поддерживается DeepSeek через OpenRouter — не посылаем
         ...(useStream && !isDeepSeek ? { stream_options: { include_usage: true } } : {}),
@@ -5850,7 +5805,7 @@ export class AssistantModule {
         }
 
         const streamUsage = reportAiUsage('Сима', lastChunkWithUsage);
-        if (!this.isAdminUser) recordAiSpend(streamUsage ?? this.roughUsage(messages, full), model);
+        recordAiSpend(streamUsage ?? this.roughUsage(messages, full), model);
         // DeepSeek R1 иногда пропускает теги рассуждений в поток контента — убираем
         return isReasoningModel ? full.replace(/<think>[\s\S]*?<\/think>/g, '').trimStart() : full;
       }
@@ -5859,7 +5814,7 @@ export class AssistantModule {
       const data = await res.json();
       const usage2 = reportAiUsage('Сима', data);
       const content: string = data?.choices?.[0]?.message?.content ?? '';
-      if (!this.isAdminUser) recordAiSpend(usage2 ?? this.roughUsage(messages, content), model);
+      recordAiSpend(usage2 ?? this.roughUsage(messages, content), model);
       return content;
     } catch (e) {
       throw asTimeout(e);
