@@ -175,6 +175,7 @@ END;
 $$;
 
 -- ── RPC: get all promo codes (admin only) ─────────────────────────────────────
+DROP FUNCTION IF EXISTS admin_get_promos();
 CREATE OR REPLACE FUNCTION admin_get_promos()
 RETURNS SETOF promo_codes LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE v_admin platform_admins;
