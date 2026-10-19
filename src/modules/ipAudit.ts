@@ -262,13 +262,13 @@ export class IpAudit {
         throw new Error(String(detail.error?.message ?? `ИИ ответил HTTP ${res.status}`));
       }
       const body = await res.json();
-      const actualModels = Array.isArray(body.details?.actual_models) ? body.details.actual_models.map(String) : [String(body.model || modelId)];
-      const freeModels = actualModels.length > 0 && actualModels.every(isFreeAiModel);
-      const usage = reportAiUsage('Анализ прав', body, { model: String(body.model || modelId), free: freeModels });
-      if (usage) recordAiSpend(usage, body.model || modelId);
       const raw = body.choices?.[0]?.message?.content;
       if (typeof raw !== 'string') throw new Error('Пустой ответ ИИ');
       const data = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, ''));
+      const actualModels = Array.isArray(data.details?.actual_models) ? data.details.actual_models.map(String) : [String(body.model || modelId)];
+      const freeModels = actualModels.length > 0 && actualModels.every(isFreeAiModel);
+      const usage = reportAiUsage('Анализ прав', body, { model: String(body.model || modelId), free: freeModels });
+      if (usage) recordAiSpend(usage, body.model || modelId);
       if (data.details?.audit_version !== 'ru-photo-v4') throw new Error('Сервер не подтвердил проверку всех фото и источников для РФ. Обновите страницу и повторите.');
       const risk: Risk = ['high','medium','low','none','insufficient'].includes(data.risk) ? data.risk : 'insufficient';
       return { risk, object_type: String(data.object_type ?? ''), object_name: String(data.object_name ?? ''),
