@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS error_log (
 -- Только INSERT для аутентифицированных пользователей, никакого SELECT/UPDATE/DELETE
 ALTER TABLE error_log ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "insert_own_errors" ON error_log;
 CREATE POLICY "insert_own_errors" ON error_log
   FOR INSERT TO authenticated
   WITH CHECK (true);
