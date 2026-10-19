@@ -8,6 +8,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { handleSimaConnect } from './sima-connect.ts';
+import { runRightsAudit } from './rights-audit.ts';
 
 
 // Every AI task uses the same platform gateway and model policy.
@@ -1373,6 +1374,19 @@ async function handleAiProxy(req: Request): Promise<Response> {
   }
   try {
     const parsed = JSON.parse(body);
+    if (parsed.rights_audit && typeof parsed.rights_audit === 'object' && !Array.isArray(parsed.rights_audit)) {
+      if (parsed.model != null && (typeof parsed.model !== 'string' || parsed.model.length > 200)) throw new Error('Некорректная модель');
+      const result = await runRightsAudit(parsed.rights_audit, parsed.model || 'auto', async payload => {
+        const res = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/chat/completions`, {
+          method: 'POST', headers: { Authorization: `Bearer ${platformKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload), signal: AbortSignal.timeout(180_000),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error?.message || `ИИ ответил HTTP ${res.status}`);
+        return data;
+      });
+      return new Response(JSON.stringify(result), { headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Sima-Model': result.model } });
+    }
     if (!Array.isArray(parsed.messages) || !parsed.messages.length ||
         (parsed.model != null && (typeof parsed.model !== 'string' || parsed.model.length > 200)))
       throw new Error('Некорректный запрос к ИИ');

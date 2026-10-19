@@ -6,7 +6,7 @@ import { dbFetch } from '@/services/dbClient';
 import { analysisAiFetch } from '@/services/aiProxy';
 import { loadAiCatalog } from '@/services/aiModels';
 
-vi.mock('@/services/dbClient', () => ({ dbFetch: vi.fn(), dbFetchAll: vi.fn().mockResolvedValue([]) }));
+vi.mock('@/services/dbClient', () => ({ dbFetch: vi.fn(), dbFetchAll: vi.fn().mockImplementation(async () => []) }));
 vi.mock('@/services/aiProxy', () => ({ analysisAiFetch: vi.fn() }));
 vi.mock('@/services/companyService', () => ({ companyService: { getActiveId: () => 'company1' } }));
 vi.mock('@/services/aiTokenQuota', () => ({ hasQuota: () => true, recordAiSpend: vi.fn() }));
@@ -22,7 +22,7 @@ beforeEach(() => {
     if (path.startsWith('ip_audit_findings?on_conflict')) return [{ id: 'finding1', ...data }] as any;
     return [] as any;
   });
-  vi.mocked(analysisAiFetch).mockResolvedValue(new Response(JSON.stringify({ model: 'actual/free:free', choices: [{ message: { content: JSON.stringify({ risk: 'low', reason: 'Упоминание в названии', object_name: 'Пример' }) } }] })));
+  vi.mocked(analysisAiFetch).mockResolvedValue(new Response(JSON.stringify({ model: 'actual/free:free', choices: [{ message: { content: JSON.stringify({ risk: 'insufficient', reason: 'Нет фото', object_name: 'Пример', details: { audit_version: 'ru-photo-v3' } }) } }] })));
 });
 
 it('runs Auto without loading a catalog, respects selected stores and prevents duplicate starts', async () => {
@@ -35,10 +35,22 @@ it('runs Auto without loading a catalog, respects selected stores and prevents d
   expect(analysisAiFetch).toHaveBeenCalledOnce();
   const request = vi.mocked(analysisAiFetch).mock.calls[0][0] as any;
   expect(request.model).toBe('auto');
-  expect(request.messages[0].content[0].text).toContain('Описание товара');
+  expect(request.rights_audit).toMatchObject({ description: 'Описание товара', title: 'Товар с упоминанием объекта', photo_url: null });
   const runs = vi.mocked(dbFetch).mock.calls.filter(([path]) => path === 'ip_audit_runs');
   expect(runs).toHaveLength(1);
   expect(JSON.parse(String(runs[0][1]?.body))).toMatchObject({ total: 1, product_keys: ['c1'], model_id: 'auto' });
   expect(audit.findings[0].details.actual_model).toBe('actual/free:free');
   expect(audit.runs[0].status).toBe('completed');
+});
+
+it('still analyses the photo if fetching the marketplace description fails', async () => {
+  const card = { uid: 'c1', mp: 'wb' as const, storeId: 's1', storeName: 'Store', vendorCode: 'A1', name: 'Футболка', photoUrls: ['https://basket-45.wbbasket.ru/photo.webp'] };
+  const audit = new IpAudit(() => [card], async () => { throw new Error('Marketplace unavailable'); }, vi.fn());
+  await audit.load(); await audit.start('sample');
+  expect(analysisAiFetch).toHaveBeenCalledOnce();
+  expect(audit.findings).toHaveLength(1);
+  expect(audit.findings[0].error).toContain('Marketplace unavailable');
+  expect(audit.findings[0].details.description_error).toContain('Описание');
+  expect(audit.runs[0].errors).toBe(1);
+  expect(audit.message).toContain('Продолжить');
 });
