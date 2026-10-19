@@ -1372,10 +1372,20 @@ async function handleAiProxy(req: Request): Promise<Response> {
       status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
-  try {
-    const parsed = JSON.parse(body);
-    if (parsed.rights_audit && typeof parsed.rights_audit === 'object' && !Array.isArray(parsed.rights_audit)) {
-      if (parsed.model != null && (typeof parsed.model !== 'string' || parsed.model.length > 200)) throw new Error('Некорректная модель');
+  let parsed: any;
+  try { parsed = JSON.parse(body); }
+  catch {
+    return new Response(JSON.stringify({ error: { message: 'Тело запроса ИИ содержит некорректный JSON' }, code: 'invalid_json' }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  if (parsed?.rights_audit && typeof parsed.rights_audit === 'object' && !Array.isArray(parsed.rights_audit)) {
+    if (parsed.model != null && (typeof parsed.model !== 'string' || parsed.model.length > 200)) {
+      return new Response(JSON.stringify({ error: { message: 'Некорректный идентификатор модели' }, code: 'invalid_model' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    try {
       const result = await runRightsAudit(parsed.rights_audit, parsed.model || 'auto', async payload => {
         const res = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/chat/completions`, {
           method: 'POST', headers: { Authorization: `Bearer ${platformKey}`, 'Content-Type': 'application/json' },
@@ -1386,17 +1396,23 @@ async function handleAiProxy(req: Request): Promise<Response> {
         return data;
       });
       return new Response(JSON.stringify(result), { headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Sima-Model': result.model } });
+    } catch (error) {
+      // Do not disguise provider/network failures as a malformed client request.
+      const message = error instanceof Error ? error.message.slice(0, 500) : 'Неизвестная ошибка аудита';
+      console.error('rights-audit request failed', { model: parsed.model || 'auto', message });
+      return new Response(JSON.stringify({ error: { message: `Сбой проверки прав${parsed.model ? ` на модели ${parsed.model}` : ''}: ${message}` }, code: 'rights_audit_failed' }), {
+        status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
-    if (!Array.isArray(parsed.messages) || !parsed.messages.length ||
-        (parsed.model != null && (typeof parsed.model !== 'string' || parsed.model.length > 200)))
-      throw new Error('Некорректный запрос к ИИ');
-    parsed.model = parsed.model || 'auto';
-    body = JSON.stringify(parsed);
-  } catch {
-    return new Response(JSON.stringify({ error: { message: 'Некорректный запрос к ИИ' } }), {
+  }
+  if (!Array.isArray(parsed?.messages) || !parsed.messages.length ||
+      (parsed.model != null && (typeof parsed.model !== 'string' || parsed.model.length > 200))) {
+    return new Response(JSON.stringify({ error: { message: 'Запрос не содержит корректный блок rights_audit или messages' }, code: 'invalid_ai_request' }), {
       status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
+  parsed.model = parsed.model || 'auto';
+  body = JSON.stringify(parsed);
   // Ассистент SimaDesk — это Сима: её общий характер и «обо мне» идут первыми
   if (body.includes('"sima_mind"')) {
     try {
