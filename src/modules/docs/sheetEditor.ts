@@ -510,17 +510,32 @@ export class SheetEditor {
       } else {
         content = esc(text);
       }
+      if (text.length > 80) title = text;
       if (cell.link && text) { content = `<span class="xl-link">${content}</span>`; title = cell.link; }
       if (cell.img && isSafeImageSrc(cell.img)) {
         const sz = cell.imgW && cell.imgH ? ` style="width:${cell.imgW}px;height:${cell.imgH}px"` : '';
         content = `<img class="xl-cimg" src="${esc(cell.img)}" alt=""${sz} draggable="false">` + content;
       }
       if (cell.note) { cls.push('xl-has-note'); title = cell.note; }
-      // Текст «вылезает» на пустых соседей справа, как в Excel
+      // Текст может занимать пустые ячейки справа, как в Excel, но должен
+      // остановиться перед первой заполненной ячейкой. Одного overflow:visible
+      // недостаточно: браузер рисует текст поверх заполненных ячеек дальше по строке.
       const wrap = cell.s && /white-space:pre-wrap/.test(cell.s);
       if (kind === 'text' && text && !wrap && !o.cs) {
-        const right = sh.data[r]?.[c + 1];
-        if (!right || (!right.v && !right.img)) cls.push('xl-ovf');
+        let spillPx = 0;
+        for (let nextC = c + 1; nextC < this.dispCols; nextC++) {
+          if (this.isColHidden(nextC)) continue;
+          const right = sh.data[r]?.[nextC];
+          const rightValue = right?.v ?? '';
+          const rightIsEmpty = !right?.img && !String(rightValue).length;
+          if (!rightIsEmpty) break;
+          spillPx += this.colW(nextC);
+        }
+        if (spillPx > 0) {
+          cls.push('xl-ovf');
+          style += `;clip-path:inset(0 -${spillPx}px 0 0)`;
+          if (!title) title = text;
+        }
       }
       if (o.clipH && content) content = `<div class="xl-clip" style="max-height:${o.clipH}px">${content}</div>`;
     }

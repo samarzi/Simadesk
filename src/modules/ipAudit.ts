@@ -149,7 +149,7 @@ export class IpAudit {
     } catch (e) { this.message = `Не удалось открыть результаты: ${e instanceof Error ? e.message : String(e)}`; }
     finally { if (this.loadingRun === runId) this.loadingRun = ''; this.paint(); }
   }
-  requestStop(): void { this.stop = true; this.message = 'Останавливаем после текущей карточки…'; this.paint(); }
+  requestStop(): void { this.stop = true; this.currentAbort?.abort(); this.message = 'Останавливаем…'; this.paint(); }
   skipCurrentCard(): void {
     if (!this.currentCard) return;
     this.skipCurrentRequested = true;
