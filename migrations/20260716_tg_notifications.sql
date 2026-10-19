@@ -30,9 +30,11 @@ ALTER TABLE tg_chats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tg_notification_settings ENABLE ROW LEVEL SECURITY;
 
 -- Users can read/write their own chats
+DROP POLICY IF EXISTS "tg_chats_own" ON tg_chats;
 CREATE POLICY "tg_chats_own" ON tg_chats
   FOR ALL USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "tg_notif_settings_own" ON tg_notification_settings;
 CREATE POLICY "tg_notif_settings_own" ON tg_notification_settings
   FOR ALL USING (user_id = auth.uid());
 
