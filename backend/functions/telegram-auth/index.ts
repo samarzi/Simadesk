@@ -1317,7 +1317,7 @@ async function handleAiModels(req: Request): Promise<Response> {
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const { data: { user }, error } = await admin.auth.getUser(token);
   if (error || !user) return new Response('{"error":"Нужно войти заново"}', { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-  
+
   // Кэшируем на 6 часов
   if (modelCatalogCache && Date.now() - modelCatalogCache.at < 6 * 3600_000)
     return new Response(modelCatalogCache.body, { headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=300' } });
@@ -1326,26 +1326,55 @@ async function handleAiModels(req: Request): Promise<Response> {
   const platformKey = Deno.env.get('SIMA_PLATFORM_KEY');
   const openrouterKey = Deno.env.get('OPENROUTER_KEY');
 
+  // Если ни один ключ не настроен, возвращаем стандартный список моделей
+  if (!platformUrl || !platformKey) {
+    if (!openrouterKey) {
+      // Возвращаем стандартный список популярных моделей с поддержкой изображений
+      const defaultModels = [
+        { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', description: 'Быстрая и экономичная модель от OpenAI с поддержкой изображений', context_length: 128000, architecture: { modality: 'text->text', input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [], top_provider: { max_completion_tokens: 16384, is_moderated: true } },
+        { id: 'openai/gpt-4o', name: 'GPT-4o', description: 'Мульти modal модель от OpenAI с поддержкой изображений', context_length: 128000, architecture: { modality: 'text->text', input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [], top_provider: { max_completion_tokens: 4096, is_moderated: true } },
+        { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Модель от Anthropic с поддержкой изображений', context_length: 200000, architecture: { modality: 'text->text', input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [], top_provider: { max_completion_tokens: 8192, is_moderated: true } },
+      ];
+      const body = JSON.stringify({ data: defaultModels });
+      modelCatalogCache = { at: Date.now(), body };
+      return new Response(body, { headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=300' } });
+    }
+  }
+
   // Пробуем получить каталог через SIMA Platform
   let response: Response | null = null;
   if (platformUrl && platformKey) {
-    response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models?output_modalities=all`, { signal: AbortSignal.timeout(20_000) }).catch(() => null);
-    if (!response?.ok) response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models`, { signal: AbortSignal.timeout(20_000) }).catch(() => null);
+    try {
+      response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models?output_modalities=all`, { signal: AbortSignal.timeout(20_000) });
+      if (!response.ok) response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models`, { signal: AbortSignal.timeout(20_000) });
+    } catch { /* ignore */ }
   }
 
   // Fallback: прямой запрос к OpenRouter
   if (!response?.ok && openrouterKey) {
-    response = await fetch('https://openrouter.ai/api/v1/models?output_modalities=all', {
-      headers: { 'Authorization': `Bearer ${openrouterKey}` },
-      signal: AbortSignal.timeout(20_000),
-    }).catch(() => null);
-    if (!response?.ok) response = await fetch('https://openrouter.ai/api/v1/models', {
-      headers: { 'Authorization': `Bearer ${openrouterKey}` },
-      signal: AbortSignal.timeout(20_000),
-    }).catch(() => null);
+    try {
+      response = await fetch('https://openrouter.ai/api/v1/models?output_modalities=all', {
+        headers: { 'Authorization': `Bearer ${openrouterKey}` },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!response.ok) response = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: { 'Authorization': `Bearer ${openrouterKey}` },
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch { /* ignore */ }
   }
 
-  if (!response?.ok) return new Response(JSON.stringify({ error: `Каталог моделей недоступен. Настройте SIMA_PLATFORM_URL или OPENROUTER_KEY` }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  if (!response?.ok) {
+    // Fallback на стандартный список
+    const defaultModels = [
+      { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', description: 'Быстрая и экономичная модель от OpenAI с поддержкой изображений', context_length: 128000, architecture: { modality: 'text->text', input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [], top_provider: { max_completion_tokens: 16384, is_moderated: true } },
+      { id: 'openai/gpt-4o', name: 'GPT-4o', description: 'Мульти modal модель от OpenAI с поддержкой изображений', context_length: 128000, architecture: { modality: 'text->text', input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [], top_provider: { max_completion_tokens: 4096, is_moderated: true } },
+      { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Модель от Anthropic с поддержкой изображений', context_length: 200000, architecture: { modality: 'text->text', input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [], top_provider: { max_completion_tokens: 8192, is_moderated: true } },
+    ];
+    const body = JSON.stringify({ data: defaultModels });
+    modelCatalogCache = { at: Date.now(), body };
+    return new Response(body, { headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=300' } });
+  }
   
   const data = await response.json();
   if (!Array.isArray(data.data)) return new Response('{"error":"Некорректный каталог моделей"}', { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
