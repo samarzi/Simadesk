@@ -91,6 +91,7 @@ it('checks a gallery one photo at a time, retries a transient free-model failure
   const secondPhoto = 'https://basket-45.wbbasket.ru/photo-2.webp';
   let firstPhotoFailures = 0;
   const complete = vi.fn(async (body: Record<string, unknown>) => {
+    expect(body).not.toHaveProperty('reasoning');
     const raw = JSON.stringify(body);
     if (raw.includes('image_url')) {
       const images = (body.messages as { content: { type?: string }[] }[])[1].content.filter(part => part.type === 'image_url');

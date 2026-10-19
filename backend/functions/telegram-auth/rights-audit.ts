@@ -285,7 +285,7 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
     }
     photoCalls.push(completed ? { status: 'fulfilled', value: completed } : { status: 'rejected', reason: lastError });
   }
-  const textCalls = await Promise.allSettled([complete({ model, max_tokens: 1200, reasoning: { effort: 'low' }, temperature: 0, messages: [{ role: 'system', content: TEXT_PROMPT },
+  const textCalls = await Promise.allSettled([complete({ model, max_tokens: 1200, temperature: 0, messages: [{ role: 'system', content: TEXT_PROMPT },
     { role: 'user', content: JSON.stringify({ title: input.title, description: input.description }) }] })]);
   const results = [...photoCalls, ...textCalls];
   const failures: string[] = [];
@@ -353,7 +353,7 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
           ? `Потенциальные объекты упомянуты в тексте карточки, но не подтверждены как нанесённые на товар: ${[...new Set(objects.map(o => o.name))].join(', ')}.`
           : 'На проверенных фото и в тексте конкретные потенциальные объекты не распознаны. Это не является подтверждением отсутствия чужих прав.';
   const summary = { headline: risk === 'high' ? 'Есть российская практика по похожему использованию' : risk === 'medium' ? 'Нужна проверка прав и документов' : risk === 'none' ? 'Явных объектов не распознано' : risk === 'low' ? 'Слабый признак, нужна ручная оценка' : 'Недостаточно данных для вывода',
-    why: summaryWhy, checked: [`Фото просмотрены моделью: ${seenPhotos}/${photoUrls.length}`, `Название и описание: ${cardText ? 'проверены' : 'не проверены'}`, `Открытые портфели агентств: ${portfolio.status === 'live' ? 'проверены' : 'частично доступны'}`, `Судебные материалы в базе аудита: ${russianCases.length ? `совпадений ${russianCases.length}` : 'совпадение не найдено'}`],
+    why: summaryWhy, checked: [`Фото просмотрены моделью: ${seenPhotos}/${photoUrls.length}`, `Название и описание: ${cardText ? 'проверены' : 'не проверены'}`, `Открытые портфели агентств: ${portfolio.status === 'live' ? 'проверены' : 'частично доступны'}`, `Судебные материалы в базе аудита: ${russianCases.length ? `совпадений ${russianCases.length}` : 'совпадение не найдено'}`, 'Реестр товарных знаков Роспатента: автоматический API-поиск не подключён; доступна ручная проверка по ссылке'],
     sources: [...russianCases.map(({ title, case_no, kind, url }) => ({ title: `${case_no} · ${title} · ${kind}`, url })),
       ...(!russianCases.length && foundNames.length ? [{ title: 'Поиск судебных актов РФ по найденному обозначению', url: `https://sudact.ru/arbitral/doc/?arbitral-txt=${encodeURIComponent(foundNames[0])}` }] : [])] };
   const finding = { risk, object_type: [...new Set(objects.map(o => o.type))].join(', '), object_name: [...new Set(objects.map(o => o.name))].join('; '),
