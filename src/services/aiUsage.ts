@@ -1,4 +1,5 @@
 import { isFreeAiModel } from './aiTokenQuota';
+import { cachedAiCatalog } from './aiModels';
 
 /**
  * Учёт расхода токенов на запросы к AI.
@@ -87,7 +88,10 @@ export function reportAiUsage(label: string, response: unknown, options: { model
   totals.calls      += 1;
   saveTotals();
 
-  showUsageCard(label, usage);
+  const responseModel = (response as any)?.model;
+  const modelId = options.model || (typeof responseModel === 'string' ? responseModel : '');
+  const modelName = modelId ? cachedAiCatalog()?.models.find(model => model.id === modelId)?.name || modelId : 'не определена';
+  showUsageCard(label, usage, modelName);
   return usage;
 }
 
@@ -110,7 +114,7 @@ function isAdminSession(): boolean {
   return (window as any).__sdAdminUser === true;
 }
 
-function showUsageCard(label: string, usage: AiUsage): void {
+function showUsageCard(label: string, usage: AiUsage, model: string): void {
   if (typeof document === 'undefined' || !document.body) return;
 
   const host = ensureHost();
@@ -136,6 +140,7 @@ function showUsageCard(label: string, usage: AiUsage): void {
       <span class="sd-ai-usage-io" title="Ответ">↓ ${nf.format(usage.completion)}</span>
       ${costLine}
     </div>
+    <div class="sd-ai-usage-model" title="Идентификатор модели OpenRouter">Модель: ${escapeHtml(model)}</div>
     <div class="sd-ai-usage-sum">За сессию по всем ИИ-модулям: ${nf.format(totals.total)} токенов · ${nf.format(totals.calls)} запросов${sumCost ? ` · общая стоимость: ${sumCost.slice(3)}` : ''}</div>`;
 
   host.appendChild(card);

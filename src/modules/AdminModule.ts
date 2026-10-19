@@ -1798,7 +1798,7 @@ ${this.SIMADESK_KNOWLEDGE}
 
       if (!res.ok) return;
       const data = await res.json();
-      reportAiUsage('Поддержка AI', data);
+      reportAiUsage('Поддержка AI', data, { model: res.headers.get('x-sima-model') || data?.model || selectedAiModel('support') });
       let reply: string = data?.choices?.[0]?.message?.content ?? '';
       if (!reply) return;
 

@@ -1055,7 +1055,7 @@ export class MyAnalysisModule {
       throw new Error(String(detail.error?.message ?? `ИИ ответил HTTP ${r.status}`));
     }
     const d = await r.json();
-    reportAiUsage('Мой анализ', d);
+    reportAiUsage('Мой анализ', d, { model: r.headers.get('x-sima-model') || d?.model || model });
     const t = d.choices?.[0]?.message?.content;
     if (!t) throw new Error('Пустой ответ');
     return t;

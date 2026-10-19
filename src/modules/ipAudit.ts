@@ -261,6 +261,27 @@ export class IpAudit {
     }
     this.selectedRun = id; this.section = 'results';
     await this.loadRunFindings(id, true);
+    // A paused run may have been created with another model. The model picker
+    // is the user's current choice, so apply it to the still-pending cards.
+    const selectedModel = selectedAiModel('rights');
+    if (selectedModel !== run.model_id) {
+      try {
+        if (selectedModel !== AI_AUTO) {
+          const selected = (await loadAiCatalog()).models.find(model => model.id === selectedModel);
+          if (!selected || !modelCompatible(selected, { vision: true })) {
+            this.message = 'Выбранная модель недоступна или не поддерживает фото. Выберите другую модель и повторите.';
+            this.paint();
+            return;
+          }
+        }
+        await this.patchRun(run, { model_id: selectedModel });
+        this.runs = this.runs.map(item => item.id === id ? run! : item);
+      } catch (e) {
+        this.message = `Не удалось применить выбранную модель: ${e instanceof Error ? e.message : String(e)}`;
+        this.paint();
+        return;
+      }
+    }
     const targets = new Set(run.product_keys ?? []);
     const cards = this.cards().filter(c => {
       if (!targets.has(c.uid)) return false;

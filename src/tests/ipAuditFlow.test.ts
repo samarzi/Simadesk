@@ -4,7 +4,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { IpAudit } from '@/modules/ipAudit';
 import { dbFetch, dbFetchAll } from '@/services/dbClient';
 import { analysisAiFetch } from '@/services/aiProxy';
-import { loadAiCatalog } from '@/services/aiModels';
+import { loadAiCatalog, setAiModel } from '@/services/aiModels';
 
 vi.mock('@/services/dbClient', () => ({ dbFetch: vi.fn(), dbFetchAll: vi.fn().mockImplementation(async () => []) }));
 vi.mock('@/services/aiProxy', () => ({ analysisAiFetch: vi.fn() }));
@@ -77,6 +77,34 @@ it('tries free vision providers beyond the previous five-model cutoff', async ()
   expect(analysisAiFetch).toHaveBeenCalledTimes(6);
   expect(audit.findings[0].risk).toBe('none');
   expect(audit.runs[0].status).toBe('completed');
+});
+
+it('applies the currently selected paid vision model when resuming an older run', async () => {
+  const card = { uid: 'c1', mp: 'wb' as const, storeId: 's1', storeName: 'Store', vendorCode: 'A1', name: 'Футболка', photoUrls: ['https://basket-45.wbbasket.ru/photo.webp'] };
+  const pausedRun = { id: 'run1', company_id: 'company1', status: 'paused', scope: 'sample', total: 1, processed: 0, errors: 1,
+    created_at: new Date().toISOString(), model_id: 'old/free:free', product_keys: ['c1'] };
+  vi.mocked(dbFetch).mockImplementation(async (path, options) => {
+    if (path.startsWith('ip_audit_runs?company_id=')) return [{ ...pausedRun, product_keys: undefined }] as any;
+    if (path.startsWith('ip_audit_runs?id=eq.run1')) return [pausedRun] as any;
+    const data = JSON.parse(String(options?.body ?? '{}'));
+    if (path.startsWith('ip_audit_findings?on_conflict')) return [{ id: 'finding1', ...data }] as any;
+    return [] as any;
+  });
+  vi.mocked(loadAiCatalog).mockResolvedValue({ models: [{ id: 'paid/vision', name: 'Paid Vision', free: false, context: 100_000,
+    input: ['text', 'image'], output: ['text'], parameters: [], description: '', maxOutput: 4000, created: null,
+    knowledgeCutoff: null, expiration: null, tokenizer: null, instructType: null, moderated: null }], auto: {} });
+  setAiModel('rights', 'paid/vision');
+  vi.mocked(analysisAiFetch).mockResolvedValue(new Response(JSON.stringify({ model: 'paid/vision', usage: { total_tokens: 12 }, choices: [{ message: { content: JSON.stringify({
+    risk: 'none', reason: 'Проверено', details: { audit_version: 'ru-photo-v5', actual_models: ['paid/vision'] },
+  }) } }] })));
+  const audit = new IpAudit(() => [card], async () => 'Описание товара', vi.fn());
+  await audit.load();
+  await audit.resume('run1');
+  expect(analysisAiFetch).toHaveBeenCalledOnce();
+  expect(vi.mocked(analysisAiFetch).mock.calls[0][0]).toMatchObject({ model: 'paid/vision' });
+  expect(vi.mocked(dbFetch).mock.calls.some(([path, options]) => path === 'ip_audit_runs?id=eq.run1' &&
+    JSON.parse(String(options?.body)).model_id === 'paid/vision')).toBe(true);
+  expect(audit.runs[0].model_id).toBe('paid/vision');
 });
 
 it('loads run metadata and references first, then loads the selected findings page on demand', async () => {

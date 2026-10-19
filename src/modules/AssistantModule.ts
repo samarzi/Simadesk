@@ -5804,7 +5804,7 @@ export class AssistantModule {
           }
         }
 
-        const streamUsage = reportAiUsage('Сима', lastChunkWithUsage);
+        const streamUsage = reportAiUsage('Сима', lastChunkWithUsage, { model: res.headers.get('x-sima-model') || lastChunkWithUsage?.model || model });
         recordAiSpend(streamUsage ?? this.roughUsage(messages, full), model);
         // DeepSeek R1 иногда пропускает теги рассуждений в поток контента — убираем
         return isReasoningModel ? full.replace(/<think>[\s\S]*?<\/think>/g, '').trimStart() : full;
@@ -5812,7 +5812,7 @@ export class AssistantModule {
 
       // ── Non-streaming fallback ────────────────────────────────────────────────
       const data = await res.json();
-      const usage2 = reportAiUsage('Сима', data);
+      const usage2 = reportAiUsage('Сима', data, { model: res.headers.get('x-sima-model') || data?.model || model });
       const content: string = data?.choices?.[0]?.message?.content ?? '';
       recordAiSpend(usage2 ?? this.roughUsage(messages, content), model);
       return content;

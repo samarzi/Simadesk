@@ -1,6 +1,6 @@
 import { webcrypto } from 'node:crypto';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { assess, boundedBytes, loadAuditImage, observations, parseMegaPortfolio, permittedImageUrl, portfolioMatches, runRightsAudit, russianChecks, RU_CASE_SIGNALS, type Portfolio } from '../../backend/functions/telegram-auth/rights-audit';
+import { assess, boundedBytes, loadAuditImage, observations, parseMegaPortfolio, permittedImageUrl, portfolioMatches, runRightsAudit, russianChecks, RU_CASE_SIGNALS, RU_RULES, type Portfolio } from '../../backend/functions/telegram-auth/rights-audit';
 
 const PHOTO = 'https://basket-45.wbbasket.ru/photo.webp';
 const png = Uint8Array.from([137,80,78,71,13,10,26,10,...Array(30).fill(0)]);
@@ -60,6 +60,11 @@ it('separates copyright, trademarks, band names and common slogans in Russian ch
   expect(assess([{ ...observation, type: 'текстовая разметка', name: 'Информационные надписи' }], { status: 'sent', url: PHOTO }, true)).toBe('none');
 });
 
+it('links to the official Rospatent trademark search without claiming an automatic registry lookup', () => {
+  const source = RU_RULES.find(item => item.url === 'https://searchplatform.rospatent.gov.ru/trademarks');
+  expect(source?.title).toContain('не проверен автоматически');
+});
+
 const fetcher = vi.fn(async (url: string | URL | Request) => {
   if (String(url) === 'https://megalicense.ru/') return new Response('<a href="/brands/naruto/">Наруто</a>');
   if (String(url) === 'https://brandmonitor.ru/') return new Response('Customer testimonial: Wenger SA and Victorinox AG');
@@ -84,6 +89,8 @@ it('runs independent visual and text passes, sends bytes, reports grounding and 
   expect(finding.details.objects).toHaveLength(2);
   expect(finding.details.summary.why).toContain('Рик и Морти');
   expect(finding.details.summary.sources).toHaveLength(1);
+  expect(finding.details.summary.checked.at(-1)).toContain('Реестр товарных знаков Роспатента');
+  expect(finding.details.legal_sources).toContainEqual(expect.objectContaining({ url: 'https://searchplatform.rospatent.gov.ru/trademarks' }));
   expect(result.usage.total_tokens).toBe(60);
 });
 

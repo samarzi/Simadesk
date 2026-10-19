@@ -1089,7 +1089,7 @@ ${candidates.join('\n')}`;
       const resp = await aiFetch({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 2000 }, undefined, 'storefront');
       if (!resp.ok) throw new Error(`AI API error ${resp.status}`);
       const data = await resp.json();
-      reportAiUsage('Витрина · группировка', data);
+      reportAiUsage('Витрина · группировка', data, { model: resp.headers.get('x-sima-model') || data?.model || model });
       const text = data.choices?.[0]?.message?.content ?? '';
 
       // Extract JSON from response

@@ -4,7 +4,9 @@ export const AUDIT_VERSION = 'ru-photo-v5';
 const MEGA = 'https://megalicense.ru/';
 const BM = 'https://brandmonitor.ru/';
 const CODE = 'https://rospatent.gov.ru/ru/documents/grazhdanskiy-kodeks-rossiyskoy-federacii-chast-chetvertaya';
+const ROSPATENT_TRADEMARK_SEARCH = 'https://searchplatform.rospatent.gov.ru/trademarks';
 export const RU_RULES = [
+  { title: 'Роспатент: официальный поиск товарных знаков (реестр не проверен автоматически)', url: ROSPATENT_TRADEMARK_SEARCH },
   { title: 'ГК РФ, часть IV: ст. 1256, 1259, 1270, 1484, 1487', url: CODE },
   { title: 'Бернская конвенция: охрана иностранных произведений', url: 'https://rospatent.gov.ru/ru/documents/bernskaya-konvenciya-ob-ohrane-literaturnyh-i-hudozhestvennyh-proizvedeniy' },
   { title: 'Wildberries: обращения правообладателей', url: 'https://seller.wildberries.ru/instructions/ru/ru/material/digital-arbitration' },
@@ -268,7 +270,7 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
     for (let attempt = 0; attempt < 3 && !completed; attempt++) {
       if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 700 * attempt));
       try {
-        const body = await complete({ model, max_tokens: 1600, reasoning: { effort: 'low' }, temperature: 0,
+        const body = await complete({ model, max_tokens: 1600, temperature: 0,
           messages: [{ role: 'system', content: VISUAL_PROMPT }, { role: 'user', content: [
             { type: 'text', text: `Проверь только это фото товара №${photoNumber}. Верни один объект photos с photo_number ${photoNumber}.` },
             { type: 'image_url', image_url: { url: file.dataUrl } }, ...refContent,
