@@ -1324,16 +1324,28 @@ async function handleAiModels(req: Request): Promise<Response> {
 
   const platformUrl = Deno.env.get('SIMA_PLATFORM_URL');
   const platformKey = Deno.env.get('SIMA_PLATFORM_KEY');
-  
-  if (!platformUrl || !platformKey) {
-    return new Response(JSON.stringify({ error: 'ИИ не настроен на сервере' }), { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-  }
+  const openrouterKey = Deno.env.get('OPENROUTER_KEY');
 
   // Пробуем получить каталог через SIMA Platform
-  let response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models?output_modalities=all`, { signal: AbortSignal.timeout(20_000) });
-  if (!response.ok) response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models`, { signal: AbortSignal.timeout(20_000) });
-  
-  if (!response.ok) return new Response(JSON.stringify({ error: `Каталог моделей недоступен (HTTP ${response.status})` }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  let response: Response | null = null;
+  if (platformUrl && platformKey) {
+    response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models?output_modalities=all`, { signal: AbortSignal.timeout(20_000) }).catch(() => null);
+    if (!response?.ok) response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models`, { signal: AbortSignal.timeout(20_000) }).catch(() => null);
+  }
+
+  // Fallback: прямой запрос к OpenRouter
+  if (!response?.ok && openrouterKey) {
+    response = await fetch('https://openrouter.ai/api/v1/models?output_modalities=all', {
+      headers: { 'Authorization': `Bearer ${openrouterKey}` },
+      signal: AbortSignal.timeout(20_000),
+    }).catch(() => null);
+    if (!response?.ok) response = await fetch('https://openrouter.ai/api/v1/models', {
+      headers: { 'Authorization': `Bearer ${openrouterKey}` },
+      signal: AbortSignal.timeout(20_000),
+    }).catch(() => null);
+  }
+
+  if (!response?.ok) return new Response(JSON.stringify({ error: `Каталог моделей недоступен. Настройте SIMA_PLATFORM_URL или OPENROUTER_KEY` }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   
   const data = await response.json();
   if (!Array.isArray(data.data)) return new Response('{"error":"Некорректный каталог моделей"}', { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
