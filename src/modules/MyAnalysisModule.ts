@@ -46,6 +46,7 @@ interface ProductCard {
   nmId?: number;
   businessId?: number;
   campaignId?: number;
+  stock?: number;
   issues: Issue[];
   score: number;
 }
@@ -180,6 +181,8 @@ export class MyAnalysisModule {
   private issueFilter: IssueFilter = 'all';
   private searchQ = '';
   private sortBy: 'score'|'name'|'photos'|'mp' = 'score';
+  private filterByStock = false;        // только с остатками
+  private filterBySelling = false;      // только продающиеся (активные)
 
   // State
   private loading = false;
@@ -272,6 +275,8 @@ export class MyAnalysisModule {
   setStore(id: string)     { this.storeFilter = id; this._paint(); }
   setIssueFilter(f: IssueFilter){ this.issueFilter = f; this._paint(); }
   setSort(s: typeof this.sortBy){ this.sortBy = s; this._paint(); }
+  setFilterByStock(v: boolean) { this.filterByStock = v; this._paint(); }
+  setFilterBySelling(v: boolean) { this.filterBySelling = v; this._paint(); }
   setSearch(v: string)     {
     this.searchQ = v; this.shownCards = 30; this.resetScroll = true;
     window.clearTimeout(this._searchTimer);
@@ -288,7 +293,15 @@ export class MyAnalysisModule {
   private _stores() {
     return [...this.wbStores.map(s => ({ ...s, mp: 'wb' as Mp })), ...this.ozStores.map(s => ({ ...s, mp: 'ozon' as Mp })), ...this.yaStores.map(s => ({ ...s, mp: 'yandex' as Mp }))];
   }
-  private _scopeCards() { return this.cards.filter(c => !this.qualityStores || this.qualityStores.has(c.storeId)); }
+  private _scopeCards() {
+    let cards = this.cards.filter(c => !this.qualityStores || this.qualityStores.has(c.storeId));
+    if (this.filterByStock) cards = cards.filter(c => (c.stock ?? 0) > 0);
+    if (this.filterBySelling) cards = cards.filter(c => {
+      const s = (c.rawStatus || '').toLowerCase();
+      return s !== 'archived' && s !== 'banned' && s !== 'blocked' && s !== 'failed_moderation' && s !== 'expired';
+    });
+    return cards;
+  }
   qualityToggleStore(id: string) {
     const selected = this.qualityStores ?? new Set(this._stores().map(s => s.id));
     selected.has(id) ? selected.delete(id) : selected.add(id);
@@ -311,7 +324,12 @@ export class MyAnalysisModule {
   ipFilter(v: string) { this.ipAudit.setFilter(v); }
   ipSearch(v: string) { this.ipAudit.setSearch(v); }
   ipChooseRun(v: string) { this.ipAudit.setRun(v); this.ipAudit.setSection('results'); }
-  ipStart(scope: 'sample' | 'all' | 'new' | 'selected', selection = '') { void this.ipAudit.start(scope, selection); }
+  ipStart(scope: 'sample' | 'all' | 'new' | 'selected', selection = '') { 
+    void this.ipAudit.start(scope, selection, { 
+      onlyStock: this.ipAudit.filterByStock, 
+      onlySelling: this.ipAudit.filterBySelling 
+    }); 
+  }
   ipResume(id: string) { void this.ipAudit.resume(id); }
 ipDeleteRun(id: string) { void this.ipAudit.deleteRun(id); }
   ipStop() { this.ipAudit.requestStop(); }
@@ -954,42 +972,45 @@ ipDeleteRun(id: string) { void this.ipAudit.deleteRun(id); }
       this.loadMsg = 'Загружаем карточки…';
       this._paint();
 
-      type OzP = { store_id:string; offer_id:string; product_id:number; name:string; price:number; images:string[]|null; status:string };
-      type WbP = { store_id:string; nm_id:number; vendor_code:string; title:string; price:number; discount:number; pictures:string[]|null };
-      type YaP = { store_id:string; offer_id:string; name:string; basic_price:number; pictures:string[]|null; archived:boolean };
+      type OzP = { store_id:string; offer_id:string; product_id:number; name:string; price:number; images:string[]|null; status:string; stock_fbs:number|null; stock_fbo:number|null };
+      type WbP = { store_id:string; nm_id:number; vendor_code:string; title:string; price:number; discount:number; pictures:string[]|null; stock_total:number|null; stock_fbs:number|null };
+      type YaP = { store_id:string; offer_id:string; name:string; basic_price:number; pictures:string[]|null; archived:boolean; stock_total:number|null; stock_available:number|null };
 
       const [ozP, wbP, yaP] = await Promise.all([
-        ozIds.length ? dbFetchAll<OzP>(`ozon_products?store_id=in.(${ozIds.join(',')})&select=store_id,offer_id,product_id,name,price,images,status`) : Promise.resolve<OzP[]>([]),
-        wbIds.length ? dbFetchAll<WbP>(`wb_products?store_id=in.(${wbIds.join(',')})&select=store_id,nm_id,vendor_code,title,price,discount,pictures`) : Promise.resolve<WbP[]>([]),
-        yaIds.length ? dbFetchAll<YaP>(`yandex_products?store_id=in.(${yaIds.join(',')})&select=store_id,offer_id,name,basic_price,pictures,archived`) : Promise.resolve<YaP[]>([]),
+        ozIds.length ? dbFetchAll<OzP>(`ozon_products?store_id=in.(${ozIds.join(',')})&select=store_id,offer_id,product_id,name,price,images,status,stock_fbs,stock_fbo`) : Promise.resolve<OzP[]>([]),
+        wbIds.length ? dbFetchAll<WbP>(`wb_products?store_id=in.(${wbIds.join(',')})&select=store_id,nm_id,vendor_code,title,price,discount,pictures,stock_total,stock_fbs`) : Promise.resolve<WbP[]>([]),
+        yaIds.length ? dbFetchAll<YaP>(`yandex_products?store_id=in.(${yaIds.join(',')})&select=store_id,offer_id,name,basic_price,pictures,archived,stock_total,stock_available`) : Promise.resolve<YaP[]>([]),
       ]);
 
       const cards: ProductCard[] = [];
 
       for (const p of ozP) {
+        const stock = (Number(p.stock_fbs) || 0) + (Number(p.stock_fbo) || 0);
         const base = { uid:`ozon:${p.store_id}:${p.offer_id}`, mp:'ozon' as Mp,
           storeId:p.store_id, storeName:sName(p.store_id), vendorCode:p.offer_id,
           name:p.name||p.offer_id, photoUrls:p.images||[], price:Number(p.price)||0,
-          rawStatus:p.status||'', productId:Number(p.product_id)||undefined };
+          rawStatus:p.status||'', productId:Number(p.product_id)||undefined, stock };
         const issues = auditCard(base);
         cards.push({ ...base, issues, score:scoreCard(issues) });
       }
       for (const p of wbP) {
+        const stock = (Number(p.stock_total) || 0) + (Number(p.stock_fbs) || 0);
         const base = { uid:`wb:${p.store_id}:${p.vendor_code}`, mp:'wb' as Mp,
           storeId:p.store_id, storeName:sName(p.store_id), vendorCode:p.vendor_code,
           name:p.title||p.vendor_code, photoUrls:p.pictures||[],
           price:Number(p.price)*(1-(Number(p.discount)||0)/100), rawStatus:'active',
-          nmId:Number(p.nm_id)||undefined };
+          nmId:Number(p.nm_id)||undefined, stock };
         const issues = auditCard(base);
         cards.push({ ...base, issues, score:scoreCard(issues) });
       }
       for (const p of yaP) {
         const ys = ya.find(s=>s.id===p.store_id);
+        const stock = (Number(p.stock_total) || 0) + (Number(p.stock_available) || 0);
         const base = { uid:`yandex:${p.store_id}:${p.offer_id}`, mp:'yandex' as Mp,
           storeId:p.store_id, storeName:sName(p.store_id), vendorCode:p.offer_id,
           name:p.name||p.offer_id, photoUrls:p.pictures||[], price:Number(p.basic_price)||0,
           rawStatus:p.archived?'archived':'active',
-          businessId:ys?.business_id??undefined, campaignId:ys?.campaign_id??undefined };
+          businessId:ys?.business_id??undefined, campaignId:ys?.campaign_id??undefined, stock };
         const issues = auditCard(base);
         cards.push({ ...base, issues, score:scoreCard(issues) });
       }
@@ -1144,7 +1165,7 @@ ipDeleteRun(id: string) { void this.ipAudit.deleteRun(id); }
     const average = cards.length ? Math.round(cards.reduce((n,c) => n + c.score, 0) / cards.length) : 0;
     return `<div class="ca-body"><div class="ca-intro"><div><span class="ca-eyebrow">КАРТОЧКИ ТОВАРОВ</span><h1>Качество, которое видно</h1><p>Найдите пропущенные фото, слабые названия и ошибки карточек. ИИ поможет подготовить улучшения.</p></div><div class="ca-overall"><b>${average}</b><span>из 100 · средняя оценка</span></div></div>
       <div class="ca-metrics"><div><span>В выбранных магазинах</span><b>${cards.length}</b></div><div><span>С ошибками</span><b class="ca-error">${errors}</b></div><div><span>Требуют улучшения</span><b class="ca-warning">${warnings}</b></div><div><span>Без замечаний</span><b class="ca-success">${cards.filter(c => !c.issues.length).length}</b></div></div>
-      <section class="ca-surface">${this._qualityScope()}<div class="ca-launch"><span>Статус, фото, название и цена · без обращения к ИИ</span><button class="ca-primary" onclick="window.myAnalysisModule?.setTab('issues')" ${!cards.length ? 'disabled' : ''}>Проверить качество <span>→</span></button></div></section>
+      <section class="ca-surface">${this._qualityScope()}<div class="ca-filter-row"><label><input type="checkbox" ${this.filterByStock ? 'checked' : ''} onchange="window.myAnalysisModule?.setFilterByStock(this.checked)"> Только с остатками</label><label><input type="checkbox" ${this.filterBySelling ? 'checked' : ''} onchange="window.myAnalysisModule?.setFilterBySelling(this.checked)"> Только продающиеся</label></div><div class="ca-launch"><span>Статус, фото, название и цена · без обращения к ИИ</span><button class="ca-primary" onclick="window.myAnalysisModule?.setTab('issues')" ${!cards.length ? 'disabled' : ''}>Проверить качество <span>→</span></button></div></section>
       <div class="ca-help-grid"><button class="ca-help-card" onclick="window.myAnalysisModule?.setTab('ai')"><span>✦</span><b>Улучшить с ИИ</b><small>Предложения названий с учётом описания товара</small><i>→</i></button><button class="ca-help-card" onclick="window.myAnalysisModule?.setTab('fixed')"><span>↻</span><b>Проверить изменения</b><small>Убедиться, что маркетплейс принял правки</small><i>→</i></button></div></div>`;
   }
 

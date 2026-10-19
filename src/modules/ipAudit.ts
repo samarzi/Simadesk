@@ -10,7 +10,7 @@ import { aiModelButton } from '@/components/aiModelPicker';
 export interface AuditCard {
   uid: string; mp: 'wb' | 'ozon' | 'yandex'; storeId: string; storeName: string;
   vendorCode: string; name: string; photoUrls: string[];
-  nmId?: number; productId?: number;
+  nmId?: number; productId?: number; stock?: number; rawStatus?: string;
 }
 type Risk = 'high' | 'medium' | 'low' | 'none' | 'insufficient';
 type Review = 'unreviewed' | 'needs_review' | 'object_confirmed' | 'not_confirmed' | 'permitted' | 'needs_documents' | 'closed';
@@ -149,7 +149,10 @@ export class IpAudit {
     } catch (e) { this.message = `Не удалось открыть результаты: ${e instanceof Error ? e.message : String(e)}`; }
     finally { if (this.loadingRun === runId) this.loadingRun = ''; this.paint(); }
   }
+  filterByStock = false;
+  filterBySelling = false;
   requestStop(): void { this.stop = true; this.currentAbort?.abort(); this.message = 'Останавливаем…'; this.paint(); }
+  setFilterBySelling(v: boolean) { this.filterBySelling = v; this.paint(); }
   async deleteRun(id: string): Promise<void> {
     if (this.busy) return;
     const run = this.runs.find(r => r.id === id);
@@ -224,12 +227,19 @@ export class IpAudit {
     this.selectedStores = chosen; this.saveStores();
   }
 
-  async start(scope: 'sample' | 'all' | 'new' | 'selected', selection = ''): Promise<void> {
+  async start(scope: 'sample' | 'all' | 'new' | 'selected', selection = '', filters?: { onlyStock?: boolean; onlySelling?: boolean }): Promise<void> {
     if (this.busy) return;
     if (!this.companyId) await this.load();
     const cid = this.companyId;
     const chosen = this.chosenStores();
-    const all = this.cards().filter(c => chosen.has(c.storeId));
+    let all = this.cards().filter(c => chosen.has(c.storeId));
+    // Фильтр: только с остатками
+    if (filters?.onlyStock) all = all.filter(c => (c.stock ?? 0) > 0);
+    // Фильтр: только продающиеся (активные, не архивные/заблокированные)
+    if (filters?.onlySelling) all = all.filter(c => {
+      const s = (c.rawStatus || '').toLowerCase();
+      return s !== 'archived' && s !== 'banned' && s !== 'blocked' && s !== 'failed_moderation' && s !== 'expired' && s !== 'not_moderated';
+    });
     let cards = scope === 'selected' ? all.filter(c => c.vendorCode === selection.trim() || c.uid === selection.trim()) : all;
     if (scope === 'sample') {
       const buckets = (['wb', 'ozon', 'yandex'] as const).map(mp => cards.filter(c => c.mp === mp));
@@ -395,7 +405,13 @@ export class IpAudit {
         run.processed = completed.size;
         await this.patchRun(run, { processed: run.processed, errors: run.errors });
         this.paint('progress');
-        if (cardNeedsRetry) { this.stop = true; break; }
+        if (cardNeedsRetry) {
+      // Не останавливаем всю проверку из-за одной карточки —
+      // пропускаем её и продолжаем со следующей.
+      this.message = `Недостаточно данных по ${c.vendorCode} — карточка пропущена, продолжаем…`;
+      this.paint();
+      await new Promise(r => setTimeout(r, 300));
+    }
         consecutiveErrors = cardHadError ? consecutiveErrors + 1 : 0;
         if (consecutiveErrors >= 5) throw new Error('Пять карточек подряд завершились ошибкой. Проверьте доступ к ИИ и фото, затем продолжите.');
       }
@@ -620,7 +636,10 @@ export class IpAudit {
     if (this.section === 'overview') {
       out += `<div class="ca-intro"><div><span class="ca-eyebrow">РОССИЯ · ФОТО · НАЗВАНИЕ · ОПИСАНИЕ</span><h1>Проверьте, что требует внимания</h1><p>Распознавание каждого фото, проверка текста и сопоставление с открытыми источниками MegaLicense и BrandMonitor. Сохраняйте документы и результат проверки.</p></div><div class="ip-shield">◇</div></div>
         <div class="ca-metrics"><div><span>Карточек в выборе</span><b>${count}</b></div><div><span>В последней проверке</span><b>${run?.processed ?? 0}</b></div><div><span>Требуют внимания</span><b class="ca-warning">${resultsLoaded ? risks : '—'}</b></div><div><span>Сохранённых проверок</span><b>${this.runs.length}</b></div></div>
-        <section class="ca-surface">${this.renderStores()}<div class="ca-launch"><select id="ip-scope" class="ca-search" aria-label="Объём проверки"><option value="sample">Пробная · до 50 карточек</option><option value="new">Только новые карточки</option><option value="all" ${!this.runs.some(r => r.scope === 'sample' && r.status === 'completed') ? 'disabled' : ''}>Весь выбранный каталог</option></select><button class="ca-primary" onclick="window.myAnalysisModule?.ipStart(document.getElementById('ip-scope').value)" ${this.busy || this.loading || !count ? 'disabled' : ''}>${this.busy ? '<i class="ca-spin-sm" aria-hidden="true"></i> Проверяем…' : 'Начать проверку'} <span>→</span></button></div></section>
+        <section class="ca-surface">${this.renderStores()}<div class="ca-launch-filters">
+<label><input type="checkbox" ${this.filterByStock ? 'checked' : ''} onchange="window.myAnalysisModule?.ipAudit.setFilterByStock(this.checked)"> Только с остатками</label>
+<label><input type="checkbox" ${this.filterBySelling ? 'checked' : ''} onchange="window.myAnalysisModule?.ipAudit.setFilterBySelling(this.checked)"> Только продающиеся</label>
+</div><div class="ca-launch"><select id="ip-scope" class="ca-search" aria-label="Объём проверки"><option value="sample">Пробная · до 50 карточек</option><option value="new">Только новые карточки</option><option value="all" ${!this.runs.some(r => r.scope === 'sample' && r.status === 'completed') ? 'disabled' : ''}>Весь выбранный каталог</option></select><button class="ca-primary" onclick="window.myAnalysisModule?.ipStart(document.getElementById('ip-scope').value)" ${this.busy || this.loading || !count ? 'disabled' : ''}>${this.busy ? '<i class="ca-spin-sm" aria-hidden="true"></i> Проверяем…' : 'Начать проверку'} <span>→</span></button></div></section>
         <section class="ca-surface ip-single"><div><b>Проверить конкретный товар</b><p>Артикул продавца в выбранных магазинах</p></div><input id="ip-article" class="ca-search" placeholder="Артикул"><button class="ca-btn" onclick="window.myAnalysisModule?.ipStart('selected',document.getElementById('ip-article').value)" ${this.busy ? 'disabled' : ''}>Проверить</button></section>
         ${run ? `<section class="ca-surface ip-last-run"><div><small>ПОСЛЕДНЯЯ ПРОВЕРКА</small><b>${date(run.created_at)} · ${status[run.status] || clean(run.status)}</b><span>${run.processed} из ${run.total} карточек · ошибок ${run.errors}</span></div><button class="ca-btn" onclick="window.myAnalysisModule?.ipChooseRun('${run.id}')">Открыть результаты →</button></section>` : ''}
         <p class="ca-footnote">Проверка для рынка РФ. Иностранные персонажи и группы тоже могут охраняться. Высокий приоритет означает необходимость проверить документы, а отсутствие в открытом портфеле агентства не означает разрешение. Для полного каталога сначала завершите пробную проверку.</p>`;
