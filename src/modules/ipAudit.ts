@@ -393,8 +393,9 @@ export class IpAudit {
       if (seenProviders.has(provider)) return false;
       seenProviders.add(provider); return true;
     }).map(m => m.id);
-    // Retry with the most reliable free vision providers first. An explicitly chosen paid model stays selected.
-    const models = [...new Set([modelId, ...(freeMode ? alternatives : [])])].slice(0, freeMode ? 5 : 1);
+    // Retry with the most reliable free vision providers first. In free mode
+    // exhaust the distinct compatible providers before leaving a card unresolved.
+    const models = [...new Set([modelId, ...(freeMode ? alternatives : [])])];
     let last: Pick<Finding, 'risk'|'object_type'|'object_name'|'rights_holder'|'reason'|'confidence'|'detected_text'|'details'|'error'> | null = null;
     for (let index = 0; index < models.length; index++) {
       const candidate = models[index];
@@ -600,7 +601,9 @@ export class IpAudit {
     const sources = Array.isArray(f.details?.search_sources) ? f.details.search_sources as string[] : [];
     const summary = f.details?.summary as { headline?: string; why?: string; checked?: string[]; sources?: { title: string; url: string }[] } | undefined;
     const cardPhotos = Array.isArray(f.details?.photo_results) ? f.details.photo_results as { photo_number: number; url: string; status: string; model_observed: boolean }[] : [];
-    const photoLabel = f.details?.skipped ? 'пропущена' : f.photo_index === -1 && ['ru-photo-v4','ru-photo-v5'].includes(String(f.details?.audit_version)) ? `вся карточка · ${cardPhotos.length ? `${cardPhotos.length} фото` : 'без фото'}` : f.photo_index >= 0 ? `фото ${f.photo_index + 1}` : 'без фото';
+    const reportedPhotoTotal = Number((f.details?.image as { total?: unknown } | undefined)?.total) || 0;
+    const photoCount = Math.max(cardPhotos.length, reportedPhotoTotal, f.photo_url ? 1 : 0);
+    const photoLabel = f.details?.skipped ? 'пропущена' : f.photo_index === -1 && ['ru-photo-v4','ru-photo-v5'].includes(String(f.details?.audit_version)) ? `вся карточка · ${photoCount ? `${photoCount} фото` : 'данные о фото не сохранены'}` : f.photo_index >= 0 ? `фото ${f.photo_index + 1}` : 'без фото';
     return `<article class="ip-finding"><div class="ip-finding-select"><input type="checkbox" aria-label="Выбрать результат" ${this.selectedFindings.has(f.id) ? 'checked' : ''} onchange="window.myAnalysisModule?.ipToggleSelect('${f.id}')"></div><details data-key="finding-${f.id}"><summary>${safeUrl(f.photo_url) ? `<img src="${clean(f.photo_url)}" loading="lazy" alt="">` : '<span class="ip-no-photo">◇</span>'}<span class="ip-finding-title"><b>${clean(f.product_name)}</b><small>${clean(f.marketplace.toUpperCase())} · ${clean(f.vendor_code)} · ${photoLabel}</small><span>${clean(f.object_name || f.reason || 'Объект не определён')}</span></span><span class="ip-risk ip-risk-${f.risk}">${f.details?.skipped ? 'Пропущено' : RISK_LABEL[f.risk]}</span><span class="ip-expand">⌄</span></summary>
       <div class="ip-finding-body"><div class="ip-evidence"><div>${safeUrl(f.photo_url) ? `<a href="${clean(f.photo_url)}" target="_blank" rel="noopener noreferrer"><img src="${clean(f.photo_url)}" loading="lazy" alt="Фото товара"></a><small>Фото товара</small>` : ''}</div>${ref && safeUrl(ref.image_url) ? `<div><img src="${clean(ref.image_url)}" loading="lazy" alt="Эталон"><small>${clean(ref.name)}</small></div>` : ''}<div class="ip-reason"><b>${clean(summary?.headline || f.object_name || 'Объект не назван')}</b><p>${clean(summary?.why || f.reason)}</p>${f.error ? `<p class="ca-error">${clean(f.error)}</p>` : ''}${summary?.checked?.length ? `<ul class="ip-summary-checked">${summary.checked.map(item => `<li>${clean(item)}</li>`).join('')}</ul>` : ''}${summary?.sources?.length ? `<div class="ip-summary-sources">${summary.sources.map(source => `<a href="${clean(safeUrl(source.url))}" target="_blank" rel="noopener noreferrer">${clean(source.title)} ↗</a>`).join('')}</div>` : ''}</div></div>
       <details class="ip-more-evidence"><summary>Подробности анализа, фото и источники</summary>${this.renderAuditEvidence(f)}

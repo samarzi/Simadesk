@@ -9,7 +9,7 @@ import { loadAiCatalog } from '@/services/aiModels';
 vi.mock('@/services/dbClient', () => ({ dbFetch: vi.fn(), dbFetchAll: vi.fn().mockImplementation(async () => []) }));
 vi.mock('@/services/aiProxy', () => ({ analysisAiFetch: vi.fn() }));
 vi.mock('@/services/companyService', () => ({ companyService: { getActiveId: () => 'company1' } }));
-vi.mock('@/services/aiTokenQuota', () => ({ hasQuota: () => true, recordAiSpend: vi.fn() }));
+vi.mock('@/services/aiTokenQuota', () => ({ hasQuota: () => true, recordAiSpend: vi.fn(), isFreeAiModel: (id: string) => id.endsWith(':free') }));
 vi.mock('@/services/aiUsage', () => ({ reportAiUsage: () => null }));
 vi.mock('@/modules/analytics/services/exporter', () => ({ exportXlsx: vi.fn(), exportFileName: vi.fn() }));
 vi.mock('@/services/aiModels', async importOriginal => ({ ...await importOriginal<typeof import('@/services/aiModels')>(), loadAiCatalog: vi.fn().mockRejectedValue(new Error('offline')) }));
@@ -51,6 +51,32 @@ it('still analyses the photo if fetching the marketplace description fails', asy
   expect(audit.findings[0].details.description_error).toContain('Описание');
   expect(audit.runs[0].errors).toBe(1);
   expect(audit.message).toContain('Продолжить');
+});
+
+it('tries free vision providers beyond the previous five-model cutoff', async () => {
+  const models = Array.from({ length: 6 }, (_, i) => ({
+    id: `provider${i}/vision:free`, name: `Vision ${i}`, free: true,
+    context: 100_000 - i, input: ['text', 'image'], output: ['text'], parameters: [],
+    description: '', maxOutput: null, created: null, knowledgeCutoff: null,
+    expiration: null, tokenizer: null, instructType: null, moderated: null,
+  }));
+  vi.mocked(loadAiCatalog).mockResolvedValue({ models, auto: { vision: models[0].id } });
+  let modelAttempt = 0;
+  vi.mocked(analysisAiFetch).mockImplementation(async body => {
+    const attempt = ++modelAttempt;
+    const risk = attempt < 6 ? 'insufficient' : 'none';
+    return new Response(JSON.stringify({ model: models[attempt - 1]?.id, choices: [{ message: { content: JSON.stringify({
+      risk, reason: risk === 'none' ? 'Фото проверено' : 'Повторить', object_name: '',
+      details: { audit_version: 'ru-photo-v5', actual_models: [models[attempt - 1]?.id] },
+    }) } }] }));
+  });
+  const card = { uid: 'c1', mp: 'wb' as const, storeId: 's1', storeName: 'Store', vendorCode: 'A1', name: 'Футболка', photoUrls: ['https://basket-45.wbbasket.ru/photo.webp'] };
+  const audit = new IpAudit(() => [card], async () => 'Описание товара', vi.fn());
+  await audit.load();
+  await audit.start('sample');
+  expect(analysisAiFetch).toHaveBeenCalledTimes(6);
+  expect(audit.findings[0].risk).toBe('none');
+  expect(audit.runs[0].status).toBe('completed');
 });
 
 it('loads run metadata and references first, then loads the selected findings page on demand', async () => {
