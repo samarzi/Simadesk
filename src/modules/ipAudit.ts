@@ -414,9 +414,14 @@ export class IpAudit {
       if (seenProviders.has(provider)) return false;
       seenProviders.add(provider); return true;
     }).map(m => m.id);
+    // В режиме «Авто» не отправляем 'auto' на сервер — он не знает, какую модель
+    // выбрать, и может взять платную. Берём лучшую бесплатную vision-модель.
+    const primaryModel = (modelId === AI_AUTO && alternatives.length > 0)
+      ? alternatives[0]
+      : modelId;
     // Retry with the most reliable free vision providers first. In free mode
     // exhaust the distinct compatible providers before leaving a card unresolved.
-    const models = [...new Set([modelId, ...(freeMode ? alternatives : [])])];
+    const models = [...new Set([primaryModel, ...(freeMode ? alternatives : [])])];
     let last: Pick<Finding, 'risk'|'object_type'|'object_name'|'rights_holder'|'reason'|'confidence'|'detected_text'|'details'|'error'> | null = null;
     for (let index = 0; index < models.length; index++) {
       const candidate = models[index];
