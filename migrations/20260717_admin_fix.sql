@@ -135,7 +135,9 @@ CREATE TABLE IF NOT EXISTS support_tickets (
 );
 
 ALTER TABLE support_tickets ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "users see own tickets" ON support_tickets;
 CREATE POLICY "users see own tickets" ON support_tickets FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "users create tickets" ON support_tickets;
 CREATE POLICY "users create tickets"  ON support_tickets FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- RPC: user creates a ticket
