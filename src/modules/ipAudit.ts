@@ -439,6 +439,9 @@ export class IpAudit {
     const primaryModel = (modelId === AI_AUTO && alternatives.length > 0)
       ? alternatives[0]
       : modelId;
+    // Если выбрана конкретная модель, но она недоступна на сервере —
+    // добавляем 'auto' как запасной вариант (сервер сам выберет рабочую модель).
+    if (modelId !== AI_AUTO && freeMode) alternatives.unshift('auto');
     // Retry with the most reliable free vision providers first. In free mode
     // exhaust the distinct compatible providers before leaving a card unresolved.
     const models = [...new Set([primaryModel, ...(freeMode ? alternatives : [])])];
