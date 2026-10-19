@@ -1,3 +1,5 @@
+import { isFreeAiModel } from './aiTokenQuota';
+
 /**
  * Учёт расхода токенов на запросы к AI.
  *
@@ -72,9 +74,11 @@ const nf = new Intl.NumberFormat('ru-RU');
  * Записать расход и показать уведомление.
  * `label` — что именно потратило токены («Сима», «Поддержка AI», …).
  */
-export function reportAiUsage(label: string, response: unknown): AiUsage | null {
-  const usage = parseUsage(response);
-  if (!usage) return null;
+export function reportAiUsage(label: string, response: unknown, options: { model?: string; free?: boolean } = {}): AiUsage | null {
+  const parsed = parseUsage(response);
+  if (!parsed) return null;
+  const free = options.free ?? (options.model ? isFreeAiModel(options.model) : false);
+  const usage = free ? { ...parsed, cost: 0 } : parsed;
 
   totals.prompt     += usage.prompt;
   totals.completion += usage.completion;
@@ -116,7 +120,7 @@ function showUsageCard(label: string, usage: AiUsage): void {
   // Стоимость показываем только администраторам
   const showCost = isAdminSession();
   const costLine = showCost && usage.cost !== undefined
-    ? `<span class="sd-ai-usage-cost">$${usage.cost.toFixed(4)}</span>`
+    ? `<span class="sd-ai-usage-cost">${usage.cost === 0 ? 'Бесплатно' : `$${usage.cost.toFixed(4)}`}</span>`
     : '';
   const sumCost = showCost && totals.cost > 0
     ? ` · $${totals.cost.toFixed(3)}`
@@ -132,7 +136,7 @@ function showUsageCard(label: string, usage: AiUsage): void {
       <span class="sd-ai-usage-io" title="Ответ">↓ ${nf.format(usage.completion)}</span>
       ${costLine}
     </div>
-    <div class="sd-ai-usage-sum">За сессию: ${nf.format(totals.total)} · запросов: ${nf.format(totals.calls)}${sumCost}</div>`;
+    <div class="sd-ai-usage-sum">За сессию по всем ИИ-модулям: ${nf.format(totals.total)} токенов · ${nf.format(totals.calls)} запросов${sumCost ? ` · общая стоимость: ${sumCost.slice(3)}` : ''}</div>`;
 
   host.appendChild(card);
 
@@ -149,3 +153,4 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
+

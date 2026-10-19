@@ -100,8 +100,22 @@ function lookupModelPrice(model: string): ModelPrice | null {
   }
 }
 
+/** Бесплатный OpenRouter-маршрут может не передавать usage.cost. */
+export function isFreeAiModel(model: string): boolean {
+  if (/:free$/i.test(model) || /(?:^|\/)openrouter\/free$/i.test(model)) return true;
+  try {
+    const list = (JSON.parse(localStorage.getItem('sd_or_models_v2') || '{}')?.data ?? []) as Array<{
+      id: string; free?: boolean; pricing?: { prompt?: string; completion?: string };
+    }>;
+    const alt = model.replace(/(\d)-(\d)/g, '$1.$2');
+    const m = list.find(x => x.id === model) ?? list.find(x => x.id === alt);
+    return m?.free === true || (!!m?.pricing && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0);
+  } catch { return false; }
+}
+
 /** Стоимость запроса в $, если OpenRouter её не вернул. */
 export function estimateCostUsd(model: string, promptTokens: number, completionTokens: number): number {
+  if (isFreeAiModel(model)) return 0;
   const price = lookupModelPrice(model) ?? { prompt: BASE_PROMPT_USD, completion: BASE_COMPLETION_USD };
   return promptTokens * price.prompt + completionTokens * price.completion;
 }

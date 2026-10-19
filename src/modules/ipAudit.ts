@@ -2,7 +2,7 @@ import { dbFetch, dbFetchAll } from '@/services/dbClient';
 import { analysisAiFetch } from '@/services/aiProxy';
 import { companyService } from '@/services/companyService';
 import { reportAiUsage } from '@/services/aiUsage';
-import { recordAiSpend } from '@/services/aiTokenQuota';
+import { isFreeAiModel, recordAiSpend } from '@/services/aiTokenQuota';
 import { exportXlsx, exportFileName } from './analytics/services/exporter';
 import { AI_AUTO, loadAiCatalog, modelCompatible, selectedAiModel } from '@/services/aiModels';
 import { aiModelButton } from '@/components/aiModelPicker';
@@ -262,7 +262,9 @@ export class IpAudit {
         throw new Error(String(detail.error?.message ?? `ИИ ответил HTTP ${res.status}`));
       }
       const body = await res.json();
-      const usage = reportAiUsage('Аудит прав', body);
+      const actualModels = Array.isArray(body.details?.actual_models) ? body.details.actual_models.map(String) : [String(body.model || modelId)];
+      const freeModels = actualModels.length > 0 && actualModels.every(isFreeAiModel);
+      const usage = reportAiUsage('Анализ прав', body, { model: String(body.model || modelId), free: freeModels });
       if (usage) recordAiSpend(usage, body.model || modelId);
       const raw = body.choices?.[0]?.message?.content;
       if (typeof raw !== 'string') throw new Error('Пустой ответ ИИ');
