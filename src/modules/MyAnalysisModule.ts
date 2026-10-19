@@ -211,7 +211,7 @@ export class MyAnalysisModule {
   private analysisKind: 'quality' | 'rights' = 'quality';
   private companyId = '';
   private qualityStores: Set<string> | null = null;
-  private shownCards = 100;
+  private shownCards = 30;
   private resetScroll = false;
   private ipAudit = new IpAudit(() => this.cards as AuditCard[], c => this._fetchDesc(c as ProductCard), mode => mode === 'progress' ? this._paintAuditProgress() : this._paint());
   private fixedItems: FixedItem[] = [];
@@ -273,7 +273,7 @@ export class MyAnalysisModule {
   setIssueFilter(f: IssueFilter){ this.issueFilter = f; this._paint(); }
   setSort(s: typeof this.sortBy){ this.sortBy = s; this._paint(); }
   setSearch(v: string)     {
-    this.searchQ = v; this.shownCards = 100; this.resetScroll = true;
+    this.searchQ = v; this.shownCards = 30; this.resetScroll = true;
     window.clearTimeout(this._searchTimer);
     this._searchTimer = window.setTimeout(() => this._paint(), 140);
   }
@@ -284,7 +284,7 @@ export class MyAnalysisModule {
     if (kind === 'rights') void this.ipAudit.load();
   }
   setTab(t: 'overview' | 'issues' | 'fixed' | 'ai' | 'settings') { this.activeTab = t; this.resetScroll = true; this._paint(); }
-  showMoreCards() { this.shownCards += 100; this._paint(); }
+  showMoreCards() { this.shownCards += 30; this._paint(); }
   private _stores() {
     return [...this.wbStores.map(s => ({ ...s, mp: 'wb' as Mp })), ...this.ozStores.map(s => ({ ...s, mp: 'ozon' as Mp })), ...this.yaStores.map(s => ({ ...s, mp: 'yandex' as Mp }))];
   }
@@ -304,7 +304,7 @@ export class MyAnalysisModule {
   qualityChooseAll(all: boolean) { this.qualityStores = all ? null : new Set(); this._saveScope(); }
   private _saveScope() {
     localStorage.setItem(`sd_quality_stores_${this.companyId}`, JSON.stringify([...(this.qualityStores ?? new Set(this._stores().map(s => s.id)))]));
-    this.aiSuggestions = []; this.shownCards = 100; this._paint();
+    this.aiSuggestions = []; this.shownCards = 30; this._paint();
   }
 
   ipSection(v: 'overview' | 'results' | 'history' | 'references' | 'settings') { this.resetScroll = true; this.ipAudit.setSection(v); }
@@ -1127,10 +1127,12 @@ export class MyAnalysisModule {
   private _qualityScope(): string {
     const stores = this._stores();
     const selected = this.qualityStores ?? new Set(stores.map(s => s.id));
+    const cardsByStore = new Map<string, number>();
+    for (const card of this.cards) cardsByStore.set(card.storeId, (cardsByStore.get(card.storeId) ?? 0) + 1);
     return `<div class="ca-scope-head"><div><b>Магазины для проверки</b><p>Будут обработаны только отмеченные магазины.</p></div><div><button class="ca-text-btn" onclick="window.myAnalysisModule?.qualityChooseAll(true)">Все</button><button class="ca-text-btn" onclick="window.myAnalysisModule?.qualityChooseAll(false)">Снять выбор</button></div></div>
       <div class="ca-scope-grid">${(['wb','ozon','yandex'] as const).map(mp => {
         const list = stores.filter(s => s.mp === mp); if (!list.length) return '';
-        return `<div class="ca-scope-group"><label class="ca-scope-mp"><input type="checkbox" ${list.every(s => selected.has(s.id)) ? 'checked' : ''} onchange="window.myAnalysisModule?.qualityToggleMp('${mp}')"><span class="ca-mp-dot" style="background:${MP_COLOR[mp]}"></span>${MP_NAME[mp]}</label>${list.map(s => `<label><input type="checkbox" ${selected.has(s.id) ? 'checked' : ''} onchange="window.myAnalysisModule?.qualityToggleStore('${s.id}')"><span>${this._e(s.name)}</span><small>${this.cards.filter(c => c.storeId === s.id).length}</small></label>`).join('')}</div>`;
+        return `<div class="ca-scope-group"><label class="ca-scope-mp"><input type="checkbox" ${list.every(s => selected.has(s.id)) ? 'checked' : ''} onchange="window.myAnalysisModule?.qualityToggleMp('${mp}')"><span class="ca-mp-dot" style="background:${MP_COLOR[mp]}"></span>${MP_NAME[mp]}</label>${list.map(s => `<label><input type="checkbox" ${selected.has(s.id) ? 'checked' : ''} onchange="window.myAnalysisModule?.qualityToggleStore('${s.id}')"><span>${this._e(s.name)}</span><small>${cardsByStore.get(s.id) ?? 0}</small></label>`).join('')}</div>`;
       }).join('') || '<p class="ca-muted">Подключённых магазинов пока нет.</p>'}</div>`;
   }
 
@@ -1162,7 +1164,7 @@ export class MyAnalysisModule {
     if (this.activeTab === 'fixed') return this._fixedBody();
     if (this.activeTab === 'ai') return `<div class="ca-workspace">${this._qualityToolbar()}${this._aiBody()}</div>`;
     const list = this._filtered();
-    return `<div class="ca-workspace">${this._qualityToolbar()}<div class="ca-body"><div class="ca-results-caption"><span>${list.length} карточек</span><select aria-label="Сортировка карточек" onchange="window.myAnalysisModule?.setSort(this.value)">${[['score','Сначала низкая оценка'],['name','По названию'],['photos','По числу фото'],['mp','По площадке']].map(([id,n]) => `<option value="${id}" ${this.sortBy === id ? 'selected' : ''}>${n}</option>`).join('')}</select></div><div class="ca-list">${list.slice(0, this.shownCards).map(c => this._row(c)).join('') || '<div class="ca-empty"><b>Карточки не найдены</b><p>Измените фильтры или выберите магазины в обзоре.</p></div>'}</div>${list.length > this.shownCards ? '<button class="ca-btn ca-more" onclick="window.myAnalysisModule?.showMoreCards()">Показать ещё 100</button>' : ''}</div></div>`;
+    return `<div class="ca-workspace">${this._qualityToolbar()}<div class="ca-body"><div class="ca-results-caption"><span>${list.length} карточек</span><select aria-label="Сортировка карточек" onchange="window.myAnalysisModule?.setSort(this.value)">${[['score','Сначала низкая оценка'],['name','По названию'],['photos','По числу фото'],['mp','По площадке']].map(([id,n]) => `<option value="${id}" ${this.sortBy === id ? 'selected' : ''}>${n}</option>`).join('')}</select></div><div class="ca-list">${list.slice(0, this.shownCards).map(c => this._row(c)).join('') || '<div class="ca-empty"><b>Карточки не найдены</b><p>Измените фильтры или выберите магазины в обзоре.</p></div>'}</div>${list.length > this.shownCards ? '<button class="ca-btn ca-more" onclick="window.myAnalysisModule?.showMoreCards()">Показать ещё 30</button>' : ''}</div></div>`;
   }
 
   private _aiBody(): string {

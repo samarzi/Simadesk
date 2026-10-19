@@ -18,7 +18,7 @@ beforeEach(() => {
   vi.clearAllMocks(); localStorage.clear(); vi.stubGlobal('crypto', webcrypto);
   vi.mocked(dbFetch).mockImplementation(async (path, options) => {
     const data = JSON.parse(String(options?.body ?? '{}'));
-    if (path === 'ip_audit_runs') return [{ id: 'run1', status: 'running', processed: 0, errors: 0, created_at: new Date().toISOString(), ...data }] as any;
+    if (path === 'ip_audit_runs' || path.startsWith('ip_audit_runs?company_id=')) return [{ id: 'run1', company_id: 'company1', status: 'running', scope: 'sample', total: 1, processed: 0, errors: 0, created_at: new Date().toISOString(), model_id: 'auto', ...data }] as any;
     if (path.startsWith('ip_audit_findings?on_conflict')) return [{ id: 'finding1', ...data }] as any;
     return [] as any;
   });
@@ -53,16 +53,19 @@ it('still analyses the photo if fetching the marketplace description fails', asy
   expect(audit.message).toContain('Продолжить');
 });
 
-it('loads audit results once per company without downloading findings from every historical run', async () => {
+it('loads run metadata and references first, then loads the selected findings page on demand', async () => {
   const audit = new IpAudit(() => [], async () => '', vi.fn());
   const firstLoad = audit.load();
   expect(audit.loading).toBe(true);
   await firstLoad;
   await audit.load();
   expect(audit.loading).toBe(false);
-  expect(dbFetchAll).toHaveBeenCalledTimes(2);
+  expect(dbFetchAll).toHaveBeenCalledOnce();
   const queries = vi.mocked(dbFetchAll).mock.calls.map(([path]) => String(path));
-  expect(queries.some(path => path.includes('ip_audit_runs?company_id=eq.company1'))).toBe(true);
   expect(queries.some(path => path.includes('ip_audit_references?company_id=eq.company1'))).toBe(true);
-  expect(queries.some(path => path.includes('ip_audit_findings'))).toBe(false);
+  const initialQueries = vi.mocked(dbFetch).mock.calls.map(([path]) => String(path));
+  expect(initialQueries.some(path => path.includes('ip_audit_runs?company_id=eq.company1') && !path.includes('product_keys'))).toBe(true);
+  expect(initialQueries.some(path => path.includes('ip_audit_findings'))).toBe(false);
+  audit.setSection('results');
+  expect(vi.mocked(dbFetch).mock.calls.some(([path]) => String(path).includes('ip_audit_findings') && String(path).endsWith('limit=100'))).toBe(true);
 });
