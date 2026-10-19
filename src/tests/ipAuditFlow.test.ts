@@ -2,7 +2,7 @@
 import { webcrypto } from 'node:crypto';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { IpAudit } from '@/modules/ipAudit';
-import { dbFetch } from '@/services/dbClient';
+import { dbFetch, dbFetchAll } from '@/services/dbClient';
 import { analysisAiFetch } from '@/services/aiProxy';
 import { loadAiCatalog } from '@/services/aiModels';
 
@@ -51,4 +51,18 @@ it('still analyses the photo if fetching the marketplace description fails', asy
   expect(audit.findings[0].details.description_error).toContain('Описание');
   expect(audit.runs[0].errors).toBe(1);
   expect(audit.message).toContain('Продолжить');
+});
+
+it('loads audit results once per company without downloading findings from every historical run', async () => {
+  const audit = new IpAudit(() => [], async () => '', vi.fn());
+  const firstLoad = audit.load();
+  expect(audit.loading).toBe(true);
+  await firstLoad;
+  await audit.load();
+  expect(audit.loading).toBe(false);
+  expect(dbFetchAll).toHaveBeenCalledTimes(2);
+  const queries = vi.mocked(dbFetchAll).mock.calls.map(([path]) => String(path));
+  expect(queries.some(path => path.includes('ip_audit_runs?company_id=eq.company1'))).toBe(true);
+  expect(queries.some(path => path.includes('ip_audit_references?company_id=eq.company1'))).toBe(true);
+  expect(queries.some(path => path.includes('ip_audit_findings'))).toBe(false);
 });

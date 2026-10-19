@@ -15,6 +15,7 @@ import { debug } from '@/utils/debug';
 import { reportAiUsage } from '@/services/aiUsage';
 import { IpAudit, type AuditCard } from './ipAudit';
 import './ipAudit.css';
+import './analysis-loading.css';
 import '@/styles/analysis.css';
 import { aiModelButton } from '@/components/aiModelPicker';
 import { selectedAiModel } from '@/services/aiModels';
@@ -186,6 +187,7 @@ export class MyAnalysisModule {
   private error: string | null = null;
   private loadMsg = 'Загружаем…';
   private _raf = 0;
+  private _searchTimer = 0;
   private _drawerOpen = false;   // tracks if drawer is already rendered (avoid re-animation)
 
   // Data
@@ -211,7 +213,7 @@ export class MyAnalysisModule {
   private qualityStores: Set<string> | null = null;
   private shownCards = 100;
   private resetScroll = false;
-  private ipAudit = new IpAudit(() => this.cards as AuditCard[], c => this._fetchDesc(c as ProductCard), () => this._paint());
+  private ipAudit = new IpAudit(() => this.cards as AuditCard[], c => this._fetchDesc(c as ProductCard), mode => mode === 'progress' ? this._paintAuditProgress() : this._paint());
   private fixedItems: FixedItem[] = [];
   private fixedVerifying = false;
 
@@ -257,7 +259,7 @@ export class MyAnalysisModule {
       this.drawerCard = null;
       try { const saved = localStorage.getItem(`sd_quality_stores_${cid}`); this.qualityStores = saved ? new Set(JSON.parse(saved)) : null; } catch { this.qualityStores = null; }
     }
-    if (!this.loaded && !this.loading) await this._load();
+    if (!this.loaded && !this.loading) void this._load();
     else this._paint();
     if (this.analysisKind === 'rights') void this.ipAudit.load();
   }
@@ -270,7 +272,11 @@ export class MyAnalysisModule {
   setStore(id: string)     { this.storeFilter = id; this._paint(); }
   setIssueFilter(f: IssueFilter){ this.issueFilter = f; this._paint(); }
   setSort(s: typeof this.sortBy){ this.sortBy = s; this._paint(); }
-  setSearch(v: string)     { this.searchQ = v; this.shownCards = 100; this.resetScroll = true; this._paint(); }
+  setSearch(v: string)     {
+    this.searchQ = v; this.shownCards = 100; this.resetScroll = true;
+    window.clearTimeout(this._searchTimer);
+    this._searchTimer = window.setTimeout(() => this._paint(), 140);
+  }
   async reload()           { this.loaded = false; await this._load(); }
 
   setKind(kind: 'quality' | 'rights') {
@@ -964,7 +970,8 @@ export class MyAnalysisModule {
           storeId:p.store_id, storeName:sName(p.store_id), vendorCode:p.offer_id,
           name:p.name||p.offer_id, photoUrls:p.images||[], price:Number(p.price)||0,
           rawStatus:p.status||'', productId:Number(p.product_id)||undefined };
-        cards.push({ ...base, issues:auditCard(base), score:scoreCard(auditCard(base)) });
+        const issues = auditCard(base);
+        cards.push({ ...base, issues, score:scoreCard(issues) });
       }
       for (const p of wbP) {
         const base = { uid:`wb:${p.store_id}:${p.vendor_code}`, mp:'wb' as Mp,
@@ -972,7 +979,8 @@ export class MyAnalysisModule {
           name:p.title||p.vendor_code, photoUrls:p.pictures||[],
           price:Number(p.price)*(1-(Number(p.discount)||0)/100), rawStatus:'active',
           nmId:Number(p.nm_id)||undefined };
-        cards.push({ ...base, issues:auditCard(base), score:scoreCard(auditCard(base)) });
+        const issues = auditCard(base);
+        cards.push({ ...base, issues, score:scoreCard(issues) });
       }
       for (const p of yaP) {
         const ys = ya.find(s=>s.id===p.store_id);
@@ -981,7 +989,8 @@ export class MyAnalysisModule {
           name:p.name||p.offer_id, photoUrls:p.pictures||[], price:Number(p.basic_price)||0,
           rawStatus:p.archived?'archived':'active',
           businessId:ys?.business_id??undefined, campaignId:ys?.campaign_id??undefined };
-        cards.push({ ...base, issues:auditCard(base), score:scoreCard(auditCard(base)) });
+        const issues = auditCard(base);
+        cards.push({ ...base, issues, score:scoreCard(issues) });
       }
 
       if (cid !== companyService.getActiveId()) return;
@@ -1067,7 +1076,8 @@ export class MyAnalysisModule {
         .map(input => ({ id: input.id, name: input.name, value: input.value }));
       const openDetails = [...this.el.querySelectorAll<HTMLDetailsElement>('details[open][data-key]')].map(d => d.dataset.key);
       const hadDrawer = this._drawerOpen; this._drawerOpen = !!this.drawerCard;
-      this.el.innerHTML = `<div class="ca-root">${this._head()}${this._body()}</div>${this._drawer(hadDrawer)}`;
+      const activeWork = this.loading || this.ipAudit.loading || this.ipAudit.busy || this.aiRunning || this.aiApplying || this.fixedVerifying;
+      this.el.innerHTML = `<div class="ca-root${activeWork ? ' ca-is-busy' : ''}">${activeWork ? '<div class="ca-activity" role="progressbar" aria-label="Идёт обработка"><span></span></div>' : ''}${this._head()}${this._body()}</div>${this._drawer(hadDrawer)}`;
       const body = this.el.querySelector<HTMLElement>('.ca-body'); if (body) body.scrollTop = scroll;
       this.el.querySelectorAll<HTMLDetailsElement>('details[data-key]').forEach(d => { if (openDetails.includes(d.dataset.key)) d.open = true; });
       for (const draft of drafts) {
@@ -1079,6 +1089,25 @@ export class MyAnalysisModule {
         if (next) { next.focus({ preventScroll: true }); try { next.setSelectionRange(selection[0] ?? 0, selection[1] ?? 0); } catch { /* selects / number inputs */ } }
       }
     });
+  }
+
+  /** Update the active audit row without rebuilding a potentially large result list. */
+  private _paintAuditProgress() {
+    const stage = this.el.querySelector<HTMLElement>('.ip-current-stage');
+    if (stage) stage.textContent = this.ipAudit.currentStage || 'Выполняю проверку карточки';
+    const notice = this.el.querySelector<HTMLElement>('.ip-notice');
+    if (this.ipAudit.message) {
+      if (notice) notice.textContent = this.ipAudit.message;
+      else { this._paint(); return; }
+    }
+    const run = this.ipAudit.runs.find(item => item.id === this.ipAudit.selectedRun);
+    const progress = this.el.querySelector<HTMLElement>('.ip-progress progress');
+    if (run && progress instanceof HTMLProgressElement) {
+      progress.max = Math.max(1, run.total);
+      progress.value = run.processed;
+      const label = this.el.querySelector<HTMLElement>('.ip-progress > div span');
+      if (label) label.textContent = `${run.processed} из ${run.total} карточек · ${this.ipAudit.findings.filter(f => f.run_id === run.id).length} результатов · ошибок ${run.errors}`;
+    }
   }
 
   private _head(): string {
@@ -1125,9 +1154,9 @@ export class MyAnalysisModule {
   }
 
   private _body(): string {
+    if (this.analysisKind === 'rights') return this.ipAudit.render();
     if (this.loading && !this.loaded) return `<div class="ca-body ca-empty"><div class="ca-spin"></div><p>${this._e(this.loadMsg)}</p></div>`;
     if (this.error) return `<div class="ca-body ca-empty"><p>${this._e(this.error)}</p><button class="ca-btn" onclick="window.myAnalysisModule?.reload()">Повторить загрузку</button></div>`;
-    if (this.analysisKind === 'rights') return this.ipAudit.render();
     if (this.activeTab === 'overview') return this._qualityOverview();
     if (this.activeTab === 'settings') return `<div class="ca-body"><section class="ca-surface"><div class="ca-setting-line"><div><h2>Модель для улучшения карточек</h2><p>Авто подбирает бесплатную модель. Базовая проверка качества выполняется без ИИ.</p></div>${aiModelButton('quality')}</div></section><section class="ca-surface">${this._qualityScope()}</section><p class="ca-footnote">Оценка качества помогает найти неполные карточки. Правки отправляются на маркетплейс после вашего подтверждения.</p></div>`;
     if (this.activeTab === 'fixed') return this._fixedBody();

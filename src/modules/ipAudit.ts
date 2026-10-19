@@ -29,7 +29,6 @@ const REVIEW_LABEL: Record<Review, string> = { unreviewed: 'Не провере�
 const clean = (s: unknown): string => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] || c);
 const safeUrl = (s: string | null | undefined) => /^https:\/\//i.test(s ?? '') ? s || '' : '';
 const productLink = (c: AuditCard): string => c.mp === 'wb' && c.nmId ? `https://www.wildberries.ru/catalog/${c.nmId}/detail.aspx` : '';
-const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const MODEL_STABILITY_KEY = 'sd_ip_free_model_stability_v1';
 interface ModelStability { ok: number; failed: number; avgMs: number; lastFailure?: number; }
 function readModelStability(): Record<string, ModelStability> {
@@ -54,6 +53,8 @@ export class IpAudit {
   findings: Finding[] = [];
   references: Reference[] = [];
   busy = false;
+  loading = false;
+  currentStage = '';
   message = '';
   section: 'overview' | 'results' | 'history' | 'references' | 'settings' = 'overview';
   filter = 'all';
@@ -62,44 +63,82 @@ export class IpAudit {
   private stop = false;
   private skipCurrentRequested = false;
   private currentCard: AuditCard | null = null;
-  private currentStage = '';
   private currentAbort: AbortController | null = null;
   private companyId = '';
+  private loadedCompany = '';
+  private loadTask: Promise<void> | null = null;
+  private loadedRunIds = new Set<string>();
+  private loadingRun = '';
+  private findingsMayContinue = false;
+  private loadingMore = false;
+  private searchTimer: ReturnType<typeof setTimeout> | null = null;
   private selectedStores: Set<string> | null = null;
   private shown = 100;
   private selectedFindings: Set<string> = new Set();
-  constructor(private cards: () => AuditCard[], private description: (c: AuditCard) => Promise<string>, private paint: () => void) {}
+  constructor(private cards: () => AuditCard[], private description: (c: AuditCard) => Promise<string>, private paint: (mode?: 'progress') => void) {}
 
   async load(): Promise<void> {
     const cid = companyService.getActiveId() ?? '';
     if (!cid) return;
-    if (this.busy && this.companyId === cid) return;
+    if (this.loadTask) return this.loadTask;
+    if (this.loadedCompany === cid) return;
     if (this.companyId !== cid) {
-      this.stop = true; this.selectedRun = ''; this.selectedFindings.clear(); this.runs = []; this.findings = []; this.references = [];
+      this.stop = true; this.selectedRun = ''; this.selectedFindings.clear(); this.runs = []; this.findings = []; this.references = []; this.loadedRunIds.clear();
       try {
         const saved = localStorage.getItem(`sd_ip_audit_stores_${cid}`);
         this.selectedStores = saved ? new Set(JSON.parse(saved) as string[]) : null;
       } catch { this.selectedStores = null; }
     }
     this.companyId = cid;
-    try {
-      const [runs, findings, refs] = await Promise.all([
-        dbFetchAll<Run>(`ip_audit_runs?company_id=eq.${cid}&select=*&order=created_at.desc`),
-        dbFetchAll<Finding>(`ip_audit_findings?company_id=eq.${cid}&select=*&order=created_at.desc`),
+    this.loading = true;
+    this.paint();
+    this.loadTask = (async () => {
+      try {
+      // Keep all run metadata for history, but fetch findings only for the latest run.
+      const [runs, refs] = await Promise.all([
+        dbFetchAll<Run>(`ip_audit_runs?company_id=eq.${cid}&select=id,company_id,status,scope,total,processed,errors,created_at,finished_at,product_keys,model_id&order=created_at.desc`),
         dbFetchAll<Reference>(`ip_audit_references?company_id=eq.${cid}&select=*&order=created_at.desc`),
       ]);
       if (cid !== companyService.getActiveId()) return;
-      this.runs = runs; this.findings = findings; this.references = refs;
+      this.runs = runs; this.references = refs;
       if (!this.selectedRun && runs.length) this.selectedRun = runs[0].id;
+      if (this.selectedRun) {
+        this.findings = await dbFetch<Finding[]>(`ip_audit_findings?company_id=eq.${cid}&run_id=eq.${this.selectedRun}&select=*&order=created_at.desc&limit=500`);
+        this.findingsMayContinue = this.findings.length === 500;
+        this.loadedRunIds.add(this.selectedRun);
+      } else { this.findings = []; this.findingsMayContinue = false; }
+      if (cid !== companyService.getActiveId()) return;
+      this.loadedCompany = cid;
       this.message = '';
-    } catch (e) { this.message = `Не удалось загрузить аудит: ${e instanceof Error ? e.message : String(e)}`; }
-    this.paint();
+      } catch (e) { this.message = `Не удалось загрузить аудит: ${e instanceof Error ? e.message : String(e)}`; }
+      finally { this.loading = false; this.loadTask = null; this.paint(); }
+    })();
+    return this.loadTask;
   }
 
   setSection(v: typeof this.section): void { this.section = v; this.paint(); }
   setFilter(v: string): void { this.filter = v; this.shown = 100; this.paint(); }
-  setSearch(v: string): void { this.search = v; this.shown = 100; this.paint(); }
-  setRun(v: string): void { this.selectedRun = v; this.selectedFindings.clear(); this.shown = 100; this.paint(); }
+  setSearch(v: string): void {
+    this.search = v; this.shown = 100;
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.searchTimer = setTimeout(() => { this.searchTimer = null; this.paint(); }, 140);
+  }
+  setRun(v: string): void { this.selectedRun = v; this.selectedFindings.clear(); this.shown = 100; void this.loadRunFindings(v, true); }
+  private async loadRunFindings(runId: string, complete = false): Promise<void> {
+    if (!runId || (this.loadedRunIds.has(runId) && !complete)) { this.paint(); return; }
+    const cid = this.companyId;
+    this.loadingRun = runId; this.paint();
+    try {
+      const endpoint = `ip_audit_findings?company_id=eq.${cid}&run_id=eq.${runId}&select=*&order=created_at.desc`;
+      const rows = complete ? await dbFetchAll<Finding>(endpoint) : await dbFetch<Finding[]>(`${endpoint}&limit=500`);
+      if (this.selectedRun !== runId || this.companyId !== cid) return;
+      this.findings = rows;
+      this.findingsMayContinue = !complete && rows.length === 500;
+      this.loadedRunIds.add(runId);
+      this.message = '';
+    } catch (e) { this.message = `Не удалось открыть результаты: ${e instanceof Error ? e.message : String(e)}`; }
+    finally { if (this.loadingRun === runId) this.loadingRun = ''; this.paint(); }
+  }
   requestStop(): void { this.stop = true; this.message = 'Останавливаем после текущей карточки…'; this.paint(); }
   skipCurrentCard(): void {
     if (!this.currentCard) return;
@@ -188,7 +227,7 @@ export class IpAudit {
       if (cid !== companyService.getActiveId()) throw new Error('Компания изменилась. Запустите проверку заново.');
       const rows = await dbFetch<Run[]>('ip_audit_runs', { method: 'POST', body: JSON.stringify({ company_id: cid, scope, total: cards.length, product_keys: cards.map(c => c.uid), model_id: modelId }) });
       const run = rows[0];
-      this.runs.unshift(run); this.selectedRun = run.id; this.section = 'results'; this.paint();
+      this.runs.unshift(run); this.selectedRun = run.id; this.findings = []; this.findingsMayContinue = false; this.loadedRunIds.add(run.id); this.section = 'results'; this.paint();
       await this.execute(run, cards);
     } catch (e) { this.busy = false; this.message = `Запуск не удался: ${e instanceof Error ? e.message : String(e)}`; this.paint(); }
   }
@@ -198,6 +237,7 @@ export class IpAudit {
     const run = this.runs.find(r => r.id === id);
     if (!run) return;
     this.selectedRun = id; this.section = 'results';
+    await this.loadRunFindings(id, true);
     const targets = new Set(run.product_keys ?? []);
     const cards = this.cards().filter(c => {
       if (!targets.has(c.uid)) return false;
@@ -228,15 +268,14 @@ export class IpAudit {
         let cardHadError = false;
         let cardNeedsRetry = false;
         try {
-          this.currentStage = 'Загружаю название и описание товара'; this.paint();
+          this.currentStage = 'Загружаю название и описание товара'; this.paint('progress');
           let desc = '', descriptionError = '';
           try { desc = await this.description(c); }
           catch (e) { descriptionError = `Описание маркетплейса не загружено: ${e instanceof Error ? e.message : String(e)}`; }
           const photos = [...new Set(c.photoUrls.filter(safeUrl))];
           const fingerprint = await this.hash(`ru-photo-v5\n${run.id}\n${run.model_id}\n${JSON.stringify(this.references)}\n${c.name}\n${desc}\n${photos.join('\n')}`);
-          // Send the complete photo set in one model request and save one card-level result.
-          this.currentStage = `Передаю ${photos.length} фото и текст на проверку`; this.paint();
-          const result = await this.analyze(c, desc, photos, run.model_id, this.currentAbort.signal, stage => { this.currentStage = stage; this.paint(); });
+          this.currentStage = `Передаю ${photos.length} фото и текст на проверку`; this.paint('progress');
+          const result = await this.analyze(c, desc, photos, run.model_id, this.currentAbort.signal, stage => { this.currentStage = stage; this.paint('progress'); });
           if (this.skipCurrentRequested) {
             result.risk = 'insufficient'; result.object_type = ''; result.object_name = '';
             result.reason = 'Проверка карточки пропущена пользователем.'; result.confidence = null; result.detected_text = ''; result.error = null;
@@ -268,8 +307,7 @@ export class IpAudit {
           this.findings = this.findings.filter(f => f.id !== saved[0].id);
           this.findings.unshift(saved[0]);
           if (result.error) cardHadError = true;
-          this.paint();
-          await pause(450);
+          // The final full render happens once after the active row is removed.
         } catch (e) {
           if (this.skipCurrentRequested) {
             const photos = [...new Set(c.photoUrls.filter(safeUrl))];
@@ -292,7 +330,7 @@ export class IpAudit {
         if (this.findings.some(f => f.run_id === run.id && f.marketplace === c.mp && f.store_id === c.storeId && f.product_id === c.uid && f.photo_index === -1 && !f.error)) completed.add(c.uid);
         run.processed = completed.size;
         await this.patchRun(run, { processed: run.processed, errors: run.errors });
-        this.paint();
+        this.paint('progress');
         if (cardNeedsRetry) { this.stop = true; break; }
         consecutiveErrors = cardHadError ? consecutiveErrors + 1 : 0;
         if (consecutiveErrors >= 5) throw new Error('Пять карточек подряд завершились ошибкой. Проверьте доступ к ИИ и фото, затем продолжите.');
@@ -457,7 +495,24 @@ export class IpAudit {
       (!q || [f.vendor_code, f.product_name, f.object_name].some(v => v.toLowerCase().includes(q))));
   }
   selectFiltered(): void { this.selectAll(this.filteredFindings()); }
-  more(): void { this.shown += 100; this.paint(); }
+  more(): void {
+    this.shown += 100;
+    if (this.shown >= this.findings.length && this.findingsMayContinue && !this.loadingMore) void this.loadMoreFindings();
+    this.paint();
+  }
+  private async loadMoreFindings(): Promise<void> {
+    const runId = this.selectedRun, cid = this.companyId, offset = this.findings.length;
+    if (!runId || !cid || this.loadingMore) return;
+    this.loadingMore = true; this.paint();
+    try {
+      const rows = await dbFetch<Finding[]>(`ip_audit_findings?company_id=eq.${cid}&run_id=eq.${runId}&select=*&order=created_at.desc&limit=500&offset=${offset}`);
+      if (this.selectedRun === runId && this.companyId === cid) {
+        this.findings.push(...rows);
+        this.findingsMayContinue = rows.length === 500;
+      }
+    } catch (e) { this.message = `Не удалось загрузить следующие результаты: ${e instanceof Error ? e.message : String(e)}`; }
+    finally { this.loadingMore = false; this.paint(); }
+  }
   chooseAll(all: boolean): void { this.selectedStores = all ? null : new Set(); this.saveStores(); }
   private renderStores(): string {
     const chosen = this.chosenStores();
@@ -475,11 +530,11 @@ export class IpAudit {
     const status: Record<string, string> = { running: 'Выполняется', paused: 'Приостановлено', completed: 'Завершено', failed: 'Ошибка' };
     const scopes: Record<string, string> = { sample: 'Пробная проверка', all: 'Весь каталог', new: 'Новые карточки', selected: 'По артикулу' };
     const date = (v: string) => new Date(v).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-    let out = `<div class="ca-body ip-audit">${this.message ? `<div class="ip-notice" role="status">${clean(this.message)}</div>` : ''}`;
+    let out = `<div class="ca-body ip-audit">${this.loading ? '<div class="ip-loading-line" role="status"><i class="ca-spin-sm" aria-hidden="true"></i> Загружаем историю и эталоны…</div>' : this.loadingRun ? '<div class="ip-loading-line" role="status"><i class="ca-spin-sm" aria-hidden="true"></i> Загружаем результаты выбранной проверки…</div>' : ''}${this.message ? `<div class="ip-notice" role="status">${clean(this.message)}</div>` : ''}`;
     if (this.section === 'overview') {
       out += `<div class="ca-intro"><div><span class="ca-eyebrow">РОССИЯ · ФОТО · НАЗВАНИЕ · ОПИСАНИЕ</span><h1>Проверьте, что требует внимания</h1><p>Распознавание каждого фото, проверка текста и сопоставление с открытыми источниками MegaLicense и BrandMonitor. Сохраняйте документы и результат проверки.</p></div><div class="ip-shield">◇</div></div>
         <div class="ca-metrics"><div><span>Карточек в выборе</span><b>${count}</b></div><div><span>Проверено карточек</span><b>${latest.length}</b></div><div><span>Требуют внимания</span><b class="ca-warning">${risks}</b></div><div><span>Сохранённых проверок</span><b>${this.runs.length}</b></div></div>
-        <section class="ca-surface">${this.renderStores()}<div class="ca-launch"><select id="ip-scope" class="ca-search" aria-label="Объём проверки"><option value="sample">Пробная · до 50 карточек</option><option value="new">Только новые карточки</option><option value="all" ${!this.runs.some(r => r.scope === 'sample' && r.status === 'completed') ? 'disabled' : ''}>Весь выбранный каталог</option></select><button class="ca-primary" onclick="window.myAnalysisModule?.ipStart(document.getElementById('ip-scope').value)" ${this.busy || !count ? 'disabled' : ''}>${this.busy ? 'Проверяем…' : 'Начать проверку'} <span>→</span></button></div></section>
+        <section class="ca-surface">${this.renderStores()}<div class="ca-launch"><select id="ip-scope" class="ca-search" aria-label="Объём проверки"><option value="sample">Пробная · до 50 карточек</option><option value="new">Только новые карточки</option><option value="all" ${!this.runs.some(r => r.scope === 'sample' && r.status === 'completed') ? 'disabled' : ''}>Весь выбранный каталог</option></select><button class="ca-primary" onclick="window.myAnalysisModule?.ipStart(document.getElementById('ip-scope').value)" ${this.busy || this.loading || !count ? 'disabled' : ''}>${this.busy ? '<i class="ca-spin-sm" aria-hidden="true"></i> Проверяем…' : 'Начать проверку'} <span>→</span></button></div></section>
         <section class="ca-surface ip-single"><div><b>Проверить конкретный товар</b><p>Артикул продавца в выбранных магазинах</p></div><input id="ip-article" class="ca-search" placeholder="Артикул"><button class="ca-btn" onclick="window.myAnalysisModule?.ipStart('selected',document.getElementById('ip-article').value)" ${this.busy ? 'disabled' : ''}>Проверить</button></section>
         ${run ? `<section class="ca-surface ip-last-run"><div><small>ПОСЛЕДНЯЯ ПРОВЕРКА</small><b>${date(run.created_at)} · ${status[run.status] || clean(run.status)}</b><span>${run.processed} из ${run.total} карточек · ошибок ${run.errors}</span></div><button class="ca-btn" onclick="window.myAnalysisModule?.ipChooseRun('${run.id}')">Открыть результаты →</button></section>` : ''}
         <p class="ca-footnote">Проверка для рынка РФ. Иностранные персонажи и группы тоже могут охраняться. Высокий приоритет означает необходимость проверить документы, а отсутствие в открытом портфеле агентства не означает разрешение. Для полного каталога сначала завершите пробную проверку.</p>`;
@@ -494,14 +549,14 @@ export class IpAudit {
       out += `<div class="ip-results-toolbar"><input id="ip-search" type="search" class="ca-search" placeholder="Артикул, товар или объект…" value="${clean(this.search)}" oninput="window.myAnalysisModule?.ipSearch(this.value)"><select class="ca-search" aria-label="Уровень риска" onchange="window.myAnalysisModule?.ipFilter(this.value)">${[['all','Все результаты'],...Object.entries(RISK_LABEL)].map(([v,l]) => `<option value="${v}" ${this.filter === v ? 'selected' : ''}>${l}</option>`).join('')}</select><button class="ca-btn" onclick="window.myAnalysisModule?.ipExport(false)">Экспорт Excel</button>${this.busy ? '<button class="ca-btn" onclick="window.myAnalysisModule?.ipStop()">Остановить</button>' : run && (run.status !== 'completed' || run.errors > 0) ? `<button class="ca-btn" onclick="window.myAnalysisModule?.ipResume('${run.id}')">Продолжить</button>` : ''}</div>
         ${run ? `<div class="ip-progress"><div><b>${status[run.status] || clean(run.status)}</b><span>${run.processed} из ${run.total} карточек · ${latest.length} результатов · ошибок ${run.errors}</span></div><progress max="${Math.max(1,run.total)}" value="${run.processed}"></progress></div>` : ''}
         ${filtered.length ? `<div class="ip-bulk-actions"><label><input type="checkbox" onchange="window.myAnalysisModule?.ipSelectAll()" ${filtered.every(f => this.selectedFindings.has(f.id)) ? 'checked' : ''}> Выбрать все</label><span>${this.selectedFindings.size} выбрано · ${filtered.length} результатов</span>${this.selectedFindings.size ? `<select id="ip-bulk-status">${Object.entries(REVIEW_LABEL).map(([v,l]) => `<option value="${v}">${l}</option>`).join('')}</select><input id="ip-bulk-comment" placeholder="Общий комментарий"><button class="ca-btn" onclick="window.myAnalysisModule?.ipBulkReview()">Применить</button>` : ''}</div>` : ''}
-        <div class="ip-result-list">${this.currentCard ? this.renderCurrentCard() : ''}${filtered.slice(0,this.shown).map(f => this.renderFinding(f)).join('') || (!this.currentCard ? '<div class="ca-empty"><b>Результатов пока нет</b><p>Запустите проверку или измените фильтры.</p></div>' : '')}</div>${filtered.length > this.shown ? '<button class="ca-btn ca-more" onclick="window.myAnalysisModule?.ipMore()">Показать ещё 100</button>' : ''}`;
+        <div class="ip-result-list">${this.currentCard ? this.renderCurrentCard() : ''}${filtered.slice(0,this.shown).map(f => this.renderFinding(f)).join('') || (!this.currentCard && !this.loading && !this.loadingRun ? '<div class="ca-empty"><b>Результатов пока нет</b><p>Запустите проверку или измените фильтры.</p></div>' : '')}</div>${filtered.length > this.shown || this.findingsMayContinue ? `<button class="ca-btn" onclick="window.myAnalysisModule?.ipMore()" ${this.loadingMore ? 'disabled' : ''}>${this.loadingMore ? '<i class="ca-spin-sm" aria-hidden="true"></i> Загружаю…' : 'Показать ещё 100'}</button>` : ''}`;
     }
     return out + '</div>';
   }
   private renderCurrentCard(): string {
     const c = this.currentCard;
     if (!c) return '';
-    return `<article class="ip-finding ip-current-card" aria-live="polite"><div class="ip-finding-select"></div>${safeUrl(c.photoUrls[0]) ? `<img src="${clean(safeUrl(c.photoUrls[0]))}" loading="lazy" alt="">` : '<span class="ip-no-photo">◇</span>'}<div class="ip-current-info"><b>${clean(c.name)}</b><small>${clean(c.mp.toUpperCase())} · ${clean(c.storeName)} · артикул ${clean(c.vendorCode)}</small><span>${clean(this.currentStage || 'Выполняю проверку карточки')}</span></div><span class="ip-current-state"><i class="ip-current-spinner" aria-hidden="true"></i> Проверяется</span><button class="ca-btn" onclick="window.myAnalysisModule?.ipSkipCard()" ${this.skipCurrentRequested ? 'disabled' : ''}>${this.skipCurrentRequested ? 'Пропускаю…' : 'Пропустить'}</button></article>`;
+    return `<article class="ip-finding ip-current-card" aria-live="polite"><div class="ip-finding-select"></div>${safeUrl(c.photoUrls[0]) ? `<img src="${clean(safeUrl(c.photoUrls[0]))}" loading="lazy" alt="">` : '<span class="ip-no-photo">◇</span>'}<div class="ip-current-info"><b>${clean(c.name)}</b><small>${clean(c.mp.toUpperCase())} · ${clean(c.storeName)} · артикул ${clean(c.vendorCode)}</small><span class="ip-current-stage">${clean(this.currentStage || 'Выполняю проверку карточки')}</span></div><span class="ip-current-state"><i class="ip-current-spinner" aria-hidden="true"></i> Проверяется</span><button class="ca-btn" onclick="window.myAnalysisModule?.ipSkipCard()" ${this.skipCurrentRequested ? 'disabled' : ''}>${this.skipCurrentRequested ? 'Пропускаю…' : 'Пропустить'}</button></article>`;
   }
 
   private renderFinding(f: Finding): string {
