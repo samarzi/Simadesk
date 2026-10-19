@@ -38,6 +38,7 @@ $$;
 GRANT EXECUTE ON FUNCTION admin_create_promo(TEXT,INT,INT,TEXT,TIMESTAMPTZ,INT,INT,INT) TO authenticated;
 
 -- ── Update admin_get_promos to include new fields ───────────────────────────
+DROP FUNCTION IF EXISTS admin_get_promos();
 CREATE OR REPLACE FUNCTION admin_get_promos()
 RETURNS JSON LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
