@@ -15,12 +15,12 @@ CREATE TABLE IF NOT EXISTS roadmap_tasks (
 -- RLS: только admin/superadmin
 ALTER TABLE roadmap_tasks ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "roadmap_admin_all" ON roadmap_tasks;
 CREATE POLICY "roadmap_admin_all" ON roadmap_tasks
   FOR ALL USING (
     EXISTS (
-      SELECT 1 FROM user_roles
-      WHERE user_roles.user_id = auth.uid()
-      AND user_roles.role IN ('admin', 'superadmin')
+      SELECT 1 FROM platform_admins
+      WHERE platform_admins.user_id = auth.uid()
     )
   );
 
