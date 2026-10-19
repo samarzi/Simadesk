@@ -22,6 +22,11 @@ export function aiFetch(body: unknown, signal?: AbortSignal): Promise<Response> 
   });
 }
 
+/** Analysis использует точно выбранную модель; использует тот же endpoint, что и aiFetch. */
+export function analysisAiFetch(body: unknown, signal?: AbortSignal): Promise<Response> {
+  return aiFetch(body, signal);
+}
+
 /** Правка общего «разума» Симы: характер и «обо мне» (общие для всех продуктов SIMA). */
 export async function simaMindPatch(patch: { character_add?: string; character_remove?: number[]; about_add?: string }): Promise<boolean> {
   const res = await fetch(`${API_URL}/functions/v1/sima-mind`, {
