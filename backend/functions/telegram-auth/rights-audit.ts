@@ -127,7 +127,7 @@ export async function loadPortfolio(fetcher: typeof fetch = fetch): Promise<Port
   if (portfolioCache && Date.now() - Date.parse(portfolioCache.checked_at) < 6 * 3600_000) return portfolioCache;
   const sources: Portfolio['sources'] = [];
   const results = await Promise.allSettled([MEGA, BM].map(async url => {
-    const bytes = await boundedBytes(await fetcher(url, { redirect: 'error', signal: AbortSignal.timeout(15_000) }), 2_000_000);
+    const bytes = await boundedBytes(await fetcher(url, { redirect: 'error', signal: AbortSignal.timeout(8_000) }), 2_000_000);
     return { url, html: new TextDecoder().decode(bytes), hash: await sha(bytes) };
   }));
   const entries: PortfolioEntry[] = [];
@@ -234,13 +234,22 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
   const photoProofs: ImageProof[] = [];
   const files: ImageFile[] = [];
   let totalBytes = 0;
-  for (const url of photoUrls) {
-    try {
-      const file = await loadAuditImage(url, fetcher);
-      if (totalBytes + (file.proof.bytes ?? 0) > 24_000_000) throw new Error('Превышен общий размер фото карточки для одной проверки');
-      totalBytes += file.proof.bytes ?? 0;
-      files.push(file); photoProofs.push(file.proof);
-    } catch (e) { photoProofs.push({ status: 'failed', url, error: e instanceof Error ? e.message : 'Фото недоступно' }); }
+  // Загружаем фото параллельно для ускорения
+  const photoLoadResults = await Promise.allSettled(photoUrls.map(url => loadAuditImage(url, fetcher)));
+  for (let i = 0; i < photoUrls.length; i++) {
+    const result = photoLoadResults[i];
+    if (result.status === 'fulfilled') {
+      const file = result.value;
+      if (totalBytes + (file.proof.bytes ?? 0) > 24_000_000) {
+        photoProofs.push({ status: 'failed', url: photoUrls[i], error: 'Превышен общий размер фото карточки для одной проверки' });
+      } else {
+        totalBytes += file.proof.bytes ?? 0;
+        files.push(file);
+        photoProofs.push(file.proof);
+      }
+    } else {
+      photoProofs.push({ status: 'failed', url: photoUrls[i], error: result.reason instanceof Error ? result.reason.message : 'Фото недоступно' });
+    }
   }
   if (requestedPhotoUrls.length > 20) photoProofs.push({ status: 'failed', url: '', error: `В карточке ${requestedPhotoUrls.length} фото; в один запрос переданы первые 20.` });
   const image: ImageProof = { status: files.length && files.length === photoUrls.length && photoProofs.every(p => p.status === 'sent') ? 'sent' : photoUrls.length ? 'failed' : 'missing',
@@ -270,7 +279,7 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
     for (let attempt = 0; attempt < 3 && !completed; attempt++) {
       if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 700 * attempt));
       try {
-        const body = await complete({ model, max_tokens: 1600, temperature: 0,
+        const body = await complete({ model, max_tokens: 2500, temperature: 0,
           messages: [{ role: 'system', content: VISUAL_PROMPT }, { role: 'user', content: [
             { type: 'text', text: `Проверь только это фото товара №${photoNumber}. Верни один объект photos с photo_number ${photoNumber}.` },
             { type: 'image_url', image_url: { url: file.dataUrl } }, ...refContent,
@@ -287,7 +296,7 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
     }
     photoCalls.push(completed ? { status: 'fulfilled', value: completed } : { status: 'rejected', reason: lastError });
   }
-  const textCalls = await Promise.allSettled([complete({ model, max_tokens: 1200, temperature: 0, messages: [{ role: 'system', content: TEXT_PROMPT },
+  const textCalls = await Promise.allSettled([complete({ model, max_tokens: 1800, temperature: 0, messages: [{ role: 'system', content: TEXT_PROMPT },
     { role: 'user', content: JSON.stringify({ title: input.title, description: input.description }) }] })]);
   const results = [...photoCalls, ...textCalls];
   const failures: string[] = [];

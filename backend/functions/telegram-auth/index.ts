@@ -1389,7 +1389,7 @@ async function handleAiProxy(req: Request): Promise<Response> {
       const result = await runRightsAudit(parsed.rights_audit, parsed.model || 'auto', async payload => {
         const res = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/chat/completions`, {
           method: 'POST', headers: { Authorization: `Bearer ${platformKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload), signal: AbortSignal.timeout(180_000),
+          body: JSON.stringify(payload), signal: AbortSignal.timeout(90_000),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error?.message || `ИИ ответил HTTP ${res.status}`);
