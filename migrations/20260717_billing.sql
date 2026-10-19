@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS user_trials (
 );
 
 ALTER TABLE user_trials ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "user sees own trial" ON user_trials;
 CREATE POLICY "user sees own trial" ON user_trials FOR SELECT USING (auth.uid() = user_id);
 
 -- Subscriptions (one per company)
@@ -30,8 +31,11 @@ CREATE TABLE IF NOT EXISTS user_subscriptions (
 );
 
 ALTER TABLE user_subscriptions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "user sees own subs" ON user_subscriptions;
 CREATE POLICY "user sees own subs" ON user_subscriptions FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "user updates own subs" ON user_subscriptions;
 CREATE POLICY "user updates own subs" ON user_subscriptions FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "user inserts own subs" ON user_subscriptions;
 CREATE POLICY "user inserts own subs" ON user_subscriptions FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- Promo codes
@@ -50,6 +54,7 @@ CREATE TABLE IF NOT EXISTS promo_codes (
 
 ALTER TABLE promo_codes ENABLE ROW LEVEL SECURITY;
 -- Anyone can read active codes (to validate), only service_role can write
+DROP POLICY IF EXISTS "anyone reads active promos" ON promo_codes;
 CREATE POLICY "anyone reads active promos" ON promo_codes FOR SELECT USING (is_active = true);
 
 -- ── RPC: ensure trial exists for user (called on first app load) ──────────────
