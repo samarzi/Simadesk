@@ -1,0 +1,48 @@
+.ip-audit { padding: 20px; overflow: auto; color: var(--text); }
+.ip-audit h2 { margin: 0 0 8px; font-size: 20px; }
+.ip-audit .ip-tabs, .ip-audit .ip-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; align-items: center; }
+.ip-audit .ip-stats { display: flex; gap: 12px; flex-wrap: wrap; margin: 20px 0; }
+.ip-audit .ip-stats span { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+.ip-audit .ip-bulk-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px; background: var(--bg3); border-radius: 8px; margin: 10px 0; font-size: 13px; }
+.ip-audit .ip-item { display: flex; gap: 14px; align-items: flex-start; border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin: 10px 0; background: var(--bg2); }
+.ip-audit .ip-checkbox { padding-top: 4px; }
+.ip-audit .ip-images { display: flex; gap: 10px; flex-shrink: 0; }
+.ip-audit .ip-photo-wrapper { position: relative; }
+.ip-audit .ip-photo-wrapper img { width: 100px; height: 100px; object-fit: contain; border-radius: 6px; border: 1px solid var(--border); }
+.ip-audit .ip-photo-label { display: block; font-size: 10px; color: var(--text2); margin-top: 4px; text-align: center; }
+.ip-audit .ip-content { flex: 1; min-width: 0; }
+.ip-audit .ip-item img { width: 75px; height: 75px; object-fit: contain; flex: none; border-radius: 6px; }
+.ip-audit .ip-item p { margin: 6px 0; }
+.ip-audit .ip-item small { display: block; color: var(--text2); }
+.ip-audit .ip-item a { display: inline-block; margin-left: 8px; color: var(--accent); }
+.ip-audit .ip-match-score { font-size: 12px; font-weight: 600; color: var(--accent); margin: 4px 0; }
+.ip-audit .ip-visual-desc { margin: 4px 0; }
+.ip-audit .ip-sources { margin: 8px 0; padding: 8px; background: var(--bg3); border-radius: 6px; }
+.ip-audit .ip-sources a { display: inline-block; margin-right: 12px; font-size: 12px; color: var(--accent); }
+.ip-audit .ip-review, .ip-audit .ip-ref-form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.ip-audit input, .ip-audit select { min-height: 32px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border2); background: var(--bg); color: var(--text); }
+.ip-audit .ip-review input { min-width: 150px; }
+.ip-store-choice { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin: 16px 0; }
+.ip-store-group { padding: 9px 0; border-top: 1px solid var(--border); }
+.ip-store-group:first-of-type { border-top: 0; }
+.ip-store-group label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; margin: 4px 14px 4px 0; }
+.ip-store-group > div { padding-left: 22px; }
+.ca-models { padding: 20px; overflow: auto; color: var(--text); }
+.ca-models-intro h2 { margin: 0 0 8px; font-size: 20px; }
+.ca-models-intro p { max-width: 850px; margin: 0 0 12px; color: var(--text2); }
+.ca-models-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 18px 0; }
+.ca-models-controls .ca-search { min-width: min(100%, 310px); }
+.ca-models-list { display: grid; gap: 10px; margin: 12px 0; }
+.ca-model-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+.ca-model-card.selected { border-color: var(--accent); }
+.ca-model-card-head, .ca-model-card-actions, .ca-model-tags { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ca-model-card-head { justify-content: space-between; }
+.ca-model-card-head b { font-size: 15px; }
+.ca-model-card-head small { display: block; color: var(--text2); margin-top: 3px; overflow-wrap: anywhere; }
+.ca-model-tags { margin-top: 12px; }
+.ca-model-tag { color: var(--text2); background: var(--bg); border: 1px solid var(--border); border-radius: 99px; padding: 3px 9px; font-size: 12px; }
+.ca-model-details { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 10px; }
+.ca-model-details p { white-space: pre-wrap; color: var(--text2); }
+.ca-model-details dl { display: grid; grid-template-columns: minmax(135px, 190px) minmax(0, 1fr); gap: 7px 12px; }
+.ca-model-details dt { color: var(--text2); }
+.ca-model-details dd { margin: 0; overflow-wrap: anywhere; }

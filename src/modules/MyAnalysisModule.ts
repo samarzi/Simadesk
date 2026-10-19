@@ -6,13 +6,16 @@
  * – ИИ-подсказки через OpenRouter
  */
 import { dbFetch, dbFetchAll } from '../services/dbClient';
-import { aiFetch } from '@/services/aiProxy';
+import { analysisAiFetch } from '@/services/aiProxy';
 import { companyService } from '../services/companyService';
 import { ozonApi } from '../services/ozonApi';
 import { wbApi } from '../services/wbApi';
 import { yandexApi } from '../services/yandexApi';
 import { debug } from '@/utils/debug';
 import { reportAiUsage } from '@/services/aiUsage';
+import { IpAudit, type AuditCard } from './ipAudit';
+import './ipAudit.css';
+import { loadAnalysisModels, modelSupportsImages, modelSupportsText, selectedAnalysisModel, ANALYSIS_MODEL_KEY, type AnalysisModel } from './analysisModels';
 
 type Mp = 'ozon' | 'wb' | 'yandex';
 type Severity = 'error' | 'warning' | 'info';
@@ -200,7 +203,15 @@ export class MyAnalysisModule {
   private drawerAiNames: string[] = [];   // AI name suggestions
 
   // Fixed-items tab
-  private activeTab: 'issues' | 'fixed' | 'ai' = 'issues';
+  private activeTab: 'issues' | 'fixed' | 'ai' | 'ip' | 'models' = 'issues';
+  private ipAudit = new IpAudit(() => this.cards as AuditCard[], c => this._fetchDesc(c as ProductCard), () => this._paint());
+  private models: AnalysisModel[] = [];
+  private modelError = '';
+  private modelLoading = false;
+  private modelSearch = '';
+  private modelFilter = 'all';
+  private modelShown = 50;
+  private modelDetails = '';
   private fixedItems: FixedItem[] = [];
   private fixedVerifying = false;
 
@@ -242,6 +253,7 @@ export class MyAnalysisModule {
     this.el.style.display = 'flex';
     if (!this.loaded && !this.loading) await this._load();
     else this._paint();
+    if (this.activeTab === 'ip') void this.ipAudit.load();
   }
 
   hide() { this.el.style.display = 'none'; }
@@ -255,7 +267,61 @@ export class MyAnalysisModule {
   setSearch(v: string)     { this.searchQ = v; this._paint(); }
   async reload()           { this.loaded = false; await this._load(); }
 
-  setTab(t: 'issues' | 'fixed' | 'ai') { this.activeTab = t; this._paint(); }
+  setTab(t: 'issues' | 'fixed' | 'ai' | 'ip' | 'models') { this.activeTab = t; this._paint(); if (t === 'ip') void this.ipAudit.load(); if (t === 'models') void this._loadModels(); }
+
+  private async _loadModels(force = false): Promise<void> {
+    if (this.modelLoading || (this.models.length && !force)) return;
+    this.modelLoading = true; this.modelError = ''; this._paint();
+    try { this.models = await loadAnalysisModels(force); }
+    catch (e) { this.modelError = e instanceof Error ? e.message : String(e); }
+    finally { this.modelLoading = false; this._paint(); }
+  }
+  modelSearchSet(v: string) { this.modelSearch = v; this.modelShown = 50; this._paint(); }
+  modelFilterSet(v: string) { this.modelFilter = v; this.modelShown = 50; this._paint(); }
+  modelMore() { this.modelShown += 50; this._paint(); }
+  modelDetailsSet(v: string) { this.modelDetails = this.modelDetails === v ? '' : v; this._paint(); }
+  modelSelect(v: string) {
+    const model = this.models.find(m => m.id === v);
+    if (!model || !modelSupportsText(model)) return;
+    localStorage.setItem(ANALYSIS_MODEL_KEY, v);
+    this._paint();
+  }
+  modelRefresh() { void this._loadModels(true); }
+
+  ipSection(v: 'overview' | 'results' | 'history' | 'references') { this.ipAudit.setSection(v); }
+  ipFilter(v: string) { this.ipAudit.setFilter(v); }
+  ipSearch(v: string) { this.ipAudit.setSearch(v); }
+  ipChooseRun(v: string) { this.ipAudit.setRun(v); this.ipAudit.setSection('results'); }
+  ipStart(scope: 'sample' | 'all' | 'new' | 'selected', selection = '') { void this.ipAudit.start(scope, selection); }
+  ipResume(id: string) { void this.ipAudit.resume(id); }
+  ipStop() { this.ipAudit.requestStop(); }
+  ipToggleStore(id: string) { this.ipAudit.toggleStore(id); }
+  ipToggleMarketplace(mp: 'wb' | 'ozon' | 'yandex') { this.ipAudit.toggleMarketplace(mp); }
+  ipExport(onlyRisk: boolean) { void this.ipAudit.export(onlyRisk); }
+  ipAddReference(form: HTMLFormElement) { void this.ipAudit.addReference(form); }
+  ipReview(id: string) {
+    const status = (document.getElementById(`ip-status-${id}`) as HTMLSelectElement)?.value as Parameters<IpAudit['review']>[1];
+    const comment = (document.getElementById(`ip-comment-${id}`) as HTMLInputElement)?.value ?? '';
+    const evidence = (document.getElementById(`ip-evidence-${id}`) as HTMLInputElement)?.value ?? '';
+    void this.ipAudit.review(id, status, comment, evidence);
+  }
+  ipToggleSelect(id: string) { this.ipAudit.toggleSelect(id); }
+  ipSelectAll() {
+    const run = this.ipAudit['runs'].find((r: any) => r.id === this.ipAudit['selectedRun']);
+    const latest = run ? this.ipAudit['findings'].filter((f: any) => f.run_id === run.id) : [];
+    const filtered = latest.filter((f: any) => {
+      const filter = this.ipAudit['filter'];
+      const search = this.ipAudit['search'].toLowerCase();
+      return (filter === 'all' || f.risk === filter) && (!search || [f.vendor_code,f.product_name,f.object_name].some((v: string) => v.toLowerCase().includes(search)));
+    });
+    this.ipAudit.selectAll(filtered);
+  }
+  async ipBulkReview() {
+    const status = (document.getElementById('ip-bulk-status') as HTMLSelectElement)?.value as Parameters<IpAudit['review']>[1];
+    const comment = (document.getElementById('ip-bulk-comment') as HTMLInputElement)?.value ?? '';
+    await this.ipAudit.bulkReview(status, comment);
+  }
+  ipSearchSource(id: string) { void this.ipAudit.searchSource(id); }
 
   // ─── AI bulk fix ──────────────────────────────────────────────────────────
 
@@ -308,6 +374,8 @@ export class MyAnalysisModule {
     if (!this.loaded) await this._load();
 
     const candidates = this.cards.filter(c =>
+      (this.mpFilter === 'all' || c.mp === this.mpFilter) &&
+      (this.storeFilter === 'all' || c.storeId === this.storeFilter) &&
       c.issues.some(i => i.field === 'name' || i.code === 'LONG_WORD'),
     );
     if (!candidates.length) {
@@ -962,8 +1030,12 @@ export class MyAnalysisModule {
   }
 
   private async _callAi(prompt: string): Promise<string> {
-    const model = localStorage.getItem('sd_ai_model') || 'anthropic/claude-haiku-4-5';
-    const r = await aiFetch({ model, messages:[{role:'user',content:prompt}], max_tokens:800, temperature:0.7 });
+    const model = selectedAnalysisModel();
+    const r = await analysisAiFetch({ model, messages:[{role:'user',content:prompt}], max_tokens:800 });
+    if (!r.ok) {
+      const detail = await r.json().catch(() => ({}));
+      throw new Error(String(detail.error?.message ?? `ИИ ответил HTTP ${r.status}`));
+    }
     const d = await r.json();
     reportAiUsage('Мой анализ', d);
     const t = d.choices?.[0]?.message?.content;
@@ -980,10 +1052,12 @@ export class MyAnalysisModule {
       const activeEl = document.activeElement;
       let restoreTaId: string | null = null;
       let restoreSel = [0, 0];
+      let restoreModelSearch = -1;
       if (activeEl instanceof HTMLTextAreaElement && this.el.contains(activeEl) && activeEl.id) {
         restoreTaId = activeEl.id;
         restoreSel = [activeEl.selectionStart ?? 0, activeEl.selectionEnd ?? 0];
       }
+      if (activeEl instanceof HTMLInputElement && activeEl.id === 'ca-model-search') restoreModelSearch = activeEl.selectionStart ?? activeEl.value.length;
 
       const hadDrawer = this._drawerOpen;
       this._drawerOpen = !!this.drawerCard;
@@ -996,6 +1070,10 @@ export class MyAnalysisModule {
       if (restoreTaId) {
         const ta = this.el.querySelector<HTMLTextAreaElement>(`#${restoreTaId}`);
         if (ta) { ta.focus(); ta.setSelectionRange(restoreSel[0], restoreSel[1]); }
+      }
+      if (restoreModelSearch >= 0) {
+        const input = this.el.querySelector<HTMLInputElement>('#ca-model-search');
+        if (input) { input.focus(); input.setSelectionRange(restoreModelSearch, restoreModelSearch); }
       }
     });
   }
@@ -1039,8 +1117,12 @@ export class MyAnalysisModule {
         <button class="ca-tab ca-tab-ai${this.activeTab==='ai'?' on':''}" onclick="window.myAnalysisModule?.setTab('ai')">
           ✨ ИИ Исправление
         </button>
+        <button class="ca-tab${this.activeTab==='ip'?' on':''}" onclick="window.myAnalysisModule?.setTab('ip')">Аудит прав</button>
+        <button class="ca-tab${this.activeTab==='models'?' on':''}" onclick="window.myAnalysisModule?.setTab('models')">Модели ИИ</button>
       </div>
 
+      ${this.activeTab === 'ai' ? `<div class="ca-filters"><div class="ca-filter-row"><span class="ca-filter-label">Площадка:</span><div class="ca-pills">${mps.map(([m,l])=>`<button class="ca-pill${this.mpFilter===m?' on':''}" onclick="window.myAnalysisModule?.setMp('${m}')">${l}</button>`).join('')}</div></div>
+        ${allStores.length > 1 ? `<div class="ca-filter-row"><span class="ca-filter-label">Магазин:</span><select class="ca-search" onchange="window.myAnalysisModule?.setStore(this.value)"><option value="all">Все выбранные</option>${allStores.map(s=>`<option value="${this._e(s.id)}" ${this.storeFilter===s.id?'selected':''}>${this._e(s.name)}</option>`).join('')}</select></div>` : ''}</div>` : ''}
       ${this.activeTab === 'issues' ? `<div class="ca-filters">
         <div class="ca-search-row">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -1083,6 +1165,8 @@ export class MyAnalysisModule {
   }
 
   private _body() {
+    if (this.activeTab === 'ip') return this.ipAudit.render();
+    if (this.activeTab === 'models') return this._modelsBody();
     if (this.activeTab === 'fixed') return this._fixedBody();
     if (this.activeTab === 'ai')    return this._aiBody();
 
@@ -1104,9 +1188,53 @@ export class MyAnalysisModule {
     return `<div class="ca-body"><div class="ca-list">${list.map(c=>this._row(c)).join('')}</div></div>`;
   }
 
+  private _modelsBody(): string {
+    const selected = selectedAnalysisModel();
+    const q = this.modelSearch.trim().toLowerCase();
+    const matches = this.models.filter(m => {
+      if (q && ![m.id, m.name, m.description].some(v => v.toLowerCase().includes(q))) return false;
+      if (this.modelFilter === 'vision') return modelSupportsImages(m);
+      if (this.modelFilter === 'text') return modelSupportsText(m);
+      if (this.modelFilter === 'reasoning') return m.supported_parameters.includes('reasoning');
+      if (this.modelFilter === 'tools') return m.supported_parameters.includes('tools');
+      if (this.modelFilter === 'audio') return [...m.input_modalities, ...m.output_modalities].includes('audio');
+      if (this.modelFilter === 'video') return [...m.input_modalities, ...m.output_modalities].includes('video');
+      return true;
+    });
+    const filters = [['all','Все'],['vision','Фото'],['text','Текст'],['reasoning','Рассуждение'],['tools','Инструменты'],['audio','Аудио'],['video','Видео']];
+    const fmt = (n: number | null) => n == null ? 'не указано' : new Intl.NumberFormat('ru-RU').format(n);
+    const tag = (text: string) => `<span class="ca-model-tag">${this._e(text)}</span>`;
+    return `<div class="ca-body ca-models">
+      <div class="ca-models-intro"><h2>Модели ИИ для «Анализа»</h2><p>Выбранная модель: <b>${this._e(selected)}</b>. Она применяется к ИИ-исправлению карточек и новым заданиям аудита прав. Для фото нужна модель с входом «image». Запущенное задание сохраняет выбранную при старте модель.</p>
+        <button class="ca-btn" onclick="window.myAnalysisModule?.modelRefresh()" ${this.modelLoading ? 'disabled' : ''}>Обновить список</button></div>
+      <div class="ca-models-controls"><input id="ca-model-search" class="ca-search" placeholder="Название, разработчик или описание…" value="${this._e(this.modelSearch)}" oninput="window.myAnalysisModule?.modelSearchSet(this.value)">
+        <div class="ca-pills">${filters.map(([v,l]) => `<button class="ca-pill${this.modelFilter===v?' on':''}" onclick="window.myAnalysisModule?.modelFilterSet('${v}')">${l}</button>`).join('')}</div></div>
+      <p class="ca-hint">${this.modelLoading ? 'Загружаем каталог…' : this.modelError ? this._e(this.modelError) : `${matches.length} из ${this.models.length} моделей`}. Сведения получены из каталога OpenRouter; доступность зависит от настроек провайдера.</p>
+      <div class="ca-models-list">${matches.slice(0, this.modelShown).map(m => {
+        const encoded = encodeURIComponent(m.id).replace(/'/g, '%27');
+        const textOk = modelSupportsText(m), visionOk = modelSupportsImages(m), open = this.modelDetails === m.id;
+        return `<article class="ca-model-card${selected === m.id ? ' selected' : ''}">
+          <div class="ca-model-card-head"><div><b>${this._e(m.name)}</b><small>${this._e(m.id)}</small></div>
+          <div class="ca-model-card-actions"><button class="ca-btn" onclick="window.myAnalysisModule?.modelSelect(decodeURIComponent('${encoded}'))" ${!textOk || selected===m.id ? 'disabled' : ''}>${selected===m.id?'Выбрана':'Выбрать'}</button>
+          <button class="ca-btn" onclick="window.myAnalysisModule?.modelDetailsSet(decodeURIComponent('${encoded}'))">${open?'Скрыть':'Подробнее'}</button></div></div>
+          <div class="ca-model-tags">${tag(m.id.split('/')[0])}${visionOk ? tag('Фото') : ''}${textOk ? tag('Текст') : tag('Не подходит для текстового анализа')}${m.supported_parameters.includes('reasoning') ? tag('Рассуждение') : ''}${m.supported_parameters.includes('tools') ? tag('Инструменты') : ''}${tag(`Контекст: ${fmt(m.context_length)}`)}</div>
+          ${open ? `<div class="ca-model-details"><p>${this._e(m.description || 'Описание не предоставлено.')}</p>
+            <dl><dt>Вход</dt><dd>${this._e(m.input_modalities.join(', ') || 'не указан')}</dd><dt>Выход</dt><dd>${this._e(m.output_modalities.join(', ') || 'не указан')}</dd>
+            <dt>Контекст</dt><dd>${fmt(m.context_length)} токенов</dd><dt>Максимальный ответ</dt><dd>${fmt(m.max_completion_tokens)} токенов</dd>
+            <dt>Поддерживаемые параметры</dt><dd>${this._e(m.supported_parameters.join(', ') || 'не указаны')}</dd>
+            <dt>Знания до</dt><dd>${this._e(m.knowledge_cutoff || 'не указано')}</dd><dt>Токенизатор</dt><dd>${this._e(m.tokenizer || 'не указан')}</dd>
+            <dt>Формат инструкций</dt><dd>${this._e(m.instruct_type || 'не указан')}</dd><dt>Модерация провайдера</dt><dd>${m.is_moderated == null ? 'не указано' : m.is_moderated ? 'да' : 'нет'}</dd>
+            <dt>Добавлена в каталог</dt><dd>${m.created ? new Date(m.created * 1000).toLocaleDateString('ru-RU') : 'не указано'}</dd>
+            <dt>Срок доступности</dt><dd>${this._e(m.expiration_date || 'не указан')}</dd></dl></div>` : ''}
+        </article>`;
+      }).join('')}</div>
+      ${matches.length > this.modelShown ? `<button class="ca-btn" onclick="window.myAnalysisModule?.modelMore()">Показать ещё 50</button>` : ''}
+    </div>`;
+  }
+
   private _aiBody(): string {
     const nameIssueCards = this.loaded
-      ? this.cards.filter(c => c.issues.some(i => i.field === 'name' || i.code === 'LONG_WORD'))
+      ? this.cards.filter(c => (this.mpFilter === 'all' || c.mp === this.mpFilter) && (this.storeFilter === 'all' || c.storeId === this.storeFilter) && c.issues.some(i => i.field === 'name' || i.code === 'LONG_WORD'))
       : [];
 
     // ── Empty / loading states ─────────────────────────────────────────────
