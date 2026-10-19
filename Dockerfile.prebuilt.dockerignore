@@ -1,0 +1,5 @@
+**
+!dist/
+!dist/**
+!nginx-internal.conf
+!Dockerfile.prebuilt

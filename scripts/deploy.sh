@@ -4,8 +4,9 @@
 #  Запускать с Mac: bash scripts/deploy.sh
 #
 #  Как работает:
-#    1. Синхронизирует исходный код на VPS через rsync
-#    2. Собирает Docker образ фронтенда прямо на VPS (использует .env с VPS)
+#    1. Собирает фронтенд локально с публичными настройками .env VPS
+#    2. Синхронизирует код и готовые файлы на VPS через rsync
+#    3. Собирает лёгкий образ nginx (без Node/Vite на VPS)
 #    3. Перезапускает frontend контейнер
 #    4. Применяет nginx.conf, если он изменился (через пересоздание контейнера)
 #    5. Применяет новые SQL-миграции
@@ -26,6 +27,8 @@ cd "$(dirname "$0")/.."
 
 command -v rsync &>/dev/null || err "rsync не найден"
 command -v ssh   &>/dev/null || err "SSH не найден"
+command -v node  &>/dev/null || err "Node.js не найден"
+command -v npm   &>/dev/null || err "npm не найден"
 
 # ── Проверка: не деплоить если есть незакоммиченные изменения или сташ ────────
 if ! git diff --quiet || ! git diff --cached --quiet; then
@@ -39,8 +42,38 @@ if git stash list | grep -q .; then
   [[ "$CONFIRM" =~ ^[Yy]$ ]] || err "Деплой отменён. Примени сташ: git stash pop"
 fi
 
+# Only the public browser settings leave the VPS. Never copy its .env or print
+# keys. Vite runs locally so a bundle build cannot exhaust the VPS RAM/swap.
+log "[1/6] Локальная сборка с настройками VPS"
+BUILD_CONFIG=$($SSH "$VPS" bash <<'REMOTE'
+set -euo pipefail
+cd /opt/simadesk
+set -a; source .env; set +a
+python3 - <<'PY'
+import json, os
+print(json.dumps({
+    'VITE_API_URL': os.environ['SITE_URL'],
+    'VITE_API_KEY': os.environ['ANON_KEY'],
+    'VITE_TG_BOT_USERNAME': os.environ['TELEGRAM_BOT_USERNAME'],
+    'VITE_YANDEX_CLIENT_ID': os.environ.get('YANDEX_CLIENT_ID', ''),
+    'VITE_DEV_AUTH': 'false',
+}))
+PY
+REMOTE
+)
+[ -d node_modules ] || npm ci
+SIMA_BUILD_CONFIG="$BUILD_CONFIG" node --input-type=module <<'NODE'
+import { spawnSync } from 'node:child_process';
+const config = JSON.parse(process.env.SIMA_BUILD_CONFIG);
+if (!config.VITE_API_URL || !config.VITE_API_KEY || config.VITE_DEV_AUTH !== 'false')
+  throw new Error('Не получены настройки production');
+const build = spawnSync('npm', ['run', 'build'], { stdio: 'inherit', env: { ...process.env, ...config } });
+process.exit(build.status ?? 1);
+NODE
+unset BUILD_CONFIG
+
 # ── Синхронизация исходного кода ──────────────────────────────────────────────
-log "[1/5] Синхронизация кода на ВПС"
+log "[2/6] Синхронизация кода и готовой сборки на ВПС"
 rsync -az --delete \
   --exclude 'node_modules/' \
   --exclude 'dist/' \
@@ -51,27 +84,19 @@ rsync -az --delete \
   --exclude '*.tar.gz' \
   -e "$RSYNC_SSH" \
   ./ "${VPS}:${APP_DIR}/"
+rsync -az --delete -e "$RSYNC_SSH" dist/ "${VPS}:${APP_DIR}/dist/"
 
 # ── Сборка фронтенда на VPS ───────────────────────────────────────────────────
-log "[2/5] Сборка Docker образа фронтенда на ВПС"
+log "[3/6] Сборка лёгкого Docker образа фронтенда на ВПС"
 $SSH "$VPS" bash <<REMOTE
 set -euo pipefail
 cd $APP_DIR
 
-# Читаем ключи из .env на VPS
-set -a; source .env; set +a
-
-docker build \\
-  --build-arg VITE_API_URL="\${SITE_URL}" \\
-  --build-arg VITE_API_KEY="\${ANON_KEY}" \\
-  --build-arg VITE_TG_BOT_USERNAME="\${TELEGRAM_BOT_USERNAME}" \\
-  --build-arg VITE_YANDEX_CLIENT_ID="\${YANDEX_CLIENT_ID:-}" \\
-  --build-arg VITE_DEV_AUTH="false" \\
-  -t simadesk-frontend:latest .
+docker build -f Dockerfile.prebuilt -t simadesk-frontend:latest .
 REMOTE
 
 # ── Перезапуск фронтенда и edge functions ────────────────────────────────────
-log "[3/5] Перезапуск frontend и functions контейнеров"
+log "[4/6] Перезапуск frontend и functions контейнеров"
 $SSH "$VPS" "cd $APP_DIR && docker compose up -d --no-deps --force-recreate frontend functions"
 
 # ── Применение конфига nginx ─────────────────────────────────────────────────
@@ -80,7 +105,7 @@ $SSH "$VPS" "cd $APP_DIR && docker compose up -d --no-deps --force-recreate fron
 # старую версию, а `nginx -s reload` перечитывает её же. Раньше конфиг
 # синхронизировался, но никогда не применялся: правка client_max_body_size
 # доехала до сервера и молча не работала. Помогает только пересоздание.
-log "[4/5] Применение конфига nginx"
+log "[5/6] Применение конфига nginx"
 HOST_MD5=$($SSH "$VPS" "md5sum $APP_DIR/nginx.conf | cut -d' ' -f1" 2>/dev/null || echo "host")
 CONT_MD5=$($SSH "$VPS" "docker exec simadesk-nginx-1 md5sum /etc/nginx/nginx.conf | cut -d' ' -f1" 2>/dev/null || echo "cont")
 if [ "$HOST_MD5" = "$CONT_MD5" ]; then
@@ -94,7 +119,7 @@ else
 fi
 
 # ── Применение новых миграций ─────────────────────────────────────────────────
-log "[5/5] Применение SQL-миграций"
+log "[6/6] Применение SQL-миграций"
 echo "   Ждём PostgreSQL..."
 for i in $(seq 1 30); do
   $SSH "$VPS" "docker exec simadesk-db-1 pg_isready -U supabase_admin" &>/dev/null && break
