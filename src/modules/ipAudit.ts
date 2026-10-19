@@ -42,6 +42,9 @@ export class IpAudit {
   search = '';
   selectedRun = '';
   private stop = false;
+  private skipCurrentRequested = false;
+  private currentCard: AuditCard | null = null;
+  private currentAbort: AbortController | null = null;
   private companyId = '';
   private selectedStores: Set<string> | null = null;
   private shown = 100;
@@ -79,6 +82,13 @@ export class IpAudit {
   setSearch(v: string): void { this.search = v; this.shown = 100; this.paint(); }
   setRun(v: string): void { this.selectedRun = v; this.selectedFindings.clear(); this.shown = 100; this.paint(); }
   requestStop(): void { this.stop = true; this.message = 'Останавливаем после текущей карточки…'; this.paint(); }
+  skipCurrentCard(): void {
+    if (!this.currentCard) return;
+    this.skipCurrentRequested = true;
+    this.message = `Пропускаем ${this.currentCard.vendorCode} и переходим к следующей карточке…`;
+    this.currentAbort?.abort();
+    this.paint();
+  }
   toggleSelect(id: string): void {
     if (this.selectedFindings.has(id)) this.selectedFindings.delete(id);
     else this.selectedFindings.add(id);
@@ -142,7 +152,7 @@ export class IpAudit {
       cards = balanced;
     }
     if (scope === 'new') {
-      const done = new Set(this.findings.filter(f => !f.error && f.details?.audit_version === 'ru-photo-v4' && f.photo_index === -1).map(f => `${f.marketplace}:${f.store_id}:${f.product_id}`));
+      const done = new Set(this.findings.filter(f => !f.error && f.details?.audit_version === 'ru-photo-v5' && f.photo_index === -1).map(f => `${f.marketplace}:${f.store_id}:${f.product_id}`));
       cards = cards.filter(c => !done.has(`${c.mp}:${c.storeId}:${c.uid}`));
     }
     if (!cards.length) { this.message = 'Нет карточек для выбранной проверки.'; this.paint(); return; }
@@ -192,19 +202,24 @@ export class IpAudit {
       let consecutiveErrors = 0;
       for (const c of cards) {
         if (this.stop || runCompany !== companyService.getActiveId()) break;
+        this.currentCard = c; this.skipCurrentRequested = false; this.currentAbort = new AbortController();
+        this.message = `Проверяем карточку ${c.vendorCode} · ${completed.size + 1} из ${run.total}`;
+        this.paint();
         let cardHadError = false;
         try {
           let desc = '', descriptionError = '';
           try { desc = await this.description(c); }
           catch (e) { descriptionError = `Описание маркетплейса не загружено: ${e instanceof Error ? e.message : String(e)}`; }
-          if (this.findings.some(f => f.run_id === run.id && f.marketplace === c.mp && f.store_id === c.storeId && f.product_id === c.uid && f.photo_index === -1 && !f.error)) {
-            completed.add(c.uid);
-            continue;
-          }
           const photos = [...new Set(c.photoUrls.filter(safeUrl))];
-          const fingerprint = await this.hash(`ru-photo-v4\n${run.id}\n${run.model_id}\n${JSON.stringify(this.references)}\n${c.name}\n${desc}\n${photos.join('\n')}`);
+          const fingerprint = await this.hash(`ru-photo-v5\n${run.id}\n${run.model_id}\n${JSON.stringify(this.references)}\n${c.name}\n${desc}\n${photos.join('\n')}`);
           // Send the complete photo set in one model request and save one card-level result.
-          const result = await this.analyze(c, desc, photos, run.model_id);
+          const result = await this.analyze(c, desc, photos, run.model_id, this.currentAbort.signal);
+          if (this.skipCurrentRequested) {
+            result.risk = 'insufficient'; result.object_type = ''; result.object_name = '';
+            result.reason = 'Проверка карточки пропущена пользователем.'; result.confidence = null; result.detected_text = ''; result.error = null;
+            result.details = { audit_version: 'ru-photo-v5', skipped: true, checked_at: new Date().toISOString(),
+              photo_results: photos.map((url, index) => ({ photo_number: index + 1, url, status: 'skipped', model_observed: false })) };
+          }
           if (descriptionError) {
             result.details.description_error = descriptionError;
             result.error = [result.error, descriptionError].filter(Boolean).join('; ');
@@ -223,7 +238,23 @@ export class IpAudit {
           if (result.error) cardHadError = true;
           this.paint();
           await pause(450);
-        } catch (e) { transientErrors++; cardHadError = true; this.message = `Ошибка карточки ${c.vendorCode}: ${e instanceof Error ? e.message : String(e)}`; }
+        } catch (e) {
+          if (this.skipCurrentRequested) {
+            const photos = [...new Set(c.photoUrls.filter(safeUrl))];
+            const fingerprint = await this.hash(`ru-photo-v5\n${run.id}\n${run.model_id}\n${c.name}\n${photos.join('\n')}`);
+            const saved = await dbFetch<Finding[]>('ip_audit_findings?on_conflict=run_id,marketplace,store_id,product_id,photo_index', {
+              method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+              body: JSON.stringify({ company_id: runCompany, run_id: run.id, marketplace: c.mp, store_id: c.storeId,
+                product_id: c.uid, vendor_code: c.vendorCode, product_name: c.name, product_brand: '', product_description: '',
+                product_url: productLink(c), photo_url: photos[0] ?? null, photo_index: -1, fingerprint,
+                risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Проверка карточки пропущена пользователем.',
+                confidence: null, detected_text: '', error: null, details: { audit_version: 'ru-photo-v5', skipped: true,
+                  checked_at: new Date().toISOString(), photo_results: photos.map((url, index) => ({ photo_number: index + 1, url, status: 'skipped', model_observed: false })) } }),
+            });
+            this.findings = this.findings.filter(f => f.id !== saved[0].id); this.findings.unshift(saved[0]);
+            this.message = `Карточка ${c.vendorCode} пропущена.`;
+          } else { transientErrors++; cardHadError = true; this.message = `Ошибка карточки ${c.vendorCode}: ${e instanceof Error ? e.message : String(e)}`; }
+        } finally { this.currentCard = null; this.currentAbort = null; this.paint(); }
         if (runCompany !== companyService.getActiveId()) { this.stop = true; break; }
         run.errors = this.findings.filter(f => f.run_id === run.id && f.error).length + transientErrors;
         if (this.findings.some(f => f.run_id === run.id && f.marketplace === c.mp && f.store_id === c.storeId && f.product_id === c.uid && f.photo_index === -1 && !f.error)) completed.add(c.uid);
@@ -250,34 +281,57 @@ export class IpAudit {
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
     return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join('');
   }
-  private async analyze(c: AuditCard, desc: string, photos: string[], modelId: string): Promise<Pick<Finding, 'risk'|'object_type'|'object_name'|'rights_holder'|'reason'|'confidence'|'detected_text'|'details'|'error'>> {
+  private async analyze(c: AuditCard, desc: string, photos: string[], modelId: string, signal?: AbortSignal): Promise<Pick<Finding, 'risk'|'object_type'|'object_name'|'rights_holder'|'reason'|'confidence'|'detected_text'|'details'|'error'>> {
     if (photos.some(photo => !safeUrl(photo))) return { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Недопустимый URL фотографии', confidence: null, detected_text: '', details: {}, error: 'Недоступный URL' };
-    try {
-      const res = await analysisAiFetch({ model: modelId, rights_audit: {
-        photo_urls: photos, title: c.name, description: desc, marketplace: c.mp,
-        references: this.references.slice(0, 100),
-      } }, undefined, 'rights');
-      if (!res.ok) {
-        const detail = await res.json().catch(() => ({}));
-        throw new Error(String(detail.error?.message ?? `ИИ ответил HTTP ${res.status}`));
+    const catalog = modelId === AI_AUTO ? await loadAiCatalog().catch(() => null) : null;
+    const freeVision = catalog?.models.filter(m => m.free && modelCompatible(m, { vision: true })) ?? [];
+    const providers = new Set<string>();
+    const diverseFreeVision = freeVision.filter(m => {
+      const provider = m.id.includes('/') ? m.id.split('/')[0] : m.id;
+      if (providers.has(provider)) return false;
+      providers.add(provider); return true;
+    });
+    // Automatic mode rotates through a few free vision models to recover from provider overloads.
+    const models = [...new Set([modelId, ...diverseFreeVision.map(m => m.id)])].slice(0, modelId === AI_AUTO ? 4 : 1);
+    let last: Pick<Finding, 'risk'|'object_type'|'object_name'|'rights_holder'|'reason'|'confidence'|'detected_text'|'details'|'error'> | null = null;
+    for (const candidate of models) {
+      try {
+        const res = await analysisAiFetch({ model: candidate, rights_audit: {
+          photo_urls: photos, title: c.name, description: desc, marketplace: c.mp,
+          references: this.references.slice(0, 100),
+        } }, signal, 'rights');
+        if (!res.ok) {
+          const detail = await res.json().catch(() => ({}));
+          throw new Error(String(detail.error?.message ?? `ИИ ответил HTTP ${res.status}`));
+        }
+        const body = await res.json();
+        const raw = body.choices?.[0]?.message?.content;
+        if (typeof raw !== 'string') throw new Error('Пустой ответ ИИ');
+        const data = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, ''));
+        const actualModels = Array.isArray(data.details?.actual_models) ? data.details.actual_models.map(String) : [String(body.model || candidate)];
+        const freeModels = actualModels.length > 0 && actualModels.every(isFreeAiModel);
+        const usage = reportAiUsage('Анализ прав', body, { model: String(body.model || candidate), free: freeModels });
+        if (usage) recordAiSpend(usage, body.model || candidate);
+        if (data.details?.audit_version !== 'ru-photo-v5') throw new Error('Сервер вернул старую версию аудита. Обновите страницу и повторите.');
+        const risk: Risk = ['high','medium','low','none','insufficient'].includes(data.risk) ? data.risk : 'insufficient';
+        last = { risk, object_type: String(data.object_type ?? ''), object_name: String(data.object_name ?? ''),
+          rights_holder: '', reason: String(data.reason ?? ''),
+          confidence: typeof data.confidence === 'number' && Number.isFinite(data.confidence) ? Math.max(0, Math.min(1, data.confidence)) : null,
+          detected_text: String(data.detected_text ?? ''),
+          details: { ...(data.details && typeof data.details === 'object' ? data.details : {}), actual_model: body.model || candidate },
+          error: typeof data.error === 'string' ? data.error : null };
+        if (!last.error) return last;
+      } catch (e) {
+        last = { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Анализ не завершён', confidence: null, detected_text: '', details: {}, error: e instanceof Error ? e.message : String(e) };
       }
-      const body = await res.json();
-      const raw = body.choices?.[0]?.message?.content;
-      if (typeof raw !== 'string') throw new Error('Пустой ответ ИИ');
-      const data = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, ''));
-      const actualModels = Array.isArray(data.details?.actual_models) ? data.details.actual_models.map(String) : [String(body.model || modelId)];
-      const freeModels = actualModels.length > 0 && actualModels.every(isFreeAiModel);
-      const usage = reportAiUsage('Анализ прав', body, { model: String(body.model || modelId), free: freeModels });
-      if (usage) recordAiSpend(usage, body.model || modelId);
-      if (data.details?.audit_version !== 'ru-photo-v4') throw new Error('Сервер не подтвердил проверку всех фото и источников для РФ. Обновите страницу и повторите.');
-      const risk: Risk = ['high','medium','low','none','insufficient'].includes(data.risk) ? data.risk : 'insufficient';
-      return { risk, object_type: String(data.object_type ?? ''), object_name: String(data.object_name ?? ''),
-        rights_holder: '', reason: String(data.reason ?? ''),
-        confidence: typeof data.confidence === 'number' && Number.isFinite(data.confidence) ? Math.max(0, Math.min(1, data.confidence)) : null,
-        detected_text: String(data.detected_text ?? ''),
-        details: { ...(data.details && typeof data.details === 'object' ? data.details : {}), actual_model: body.model || modelId },
-        error: typeof data.error === 'string' ? data.error : null };
-    } catch (e) { return { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Анализ не завершён', confidence: null, detected_text: '', details: {}, error: e instanceof Error ? e.message : String(e) }; }
+      if (signal?.aborted) break;
+      if (models.indexOf(candidate) < models.length - 1 && last?.error && /overload|overloaded|перегруж|did not respond|timeout|временно недоступ|429|502|503|504/i.test(last.error)) {
+        await new Promise<void>(resolve => { const timer = setTimeout(resolve, 350); signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true }); });
+        continue;
+      }
+      break;
+    }
+    return last ?? { risk: 'insufficient', object_type: '', object_name: '', rights_holder: '', reason: 'Анализ не завершён', confidence: null, detected_text: '', details: {}, error: 'Нет доступной модели' };
   }
 
   async review(id: string, status: Review, comment: string, evidence: string): Promise<void> {
@@ -388,7 +442,8 @@ export class IpAudit {
     } else {
       const filtered = this.filteredFindings();
       out += `<div class="ip-results-toolbar"><input id="ip-search" type="search" class="ca-search" placeholder="Артикул, товар или объект…" value="${clean(this.search)}" oninput="window.myAnalysisModule?.ipSearch(this.value)"><select class="ca-search" aria-label="Уровень риска" onchange="window.myAnalysisModule?.ipFilter(this.value)">${[['all','Все результаты'],...Object.entries(RISK_LABEL)].map(([v,l]) => `<option value="${v}" ${this.filter === v ? 'selected' : ''}>${l}</option>`).join('')}</select><button class="ca-btn" onclick="window.myAnalysisModule?.ipExport(false)">Экспорт Excel</button>${this.busy ? '<button class="ca-btn" onclick="window.myAnalysisModule?.ipStop()">Остановить</button>' : run && (run.status !== 'completed' || run.errors > 0) ? `<button class="ca-btn" onclick="window.myAnalysisModule?.ipResume('${run.id}')">Продолжить</button>` : ''}</div>
-        ${run ? `<div class="ip-progress"><div><b>${status[run.status] || clean(run.status)}</b><span>${run.processed} из ${run.total} карточек · ${latest.length} фото · ошибок ${run.errors}</span></div><progress max="${Math.max(1,run.total)}" value="${run.processed}"></progress></div>` : ''}
+        ${this.currentCard ? `<article class="ip-current-card"><img src="${clean(safeUrl(this.currentCard.photoUrls[0]) || '')}" alt="" loading="lazy"><div><b>Сейчас проверяется</b><strong>${clean(this.currentCard.name)}</strong><span>${clean(this.currentCard.mp.toUpperCase())} · ${clean(this.currentCard.storeName)} · артикул ${clean(this.currentCard.vendorCode)}</span><small>Фото и сведения карточки обрабатываются вместе</small></div><span class="ip-current-spinner" aria-label="Проверка выполняется"></span><button class="ca-btn" onclick="window.myAnalysisModule?.ipSkipCard()">Пропустить →</button></article>` : ''}
+        ${run ? `<div class="ip-progress"><div><b>${status[run.status] || clean(run.status)}</b><span>${run.processed} из ${run.total} карточек · ${latest.length} результатов · ошибок ${run.errors}</span></div><progress max="${Math.max(1,run.total)}" value="${run.processed}"></progress></div>` : ''}
         ${filtered.length ? `<div class="ip-bulk-actions"><label><input type="checkbox" onchange="window.myAnalysisModule?.ipSelectAll()" ${filtered.every(f => this.selectedFindings.has(f.id)) ? 'checked' : ''}> Выбрать все</label><span>${this.selectedFindings.size} выбрано · ${filtered.length} результатов</span>${this.selectedFindings.size ? `<select id="ip-bulk-status">${Object.entries(REVIEW_LABEL).map(([v,l]) => `<option value="${v}">${l}</option>`).join('')}</select><input id="ip-bulk-comment" placeholder="Общий комментарий"><button class="ca-btn" onclick="window.myAnalysisModule?.ipBulkReview()">Применить</button>` : ''}</div>` : ''}
         <div class="ip-result-list">${filtered.slice(0,this.shown).map(f => this.renderFinding(f)).join('') || '<div class="ca-empty"><b>Результатов пока нет</b><p>Запустите проверку или измените фильтры.</p></div>'}</div>${filtered.length > this.shown ? '<button class="ca-btn ca-more" onclick="window.myAnalysisModule?.ipMore()">Показать ещё 100</button>' : ''}`;
     }
@@ -397,19 +452,19 @@ export class IpAudit {
   private renderFinding(f: Finding): string {
     const ref = this.references.find(r => r.id === f.details?.reference_id);
     const sources = Array.isArray(f.details?.search_sources) ? f.details.search_sources as string[] : [];
-    const matchScore = f.details?.match_score;
+    const summary = f.details?.summary as { headline?: string; why?: string; checked?: string[]; sources?: { title: string; url: string }[] } | undefined;
     const cardPhotos = Array.isArray(f.details?.photo_results) ? f.details.photo_results as { photo_number: number; url: string; status: string; model_observed: boolean }[] : [];
-    const photoLabel = f.photo_index === -1 && f.details?.audit_version === 'ru-photo-v4' ? `вся карточка · ${cardPhotos.length ? `${cardPhotos.length} фото` : 'без фото'}` : f.photo_index >= 0 ? `фото ${f.photo_index + 1}` : 'без фото';
-    return `<article class="ip-finding"><div class="ip-finding-select"><input type="checkbox" aria-label="Выбрать результат" ${this.selectedFindings.has(f.id) ? 'checked' : ''} onchange="window.myAnalysisModule?.ipToggleSelect('${f.id}')"></div><details data-key="finding-${f.id}"><summary>${safeUrl(f.photo_url) ? `<img src="${clean(f.photo_url)}" loading="lazy" alt="">` : '<span class="ip-no-photo">◇</span>'}<span class="ip-finding-title"><b>${clean(f.product_name)}</b><small>${clean(f.marketplace.toUpperCase())} · ${clean(f.vendor_code)} · ${photoLabel}</small><span>${clean(f.object_name || f.reason || 'Объект не определён')}</span></span><span class="ip-risk ip-risk-${f.risk}">${RISK_LABEL[f.risk]}</span><span class="ip-expand">⌄</span></summary>
-      <div class="ip-finding-body"><div class="ip-evidence"><div>${safeUrl(f.photo_url) ? `<a href="${clean(f.photo_url)}" target="_blank" rel="noopener noreferrer"><img src="${clean(f.photo_url)}" loading="lazy" alt="Фото товара"></a><small>Фото товара</small>` : ''}</div>${ref && safeUrl(ref.image_url) ? `<div><img src="${clean(ref.image_url)}" loading="lazy" alt="Эталон"><small>${clean(ref.name)}</small></div>` : ''}<div class="ip-reason"><b>${clean(f.object_name || 'Объект не назван')}</b><p>${clean(f.reason)}</p>${f.error ? `<p class="ca-error">${clean(f.error)}</p>` : ''}<small>${clean(f.object_type)} · ${clean(f.rights_holder || 'Правообладатель не установлен')}</small>${matchScore != null ? `<small>Оценка сходства ИИ: ${Math.round(Number(matchScore)*100)}%</small>` : ''}<small>${clean(f.detected_text)}</small></div></div>
-      ${this.renderAuditEvidence(f)}
-      ${f.details?.visual_description ? `<p><b>Что увидела модель:</b> ${clean(f.details.visual_description)}</p>` : ''}${f.details?.additional_checks ? `<details class="ip-legal-checks"><summary>Что проверить по правам в РФ</summary><p>${clean(f.details.additional_checks)}</p></details>` : ''}
+    const photoLabel = f.details?.skipped ? 'пропущена' : f.photo_index === -1 && ['ru-photo-v4','ru-photo-v5'].includes(String(f.details?.audit_version)) ? `вся карточка · ${cardPhotos.length ? `${cardPhotos.length} фото` : 'без фото'}` : f.photo_index >= 0 ? `фото ${f.photo_index + 1}` : 'без фото';
+    return `<article class="ip-finding"><div class="ip-finding-select"><input type="checkbox" aria-label="Выбрать результат" ${this.selectedFindings.has(f.id) ? 'checked' : ''} onchange="window.myAnalysisModule?.ipToggleSelect('${f.id}')"></div><details data-key="finding-${f.id}"><summary>${safeUrl(f.photo_url) ? `<img src="${clean(f.photo_url)}" loading="lazy" alt="">` : '<span class="ip-no-photo">◇</span>'}<span class="ip-finding-title"><b>${clean(f.product_name)}</b><small>${clean(f.marketplace.toUpperCase())} · ${clean(f.vendor_code)} · ${photoLabel}</small><span>${clean(f.object_name || f.reason || 'Объект не определён')}</span></span><span class="ip-risk ip-risk-${f.risk}">${f.details?.skipped ? 'Пропущено' : RISK_LABEL[f.risk]}</span><span class="ip-expand">⌄</span></summary>
+      <div class="ip-finding-body"><div class="ip-evidence"><div>${safeUrl(f.photo_url) ? `<a href="${clean(f.photo_url)}" target="_blank" rel="noopener noreferrer"><img src="${clean(f.photo_url)}" loading="lazy" alt="Фото товара"></a><small>Фото товара</small>` : ''}</div>${ref && safeUrl(ref.image_url) ? `<div><img src="${clean(ref.image_url)}" loading="lazy" alt="Эталон"><small>${clean(ref.name)}</small></div>` : ''}<div class="ip-reason"><b>${clean(summary?.headline || f.object_name || 'Объект не назван')}</b><p>${clean(summary?.why || f.reason)}</p>${f.error ? `<p class="ca-error">${clean(f.error)}</p>` : ''}${summary?.checked?.length ? `<ul class="ip-summary-checked">${summary.checked.map(item => `<li>${clean(item)}</li>`).join('')}</ul>` : ''}${summary?.sources?.length ? `<div class="ip-summary-sources">${summary.sources.map(source => `<a href="${clean(safeUrl(source.url))}" target="_blank" rel="noopener noreferrer">${clean(source.title)} ↗</a>`).join('')}</div>` : ''}</div></div>
+      <details class="ip-more-evidence"><summary>Подробности анализа, фото и источники</summary>${this.renderAuditEvidence(f)}
+      <p><b>Основание анализа</b></p><p>${clean(f.reason)}</p>${f.details?.visual_description ? `<p><b>Что увидела модель:</b> ${clean(f.details.visual_description)}</p>` : ''}${f.details?.additional_checks ? `<details class="ip-legal-checks"><summary>Что проверить по правам в РФ</summary><p>${clean(f.details.additional_checks)}</p></details>` : ''}</details>
       <div class="ip-result-meta"><span>Статус: ${REVIEW_LABEL[f.review_status]}</span>${f.confidence != null ? `<span>Уверенность распознавания: ${Math.round(f.confidence*100)}% · не вероятность блокировки</span>` : ''}${f.details?.actual_model ? `<span>Модель: ${clean(f.details.actual_model)}</span>` : ''}${safeUrl(f.product_url) ? `<a href="${clean(f.product_url)}" target="_blank" rel="noopener noreferrer">Открыть товар ↗</a>` : ''}</div>
       ${sources.length ? `<div class="ip-sources"><b>Ссылки для самостоятельного поиска</b>${sources.filter(s => safeUrl(s)).map((url,i) => `<a href="${clean(url)}" target="_blank" rel="noopener noreferrer">Поиск ${i+1} ↗</a>`).join('')}</div>` : ''}
       <div class="ip-review"><label>Результат проверки<select id="ip-status-${f.id}">${Object.entries(REVIEW_LABEL).map(([v,l]) => `<option value="${v}" ${f.review_status === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label><label>Комментарий<input id="ip-comment-${f.id}" value="${clean(f.review_comment)}" placeholder="Ваш вывод"></label><label>Документ или источник<input id="ip-evidence-${f.id}" value="${clean(f.evidence_url)}" placeholder="https://…"></label><button class="ca-btn" onclick="window.myAnalysisModule?.ipReview('${f.id}')">Сохранить</button><button class="ca-text-btn" onclick="window.myAnalysisModule?.ipSearchSource('${f.id}')">Подготовить поиск ↗</button></div></div></details></article>`;
   }
   private renderAuditEvidence(f: Finding): string {
-    if (f.details?.audit_version !== 'ru-photo-v3' && f.details?.audit_version !== 'ru-photo-v4') return `<div class="ip-proof ip-proof-warning">${f.error ? 'Проверка не завершена: фото и источники по РФ не подтверждены. Повторите проверку.' : 'Предыдущая версия проверки: загрузка фото и источники по РФ не подтверждены. Запустите новую проверку этого товара.'}</div>`;
+    if (f.details?.audit_version !== 'ru-photo-v3' && f.details?.audit_version !== 'ru-photo-v4' && f.details?.audit_version !== 'ru-photo-v5') return `<div class="ip-proof ip-proof-warning">${f.error ? 'Проверка не завершена: фото и источники по РФ не подтверждены. Повторите проверку.' : 'Предыдущая версия проверки: загрузка фото и источники по РФ не подтверждены. Запустите новую проверку этого товара.'}</div>`;
     const image = f.details.image as { status: string; bytes?: number; sha256?: string; model_observed?: boolean };
     const objects = f.details.objects as { name: string; type: string; source: string; evidence: string; location?: string; ru_checks?: string }[];
     const agencies = f.details.agencies as { matches: { agency: string; name: string; url: string; kind: string; note: string }[]; catalog_status: string; checked_at: string; coverage: string; sources: { url: string; status: string }[] };

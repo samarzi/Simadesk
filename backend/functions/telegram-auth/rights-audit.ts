@@ -1,6 +1,6 @@
 /** Photo observations, text observations and public agency evidence stay separate.
  * A public portfolio is never treated as a mandate, a licence or a registry lookup. */
-export const AUDIT_VERSION = 'ru-photo-v4';
+export const AUDIT_VERSION = 'ru-photo-v5';
 const MEGA = 'https://megalicense.ru/';
 const BM = 'https://brandmonitor.ru/';
 const CODE = 'https://rospatent.gov.ru/ru/documents/grazhdanskiy-kodeks-rossiyskoy-federacii-chast-chetvertaya';
@@ -20,6 +20,17 @@ export interface Observation {
   name: string; type: string; source: 'photo' | 'title' | 'description';
   evidence: string; location: string; confidence: number; use_context: string; photo_number?: number;
 }
+export interface RussianCaseSignal { names: string[]; case_no: string; title: string; date: string; url: string; kind: string; summary: string; }
+// Curated court-act references surfaced by exact mark/object match. SudAct republishes
+// court texts; each record describes the proceeding type and is not a live court-register query.
+export const RU_CASE_SIGNALS: RussianCaseSignal[] = [
+  { names: ['supreme', 'суприм'], case_no: 'А51-2788/2022', title: 'Supreme: дело о товарах с обозначением на таможне', date: '2022', kind: 'таможенный / административный спор', url: 'https://sudact.ru/arbitral/doc/kj4xx5qoI1VU/', summary: 'В материалах описаны товары с обозначением Supreme и позиция представителя правообладателя об отсутствии разрешения. Это подтверждает практический риск претензии, но не означает, что любое упоминание Supreme запрещено.' },
+  { names: ['supreme', 'суприм'], case_no: 'А51-21216/2023', title: 'Supreme: использование обозначения без согласия', date: '2024', kind: 'таможенный / административный спор', url: 'https://sudact.ru/arbitral/doc/q0CBOs73TGgr/', summary: 'Судебный акт рассматривает обозначения Supreme и использование без согласия правообладателя; спор связан с товарами, выявленными таможней.' },
+  { names: ['supreme', 'суприм'], case_no: 'А56-120273/2023', title: 'Supreme: спор о незаконном использовании товарного знака', date: '2024', kind: 'административный спор', url: 'https://sudact.ru/arbitral/doc/TG1KDwWuQ0LW/', summary: 'В судебном акте говорится об отсутствии предоставленных прав на товарный знак. Контекст конкретного дела нужно сверить с товаром и способом использования.' },
+  { names: ['nike', 'найк'], case_no: 'А67-2752/2022', title: 'Nike: дело о защите товарного знака', date: '2022', kind: 'спор о контрафактных товарах', url: 'https://sudact.ru/arbitral/doc/w2UQbKAX9Mgc/', summary: 'В материалах фигурируют правообладатель Nike и представитель по защите бренда в РФ.' },
+  { names: ['adidas', 'адидас'], case_no: 'А67-4491/2022', title: 'Adidas: дело о товарах с обозначением бренда', date: '2022', kind: 'спор о контрафактных товарах', url: 'https://sudact.ru/arbitral/doc/TzL3dNJABr60/', summary: 'Судебный акт касается товаров с обозначением Adidas и оценки контрафактности.' },
+  { names: ['adidas', 'адидас'], case_no: 'А68-11320/2022', title: 'Adidas: дело о контрафактном обозначении', date: '2022', kind: 'спор о контрафактных товарах', url: 'https://sudact.ru/arbitral/doc/JtQ58HHujm1P/', summary: 'В акте рассматривается использование обозначений Adidas на товарах.' },
+];
 interface ImageProof { status: 'sent' | 'missing' | 'failed'; url: string; sha256?: string; bytes?: number; mime?: string; error?: string; }
 interface ImageFile { proof: ImageProof; dataUrl: string; }
 export interface PortfolioEntry { name: string; agency: string; url: string; aliases?: string[]; kind: 'portfolio' | 'public_client'; }
@@ -178,18 +189,22 @@ export function observations(data: Record<string, unknown>, source: 'photo' | 't
       location: text(o.location, 200), confidence: score(o.confidence), use_context: text(o.use_context, 80), ...(number ? { photo_number: number } : {}) }];
   });
 }
-export function assess(objects: Observation[], image: ImageProof, observed: boolean): Risk {
+export function assess(objects: Observation[], image: ImageProof, observed: boolean, cases: RussianCaseSignal[] = []): Risk {
   if (image.status !== 'sent' || !observed) return 'insufficient';
   // Composition, size and printing-technology overlays aren't IP identifications.
   const relevant = objects.filter(o => !/текстовая разметка|информационн.*надпис|информационн.*текст/i.test(`${o.type} ${o.name}`));
   if (!relevant.length) return 'none';
-  if (relevant.some(o => o.source === 'photo' && o.confidence >= .8 &&
-      !/неустанов|неизвест|неопредел|unknown/i.test(o.name) &&
-      ['printed_design','logo_on_product','packaging'].includes(o.use_context) &&
-      /персонаж|логотип|иллюстрац|обложк|character|logo|artwork/i.test(o.type))) return 'high';
+  const productUse = relevant.filter(o => o.source === 'photo' && o.confidence >= .65 &&
+    ['printed_design','logo_on_product','packaging'].includes(o.use_context));
+  if (productUse.some(o => cases.some(c => c.names.some(n => includesPhrase(o.name, n))))) return 'high';
   if (relevant.some(o => o.confidence >= .5 && o.use_context !== 'background' &&
       !/надпись|цитата|слоган/i.test(o.type))) return 'medium';
   return 'low';
+}
+function caseSignals(objects: Observation[]) {
+  return RU_CASE_SIGNALS.filter(c => objects.some(o => o.source === 'photo' && o.confidence >= .65 &&
+    ['printed_design','logo_on_product','packaging'].includes(o.use_context) && c.names.some(n => includesPhrase(o.name, n))))
+    .map(({ names: _names, ...c }) => c);
 }
 export function russianChecks(o: Observation): string {
   const type = o.type.toLowerCase();
@@ -274,9 +289,10 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
   const objects = [...photoResults.flatMap(p => p.objects), ...(cardText ? observations(cardText.data, 'text', input) : [])];
   const portfolio = await catalogPromise;
   const matches = portfolioMatches(objects, portfolio);
+  const russianCases = caseSignals(objects);
   // Never silently drop a failed pass and report a clean card.
   const incomplete = failures.length > 0 || !cardText || !observed || image.status !== 'sent';
-  const risk = incomplete ? 'insufficient' : assess(objects, image, observed);
+  const risk = incomplete ? 'insufficient' : assess(objects, image, observed, russianCases);
   const referenceMatches = (Array.isArray(vision?.data.reference_matches) ? vision.data.reference_matches : []).filter(r =>
     r && typeof r === 'object' && refProof.some(p => p.id === r.reference_id && p.status === 'sent')).slice(0, 3);
   const actualModels = results.flatMap(r => r.status === 'fulfilled' && r.value?.model ? [r.value.model] : []);
@@ -291,12 +307,28 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
   const reason = error || (!photoUrls.length ? 'В карточке нет фотографии. Проверен только текст; визуальная проверка не выполнена.' :
     objects.length ? objects.map(o => `${o.source === 'photo' ? `Фото ${o.photo_number ?? ''}` : o.source === 'title' ? 'Название' : 'Описание'}: ${o.name} — ${o.evidence}`).join('\n') : 'На фотографиях карточки и в тексте конкретных признаков чужих объектов не обнаружено. Это не подтверждение отсутствия прав.');
   const descriptions = photoResults.filter(p => p.visual_description).map(p => `Фото ${p.photo_number}: ${p.visual_description}`).join('\n');
+  const seenPhotos = photoResults.filter(p => p.model_observed).length;
+  const productObjects = objects.filter(o => o.source === 'photo' && ['printed_design','logo_on_product','packaging'].includes(o.use_context));
+  const foundNames = [...new Set(productObjects.map(o => o.name))];
+  const summaryWhy = incomplete
+    ? `Проверка неполная: просмотрено ${seenPhotos} из ${photoUrls.length} фото; результат нельзя считать отсутствием риска.`
+    : russianCases.length
+      ? `На товаре распознано: ${foundNames.join(', ')}. Найдены российские судебные материалы по этому обозначению (${russianCases.map(c => c.case_no).join(', ')}). Это основание проверить документы и способ использования; само по себе не доказывает нарушение именно вашей карточкой.`
+      : foundNames.length
+        ? `На товаре распознано: ${foundNames.join(', ')}. В доступном наборе проверенных судебных материалов совпадение не найдено. Это не подтверждает безопасность: права, регистрация, лицензия и решения площадки требуют отдельной проверки.`
+        : objects.length
+          ? `Потенциальные объекты упомянуты в тексте карточки, но не подтверждены как нанесённые на товар: ${[...new Set(objects.map(o => o.name))].join(', ')}.`
+          : 'На проверенных фото и в тексте конкретные потенциальные объекты не распознаны. Это не является подтверждением отсутствия чужих прав.';
+  const summary = { headline: risk === 'high' ? 'Есть российская практика по похожему использованию' : risk === 'medium' ? 'Нужна проверка прав и документов' : risk === 'none' ? 'Явных объектов не распознано' : risk === 'low' ? 'Слабый признак, нужна ручная оценка' : 'Недостаточно данных для вывода',
+    why: summaryWhy, checked: [`Фото просмотрены моделью: ${seenPhotos}/${photoUrls.length}`, `Название и описание: ${cardText ? 'проверены' : 'не проверены'}`, `Открытые портфели агентств: ${portfolio.status === 'live' ? 'проверены' : 'частично доступны'}`, `Судебные материалы в базе аудита: ${russianCases.length ? `совпадений ${russianCases.length}` : 'совпадение не найдено'}`],
+    sources: [...russianCases.map(({ title, case_no, kind, url }) => ({ title: `${case_no} · ${title} · ${kind}`, url })),
+      ...(!russianCases.length && foundNames.length ? [{ title: 'Поиск судебных актов РФ по найденному обозначению', url: `https://sudact.ru/arbitral/doc/?arbitral-txt=${encodeURIComponent(foundNames[0])}` }] : [])] };
   const finding = { risk, object_type: [...new Set(objects.map(o => o.type))].join(', '), object_name: [...new Set(objects.map(o => o.name))].join('; '),
     rights_holder: '', reason, confidence: objects.length ? Math.max(...objects.map(o => o.confidence)) : null,
     detected_text: text(vision?.data.detected_text, 3000), error,
     details: { audit_version: AUDIT_VERSION, jurisdiction: 'RU', checked_at: new Date().toISOString(),
       image: { ...image, model_observed: observed, total: requestedPhotoUrls.length, sent: files.length }, images: photoProofs, photo_results: photoResults,
-      objects: objects.map(o => ({ ...o, ru_checks: russianChecks(o) })), actual_model: actualModels[0] ?? model, actual_models: actualModels,
+      objects: objects.map(o => ({ ...o, ru_checks: russianChecks(o) })), russian_cases: russianCases, summary, actual_model: actualModels[0] ?? model, actual_models: actualModels,
       visual_description: descriptions, additional_checks: RU_CHECKS,
       reference_id: referenceMatches[0]?.reference_id ?? null, reference_matches: referenceMatches, reference_images: refProof,
       agencies: { status: matches.length ? 'public_mentions' : 'unknown', matches,

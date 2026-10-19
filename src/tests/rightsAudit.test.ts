@@ -1,6 +1,6 @@
 import { webcrypto } from 'node:crypto';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { assess, boundedBytes, loadAuditImage, observations, parseMegaPortfolio, permittedImageUrl, portfolioMatches, runRightsAudit, russianChecks, type Portfolio } from '../../backend/functions/telegram-auth/rights-audit';
+import { assess, boundedBytes, loadAuditImage, observations, parseMegaPortfolio, permittedImageUrl, portfolioMatches, runRightsAudit, russianChecks, RU_CASE_SIGNALS, type Portfolio } from '../../backend/functions/telegram-auth/rights-audit';
 
 const PHOTO = 'https://basket-45.wbbasket.ru/photo.webp';
 const png = Uint8Array.from([137,80,78,71,13,10,26,10,...Array(30).fill(0)]);
@@ -28,7 +28,8 @@ it('rejects HTML masquerading as an image and limits streamed bytes', async () =
 });
 
 it('does not exempt foreign characters and never gives an unavailable photo a clean result', () => {
-  expect(assess([observation], { status: 'sent', url: PHOTO }, true)).toBe('high');
+  expect(assess([{ ...observation, name: 'Supreme' }], { status: 'sent', url: PHOTO }, true, RU_CASE_SIGNALS)).toBe('high');
+  expect(assess([observation], { status: 'sent', url: PHOTO }, true, RU_CASE_SIGNALS)).toBe('medium');
   expect(assess([observation], { status: 'failed', url: PHOTO }, false)).toBe('insufficient');
   expect(assess([], { status: 'sent', url: PHOTO }, false)).toBe('insufficient');
   expect(assess([], { status: 'sent', url: PHOTO }, true)).toBe('none');
@@ -79,8 +80,10 @@ it('runs independent visual and text passes, sends bytes, reports grounding and 
   expect(visualBody).not.toContain(PHOTO);
   expect(JSON.stringify(complete.mock.calls[1][0])).not.toContain('image_url');
   const finding = JSON.parse(result.choices[0].message.content);
-  expect(finding).toMatchObject({ risk: 'high', rights_holder: '', error: null, details: { jurisdiction: 'RU', legal_status: 'unverified', image: { status: 'sent', model_observed: true }, agencies: { status: 'unknown' } } });
+  expect(finding).toMatchObject({ risk: 'medium', rights_holder: '', error: null, details: { jurisdiction: 'RU', legal_status: 'unverified', image: { status: 'sent', model_observed: true }, agencies: { status: 'unknown' } } });
   expect(finding.details.objects).toHaveLength(2);
+  expect(finding.details.summary.why).toContain('Рик и Морти');
+  expect(finding.details.summary.sources).toHaveLength(1);
   expect(result.usage.total_tokens).toBe(60);
 });
 

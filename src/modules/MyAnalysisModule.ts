@@ -308,6 +308,7 @@ export class MyAnalysisModule {
   ipStart(scope: 'sample' | 'all' | 'new' | 'selected', selection = '') { void this.ipAudit.start(scope, selection); }
   ipResume(id: string) { void this.ipAudit.resume(id); }
   ipStop() { this.ipAudit.requestStop(); }
+  ipSkipCard() { this.ipAudit.skipCurrentCard(); }
   ipToggleStore(id: string) { this.ipAudit.toggleStore(id); }
   ipToggleMarketplace(mp: 'wb' | 'ozon' | 'yandex') { this.ipAudit.toggleMarketplace(mp); }
   ipExport(onlyRisk: boolean) { void this.ipAudit.export(onlyRisk); }
