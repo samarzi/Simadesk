@@ -1,3 +1,5 @@
+import { selectedAiModel, setAiModel } from '@/services/aiModels';
+import { aiModelButton } from '@/components/aiModelPicker';
 /**
  * Админ-панель SimaDesk (v5).
  *
@@ -151,7 +153,6 @@ export class AdminModule {
   private supError: string | null = null;
 
   private supAiEnabled: boolean = localStorage.getItem('sd_sup_ai_enabled') === '1';
-  private supAiModel: string = localStorage.getItem('sd_sup_ai_model') || 'anthropic/claude-haiku-4-5';
   private supGreetingText = 'Здравствуйте! Уже разбираемся с вашим вопросом, ответим совсем скоро 👋';
   private supNeedsAttention: Set<string> = new Set();
   private supAiProcessing: Set<string> = new Set();
@@ -225,6 +226,12 @@ export class AdminModule {
     if (this.tab !== 'support') this.stopLiveChatPolling();
     this.render();
     try {
+      if (['support','news','brain'].includes(this.tab)) {
+        const content = await adminService.getSiteContent();
+        for (const [scope, key] of [['support','ai_support_model'],['news','ai_news_model'],['memory','ai_memory_model']] as const) {
+          setAiModel(scope, content.find(c => c.key === key)?.content || 'auto');
+        }
+      }
       switch (this.tab) {
         case 'overview': {
           const [stats, analytics] = await Promise.all([adminService.getStats(), adminService.getAnalytics()]);
@@ -1140,14 +1147,6 @@ export class AdminModule {
     const clearPill = this.liveChatReasonFilter
       ? `<button class="ap-pill" data-reason-filter="" style="color:${C.rose}">${icon('close', 12)} Сбросить</button>` : '';
 
-    const aiModels = [
-      { id: 'anthropic/claude-haiku-4-5', label: 'Claude Haiku 4.5 — быстрый, дешёвый' },
-      { id: 'anthropic/claude-sonnet-4-5', label: 'Claude Sonnet 4.5 — умнее' },
-      { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini' },
-      { id: 'openai/gpt-4o', label: 'GPT-4o' },
-      { id: 'google/gemini-flash-1.5', label: 'Gemini Flash 1.5' },
-    ];
-
     const errorBar = this.supError ? `
       <div class="ap-banner error" style="margin:14px 26px 0">
         ${icon('warn', 18)}
@@ -1176,9 +1175,7 @@ export class AdminModule {
           <span class="ap-switch-label">AI-автоответы</span>
         </label>
         <div class="ap-sup-bar-sep"></div>
-        <select class="ap-select ap-sup-model-sel" id="sup-ai-model-sel">
-          ${aiModels.map(m => `<option value="${m.id}"${this.supAiModel === m.id ? ' selected' : ''}>${m.label}</option>`).join('')}
-        </select>
+        ${aiModelButton('support')}
         <div class="ap-sup-bar-sep"></div>
         <span class="ap-sup-hint" id="ap-sup-hint">
           <span class="ap-dot" style="background:${this.supAiEnabled ? C.emerald : 'var(--text3)'}"></span>
@@ -1354,12 +1351,6 @@ export class AdminModule {
       localStorage.setItem('sd_sup_ai_enabled', this.supAiEnabled ? '1' : '0');
       track.classList.toggle('on', this.supAiEnabled);
       this.updateSupHint();
-    });
-
-    const modelSel = this.el.querySelector<HTMLSelectElement>('#sup-ai-model-sel');
-    modelSel?.addEventListener('change', () => {
-      this.supAiModel = modelSel.value;
-      localStorage.setItem('sd_sup_ai_model', this.supAiModel);
     });
 
     // Greeting text toggle + save
@@ -1822,7 +1813,7 @@ ${this.SIMADESK_KNOWLEDGE}
 
       // Через сервер SimaDesk → SIMA Platform (ключи только на сервере, модели бесплатные)
       const res = await aiFetch({
-        model: this.supAiModel,
+        model: selectedAiModel('support'),
         messages: [{ role: 'system', content: systemPrompt }, ...history],
         max_tokens: 600,
         temperature: 0.3,
@@ -2023,9 +2014,7 @@ ${this.SIMADESK_KNOWLEDGE}
               <a href="https://openrouter.ai/credits" target="_blank" rel="noopener" class="ap-or-balance-link">Пополнить →</a>
             </div>
             <div class="ap-note">
-              Рекомендуемые модели: <b>anthropic/claude-haiku-4-5</b> (быстрая и дешёвая),
-              <b>anthropic/claude-sonnet-5</b> (умная), <b>deepseek/deepseek-chat</b> (экономичная).<br>
-              Ключ: <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>
+              По умолчанию ИИ выбирает бесплатную модель автоматически. Выбор модели находится внутри каждого инструмента.
             </div>
           </div>
         </div>
@@ -2999,6 +2988,7 @@ ${this.SIMADESK_KNOWLEDGE}
               <div class="ap-section-sub">Каналы в формате <code>@channelname</code>. Если VPS в России — нужен прокси (<code>TG_PROXY_URL</code> в .env).</div>
             </div>
             <div class="ap-news-fetch-wrap">
+              ${aiModelButton('news')}
               <button class="ap-btn ap-btn-primary" id="news-run-fetch" ${this.newsLoading ? 'disabled' : ''}>
                 ${this.newsLoading ? icon('refresh', 14) + ' Идёт сбор…' : icon('refresh', 14) + ' Запустить сбор сейчас'}
               </button>
@@ -3500,6 +3490,7 @@ ${this.SIMADESK_KNOWLEDGE}
               <select class="ap-input ap-brain-filter-cat" id="brain-filter-cat" style="width:160px">
                 ${CAT_OPTIONS.map(o => `<option value="${o.v}" ${this.brainFilter.category === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}
               </select>
+              ${aiModelButton('memory')}
               <button class="ap-btn ap-btn-primary" id="brain-update-btn" ${this.brainUpdating ? 'disabled' : ''}>
                 ${this.brainUpdating ? icon('refresh', 14) + ' Обновляю…' : icon('refresh', 14) + ' Обновить мозг'}
               </button>
@@ -3580,19 +3571,6 @@ ${this.SIMADESK_KNOWLEDGE}
       : '';
     const isEmpty = !savedValue.trim();
 
-    const OPENROUTER_MODELS = [
-      { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
-      { id: 'anthropic/claude-3-haiku', label: 'Claude 3 Haiku (быстрый)' },
-      { id: 'openai/gpt-4o', label: 'GPT-4o' },
-      { id: 'openai/gpt-4o-mini', label: 'GPT-4o Mini (быстрый)' },
-      { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
-      { id: 'google/gemini-pro-1.5', label: 'Gemini Pro 1.5' },
-    ];
-    const selectedModel = localStorage.getItem('sd_prompt_editor_model') ?? OPENROUTER_MODELS[0].id;
-    const modelOptions = OPENROUTER_MODELS.map(m =>
-      `<option value="${this.esc(m.id)}" ${selectedModel === m.id ? 'selected' : ''}>${this.esc(m.label)}</option>`
-    ).join('');
-
     return `
       <div class="ap-sima-cfg-wrap">
         <div class="ap-section-card" style="margin-bottom:16px">
@@ -3647,7 +3625,7 @@ ${this.SIMADESK_KNOWLEDGE}
               <div class="ap-sima-cfg-desc">Опишите что нужно изменить или добавить — ИИ профессионально встроит это в промт.</div>
             </div>
             <div>
-              <select class="ap-input ap-sima-ai-model-select" id="sima-ai-model">${modelOptions}</select>
+              ${aiModelButton('prompt')}
             </div>
           </div>
           <textarea
@@ -3837,12 +3815,6 @@ ${this.SIMADESK_KNOWLEDGE}
       }
     });
 
-    // Сохранить выбор модели
-    el.querySelector('#sima-ai-model')?.addEventListener('change', (e) => {
-      const sel = e.target as HTMLSelectElement;
-      localStorage.setItem('sd_prompt_editor_model', sel.value);
-    });
-
     // ИИ-дополнение промта
     el.querySelector('#sima-ai-submit')?.addEventListener('click', async () => {
       const aiInput = el.querySelector<HTMLTextAreaElement>('#sima-ai-input');
@@ -3853,9 +3825,7 @@ ${this.SIMADESK_KNOWLEDGE}
       if (!instruction) { showToast('Введите что нужно добавить или изменить', 'error'); return; }
       const currentPrompt = ta.value.trim();
       if (!currentPrompt) { showToast('Сначала загрузите дефолтный промт или введите его вручную', 'error'); return; }
-      const model = (el.querySelector<HTMLSelectElement>('#sima-ai-model'))?.value
-        ?? localStorage.getItem('sd_prompt_editor_model')
-        ?? '';
+      const model = selectedAiModel('prompt');
 
       if (submitBtn) { submitBtn.disabled = true; }
       if (statusEl) { statusEl.textContent = '⏳ ИИ обрабатывает…'; }

@@ -97,14 +97,22 @@ fi
 log "[5/5] Применение SQL-миграций"
 echo "   Ждём PostgreSQL..."
 for i in $(seq 1 30); do
-  $SSH "$VPS" "docker exec simadesk-db-1 pg_isready -U postgres" &>/dev/null && break
+  $SSH "$VPS" "docker exec simadesk-db-1 pg_isready -U supabase_admin" &>/dev/null && break
   sleep 2
 done
 
-for SQL in migrations/*.sql backend/migrations/*.sql; do
+# For a release with known schema changes, apply only its migrations. Legacy
+# migrations can contain one-off backfills and must not be replayed casually.
+if [[ -n "${SIMA_MIGRATIONS:-}" ]]; then
+  read -r -a SQL_FILES <<< "$SIMA_MIGRATIONS"
+else
+  SQL_FILES=(migrations/*.sql backend/migrations/*.sql)
+fi
+for SQL in "${SQL_FILES[@]}"; do
   [ -f "$SQL" ] || continue
   echo "   → $SQL"
-  $SSH "$VPS" "docker exec -i simadesk-db-1 psql -U postgres -d postgres" < "$SQL" 2>/dev/null || true
+  $SSH "$VPS" "docker exec -i simadesk-db-1 psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1" < "$SQL" \
+    || err "Миграция $SQL не применена"
 done
 
 # ── Сервер озвучки (edge-tts) — пересобираем, только если менялась его папка ──

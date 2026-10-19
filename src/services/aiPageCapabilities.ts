@@ -1,3 +1,4 @@
+import { selectedAiModel } from './aiModels';
 /**
  * aiPageCapabilities — единое место, где для каждого раздела SimaDesk собирается
  * его «капабилити» для ассистента: структура (describe), кнопки-подсказки и,
@@ -764,7 +765,7 @@ ${tone}
 Требования: 2–4 предложения, максимум 300 символов, живой текст без шаблонных фраз, только текст ответа без кавычек и подписей.`;
 
   const res = await aiFetch({
-    model: localStorage.getItem('sd_ai_model') || 'anthropic/claude-haiku-4-5',
+    model: selectedAiModel('reviews'),
     messages: [{ role: 'user', content: prompt }],
     max_tokens: 200,
     temperature: 0.75,
@@ -778,7 +779,7 @@ ${tone}
   const reply = data.choices?.[0]?.message?.content?.trim() ?? '';
   if (!reply) throw new Error('AI вернул пустой ответ');
   const usage = parseUsage(data);
-  if (usage) recordAiSpend(usage, 'anthropic/claude-haiku-4-5');
+  if (usage) recordAiSpend(usage, data.model || selectedAiModel('reviews'));
   return reply;
 }
 

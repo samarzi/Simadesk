@@ -7,6 +7,8 @@ import './styles/products-hub.css';
 import './styles/storefront.css';
 import './styles/assistant.css';
 import './styles/admin.css';
+import { installAiModelPicker } from './components/aiModelPicker';
+installAiModelPicker();
 
 // Apply saved theme immediately (before DOMContentLoaded to avoid flash)
 if (localStorage.getItem('simadesk_theme') === 'light') {

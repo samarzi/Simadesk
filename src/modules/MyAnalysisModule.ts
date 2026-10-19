@@ -15,7 +15,9 @@ import { debug } from '@/utils/debug';
 import { reportAiUsage } from '@/services/aiUsage';
 import { IpAudit, type AuditCard } from './ipAudit';
 import './ipAudit.css';
-import { loadAnalysisModels, modelSupportsImages, modelSupportsText, selectedAnalysisModel, ANALYSIS_MODEL_KEY, type AnalysisModel } from './analysisModels';
+import '@/styles/analysis.css';
+import { aiModelButton } from '@/components/aiModelPicker';
+import { selectedAiModel } from '@/services/aiModels';
 
 type Mp = 'ozon' | 'wb' | 'yandex';
 type Severity = 'error' | 'warning' | 'info';
@@ -203,15 +205,13 @@ export class MyAnalysisModule {
   private drawerAiNames: string[] = [];   // AI name suggestions
 
   // Fixed-items tab
-  private activeTab: 'issues' | 'fixed' | 'ai' | 'ip' | 'models' = 'issues';
+  private activeTab: 'overview' | 'issues' | 'fixed' | 'ai' | 'settings' = 'overview';
+  private analysisKind: 'quality' | 'rights' = 'quality';
+  private companyId = '';
+  private qualityStores: Set<string> | null = null;
+  private shownCards = 100;
+  private resetScroll = false;
   private ipAudit = new IpAudit(() => this.cards as AuditCard[], c => this._fetchDesc(c as ProductCard), () => this._paint());
-  private models: AnalysisModel[] = [];
-  private modelError = '';
-  private modelLoading = false;
-  private modelSearch = '';
-  private modelFilter = 'all';
-  private modelShown = 50;
-  private modelDetails = '';
   private fixedItems: FixedItem[] = [];
   private fixedVerifying = false;
 
@@ -251,9 +251,15 @@ export class MyAnalysisModule {
 
   async show() {
     this.el.style.display = 'flex';
+    const cid = companyService.getActiveId() ?? '';
+    if (cid !== this.companyId) {
+      this.companyId = cid; this.loaded = false; this.cards = []; this.aiSuggestions = [];
+      this.drawerCard = null;
+      try { const saved = localStorage.getItem(`sd_quality_stores_${cid}`); this.qualityStores = saved ? new Set(JSON.parse(saved)) : null; } catch { this.qualityStores = null; }
+    }
     if (!this.loaded && !this.loading) await this._load();
     else this._paint();
-    if (this.activeTab === 'ip') void this.ipAudit.load();
+    if (this.analysisKind === 'rights') void this.ipAudit.load();
   }
 
   hide() { this.el.style.display = 'none'; }
@@ -264,31 +270,38 @@ export class MyAnalysisModule {
   setStore(id: string)     { this.storeFilter = id; this._paint(); }
   setIssueFilter(f: IssueFilter){ this.issueFilter = f; this._paint(); }
   setSort(s: typeof this.sortBy){ this.sortBy = s; this._paint(); }
-  setSearch(v: string)     { this.searchQ = v; this._paint(); }
+  setSearch(v: string)     { this.searchQ = v; this.shownCards = 100; this.resetScroll = true; this._paint(); }
   async reload()           { this.loaded = false; await this._load(); }
 
-  setTab(t: 'issues' | 'fixed' | 'ai' | 'ip' | 'models') { this.activeTab = t; this._paint(); if (t === 'ip') void this.ipAudit.load(); if (t === 'models') void this._loadModels(); }
-
-  private async _loadModels(force = false): Promise<void> {
-    if (this.modelLoading || (this.models.length && !force)) return;
-    this.modelLoading = true; this.modelError = ''; this._paint();
-    try { this.models = await loadAnalysisModels(force); }
-    catch (e) { this.modelError = e instanceof Error ? e.message : String(e); }
-    finally { this.modelLoading = false; this._paint(); }
+  setKind(kind: 'quality' | 'rights') {
+    this.analysisKind = kind; this.resetScroll = true; this._paint();
+    if (kind === 'rights') void this.ipAudit.load();
   }
-  modelSearchSet(v: string) { this.modelSearch = v; this.modelShown = 50; this._paint(); }
-  modelFilterSet(v: string) { this.modelFilter = v; this.modelShown = 50; this._paint(); }
-  modelMore() { this.modelShown += 50; this._paint(); }
-  modelDetailsSet(v: string) { this.modelDetails = this.modelDetails === v ? '' : v; this._paint(); }
-  modelSelect(v: string) {
-    const model = this.models.find(m => m.id === v);
-    if (!model || !modelSupportsText(model)) return;
-    localStorage.setItem(ANALYSIS_MODEL_KEY, v);
-    this._paint();
+  setTab(t: 'overview' | 'issues' | 'fixed' | 'ai' | 'settings') { this.activeTab = t; this.resetScroll = true; this._paint(); }
+  showMoreCards() { this.shownCards += 100; this._paint(); }
+  private _stores() {
+    return [...this.wbStores.map(s => ({ ...s, mp: 'wb' as Mp })), ...this.ozStores.map(s => ({ ...s, mp: 'ozon' as Mp })), ...this.yaStores.map(s => ({ ...s, mp: 'yandex' as Mp }))];
   }
-  modelRefresh() { void this._loadModels(true); }
+  private _scopeCards() { return this.cards.filter(c => !this.qualityStores || this.qualityStores.has(c.storeId)); }
+  qualityToggleStore(id: string) {
+    const selected = this.qualityStores ?? new Set(this._stores().map(s => s.id));
+    selected.has(id) ? selected.delete(id) : selected.add(id);
+    this.qualityStores = selected; this._saveScope();
+  }
+  qualityToggleMp(mp: Mp) {
+    const selected = this.qualityStores ?? new Set(this._stores().map(s => s.id));
+    const ids = this._stores().filter(s => s.mp === mp).map(s => s.id);
+    const all = ids.every(id => selected.has(id));
+    ids.forEach(id => all ? selected.delete(id) : selected.add(id));
+    this.qualityStores = selected; this._saveScope();
+  }
+  qualityChooseAll(all: boolean) { this.qualityStores = all ? null : new Set(); this._saveScope(); }
+  private _saveScope() {
+    localStorage.setItem(`sd_quality_stores_${this.companyId}`, JSON.stringify([...(this.qualityStores ?? new Set(this._stores().map(s => s.id)))]));
+    this.aiSuggestions = []; this.shownCards = 100; this._paint();
+  }
 
-  ipSection(v: 'overview' | 'results' | 'history' | 'references') { this.ipAudit.setSection(v); }
+  ipSection(v: 'overview' | 'results' | 'history' | 'references' | 'settings') { this.resetScroll = true; this.ipAudit.setSection(v); }
   ipFilter(v: string) { this.ipAudit.setFilter(v); }
   ipSearch(v: string) { this.ipAudit.setSearch(v); }
   ipChooseRun(v: string) { this.ipAudit.setRun(v); this.ipAudit.setSection('results'); }
@@ -306,16 +319,9 @@ export class MyAnalysisModule {
     void this.ipAudit.review(id, status, comment, evidence);
   }
   ipToggleSelect(id: string) { this.ipAudit.toggleSelect(id); }
-  ipSelectAll() {
-    const run = this.ipAudit['runs'].find((r: any) => r.id === this.ipAudit['selectedRun']);
-    const latest = run ? this.ipAudit['findings'].filter((f: any) => f.run_id === run.id) : [];
-    const filtered = latest.filter((f: any) => {
-      const filter = this.ipAudit['filter'];
-      const search = this.ipAudit['search'].toLowerCase();
-      return (filter === 'all' || f.risk === filter) && (!search || [f.vendor_code,f.product_name,f.object_name].some((v: string) => v.toLowerCase().includes(search)));
-    });
-    this.ipAudit.selectAll(filtered);
-  }
+  ipSelectAll() { this.ipAudit.selectFiltered(); }
+  ipChooseAll(all: boolean) { this.ipAudit.chooseAll(all); }
+  ipMore() { this.ipAudit.more(); }
   async ipBulkReview() {
     const status = (document.getElementById('ip-bulk-status') as HTMLSelectElement)?.value as Parameters<IpAudit['review']>[1];
     const comment = (document.getElementById('ip-bulk-comment') as HTMLInputElement)?.value ?? '';
@@ -373,7 +379,7 @@ export class MyAnalysisModule {
     if (this.aiRunning) return;
     if (!this.loaded) await this._load();
 
-    const candidates = this.cards.filter(c =>
+    const candidates = this._scopeCards().filter(c =>
       (this.mpFilter === 'all' || c.mp === this.mpFilter) &&
       (this.storeFilter === 'all' || c.storeId === this.storeFilter) &&
       c.issues.some(i => i.field === 'name' || i.code === 'LONG_WORD'),
@@ -927,6 +933,7 @@ export class MyAnalysisModule {
         dbFetchAll<WbStore>  (`wb_stores?company_id=eq.${cid}&select=id,name,api_key`),
         dbFetchAll<YaStore>  (`yandex_stores?company_id=eq.${cid}&select=id,name,api_key,business_id,campaign_id`),
       ]);
+      if (cid !== companyService.getActiveId()) return;
       this.ozStores = oz;
       this.wbStores = wb;
       this.yaStores = ya;
@@ -976,6 +983,7 @@ export class MyAnalysisModule {
         cards.push({ ...base, issues:auditCard(base), score:scoreCard(auditCard(base)) });
       }
 
+      if (cid !== companyService.getActiveId()) return;
       this.cards = cards;
       this.loaded = true;
       this._loadFixed();   // reload per-company list every time data is refreshed
@@ -1030,7 +1038,7 @@ export class MyAnalysisModule {
   }
 
   private async _callAi(prompt: string): Promise<string> {
-    const model = selectedAnalysisModel();
+    const model = selectedAiModel('quality');
     const r = await analysisAiFetch({ model, messages:[{role:'user',content:prompt}], max_tokens:800 });
     if (!r.ok) {
       const detail = await r.json().catch(() => ({}));
@@ -1048,193 +1056,88 @@ export class MyAnalysisModule {
   private _paint() {
     cancelAnimationFrame(this._raf);
     this._raf = requestAnimationFrame(() => {
-      // Preserve focused textarea state before wiping innerHTML
-      const activeEl = document.activeElement;
-      let restoreTaId: string | null = null;
-      let restoreSel = [0, 0];
-      let restoreModelSearch = -1;
-      if (activeEl instanceof HTMLTextAreaElement && this.el.contains(activeEl) && activeEl.id) {
-        restoreTaId = activeEl.id;
-        restoreSel = [activeEl.selectionStart ?? 0, activeEl.selectionEnd ?? 0];
+      const active = document.activeElement;
+      const focused = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement ? active : null;
+      const focusId = focused && this.el.contains(focused) ? focused.id : '';
+      const selection = focused ? [focused.selectionStart, focused.selectionEnd] : [];
+      const scroll = this.resetScroll ? 0 : this.el.querySelector<HTMLElement>('.ca-body')?.scrollTop ?? 0;
+      this.resetScroll = false;
+      const drafts = [...this.el.querySelectorAll<HTMLInputElement | HTMLSelectElement>('.ip-review input,.ip-review select,.ip-ref-form input,#ip-bulk-comment,#ip-bulk-status,#ip-article,#ip-scope')]
+        .map(input => ({ id: input.id, name: input.name, value: input.value }));
+      const openDetails = [...this.el.querySelectorAll<HTMLDetailsElement>('details[open][data-key]')].map(d => d.dataset.key);
+      const hadDrawer = this._drawerOpen; this._drawerOpen = !!this.drawerCard;
+      this.el.innerHTML = `<div class="ca-root">${this._head()}${this._body()}</div>${this._drawer(hadDrawer)}`;
+      const body = this.el.querySelector<HTMLElement>('.ca-body'); if (body) body.scrollTop = scroll;
+      this.el.querySelectorAll<HTMLDetailsElement>('details[data-key]').forEach(d => { if (openDetails.includes(d.dataset.key)) d.open = true; });
+      for (const draft of drafts) {
+        const next = this.el.querySelector<HTMLInputElement | HTMLSelectElement>(draft.id ? `#${CSS.escape(draft.id)}` : `.ip-ref-form [name="${CSS.escape(draft.name)}"]`);
+        if (next) next.value = draft.value;
       }
-      if (activeEl instanceof HTMLInputElement && activeEl.id === 'ca-model-search') restoreModelSearch = activeEl.selectionStart ?? activeEl.value.length;
-
-      const hadDrawer = this._drawerOpen;
-      this._drawerOpen = !!this.drawerCard;
-      this.el.innerHTML =
-        this._styles(hadDrawer) +
-        `<div class="ca-root">${this._head()}${this._body()}</div>` +
-        this._drawer(hadDrawer);
-
-      // Restore focus and cursor position
-      if (restoreTaId) {
-        const ta = this.el.querySelector<HTMLTextAreaElement>(`#${restoreTaId}`);
-        if (ta) { ta.focus(); ta.setSelectionRange(restoreSel[0], restoreSel[1]); }
-      }
-      if (restoreModelSearch >= 0) {
-        const input = this.el.querySelector<HTMLInputElement>('#ca-model-search');
-        if (input) { input.focus(); input.setSelectionRange(restoreModelSearch, restoreModelSearch); }
+      if (focusId) {
+        const next = this.el.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#${CSS.escape(focusId)}`);
+        if (next) { next.focus({ preventScroll: true }); try { next.setSelectionRange(selection[0] ?? 0, selection[1] ?? 0); } catch { /* selects / number inputs */ } }
       }
     });
   }
 
-  private _head() {
-    const allStores = [
-      ...this.ozStores.map(s=>({id:s.id,name:s.name,mp:'ozon' as Mp})),
-      ...this.wbStores.map(s=>({id:s.id,name:s.name,mp:'wb' as Mp})),
-      ...this.yaStores.map(s=>({id:s.id,name:s.name,mp:'yandex' as Mp})),
-    ].filter(s => this.mpFilter === 'all' || s.mp === this.mpFilter);
-
-    const mps: [MpFilter,string][] = [['all','Все МП'],['ozon','Ozon'],['wb','WB'],['yandex','Яндекс']];
-    const iFilters: [IssueFilter,string][] = [['all','Все'],['errors','Ошибки'],['blocked','Заблокированные'],['few_photos','Мало фото']];
-
-    const total = this.cards.length;
-    const errN  = this.cards.filter(c=>c.issues.some(i=>i.severity==='error')).length;
-    const warnN = this.cards.filter(c=>!c.issues.some(i=>i.severity==='error') && c.issues.some(i=>i.severity==='warning')).length;
-
-    const fixedCount = this.fixedItems.length;
-    return `<div class="ca-head">
-      <div class="ca-head-top">
-        <div class="ca-title">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-          Анализ карточек
-        </div>
-        ${total ? `<div class="ca-chips">
-          <span class="ca-chip">${total} товаров</span>
-          ${errN  ? `<span class="ca-chip err">${errN} ошибок</span>` : ''}
-          ${warnN ? `<span class="ca-chip warn">${warnN} предупреждений</span>` : ''}
-        </div>` : ''}
-        <button class="ca-icon-btn${this.loading?' spin':''}" onclick="window.myAnalysisModule?.reload()" title="Обновить">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-        </button>
-      </div>
-
-      <div class="ca-tabs">
-        <button class="ca-tab${this.activeTab==='issues'?' on':''}" onclick="window.myAnalysisModule?.setTab('issues')">Проблемы</button>
-        <button class="ca-tab${this.activeTab==='fixed'?' on':''}" onclick="window.myAnalysisModule?.setTab('fixed')">
-          Исправленные${fixedCount ? `<span class="ca-tab-badge">${fixedCount}</span>` : ''}
-        </button>
-        <button class="ca-tab ca-tab-ai${this.activeTab==='ai'?' on':''}" onclick="window.myAnalysisModule?.setTab('ai')">
-          ✨ ИИ Исправление
-        </button>
-        <button class="ca-tab${this.activeTab==='ip'?' on':''}" onclick="window.myAnalysisModule?.setTab('ip')">Аудит прав</button>
-        <button class="ca-tab${this.activeTab==='models'?' on':''}" onclick="window.myAnalysisModule?.setTab('models')">Модели ИИ</button>
-      </div>
-
-      ${this.activeTab === 'ai' ? `<div class="ca-filters"><div class="ca-filter-row"><span class="ca-filter-label">Площадка:</span><div class="ca-pills">${mps.map(([m,l])=>`<button class="ca-pill${this.mpFilter===m?' on':''}" onclick="window.myAnalysisModule?.setMp('${m}')">${l}</button>`).join('')}</div></div>
-        ${allStores.length > 1 ? `<div class="ca-filter-row"><span class="ca-filter-label">Магазин:</span><select class="ca-search" onchange="window.myAnalysisModule?.setStore(this.value)"><option value="all">Все выбранные</option>${allStores.map(s=>`<option value="${this._e(s.id)}" ${this.storeFilter===s.id?'selected':''}>${this._e(s.name)}</option>`).join('')}</select></div>` : ''}</div>` : ''}
-      ${this.activeTab === 'issues' ? `<div class="ca-filters">
-        <div class="ca-search-row">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input class="ca-search" placeholder="Поиск по названию или артикулу…" value="${this._e(this.searchQ)}"
-            oninput="window.myAnalysisModule?.setSearch(this.value)">
-        </div>
-
-        <div class="ca-filter-row">
-          <span class="ca-filter-label">МП:</span>
-          <div class="ca-pills">
-            ${mps.map(([m,l])=>`<button class="ca-pill${this.mpFilter===m?' on':''}" onclick="window.myAnalysisModule?.setMp('${m}')">${l}</button>`).join('')}
-          </div>
-        </div>
-
-        ${allStores.length > 1 ? `
-        <div class="ca-filter-row">
-          <span class="ca-filter-label">Магазин:</span>
-          <div class="ca-pills">
-            <button class="ca-pill${this.storeFilter==='all'?' on':''}" onclick="window.myAnalysisModule?.setStore('all')">Все</button>
-            ${allStores.map(s=>`<button class="ca-pill${this.storeFilter===s.id?' on':''}" onclick="window.myAnalysisModule?.setStore('${s.id}')"
-              style="--mp-c:${MP_COLOR[s.mp]}">${s.name}</button>`).join('')}
-          </div>
-        </div>` : ''}
-
-        <div class="ca-filter-row">
-          <span class="ca-filter-label">Проблемы:</span>
-          <div class="ca-pills">
-            ${iFilters.map(([f,l])=>`<button class="ca-pill${this.issueFilter===f?' on':''}" onclick="window.myAnalysisModule?.setIssueFilter('${f}')">${l}</button>`).join('')}
-          </div>
-        </div>
-
-        <div class="ca-filter-row">
-          <span class="ca-filter-label">Сортировка:</span>
-          <div class="ca-pills">
-            ${(['score','name','photos','mp'] as const).map(s=>`<button class="ca-pill${this.sortBy===s?' on':''}" onclick="window.myAnalysisModule?.setSort('${s}')">${{score:'Оценка',name:'Название',photos:'Фото',mp:'МП'}[s]}</button>`).join('')}
-          </div>
-        </div>
-      </div>` : ''}
-    </div>`;
+  private _head(): string {
+    const rights = this.analysisKind === 'rights';
+    const qualityTabs = [['overview','Обзор'],['issues','Проблемы'],['ai','ИИ-улучшение'],['fixed','Исправленные'],['settings','Настройки']];
+    const rightsTabs = [['overview','Проверка'],['results','Результаты'],['history','История'],['references','Эталоны'],['settings','Настройки']];
+    const tabs = rights ? rightsTabs : qualityTabs;
+    const active = rights ? this.ipAudit.section : this.activeTab;
+    return `<header class="ca-head"><div class="ca-topline"><div class="ca-brand"><span class="ca-brand-symbol">◈</span><span>Анализ</span></div>
+      <div class="ca-mode-island" role="tablist" aria-label="Вид анализа">
+        <button role="tab" aria-selected="${!rights}" class="${!rights ? 'on' : ''}" onclick="window.myAnalysisModule?.setKind('quality')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 19h16M7 15V9m5 6V5m5 10v-3"/></svg>Анализ качества</button>
+        <button role="tab" aria-selected="${rights}" class="${rights ? 'on' : ''}" onclick="window.myAnalysisModule?.setKind('rights')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></svg>Анализ прав</button>
+      </div><button class="ca-refresh${this.loading ? ' busy' : ''}" title="Обновить товары" onclick="window.myAnalysisModule?.reload()" ${this.loading ? 'disabled' : ''}>↻</button></div>
+      <div class="ca-section-line"><nav class="ca-subnav">${tabs.map(([id, label]) => `<button class="${active === id ? 'on' : ''}" onclick="window.myAnalysisModule?.${rights ? 'ipSection' : 'setTab'}('${id}')">${label}${id === 'fixed' && this.fixedItems.length ? `<small>${this.fixedItems.length}</small>` : ''}</button>`).join('')}</nav>${aiModelButton(rights ? 'rights' : 'quality', { vision: rights })}</div></header>`;
   }
 
-  private _body() {
-    if (this.activeTab === 'ip') return this.ipAudit.render();
-    if (this.activeTab === 'models') return this._modelsBody();
+  private _qualityScope(): string {
+    const stores = this._stores();
+    const selected = this.qualityStores ?? new Set(stores.map(s => s.id));
+    return `<div class="ca-scope-head"><div><b>Магазины для проверки</b><p>Будут обработаны только отмеченные магазины.</p></div><div><button class="ca-text-btn" onclick="window.myAnalysisModule?.qualityChooseAll(true)">Все</button><button class="ca-text-btn" onclick="window.myAnalysisModule?.qualityChooseAll(false)">Снять выбор</button></div></div>
+      <div class="ca-scope-grid">${(['wb','ozon','yandex'] as const).map(mp => {
+        const list = stores.filter(s => s.mp === mp); if (!list.length) return '';
+        return `<div class="ca-scope-group"><label class="ca-scope-mp"><input type="checkbox" ${list.every(s => selected.has(s.id)) ? 'checked' : ''} onchange="window.myAnalysisModule?.qualityToggleMp('${mp}')"><span class="ca-mp-dot" style="background:${MP_COLOR[mp]}"></span>${MP_NAME[mp]}</label>${list.map(s => `<label><input type="checkbox" ${selected.has(s.id) ? 'checked' : ''} onchange="window.myAnalysisModule?.qualityToggleStore('${s.id}')"><span>${this._e(s.name)}</span><small>${this.cards.filter(c => c.storeId === s.id).length}</small></label>`).join('')}</div>`;
+      }).join('') || '<p class="ca-muted">Подключённых магазинов пока нет.</p>'}</div>`;
+  }
+
+  private _qualityOverview(): string {
+    const cards = this._scopeCards();
+    const errors = cards.filter(c => c.issues.some(i => i.severity === 'error')).length;
+    const warnings = cards.filter(c => !c.issues.some(i => i.severity === 'error') && c.issues.length > 0).length;
+    const average = cards.length ? Math.round(cards.reduce((n,c) => n + c.score, 0) / cards.length) : 0;
+    return `<div class="ca-body"><div class="ca-intro"><div><span class="ca-eyebrow">КАРТОЧКИ ТОВАРОВ</span><h1>Качество, которое видно</h1><p>Найдите пропущенные фото, слабые названия и ошибки карточек. ИИ поможет подготовить улучшения.</p></div><div class="ca-overall"><b>${average}</b><span>из 100 · средняя оценка</span></div></div>
+      <div class="ca-metrics"><div><span>В выбранных магазинах</span><b>${cards.length}</b></div><div><span>С ошибками</span><b class="ca-error">${errors}</b></div><div><span>Требуют улучшения</span><b class="ca-warning">${warnings}</b></div><div><span>Без замечаний</span><b class="ca-success">${cards.filter(c => !c.issues.length).length}</b></div></div>
+      <section class="ca-surface">${this._qualityScope()}<div class="ca-launch"><span>Статус, фото, название и цена · без обращения к ИИ</span><button class="ca-primary" onclick="window.myAnalysisModule?.setTab('issues')" ${!cards.length ? 'disabled' : ''}>Проверить качество <span>→</span></button></div></section>
+      <div class="ca-help-grid"><button class="ca-help-card" onclick="window.myAnalysisModule?.setTab('ai')"><span>✦</span><b>Улучшить с ИИ</b><small>Предложения названий с учётом описания товара</small><i>→</i></button><button class="ca-help-card" onclick="window.myAnalysisModule?.setTab('fixed')"><span>↻</span><b>Проверить изменения</b><small>Убедиться, что маркетплейс принял правки</small><i>→</i></button></div></div>`;
+  }
+
+  private _qualityToolbar(): string {
+    const stores = this._stores().filter(s => !this.qualityStores || this.qualityStores.has(s.id));
+    return `<div class="ca-quality-toolbar"><input id="ca-quality-search" class="ca-search" type="search" placeholder="Название или артикул…" value="${this._e(this.searchQ)}" oninput="window.myAnalysisModule?.setSearch(this.value)">
+      <select class="ca-search" aria-label="Маркетплейс" onchange="window.myAnalysisModule?.setMp(this.value)">${[['all','Все площадки'],['wb','Wildberries'],['ozon','Ozon'],['yandex','Яндекс Маркет']].map(([id,n]) => `<option value="${id}" ${this.mpFilter === id ? 'selected' : ''}>${n}</option>`).join('')}</select>
+      <select class="ca-search" aria-label="Магазин" onchange="window.myAnalysisModule?.setStore(this.value)"><option value="all">Все выбранные магазины</option>${stores.filter(st => this.mpFilter === 'all' || st.mp === this.mpFilter).map(st => `<option value="${st.id}" ${this.storeFilter === st.id ? 'selected' : ''}>${this._e(st.name)}</option>`).join('')}</select>
+      ${this.activeTab === 'issues' ? `<select class="ca-search" aria-label="Тип проблемы" onchange="window.myAnalysisModule?.setIssueFilter(this.value)">${[['all','Все карточки'],['errors','С ошибками'],['blocked','Заблокированы'],['few_photos','Мало фото']].map(([id,n]) => `<option value="${id}" ${this.issueFilter === id ? 'selected' : ''}>${n}</option>`).join('')}</select>` : ''}</div>`;
+  }
+
+  private _body(): string {
+    if (this.loading && !this.loaded) return `<div class="ca-body ca-empty"><div class="ca-spin"></div><p>${this._e(this.loadMsg)}</p></div>`;
+    if (this.error) return `<div class="ca-body ca-empty"><p>${this._e(this.error)}</p><button class="ca-btn" onclick="window.myAnalysisModule?.reload()">Повторить загрузку</button></div>`;
+    if (this.analysisKind === 'rights') return this.ipAudit.render();
+    if (this.activeTab === 'overview') return this._qualityOverview();
+    if (this.activeTab === 'settings') return `<div class="ca-body"><section class="ca-surface"><div class="ca-setting-line"><div><h2>Модель для улучшения карточек</h2><p>Авто подбирает бесплатную модель. Базовая проверка качества выполняется без ИИ.</p></div>${aiModelButton('quality')}</div></section><section class="ca-surface">${this._qualityScope()}</section><p class="ca-footnote">Оценка качества помогает найти неполные карточки. Правки отправляются на маркетплейс после вашего подтверждения.</p></div>`;
     if (this.activeTab === 'fixed') return this._fixedBody();
-    if (this.activeTab === 'ai')    return this._aiBody();
-
-    if (this.loading && !this.loaded)
-      return `<div class="ca-body ca-ctr"><div class="ca-spin"></div><span class="ca-hint">${this.loadMsg}</span></div>`;
-    if (this.error)
-      return `<div class="ca-body ca-ctr"><div style="font-size:36px">⚠️</div><div class="ca-hint">${this._e(this.error)}</div>
-        <button class="ca-btn" onclick="window.myAnalysisModule?.reload()">Повторить</button></div>`;
-    if (!this.cards.length)
-      return `<div class="ca-body ca-ctr"><div style="font-size:40px">🛍️</div>
-        <div class="ca-hint">Нет товаров. Сначала добавьте магазины и запустите синхронизацию.</div></div>`;
-
+    if (this.activeTab === 'ai') return `<div class="ca-workspace">${this._qualityToolbar()}${this._aiBody()}</div>`;
     const list = this._filtered();
-    if (!list.length)
-      return `<div class="ca-body ca-ctr"><div style="font-size:36px">✅</div>
-        <div class="ca-hint">По выбранным фильтрам всё в порядке</div>
-        <button class="ca-btn" onclick="window.myAnalysisModule?.setIssueFilter('all');window.myAnalysisModule?.setMp('all');window.myAnalysisModule?.setStore('all')">Сбросить фильтры</button></div>`;
-
-    return `<div class="ca-body"><div class="ca-list">${list.map(c=>this._row(c)).join('')}</div></div>`;
-  }
-
-  private _modelsBody(): string {
-    const selected = selectedAnalysisModel();
-    const q = this.modelSearch.trim().toLowerCase();
-    const matches = this.models.filter(m => {
-      if (q && ![m.id, m.name, m.description].some(v => v.toLowerCase().includes(q))) return false;
-      if (this.modelFilter === 'vision') return modelSupportsImages(m);
-      if (this.modelFilter === 'text') return modelSupportsText(m);
-      if (this.modelFilter === 'reasoning') return m.supported_parameters.includes('reasoning');
-      if (this.modelFilter === 'tools') return m.supported_parameters.includes('tools');
-      if (this.modelFilter === 'audio') return [...m.input_modalities, ...m.output_modalities].includes('audio');
-      if (this.modelFilter === 'video') return [...m.input_modalities, ...m.output_modalities].includes('video');
-      return true;
-    });
-    const filters = [['all','Все'],['vision','Фото'],['text','Текст'],['reasoning','Рассуждение'],['tools','Инструменты'],['audio','Аудио'],['video','Видео']];
-    const fmt = (n: number | null) => n == null ? 'не указано' : new Intl.NumberFormat('ru-RU').format(n);
-    const tag = (text: string) => `<span class="ca-model-tag">${this._e(text)}</span>`;
-    return `<div class="ca-body ca-models">
-      <div class="ca-models-intro"><h2>Модели ИИ для «Анализа»</h2><p>Выбранная модель: <b>${this._e(selected)}</b>. Она применяется к ИИ-исправлению карточек и новым заданиям аудита прав. Для фото нужна модель с входом «image». Запущенное задание сохраняет выбранную при старте модель.</p>
-        <button class="ca-btn" onclick="window.myAnalysisModule?.modelRefresh()" ${this.modelLoading ? 'disabled' : ''}>Обновить список</button></div>
-      <div class="ca-models-controls"><input id="ca-model-search" class="ca-search" placeholder="Название, разработчик или описание…" value="${this._e(this.modelSearch)}" oninput="window.myAnalysisModule?.modelSearchSet(this.value)">
-        <div class="ca-pills">${filters.map(([v,l]) => `<button class="ca-pill${this.modelFilter===v?' on':''}" onclick="window.myAnalysisModule?.modelFilterSet('${v}')">${l}</button>`).join('')}</div></div>
-      <p class="ca-hint">${this.modelLoading ? 'Загружаем каталог…' : this.modelError ? this._e(this.modelError) : `${matches.length} из ${this.models.length} моделей`}. Сведения получены из каталога OpenRouter; доступность зависит от настроек провайдера.</p>
-      <div class="ca-models-list">${matches.slice(0, this.modelShown).map(m => {
-        const encoded = encodeURIComponent(m.id).replace(/'/g, '%27');
-        const textOk = modelSupportsText(m), visionOk = modelSupportsImages(m), open = this.modelDetails === m.id;
-        return `<article class="ca-model-card${selected === m.id ? ' selected' : ''}">
-          <div class="ca-model-card-head"><div><b>${this._e(m.name)}</b><small>${this._e(m.id)}</small></div>
-          <div class="ca-model-card-actions"><button class="ca-btn" onclick="window.myAnalysisModule?.modelSelect(decodeURIComponent('${encoded}'))" ${!textOk || selected===m.id ? 'disabled' : ''}>${selected===m.id?'Выбрана':'Выбрать'}</button>
-          <button class="ca-btn" onclick="window.myAnalysisModule?.modelDetailsSet(decodeURIComponent('${encoded}'))">${open?'Скрыть':'Подробнее'}</button></div></div>
-          <div class="ca-model-tags">${tag(m.id.split('/')[0])}${visionOk ? tag('Фото') : ''}${textOk ? tag('Текст') : tag('Не подходит для текстового анализа')}${m.supported_parameters.includes('reasoning') ? tag('Рассуждение') : ''}${m.supported_parameters.includes('tools') ? tag('Инструменты') : ''}${tag(`Контекст: ${fmt(m.context_length)}`)}</div>
-          ${open ? `<div class="ca-model-details"><p>${this._e(m.description || 'Описание не предоставлено.')}</p>
-            <dl><dt>Вход</dt><dd>${this._e(m.input_modalities.join(', ') || 'не указан')}</dd><dt>Выход</dt><dd>${this._e(m.output_modalities.join(', ') || 'не указан')}</dd>
-            <dt>Контекст</dt><dd>${fmt(m.context_length)} токенов</dd><dt>Максимальный ответ</dt><dd>${fmt(m.max_completion_tokens)} токенов</dd>
-            <dt>Поддерживаемые параметры</dt><dd>${this._e(m.supported_parameters.join(', ') || 'не указаны')}</dd>
-            <dt>Знания до</dt><dd>${this._e(m.knowledge_cutoff || 'не указано')}</dd><dt>Токенизатор</dt><dd>${this._e(m.tokenizer || 'не указан')}</dd>
-            <dt>Формат инструкций</dt><dd>${this._e(m.instruct_type || 'не указан')}</dd><dt>Модерация провайдера</dt><dd>${m.is_moderated == null ? 'не указано' : m.is_moderated ? 'да' : 'нет'}</dd>
-            <dt>Добавлена в каталог</dt><dd>${m.created ? new Date(m.created * 1000).toLocaleDateString('ru-RU') : 'не указано'}</dd>
-            <dt>Срок доступности</dt><dd>${this._e(m.expiration_date || 'не указан')}</dd></dl></div>` : ''}
-        </article>`;
-      }).join('')}</div>
-      ${matches.length > this.modelShown ? `<button class="ca-btn" onclick="window.myAnalysisModule?.modelMore()">Показать ещё 50</button>` : ''}
-    </div>`;
+    return `<div class="ca-workspace">${this._qualityToolbar()}<div class="ca-body"><div class="ca-results-caption"><span>${list.length} карточек</span><select aria-label="Сортировка карточек" onchange="window.myAnalysisModule?.setSort(this.value)">${[['score','Сначала низкая оценка'],['name','По названию'],['photos','По числу фото'],['mp','По площадке']].map(([id,n]) => `<option value="${id}" ${this.sortBy === id ? 'selected' : ''}>${n}</option>`).join('')}</select></div><div class="ca-list">${list.slice(0, this.shownCards).map(c => this._row(c)).join('') || '<div class="ca-empty"><b>Карточки не найдены</b><p>Измените фильтры или выберите магазины в обзоре.</p></div>'}</div>${list.length > this.shownCards ? '<button class="ca-btn ca-more" onclick="window.myAnalysisModule?.showMoreCards()">Показать ещё 100</button>' : ''}</div></div>`;
   }
 
   private _aiBody(): string {
     const nameIssueCards = this.loaded
-      ? this.cards.filter(c => (this.mpFilter === 'all' || c.mp === this.mpFilter) && (this.storeFilter === 'all' || c.storeId === this.storeFilter) && c.issues.some(i => i.field === 'name' || i.code === 'LONG_WORD'))
+      ? this._scopeCards().filter(c => (this.mpFilter === 'all' || c.mp === this.mpFilter) && (this.storeFilter === 'all' || c.storeId === this.storeFilter) && c.issues.some(i => i.field === 'name' || i.code === 'LONG_WORD'))
       : [];
 
     // ── Empty / loading states ─────────────────────────────────────────────
@@ -1408,9 +1311,9 @@ export class MyAnalysisModule {
   private _row(c: ProductCard) {
     const thumb = c.photoUrls[0] || '';
     const cls = c.score >= 80 ? 'good' : c.score >= 50 ? 'med' : 'bad';
-    const chips = c.issues.slice(0,3).map(i=>`<span class="ca-ic sev-${i.severity}">${SEV_ICON[i.severity]} ${i.label}</span>`).join('');
+    const chips = c.issues.slice(0,3).map(i=>`<span class="ca-ic sev-${i.severity}">${SEV_ICON[i.severity]} ${this._e(i.label)}</span>`).join('');
     const more  = c.issues.length > 3 ? `<span class="ca-ic-more">+${c.issues.length-3}</span>` : '';
-    return `<div class="ca-row" onclick="window.myAnalysisModule?.openDrawer('${this._e(c.uid)}')">
+    return `<div class="ca-row" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()" onclick="window.myAnalysisModule?.openDrawer('${this._e(c.uid)}')">
       <div class="ca-thumb">${thumb?`<img src="${this._e(thumb)}" loading="lazy" alt="">`:'<span class="ca-nophoto">📷</span>'}</div>
       <div class="ca-info">
         <div class="ca-nm">${this._e(c.name)}</div>
@@ -1448,7 +1351,7 @@ export class MyAnalysisModule {
 
     return `
     <div class="ca-bd" onclick="window.myAnalysisModule?.closeDrawer()"></div>
-    <div class="ca-dw${noAnim?' noanim':''}">
+    <div role="dialog" aria-modal="true" aria-label="Редактирование карточки" class="ca-dw${noAnim?' noanim':''}">
       <div class="ca-dh">
         <div class="ca-dt">
           <span class="ca-mp-b" style="color:${MP_COLOR[c.mp]};border-color:${MP_COLOR[c.mp]}22;background:${MP_COLOR[c.mp]}14">${MP_NAME[c.mp]}</span>
@@ -1463,11 +1366,11 @@ export class MyAnalysisModule {
         </button>
       </div>
 
-      <div class="ca-ds">
+      <div class="ca-ds"><div class="ca-setting-line"><span>Модель ИИ</span>${aiModelButton('quality')}</div>
         ${/* Issues block */ c.issues.length ? `
         <div class="ca-sec">
           <div class="ca-sec-t">Проблемы (${c.issues.length})</div>
-          ${c.issues.map(i=>`<div class="ca-iss sev-${i.severity}">${SEV_ICON[i.severity]} ${i.label}</div>`).join('')}
+          ${c.issues.map(i=>`<div class="ca-iss sev-${i.severity}">${SEV_ICON[i.severity]} ${this._e(i.label)}</div>`).join('')}
         </div>` : `<div class="ca-ok">✅ Проблем не найдено</div>`}
 
         ${/* Photos section */`
@@ -1540,7 +1443,7 @@ export class MyAnalysisModule {
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   private _filtered(): ProductCard[] {
-    let list = this.cards;
+    let list = this._scopeCards();
     if (this.mpFilter !== 'all')     list = list.filter(c => c.mp === this.mpFilter);
     if (this.storeFilter !== 'all')  list = list.filter(c => c.storeId === this.storeFilter);
     if (this.issueFilter === 'errors')    list = list.filter(c => c.issues.some(i=>i.severity==='error'));
@@ -1563,219 +1466,4 @@ export class MyAnalysisModule {
     return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
-  // ─── Styles ───────────────────────────────────────────────────────────────
-
-  private _styles(_drawerAlreadyOpen: boolean) {
-    // Dock is fixed bottom: 10px + ~60px height → reserve ~80px
-    const dockH = (document.getElementById('app-dock')?.offsetHeight ?? 60) + 14;
-    return `<style>
-.ca-root{display:flex;flex-direction:column;height:100%;background:var(--bg);}
-
-/* Head */
-.ca-head{padding:14px 20px 0;border-bottom:1px solid var(--border);flex-shrink:0;}
-.ca-head-top{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
-.ca-title{font-size:16px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px;}
-.ca-title svg{color:var(--accent-text);}
-.ca-chips{display:flex;gap:5px;}
-.ca-chip{font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;background:var(--bg3);color:var(--text2);}
-.ca-chip.err{background:var(--red-dim);color:var(--red);}
-.ca-chip.warn{background:rgba(251,191,36,.12);color:#fbbf24;}
-.ca-icon-btn{margin-left:auto;background:transparent;border:1px solid var(--border);border-radius:7px;color:var(--text2);cursor:pointer;padding:6px 9px;display:flex;align-items:center;transition:all .15s;}
-.ca-icon-btn:hover{color:var(--text);}
-.ca-icon-btn.spin svg,.ca-spin-sm{animation:ca-spin .7s linear infinite;}
-
-.ca-filters{display:flex;flex-direction:column;gap:8px;padding-bottom:12px;}
-.ca-search-row{display:flex;align-items:center;gap:7px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:7px 12px;}
-.ca-search-row svg{color:var(--text3);flex-shrink:0;}
-.ca-search{background:transparent;border:none;outline:none;color:var(--text);font-size:13px;flex:1;}
-.ca-search::placeholder{color:var(--text3);}
-.ca-filter-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-.ca-filter-label{font-size:11px;font-weight:700;color:var(--text3);white-space:nowrap;min-width:64px;}
-.ca-pills{display:flex;flex-wrap:wrap;gap:4px;}
-.ca-pill{background:var(--bg3);border:1px solid transparent;color:var(--text2);font-size:12px;padding:4px 12px;border-radius:20px;cursor:pointer;transition:all .15s;font-weight:500;}
-.ca-pill.on{background:var(--bg5);color:var(--text);font-weight:700;border-color:var(--border2);}
-.ca-pill:hover:not(.on){color:var(--text);background:var(--bg4);}
-
-/* Body */
-.ca-body{flex:1;overflow:auto;padding:14px 20px;}
-.ca-ctr{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;min-height:300px;}
-.ca-spin{width:28px;height:28px;border:3px solid var(--bg3);border-top-color:var(--accent);border-radius:50%;animation:ca-spin .8s linear infinite;}
-.ca-hint{color:var(--text2);font-size:13px;text-align:center;line-height:1.6;}
-.ca-btn{background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:13px;padding:8px 18px;border-radius:8px;cursor:pointer;}
-@keyframes ca-spin{to{transform:rotate(360deg);}}
-
-/* Row */
-.ca-list{display:flex;flex-direction:column;gap:7px;}
-.ca-row{display:flex;align-items:center;gap:13px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:11px 14px;cursor:pointer;transition:border-color .15s,background .15s;}
-.ca-row:hover{border-color:var(--border2);background:var(--bg3);}
-.ca-thumb{width:54px;height:54px;border-radius:8px;overflow:hidden;flex-shrink:0;background:var(--bg3);display:flex;align-items:center;justify-content:center;}
-.ca-thumb img{width:100%;height:100%;object-fit:cover;}
-.ca-nophoto{font-size:20px;color:var(--text3);}
-.ca-info{flex:1;min-width:0;}
-.ca-nm{font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px;}
-.ca-meta{display:flex;align-items:center;gap:7px;margin-bottom:5px;flex-wrap:wrap;}
-.ca-mp-b{font-size:10px;font-weight:800;padding:2px 7px;border-radius:4px;border:1px solid;}
-.ca-vc{font-family:'JetBrains Mono','SF Mono',monospace;font-size:11px;color:var(--text3);}
-.ca-sn{font-size:11px;color:var(--text3);}
-.ca-ic-row{display:flex;flex-wrap:wrap;gap:4px;}
-.ca-ic{font-size:11px;font-weight:600;padding:2px 7px;border-radius:20px;}
-.ca-ic.sev-error{background:var(--red-dim);color:var(--red);}
-.ca-ic.sev-warning{background:rgba(251,191,36,.12);color:#fbbf24;}
-.ca-ic.sev-info{background:var(--bg3);color:var(--text3);}
-.ca-ic-more{font-size:11px;color:var(--text3);font-weight:700;padding:2px 4px;}
-.ca-right{display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0;}
-.ca-score{position:relative;display:flex;align-items:center;justify-content:center;width:46px;height:46px;}
-.ca-score span{position:absolute;font-size:11px;font-weight:800;}
-.ca-score.good{color:var(--green);}
-.ca-score.med{color:#fbbf24;}
-.ca-score.bad{color:var(--red);}
-.ca-ph-cnt{font-size:11px;color:var(--text3);font-weight:600;}
-
-/* Drawer */
-.ca-bd{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(2px);z-index:100;animation:ca-fi .2s;}
-.ca-dw{position:fixed;top:0;right:0;bottom:${dockH}px;width:490px;max-width:100vw;background:var(--bg2);border-left:1px solid var(--border2);z-index:101;display:flex;flex-direction:column;}
-.ca-dw:not(.noanim){animation:ca-si .25s cubic-bezier(.4,0,.2,1);}
-@keyframes ca-fi{from{opacity:0}to{opacity:1}}
-@keyframes ca-si{from{transform:translateX(100%)}to{transform:translateX(0)}}
-.ca-dh{display:flex;align-items:center;gap:8px;padding:14px 18px;border-bottom:1px solid var(--border);flex-shrink:0;}
-.ca-dt{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--text);flex:1;min-width:0;}
-.ca-ext{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:var(--text2);text-decoration:none;padding:5px 9px;border:1px solid var(--border);border-radius:7px;}
-.ca-ext:hover{color:var(--text);}
-.ca-cl{background:transparent;border:none;color:var(--text2);cursor:pointer;padding:5px;border-radius:6px;display:flex;align-items:center;}
-.ca-cl:hover{color:var(--text);background:var(--hover);}
-.ca-ds{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px;}
-.ca-df{padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:9px;flex-shrink:0;}
-.ca-save{flex:1;background:var(--accent);color:#0a0a0a;border:none;border-radius:10px;font-size:13px;font-weight:700;padding:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;}
-.ca-save.busy{opacity:.65;pointer-events:none;}
-.ca-cancel{background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:10px;font-size:13px;font-weight:600;padding:11px 18px;cursor:pointer;}
-.ca-cancel:hover{color:var(--text);}
-
-/* Drawer sections */
-.ca-sec{display:flex;flex-direction:column;gap:7px;}
-.ca-sec-t{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--text3);}
-.ca-ok{background:rgba(68,221,136,.08);border:1px solid rgba(68,221,136,.2);color:var(--green);border-radius:10px;padding:11px 14px;font-size:13px;font-weight:600;}
-.ca-iss{display:flex;align-items:center;gap:8px;font-size:13px;padding:8px 11px;border-radius:8px;}
-.ca-iss.sev-error{background:var(--red-dim);color:var(--red);}
-.ca-iss.sev-warning{background:rgba(251,191,36,.10);color:#fbbf24;}
-.ca-iss.sev-info{background:var(--bg3);color:var(--text2);}
-
-/* Photos */
-.ca-ph-grid{display:flex;flex-wrap:wrap;gap:8px;}
-.ca-ph-item{position:relative;width:72px;height:72px;}
-.ca-ph-item img{width:100%;height:100%;object-fit:cover;border-radius:8px;border:1px solid var(--border);}
-.ca-ph-del{position:absolute;top:3px;right:3px;background:rgba(0,0,0,.7);border:none;color:#fff;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;}
-.ca-empty-ph{background:var(--bg3);border-radius:8px;padding:20px;text-align:center;color:var(--text3);font-size:13px;}
-.ca-add-ph{display:flex;gap:7px;}
-.ca-url-in{flex:1;padding:7px 10px;height:auto;}
-.ca-add-ph-btn{background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:12px;font-weight:700;padding:7px 12px;border-radius:8px;cursor:pointer;white-space:nowrap;}
-.ca-add-ph-btn:hover{background:var(--bg4);}
-.ca-hint-sm{font-size:11px;color:var(--text3);}
-.ca-hint-sm a{color:var(--accent-text);text-decoration:none;}
-
-/* Fields */
-.ca-field{background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;padding:9px 11px;resize:vertical;outline:none;font-family:inherit;width:100%;box-sizing:border-box;transition:border-color .15s;}
-.ca-field:focus{border-color:var(--border2);}
-.ca-ai-btn{display:flex;align-items:center;gap:6px;background:rgba(212,240,0,.08);border:1px solid rgba(212,240,0,.2);color:var(--accent-text);font-size:12px;font-weight:700;padding:7px 12px;border-radius:8px;cursor:pointer;align-self:flex-start;transition:all .15s;}
-.ca-ai-btn:hover{background:rgba(212,240,0,.16);}
-.ca-ai-btn.busy{opacity:.65;pointer-events:none;}
-.ca-spin-sm{width:12px;height:12px;border:2px solid transparent;border-top-color:currentColor;border-radius:50%;flex-shrink:0;}
-.ca-ai-sug{background:rgba(212,240,0,.05);border:1px solid rgba(212,240,0,.15);border-radius:10px;padding:10px;}
-.ca-ai-sug-t{font-size:11px;font-weight:700;color:var(--accent-text);margin-bottom:7px;}
-.ca-ai-item{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;color:var(--text);padding:8px 10px;border-radius:7px;background:var(--bg3);cursor:pointer;margin-bottom:5px;transition:background .15s;}
-.ca-ai-item:last-child{margin-bottom:0;}
-.ca-ai-item:hover{background:var(--bg4);}
-.ca-pick{font-size:11px;font-weight:800;color:var(--accent-text);flex-shrink:0;}
-.ca-vc-row{display:flex;align-items:center;gap:7px;font-size:12px;}
-.ca-vc-l{color:var(--text3);}
-
-/* Tabs */
-.ca-tabs{display:flex;gap:4px;padding:10px 20px 0;}
-.ca-tab{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text3);font-size:13px;font-weight:600;padding:7px 14px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:color .15s;}
-.ca-tab.on{color:var(--text);border-bottom-color:var(--accent);}
-.ca-tab:hover:not(.on){color:var(--text2);}
-.ca-tab-badge{background:var(--accent);color:#0a0a0a;font-size:10px;font-weight:800;padding:1px 6px;border-radius:20px;}
-
-/* Fixed items */
-.ca-fx-head{padding:10px 0 12px;display:flex;justify-content:flex-end;}
-.ca-fx-all-btn{background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:700;padding:7px 14px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;}
-.ca-fx-all-btn:hover:not(.busy){color:var(--text);border-color:var(--border2);}
-.ca-fx-all-btn.busy{opacity:.65;pointer-events:none;}
-.ca-fx-list{display:flex;flex-direction:column;gap:8px;}
-.ca-fx-row{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:13px 16px;display:flex;flex-direction:column;gap:8px;}
-.ca-fx-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-.ca-fx-store{font-size:12px;color:var(--text2);font-weight:500;}
-.ca-fx-date{font-size:11px;color:var(--text3);white-space:nowrap;margin-left:auto;}
-.ca-fx-vc-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-.ca-fx-vc-label{font-size:11px;color:var(--text3);}
-.ca-fx-vc{font-size:13px;font-weight:700;color:var(--text);font-family:monospace;letter-spacing:.3px;}
-.ca-fx-copy{display:inline-flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);color:var(--text3);font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;cursor:pointer;}
-.ca-fx-copy:hover{color:var(--accent);border-color:var(--accent);}
-.ca-fx-rename-block{background:var(--bg);border-radius:8px;padding:8px 12px;display:flex;flex-direction:column;gap:3px;}
-.ca-fx-rename-label{font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;}
-.ca-fx-rename-old{font-size:12px;color:var(--text3);text-decoration:line-through;}
-.ca-fx-rename-new{font-size:12px;color:var(--text);font-weight:600;}
-.ca-fx-curname{font-size:13px;font-weight:600;color:var(--text);}
-.ca-fx-issues{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:11px;color:var(--text3);}
-.ca-fx-status{font-size:12px;font-weight:700;padding:5px 10px;border-radius:20px;align-self:flex-start;}
-.ca-fx-status.confirmed{background:rgba(68,221,136,.1);color:var(--green);}
-.ca-fx-status.partial{background:rgba(96,165,250,.12);color:#60a5fa;}
-.ca-fx-status.unchanged{background:rgba(251,191,36,.1);color:#fbbf24;}
-.ca-fx-status.gone{background:rgba(148,163,184,.12);color:var(--text3);}
-.ca-fx-status.error{background:rgba(248,113,113,.12);color:#f87171;}
-.ca-fx-status.pending{background:var(--bg3);color:var(--text3);}
-.ca-fx-photos{font-size:12px;color:var(--text2);}
-.ca-fx-note{font-size:11px;color:var(--text3);line-height:1.45;}
-.ca-ic.still{opacity:.75;}
-.ca-fx-actions{display:flex;gap:8px;flex-wrap:wrap;}
-.ca-fx-btn{background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:700;padding:6px 13px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:5px;}
-.ca-fx-btn:hover:not(.busy){color:var(--text);}
-.ca-fx-btn.busy{opacity:.65;pointer-events:none;}
-.ca-fx-retry{background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.25);color:#6366f1;font-size:12px;font-weight:700;padding:6px 13px;border-radius:8px;cursor:pointer;}
-.ca-fx-retry:hover{background:rgba(99,102,241,.18);}
-.ca-fx-del{background:transparent;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:6px 10px;border-radius:8px;}
-.ca-fx-del:hover{color:var(--red);}
-/* ─── AI tab ─────────────────────────────────────────────── */
-.ca-tab-ai{position:relative;}
-.ca-ai-intro-title{font-size:20px;font-weight:800;color:var(--text);margin:12px 0 8px;}
-.ca-ai-intro-text{font-size:13px;color:var(--text2);line-height:1.6;max-width:420px;text-align:center;margin-bottom:20px;}
-.ca-ai-run-btn{background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;border:none;font-size:14px;font-weight:700;padding:12px 28px;border-radius:12px;cursor:pointer;display:flex;align-items:center;gap:8px;box-shadow:0 4px 16px rgba(99,102,241,.35);}
-.ca-ai-run-btn:hover:not(.busy){opacity:.9;}
-.ca-ai-run-btn.busy{opacity:.65;pointer-events:none;}
-.ca-ai-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--bg2);}
-.ca-ai-selall{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer;}
-.ca-ai-stats{display:flex;gap:8px;font-size:12px;}
-.ca-ai-stat.ok{color:var(--green);}
-.ca-ai-stat.err{color:#f87171;}
-.ca-ai-apply-btn{margin-left:auto;background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;border:none;font-size:13px;font-weight:700;padding:8px 20px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:6px;}
-.ca-ai-apply-btn.busy,.ca-ai-apply-btn[disabled]{opacity:.55;pointer-events:none;}
-.ca-ai-rerun{background:var(--bg3);border:1px solid var(--border);color:var(--text3);font-size:12px;font-weight:600;padding:6px 12px;border-radius:8px;cursor:pointer;white-space:nowrap;}
-.ca-ai-rerun:hover{color:var(--text);}
-.ca-ai-list{display:flex;flex-direction:column;gap:8px;padding:12px 16px;overflow-y:auto;flex:1;}
-.ca-ai-row{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;transition:opacity .2s;}
-.ca-ai-row.ai-ok{border-color:rgba(68,221,136,.3);background:rgba(68,221,136,.05);}
-.ca-ai-row.ai-err{border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.05);}
-.ca-ai-row-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-.ca-ai-chk{width:16px;height:16px;cursor:pointer;flex-shrink:0;}
-.ca-ai-chk.ai-done{font-size:16px;}
-.ca-ai-store{font-size:12px;color:var(--text2);}
-.ca-ai-vc{font-size:12px;font-weight:700;color:var(--text);font-family:monospace;background:var(--bg3);padding:2px 6px;border-radius:5px;}
-.ca-ai-err-badge{font-size:11px;font-weight:700;color:#f87171;background:rgba(248,113,113,.12);padding:2px 8px;border-radius:20px;}
-.ca-ai-names{display:flex;flex-direction:column;gap:5px;}
-.ca-ai-old{font-size:12px;color:var(--text3);}
-.ca-ai-new{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-.ca-ai-new-done{font-size:13px;color:var(--green);font-weight:600;}
-.ca-ai-lbl{font-size:11px;color:var(--text3);font-weight:600;white-space:nowrap;}
-.ca-ai-inp{flex:1;min-width:200px;background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:600;padding:6px 10px;border-radius:8px;outline:none;}
-.ca-ai-inp:focus{border-color:var(--accent);}
-.ca-ai-err-msg{font-size:12px;color:#f87171;}
-.ca-ai-issues{display:flex;flex-wrap:wrap;gap:4px;}
-.ca-ai-prompt-block{width:100%;max-width:480px;display:flex;flex-direction:column;gap:6px;margin-bottom:18px;}
-.ca-ai-prompt-label{font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;}
-.ca-ai-prompt-ta{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-size:13px;padding:8px 12px;border-radius:10px;resize:vertical;outline:none;line-height:1.5;font-family:inherit;}
-.ca-ai-prompt-ta:focus{border-color:var(--accent);}
-.ca-ai-prompt-inline{display:flex;align-items:flex-start;gap:10px;padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg);}
-.ca-ai-prompt-sm{flex:1;min-height:40px;max-height:80px;}
-.ca-ai-rerun.busy{opacity:.65;pointer-events:none;display:flex;align-items:center;gap:5px;}
-</style>`;
-  }
 }

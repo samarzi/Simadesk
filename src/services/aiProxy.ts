@@ -1,4 +1,5 @@
 import { authService } from './authService';
+import { selectedAiModel, type AiScope } from './aiModels';
 
 const API_URL = import.meta.env.VITE_API_URL as string;
 
@@ -10,21 +11,25 @@ const API_URL = import.meta.env.VITE_API_URL as string;
  * OpenRouter живут только на сервере. Ответ — в формате OpenRouter, в том
  * числе потоковый (stream: true).
  */
-export function aiFetch(body: unknown, signal?: AbortSignal): Promise<Response> {
-  return fetch(`${API_URL}/functions/v1/ai-proxy`, {
+export async function aiFetch(body: unknown, signal?: AbortSignal, scope: AiScope = 'assistant'): Promise<Response> {
+  const payload = { model: selectedAiModel(scope), ...(body as Record<string, unknown>) };
+  const res = await fetch(`${API_URL || ''}/functions/v1/ai-proxy`, {
     method: 'POST',
     signal,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${authService.getAccessToken() ?? ''}`,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
+  const model = res.headers.get('x-sima-model');
+  if (res.ok && model) window.dispatchEvent(new CustomEvent('sd_ai_model_used', { detail: { scope, model } }));
+  return res;
 }
 
 /** Analysis использует точно выбранную модель; использует тот же endpoint, что и aiFetch. */
-export function analysisAiFetch(body: unknown, signal?: AbortSignal): Promise<Response> {
-  return aiFetch(body, signal);
+export function analysisAiFetch(body: unknown, signal?: AbortSignal, scope: 'quality' | 'rights' = 'quality'): Promise<Response> {
+  return aiFetch(body, signal, scope);
 }
 
 /** Правка общего «разума» Симы: характер и «обо мне» (общие для всех продуктов SIMA). */

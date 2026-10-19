@@ -10,15 +10,16 @@ function todayKey() {
 }
 
 function syncToExtension() {
-  const key       = sessionStorage.getItem('sd_ai_key') || '';
+  const token = localStorage.getItem('access_token') || '';
+  const model = localStorage.getItem('sd_ai_selection_v3_assistant') || 'auto';
   const usedToday = Number(localStorage.getItem(todayKey()) ?? 0);
   const boost     = localStorage.getItem('sd_ai_boost_package') || '';
 
-  if (!key) return; // ключ ещё не загружен — ждём
 
   chrome.runtime.sendMessage({
     type: 'sima-sync',
-    ai_key:     key,
+    access_token: token,
+    model,
     used_today: usedToday,
     boost:      boost,
   }).catch(() => {});
@@ -26,6 +27,11 @@ function syncToExtension() {
 
 // Fix 2: принимаем от расширения информацию о потраченных токенах и пишем в localStorage SimaDesk
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === 'sima-model-write' && typeof msg.model === 'string' && msg.model.length <= 200) {
+    localStorage.setItem('sd_ai_selection_v3_assistant', msg.model);
+    window.dispatchEvent(new Event('sd_ai_model_changed'));
+    sendResponse({ ok: true });
+  }
   if (msg?.type === 'sima-token-write' && msg.count > 0) {
     const key = 'sd_ai_daily_' + (msg.date || new Date().toISOString().slice(0, 10));
     const cur = Number(localStorage.getItem(key) ?? 0);
@@ -41,3 +47,7 @@ syncToExtension();
 // И снова через 2с — к тому времени SimaDesk успевает загрузить ключ из Supabase
 setTimeout(syncToExtension, 2000);
 setTimeout(syncToExtension, 5000);
+
+window.addEventListener('storage', syncToExtension);
+window.addEventListener('sd_ai_model_changed', syncToExtension);
+setInterval(syncToExtension, 30000);

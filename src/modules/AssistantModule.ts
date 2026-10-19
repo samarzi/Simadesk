@@ -1,3 +1,5 @@
+import { selectedAiModel } from '@/services/aiModels';
+import { aiModelButton } from '@/components/aiModelPicker';
 import '@/styles/assistant.css';
 import { aiFetch, SERVER_AI_KEY } from '@/services/aiProxy';
 import { showToast } from '@/utils/toast';
@@ -89,14 +91,6 @@ interface ChatSession {
   history: ChatMessage[];
   createdAt: number;
   updatedAt: number;
-}
-
-interface OrModel {
-  id: string;
-  name: string;
-  context_length?: number;
-  pricing?: { prompt?: string; completion?: string };
-  architecture?: { modality?: string };
 }
 
 const SESSION_MAX = 10;
@@ -1352,35 +1346,8 @@ function renderMarkdown(text: string): string {
 // ── Config helpers ────────────────────────────────────────────────────────────
 
 async function loadAiConfig(): Promise<{ key: string; model: string }> {
-  // Ключ OpenRouter больше не приходит в браузер: запросы идут через сервер
-  // (aiFetch → ai-proxy → SIMA Platform). «Ключ» здесь — только признак, что ИИ есть.
-  const key   = SERVER_AI_KEY;
-  const model = localStorage.getItem('sd_ai_model') || 'anthropic/claude-haiku-4-5';
-
-  // After auth: refresh from Supabase site_content (source of truth, set by admin)
-  if (typeof window !== 'undefined') {
-    try {
-      const { dbFetch } = await import('@/services/dbClient');
-      const rows = await dbFetch<Array<{ key: string; content: string }>>('/rpc/get_site_content', {
-        method: 'POST', body: '{}',
-      });
-      const arr = Array.isArray(rows) ? rows : [];
-      const remoteKey   = arr.find(r => r.key === 'ai_openrouter_key')?.content;
-      const remoteModel = arr.find(r => r.key === 'ai_model')?.content;
-      // Ключ из настроек (видят только админы) в браузере не храним
-      void remoteKey;
-      sessionStorage.removeItem('sd_ai_key');
-      if (remoteModel) localStorage.setItem('sd_ai_model', remoteModel);
-      // User's own choice takes priority over admin/remote default
-      const userModel = localStorage.getItem('sd_user_ai_model');
-      return {
-        key,
-        model: userModel || remoteModel || model,
-      };
-    } catch { /* unauthenticated or Supabase unavailable — use session-cached values */ }
-  }
-
-  return { key, model };
+  sessionStorage.removeItem('sd_ai_key');
+  return { key: SERVER_AI_KEY, model: selectedAiModel('assistant') };
 }
 
 // ── Command Palette ───────────────────────────────────────────────────────────
@@ -1486,7 +1453,6 @@ export class AssistantModule {
   private fileInputEl: HTMLInputElement | null = null;
   private aiKey = '';
   private aiModel = '';
-  private mpickDropEl: HTMLElement | null = null;
   /** Является ли текущий пользователь платформенным администратором (нет лимитов). */
   private isAdminUser = false;
   private aiEnabled = localStorage.getItem('sd_sima_ai_enabled') !== 'false';
@@ -1617,8 +1583,10 @@ export class AssistantModule {
     // the event fires for other potential listeners — read from session cache as fallback)
     window.addEventListener('sd_ai_config_updated', () => {
       this.aiKey   = sessionStorage.getItem('sd_ai_key') || this.aiKey;
-      this.aiModel = localStorage.getItem('sd_user_ai_model') || localStorage.getItem('sd_ai_model') || this.aiModel;
+      this.aiModel = selectedAiModel('assistant');
     });
+
+    window.addEventListener('sd_ai_model_changed', () => { this.aiModel = selectedAiModel('assistant'); this.renderQuotaBar(); });
 
     // Запуск фонового мониторинга
     this.startBackgroundMonitor();
@@ -1809,7 +1777,8 @@ export class AssistantModule {
   /** Called by admin panel to update config without page reload */
   updateConfig(key: string, model: string): void {
     this.aiKey   = key;
-    this.aiModel = model;
+    this.aiModel = selectedAiModel('assistant');
+    void model;
   }
 
   private createPanel(): void {
@@ -1917,7 +1886,6 @@ export class AssistantModule {
     });
 
     // Model picker — async, loads all OpenRouter models
-    this.initModelPicker(panel);
 
     // Speed slider
     const speedSlider = panel.querySelector<HTMLInputElement>('.sd-ap-speed-slider');
@@ -2257,14 +2225,10 @@ export class AssistantModule {
           <div class="sd-ap-setting-divider">Модель AI</div>
           <div class="sd-ap-setting-row">
             <label class="sd-ap-setting-label">Модель</label>
-            <div class="sd-ap-mpick" id="sd-ap-mpick">
-              <button class="sd-ap-mpick-btn" id="sd-ap-mpick-btn" type="button">
-                <span class="sd-ap-mpick-label" id="sd-ap-mpick-label">Загружаю…</span>
-                <svg class="sd-ap-mpick-chevron" width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-              </button>
-            </div>
+            ${aiModelButton('assistant')}
           </div>
-          <p class="sd-ap-setting-note" id="sd-ap-mpick-note">Загрузка списка моделей OpenRouter…</p>
+          <p class="sd-ap-setting-note">В режиме Авто Сима использует лучшую доступную бесплатную модель под задачу.</p>
+          <div class="sd-ap-setting-row"><label class="sd-ap-setting-label">Ответы на отзывы</label>${aiModelButton('reviews')}</div>
           <div class="sd-ap-setting-divider">Голос и озвучка</div>
           <div class="sd-ap-setting-row">
             <label class="sd-ap-setting-label">Скорость озвучки</label>
@@ -3383,225 +3347,6 @@ export class AssistantModule {
        .replace(/Meta|Cmd/g, '⌘').replace(/Space/g, '␣')
        .replace(/Key([A-Z])/g, '$1').replace(/Digit(\d)/g, '$1');
    }
-
-  // ── OpenRouter model picker ───────────────────────────────────────────────────
-
-  private async fetchOpenRouterModels(): Promise<OrModel[]> {
-    const CACHE_KEY = 'sd_or_models_v2';
-    const CACHE_TTL = 6 * 3600 * 1000;
-    try {
-      const raw = localStorage.getItem(CACHE_KEY);
-      if (raw) {
-        const { ts, data } = JSON.parse(raw) as { ts: number; data: OrModel[] };
-        if (Date.now() - ts < CACHE_TTL) return data;
-      }
-    } catch { /* stale or corrupt cache — refetch */ }
-    const res = await fetch('https://openrouter.ai/api/v1/models');
-    if (!res.ok) throw new Error('OpenRouter /models ' + res.status);
-    const json = await res.json();
-    const models: OrModel[] = (json.data ?? [])
-      .filter((m: any) => m.id && typeof m.id === 'string')
-      .map((m: any): OrModel => ({
-        id: m.id,
-        name: m.name ?? m.id,
-        context_length: m.context_length,
-        pricing: { prompt: m.pricing?.prompt, completion: m.pricing?.completion },
-        architecture: { modality: m.architecture?.modality },
-      }));
-    try {
-      localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data: models }));
-    } catch { /* localStorage full — skip cache */ }
-    return models;
-  }
-
-  private initModelPicker(panel: HTMLElement): void {
-    const btn      = panel.querySelector<HTMLButtonElement>('#sd-ap-mpick-btn');
-    const labelEl  = panel.querySelector<HTMLElement>('#sd-ap-mpick-label');
-    const noteEl   = panel.querySelector<HTMLElement>('#sd-ap-mpick-note');
-    if (!btn || !labelEl) return;
-
-    const setLabel = (models: OrModel[]) => {
-      const cur = this.aiModel || 'anthropic/claude-haiku-4-5';
-      const m = models.find(x => x.id === cur);
-      labelEl.textContent = m ? m.name : (cur.split('/').pop() ?? cur);
-    };
-
-    const isReasoning = (m: OrModel) =>
-      /\b(r1|o1|o3|o4|thinking|reasoner|qwq)\b/i.test(m.id + ' ' + m.name);
-    const isFree = (m: OrModel) => parseFloat(m.pricing?.prompt ?? '1') === 0;
-
-    let models: OrModel[] = [];
-
-    this.fetchOpenRouterModels().then(list => {
-      models = list;
-      setLabel(list);
-      if (noteEl) noteEl.textContent = `${list.length} моделей OpenRouter`;
-    }).catch(() => {
-      if (noteEl) noteEl.textContent = 'Не удалось загрузить модели — проверьте соединение';
-      setLabel([]);
-    });
-
-    const closeDropdown = () => {
-      this.mpickDropEl?.remove();
-      this.mpickDropEl = null;
-      btn.classList.remove('open');
-      document.removeEventListener('click', outsideHandler, true);
-    };
-
-    const outsideHandler = (e: MouseEvent) => {
-      if (this.mpickDropEl && !this.mpickDropEl.contains(e.target as Node) && e.target !== btn) {
-        closeDropdown();
-      }
-    };
-
-    const openDropdown = () => {
-      if (this.mpickDropEl) { closeDropdown(); return; }
-      btn.classList.add('open');
-
-      const drop = document.createElement('div');
-      drop.className = 'sd-ap-mpick-drop';
-      this.mpickDropEl = drop;
-
-      // Copy CSS variables from the panel so they resolve correctly
-      // when the dropdown is appended to document.body (outside the panel)
-      const panelEl = document.querySelector<HTMLElement>('.sd-assistant-panel');
-      if (panelEl) {
-        const cs = getComputedStyle(panelEl);
-        for (const v of ['--ap-accent','--ap-accent-str','--ap-accent-soft','--ap-surface',
-          '--ap-surface-2','--ap-surface-3','--ap-line','--ap-line-str',
-          '--ap-txt','--ap-txt-2','--ap-txt-3']) {
-          drop.style.setProperty(v, cs.getPropertyValue(v).trim());
-        }
-      }
-
-      document.body.appendChild(drop);
-
-      // Position below button
-      const r = btn.getBoundingClientRect();
-      drop.style.left  = r.left + 'px';
-      drop.style.width = Math.max(r.width, 300) + 'px';
-      drop.style.top   = (r.bottom + 4) + 'px';
-
-      // Only show providers with ≥5 models to avoid 50+ chips
-      const providerCount = new Map<string, number>();
-      for (const m of models) {
-        const p = m.id.split('/')[0];
-        providerCount.set(p, (providerCount.get(p) ?? 0) + 1);
-      }
-      const topProviders = [...providerCount.entries()]
-        .filter(([, n]) => n >= 5)
-        .sort((a, b) => b[1] - a[1])
-        .map(([p]) => p);
-      const providerChips = topProviders.map(p =>
-        `<button class="sd-ap-mpick-chip" data-filter="p:${p}">${p.charAt(0).toUpperCase() + p.slice(1)}</button>`
-      ).join('');
-
-      drop.innerHTML = `
-        <div class="sd-ap-mpick-search-row">
-          <input class="sd-ap-mpick-search" type="text" placeholder="Поиск модели…" autocomplete="off" spellcheck="false">
-          <span class="sd-ap-mpick-count"></span>
-        </div>
-        <div class="sd-ap-mpick-filters">
-          <button class="sd-ap-mpick-chip active" data-filter="all">Все</button>
-          <button class="sd-ap-mpick-chip" data-filter="free">Бесплатные</button>
-          <button class="sd-ap-mpick-chip" data-filter="reason">Рассуждение</button>
-          <button class="sd-ap-mpick-chip" data-filter="vision">Зрение</button>
-          ${providerChips}
-        </div>
-        <div class="sd-ap-mpick-list"></div>
-      `;
-
-      // Flip up if dropdown would overflow viewport bottom
-      requestAnimationFrame(() => {
-        if (!drop.isConnected) return;
-        const dRect = drop.getBoundingClientRect();
-        if (dRect.bottom > window.innerHeight - 8) {
-          drop.style.top = (r.top - dRect.height - 4) + 'px';
-        }
-      });
-
-      let activeFilter = 'all';
-      let searchQ = '';
-
-      const countEl = drop.querySelector<HTMLElement>('.sd-ap-mpick-count')!;
-      const listEl  = drop.querySelector<HTMLElement>('.sd-ap-mpick-list')!;
-
-      const renderList = () => {
-        const q = searchQ.toLowerCase();
-        const filtered = models.filter(m => {
-          if (q && !m.name.toLowerCase().includes(q) && !m.id.toLowerCase().includes(q)) return false;
-          if (activeFilter === 'free')   return isFree(m);
-          if (activeFilter === 'reason') return isReasoning(m);
-          if (activeFilter === 'vision') return /image|vision/i.test(m.architecture?.modality ?? '');
-          if (activeFilter.startsWith('p:')) return m.id.startsWith(activeFilter.slice(2) + '/');
-          return true;
-        });
-        countEl.textContent = String(filtered.length);
-        const cur = this.aiModel || 'anthropic/claude-haiku-4-5';
-        if (!filtered.length) {
-          listEl.innerHTML = '<div class="sd-ap-mpick-empty">Ничего не найдено</div>';
-          return;
-        }
-        listEl.innerHTML = filtered.map(m => {
-          const pPrompt = parseFloat(m.pricing?.prompt ?? '0');
-          const pCompl  = parseFloat(m.pricing?.completion ?? '0');
-          const priceTag = pPrompt === 0
-            ? '<span class="sd-ap-mpick-tag t-free">Бесплатно</span>'
-            : `<span class="sd-ap-mpick-tag t-price">$${(pPrompt * 1_000_000).toFixed(3)}/$${(pCompl * 1_000_000).toFixed(3)} за 1M</span>`;
-          const ctxTag  = m.context_length
-            ? `<span class="sd-ap-mpick-tag t-ctx">${Math.round(m.context_length / 1000)}K ctx</span>` : '';
-          const reasonTag = isReasoning(m) ? '<span class="sd-ap-mpick-tag t-reason">Reasoning</span>' : '';
-          const visionTag = /image|vision/i.test(m.architecture?.modality ?? '')
-            ? '<span class="sd-ap-mpick-tag t-vision">Vision</span>' : '';
-          const provider  = m.id.split('/')[0];
-          return `<div class="sd-ap-mpick-item${m.id === cur ? ' sel' : ''}" data-id="${m.id}">
-            <div class="sd-ap-mpick-item-name">${m.name}</div>
-            <div class="sd-ap-mpick-item-meta">
-              <span class="sd-ap-mpick-tag t-provider">${provider}</span>
-              ${ctxTag}${reasonTag}${visionTag}${priceTag}
-            </div>
-          </div>`;
-        }).join('');
-      };
-
-      renderList();
-
-      // Filter chips
-      drop.querySelector('.sd-ap-mpick-filters')!.addEventListener('click', e => {
-        const chip = (e.target as Element).closest<HTMLElement>('.sd-ap-mpick-chip');
-        if (!chip) return;
-        drop.querySelectorAll('.sd-ap-mpick-chip').forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
-        activeFilter = chip.dataset.filter!;
-        renderList();
-      });
-
-      // Search
-      const searchInput = drop.querySelector<HTMLInputElement>('.sd-ap-mpick-search')!;
-      searchInput.addEventListener('input', () => { searchQ = searchInput.value; renderList(); });
-      setTimeout(() => searchInput.focus(), 50);
-
-      // Select model
-      listEl.addEventListener('click', e => {
-        const item = (e.target as Element).closest<HTMLElement>('.sd-ap-mpick-item');
-        if (!item) return;
-        const id = item.dataset.id!;
-        this.aiModel = id;
-        localStorage.setItem('sd_user_ai_model', id);
-        const found = models.find(x => x.id === id);
-        labelEl.textContent = found ? found.name : (id.split('/').pop() ?? id);
-        closeDropdown();
-        this.renderQuotaBar(); // множитель расхода лимита зависит от модели
-      });
-
-      // Close on outside click (defer one tick so this open-click doesn't trigger it)
-      setTimeout(() => document.addEventListener('click', outsideHandler, true), 0);
-    };
-
-    btn.addEventListener('click', e => { e.stopPropagation(); openDropdown(); });
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
 
    captureHotkey(field: 'holdVoice' | 'quickVoice', badgeEl: HTMLElement): void {
      badgeEl.textContent = 'Нажми…';
@@ -6017,7 +5762,7 @@ export class AssistantModule {
     // DeepSeek и reasoning-модели требуют особого обращения:
     // stream_options не поддерживаются через OpenRouter для DeepSeek,
     // а reasoning-модели долго «думают» перед первым токеном контента.
-    const model = this.aiModel || 'anthropic/claude-haiku-4-5';
+    const model = selectedAiModel('assistant');
     const isDeepSeek = model.startsWith('deepseek/');
     const isReasoningModel = isDeepSeek ||
       /\b(r1|o1|o3|o4|thinking|reasoner|qwq|extended)\b/i.test(model);

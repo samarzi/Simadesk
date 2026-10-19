@@ -60,7 +60,7 @@ document.querySelectorAll('.tab-pill').forEach(btn => {
     // Sima has its own footer input — hide global footer
     const isSima = btn.dataset.tab === 'sima';
     if (gfooter) gfooter.style.display = isSima ? 'none' : '';
-    if (isSima && simaApiKey) loadPageContext();
+    if (isSima && simaAccessToken) loadPageContext();
   });
 });
 
@@ -257,10 +257,11 @@ function onPortMessage(msg) {
 
   // Key/quota sync from SimaDesk page
   if (msg.type === 'sima-sync') {
-    if (msg.sima_ai_key && msg.sima_ai_key !== simaApiKey) {
-      simaApiKey = msg.sima_ai_key;
-      showChat();
+    if (msg.sima_access_token !== undefined) {
+      simaAccessToken = msg.sima_access_token;
+      if (simaAccessToken) showChat(); else showNoSync();
     }
+    if (msg.sima_ai_model) { simaModel = msg.sima_ai_model; renderModelOptions(); }
     if (msg.sima_used_today !== undefined) {
       simaUsedToday = Math.max(simaUsedToday, msg.sima_used_today);
     }
@@ -305,14 +306,15 @@ chrome.runtime.sendMessage({ type: 'get-tasks' }, (res) => {
 // SIMA AI CHAT
 // ══════════════════════════════════════════════════════════
 
-const SIMA_MODEL     = 'anthropic/claude-haiku-4-5';
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const AI_API_URL = 'https://simadesk.ru/functions/v1';
+let simaModel = 'auto';
+let simaModels = [];
 const FREE_DAILY_TOKENS = 50_000;
 const BOOST_LIMITS = { ai_x5: 250_000, ai_x10: 500_000, ai_x20: 1_000_000 };
 
 let simaHistory   = [];
 let simaPageCtx   = null;
-let simaApiKey    = '';
+let simaAccessToken    = '';
 let simaLoading   = false;
 let pickModeOn    = false;
 let pickTabId     = null;
@@ -560,16 +562,16 @@ async function sendSimaMessage(text, extraContext) {
   const thinking = addThinking();
 
   try {
-    const resp = await fetch(OPENROUTER_URL, {
+    const resp = await fetch(`${AI_API_URL}/ai-proxy`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${simaApiKey}`,
+        'Authorization': `Bearer ${simaAccessToken}`,
         'HTTP-Referer': 'https://simadesk.ru',
         'X-Title': 'SimaDesk Extension',
       },
       body: JSON.stringify({
-        model: SIMA_MODEL,
+        model: simaModel,
         messages: [
           { role: 'system', content: buildSystemPrompt() },
           ...simaHistory,
@@ -717,11 +719,42 @@ document.querySelectorAll('#hints-grid .hint').forEach(h => {
 
 // ── Init ──────────────────────────────────────────────────
 async function initSima() {
-  const stored = await chrome.storage.local.get(['sima_ai_key', 'sima_used_today', 'sima_boost']);
-  simaApiKey    = stored.sima_ai_key    || '';
+  const stored = await chrome.storage.local.get(['sima_access_token', 'sima_ai_model', 'sima_used_today', 'sima_boost']);
+  simaAccessToken    = stored.sima_access_token || '';
+  simaModel = stored.sima_ai_model || 'auto';
   simaUsedToday = stored.sima_used_today || 0;
   simaBoost     = stored.sima_boost      || '';
-  if (simaApiKey) { showChat(); } else { showNoSync(); }
+  if (simaAccessToken) { showChat(); void loadSimaModels(); } else { showNoSync(); }
 }
 
+function renderModelOptions() {
+  const select = document.getElementById('sima-model-select');
+  if (!select) return;
+  const query = (document.getElementById('sima-model-search')?.value || '').toLowerCase().trim();
+  select.replaceChildren(new Option('Авто · лучшая бесплатная', 'auto'));
+  for (const m of simaModels.filter(m => `${m.id} ${m.name} ${m.description || ''}`.toLowerCase().includes(query))) {
+    const option = new Option(`${m.is_free || m.id.endsWith(':free') ? '✦ ' : ''}${m.name || m.id}`, m.id);
+    select.add(option);
+  }
+  if (simaModel !== 'auto' && ![...select.options].some(o => o.value === simaModel)) select.add(new Option(simaModel, simaModel));
+  select.value = simaModel;
+  const m = simaModels.find(m => m.id === simaModel);
+  document.getElementById('sima-model-info').textContent = m ? `${m.description || ''} · Контекст: ${m.context_length || 'не указан'} · Вход: ${(m.architecture?.input_modalities || []).join(', ')}` : 'Авто выбирает бесплатную модель под задачу.';
+}
+async function loadSimaModels() {
+  try {
+    const res = await fetch(`${AI_API_URL}/ai-models`, { headers: { Authorization: `Bearer ${simaAccessToken}` } });
+    if (!res.ok) throw new Error('Каталог временно недоступен. Режим Авто остаётся доступным.');
+    const data = await res.json();
+    simaModels = (data.data || []).filter(m => m.architecture?.output_modalities?.includes('text'));
+    renderModelOptions();
+  } catch (e) { document.getElementById('sima-model-info').textContent = e.message; }
+}
+document.getElementById('sima-model-search')?.addEventListener('input', renderModelOptions);
+document.getElementById('sima-model-select')?.addEventListener('change', e => {
+  simaModel = e.target.value;
+  chrome.storage.local.set({ sima_ai_model: simaModel });
+  chrome.runtime.sendMessage({ type: 'sima-model-write', model: simaModel }).catch(() => {});
+  renderModelOptions();
+});
 initSima();

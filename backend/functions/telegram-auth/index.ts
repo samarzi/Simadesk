@@ -10,22 +10,18 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { handleSimaConnect } from './sima-connect.ts';
 
 
-// ИИ на сервере: через SIMA Platform (общие ключи с переключением), а если она
-// не настроена — напрямую в OpenRouter своим ключом.
-function aiEndpoint(fallbackKey?: string | null): { url: string; key: string } | null {
-  const platformUrl = Deno.env.get('SIMA_PLATFORM_URL');
-  const platformKey = Deno.env.get('SIMA_PLATFORM_KEY');
-  if (platformUrl && platformKey) {
-    return { url: `${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/chat/completions`, key: platformKey };
-  }
-  const key = fallbackKey || Deno.env.get('OPENROUTER_KEY');
-  return key ? { url: 'https://openrouter.ai/api/v1/chat/completions', key } : null;
+// Every AI task uses the same platform gateway and model policy.
+function aiEndpoint(): { url: string; key: string } | null {
+  const url = Deno.env.get('SIMA_PLATFORM_URL');
+  const key = Deno.env.get('SIMA_PLATFORM_KEY');
+  return url && key ? { url: `${url.replace(/\/$/, '')}/api/v1/openrouter/chat/completions`, key } : null;
 }
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Expose-Headers': 'X-Sima-Model, X-Catalog-Stale',
 };
 
 // ── Login Widget verification (SHA-256 of bot token as key) ──────────────────
@@ -814,14 +810,19 @@ function extractTgMessages(html: string, channelSlug: string): Array<{ text: str
   return results;
 }
 
-async function aiSummarize(text: string, mp: string, orKey: string): Promise<{ title: string; summary: string; is_important: boolean } | null> {
+async function savedAiModel(db: ReturnType<typeof createClient>, key: string): Promise<string> {
+  const { data } = await db.from('site_content').select('content').eq('key', key).maybeSingle();
+  return typeof data?.content === 'string' && data.content.length <= 200 ? data.content || 'auto' : 'auto';
+}
+
+async function aiSummarize(text: string, mp: string, model = 'auto'): Promise<{ title: string; summary: string; is_important: boolean } | null> {
   try {
-    const ai = aiEndpoint(orKey)!;
+    const ai = aiEndpoint()!;
     const res = await fetch(ai.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.key}` },
       body: JSON.stringify({
-        model: 'google/gemini-flash-1.5',
+        model,
         max_tokens: 250,
         messages: [{
           role: 'user',
@@ -852,7 +853,7 @@ is_important=false если: общие советы, статистика бе�
 }
 
 /** Общая логика обновления памяти Симы — вызывается из news-fetch и из отдельного endpoint. */
-async function runBrainUpdate(db: ReturnType<typeof createClient>, orKey: string, sinceDays: number): Promise<{ updated: number; total_news: number; error?: string }> {
+async function runBrainUpdate(db: ReturnType<typeof createClient>, sinceDays: number, model = 'auto'): Promise<{ updated: number; total_news: number; error?: string }> {
   const since = new Date(Date.now() - sinceDays * 86_400_000).toISOString();
 
   const { data: news } = await db.from('mp_news')
@@ -873,12 +874,12 @@ async function runBrainUpdate(db: ReturnType<typeof createClient>, orKey: string
     ? (existing as any[]).map((e: any) => `mp=${e.mp} cat=${e.category} title="${e.title}" kw=[${(e.keywords ?? []).join(',')}] upd=${e.updated_at?.slice(0, 10)}`).join('\n')
     : '(пусто)';
 
-  const ai = aiEndpoint(orKey)!;
+  const ai = aiEndpoint()!;
   const aiRes = await fetch(ai.url, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${ai.key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'google/gemini-flash-1.5',
+      model,
       max_tokens: 6000,
       messages: [
         {
@@ -951,7 +952,8 @@ async function handleSimaBrainUpdate(req: Request): Promise<Response> {
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
 
-  const result = await runBrainUpdate(db, orKey, sinceDays);
+  const model = await savedAiModel(db, 'ai_memory_model');
+  const result = await runBrainUpdate(db, sinceDays, model);
   return jsonRes({ ok: !result.error, ...result });
 }
 
@@ -977,6 +979,9 @@ async function handleMpNewsFetch(req: Request): Promise<Response> {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
+
+  const newsModel = await savedAiModel(db, 'ai_news_model');
+  const memoryModel = await savedAiModel(db, 'ai_memory_model');
 
   // Загружаем каналы из БД
   const { data: channelsData, error: chErr } = await db
@@ -1031,7 +1036,7 @@ async function handleMpNewsFetch(req: Request): Promise<Response> {
         const { data: existing } = await db.from('mp_news').select('id').eq('source_url', msg.url).maybeSingle();
         if (existing) continue;
 
-        const ai = await aiSummarize(msg.text, ch.label, orKey);
+        const ai = await aiSummarize(msg.text, ch.label, newsModel);
         if (!ai) continue;
 
         await db.from('mp_news').insert({
@@ -1055,7 +1060,7 @@ async function handleMpNewsFetch(req: Request): Promise<Response> {
 
   // Автоматически обновляем мозг Симы если были новые статьи
   if (saved.length > 0 && orKey) {
-    runBrainUpdate(db, orKey, 7).catch(() => { /* non-critical */ });
+    runBrainUpdate(db, 7, memoryModel).catch(() => { /* non-critical */ });
   }
 
   return jsonRes({ ok: true, saved, errors, ts: new Date().toISOString() });
@@ -1105,7 +1110,6 @@ async function handleSupportAi(req: Request): Promise<Response> {
 
   const supaUrl  = Deno.env.get('SUPABASE_URL')!;
   const svcKey   = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const orKey    = Deno.env.get('OPENROUTER_KEY') ?? '';
 
   // Use service_role — bypasses RLS, reads/writes support tables directly
   const db = createClient(supaUrl, svcKey, { auth: { persistSession: false } });
@@ -1131,12 +1135,12 @@ async function handleSupportAi(req: Request): Promise<Response> {
   if (hasRecentAdmin) return ok();
 
   // 4. Get API key + greeting from site_content
-  let apiKey = orKey;
+  let supportModel = 'auto';
   let greetingText = 'Здравствуйте! Уже разбираемся с вашим вопросом, ответим совсем скоро 👋';
   {
     const { data: siteContent } = await db.from('site_content').select('key, content');
     for (const row of (siteContent ?? [])) {
-      if (row.key === 'ai_openrouter_key' && !apiKey) apiKey = row.content ?? '';
+      if (row.key === 'ai_support_model' && row.content) supportModel = row.content;
       if (row.key === 'support_greeting_text' && row.content) greetingText = row.content;
     }
   }
@@ -1162,8 +1166,8 @@ async function handleSupportAi(req: Request): Promise<Response> {
   const greetedAt = Date.now();
 
   // 7. No API key — send bridge and stop
-  // Сервер ходит в ИИ через Платформу; свой ключ — только если её нет
-  const ai = aiEndpoint(apiKey);
+  // Shared AI gateway
+  const ai = aiEndpoint();
   if (!ai) {
     await delay(Math.max(0, 5_000 - (Date.now() - greetedAt)));
     await db.from('support_chat_messages').insert({
@@ -1203,7 +1207,7 @@ ${SUPPORT_AI_KNOWLEDGE}
         'X-Title': 'SimaDesk Support AI',
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-haiku-4-5',
+        model: supportModel,
         messages: [{ role: 'system', content: systemPrompt }, ...history],
         max_tokens: 600,
         temperature: 0.3,
@@ -1312,103 +1316,31 @@ async function handleSimaMind(req: Request): Promise<Response> {
 let modelCatalogCache: { at: number; body: string } | null = null;
 
 async function handleAiModels(req: Request): Promise<Response> {
-  if (req.method !== 'GET') return new Response('Method Not Allowed', { status: 405, headers: corsHeaders });
+  const headers = { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=60' };
+  if (req.method !== 'GET') return new Response('Method Not Allowed', { status: 405, headers });
   const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const { data: { user }, error } = await admin.auth.getUser(token);
-  if (error || !user) return new Response('{"error":"Нужно войти заново"}', { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-
-  // Кэшируем на 6 часов
-  if (modelCatalogCache && Date.now() - modelCatalogCache.at < 6 * 3600_000)
-    return new Response(modelCatalogCache.body, { headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=300' } });
-
+  if (error || !user) return new Response(JSON.stringify({ error: 'Войдите в аккаунт заново' }), { status: 401, headers });
+  if (modelCatalogCache && Date.now() - modelCatalogCache.at < 10 * 60_000)
+    return new Response(modelCatalogCache.body, { headers });
   const platformUrl = Deno.env.get('SIMA_PLATFORM_URL');
   const platformKey = Deno.env.get('SIMA_PLATFORM_KEY');
-  const openrouterKey = Deno.env.get('OPENROUTER_KEY');
-
-  // Пробуем получить каталог через SIMA Platform
-  let response: Response | null = null;
-  if (platformUrl && platformKey) {
-    try {
-      response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models?output_modalities=all`, { signal: AbortSignal.timeout(20_000) });
-      if (!response.ok) response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models`, { signal: AbortSignal.timeout(20_000) });
-    } catch { /* ignore */ }
-  }
-
-  // Fallback: прямой запрос к OpenRouter
-  if (!response?.ok && openrouterKey && openrouterKey !== 'sk-or-v1-xxx') {
-    try {
-      response = await fetch('https://openrouter.ai/api/v1/models?output_modalities=all', {
-        headers: { 'Authorization': `Bearer ${openrouterKey}` },
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (!response.ok) response = await fetch('https://openrouter.ai/api/v1/models', {
-        headers: { 'Authorization': `Bearer ${openrouterKey}` },
-        signal: AbortSignal.timeout(20_000),
-      });
-    } catch { /* ignore */ }
-  }
-
-  if (!response?.ok) {
-    // Fallback на стандартный список
-    const defaultModels = [
-      { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', description: 'Быстрая и экономичная модель от OpenAI с поддержкой изображений', context_length: 128000, architecture: { modality: 'text->text', input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [], top_provider: { max_completion_tokens: 16384, is_moderated: true } },
-      { id: 'openai/gpt-4o', name: 'GPT-4o', description: 'Мульти modal модель от OpenAI с поддержкой изображений', context_length: 128000, architecture: { modality: 'text->text', input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [], top_provider: { max_completion_tokens: 4096, is_moderated: true } },
-      { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Модель от Anthropic с поддержкой изображений', context_length: 200000, architecture: { modality: 'text->text', input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [], top_provider: { max_completion_tokens: 8192, is_moderated: true } },
-    ];
-    const body = JSON.stringify({ data: defaultModels });
+  if (!platformUrl || !platformKey)
+    return new Response(JSON.stringify({ error: 'Не настроено подключение к ИИ-платформе' }), { status: 503, headers });
+  try {
+    const res = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models`, {
+      headers: { Authorization: `Bearer ${platformKey}` }, signal: AbortSignal.timeout(25_000),
+    });
+    const catalog = await res.json();
+    if (!res.ok || !Array.isArray(catalog.data) || !catalog.data.length) throw new Error('Каталог OpenRouter временно недоступен');
+    const body = JSON.stringify(catalog);
     modelCatalogCache = { at: Date.now(), body };
-    return new Response(body, { headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=300' } });
+    return new Response(body, { headers });
+  } catch {
+    if (modelCatalogCache) return new Response(modelCatalogCache.body, { headers: { ...headers, 'X-Catalog-Stale': 'true' } });
+    return new Response(JSON.stringify({ error: 'Не удалось загрузить каталог OpenRouter. Режим Авто доступен; повторите загрузку позже.' }), { status: 502, headers });
   }
-
-  // Пробуем получить каталог через SIMA Platform
-  let response: Response | null = null;
-  if (platformUrl && platformKey) {
-    try {
-      response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models?output_modalities=all`, { signal: AbortSignal.timeout(20_000) });
-      if (!response.ok) response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models`, { signal: AbortSignal.timeout(20_000) });
-    } catch { /* ignore */ }
-  }
-
-  // Fallback: прямой запрос к OpenRouter
-  if (!response?.ok && openrouterKey) {
-    try {
-      response = await fetch('https://openrouter.ai/api/v1/models?output_modalities=all', {
-        headers: { 'Authorization': `Bearer ${openrouterKey}` },
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (!response.ok) response = await fetch('https://openrouter.ai/api/v1/models', {
-        headers: { 'Authorization': `Bearer ${openrouterKey}` },
-        signal: AbortSignal.timeout(20_000),
-      });
-    } catch { /* ignore */ }
-  }
-
-  if (!response?.ok) {
-    // Fallback на стандартный список
-    const defaultModels = [
-      { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', description: 'Быстрая и экономичная модель от OpenAI с поддержкой изображений', context_length: 128000, architecture: { modality: 'text->text', input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [], top_provider: { max_completion_tokens: 16384, is_moderated: true } },
-      { id: 'openai/gpt-4o', name: 'GPT-4o', description: 'Мульти modal модель от OpenAI с поддержкой изображений', context_length: 128000, architecture: { modality: 'text->text', input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [], top_provider: { max_completion_tokens: 4096, is_moderated: true } },
-      { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Модель от Anthropic с поддержкой изображений', context_length: 200000, architecture: { modality: 'text->text', input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [], top_provider: { max_completion_tokens: 8192, is_moderated: true } },
-    ];
-    const body = JSON.stringify({ data: defaultModels });
-    modelCatalogCache = { at: Date.now(), body };
-    return new Response(body, { headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=300' } });
-  }
-  
-  const data = await response.json();
-  if (!Array.isArray(data.data)) return new Response('{"error":"Некорректный каталог моделей"}', { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-  
-  const models = data.data.map((m: any) => ({
-    id: m.id, name: m.name, description: m.description, context_length: m.context_length,
-    created: m.created, knowledge_cutoff: m.knowledge_cutoff, expiration_date: m.expiration_date,
-    architecture: m.architecture, supported_parameters: m.supported_parameters,
-    top_provider: { max_completion_tokens: m.top_provider?.max_completion_tokens, is_moderated: m.top_provider?.is_moderated },
-  }));
-  
-  const body = JSON.stringify({ data: models });
-  modelCatalogCache = { at: Date.now(), body };
-  return new Response(body, { headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=300' } });
 }
 
 // Браузер присылает тот же запрос, что раньше слал в OpenRouter, но со своим
@@ -1439,6 +1371,18 @@ async function handleAiProxy(req: Request): Promise<Response> {
       status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
+  try {
+    const parsed = JSON.parse(body);
+    if (!Array.isArray(parsed.messages) || !parsed.messages.length ||
+        (parsed.model != null && (typeof parsed.model !== 'string' || parsed.model.length > 200)))
+      throw new Error('Некорректный запрос к ИИ');
+    parsed.model = parsed.model || 'auto';
+    body = JSON.stringify(parsed);
+  } catch {
+    return new Response(JSON.stringify({ error: { message: 'Некорректный запрос к ИИ' } }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
   // Ассистент SimaDesk — это Сима: её общий характер и «обо мне» идут первыми
   if (body.includes('"sima_mind"')) {
     try {
@@ -1456,13 +1400,15 @@ async function handleAiProxy(req: Request): Promise<Response> {
     method: 'POST',
     headers: { Authorization: `Bearer ${platformKey}`, 'Content-Type': 'application/json' },
     body,
+    signal: AbortSignal.timeout(180_000),
   });
   return new Response(upstream.body, {
     status: upstream.status,
     headers: {
       ...corsHeaders,
       'Content-Type': upstream.headers.get('content-type') ?? 'application/json',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-store',
+      'X-Sima-Model': upstream.headers.get('x-sima-model') ?? '',
     },
   });
 }

@@ -1,3 +1,5 @@
+import { selectedAiModel } from '@/services/aiModels';
+import { aiModelButton } from '@/components/aiModelPicker';
 import { storefrontDb } from '../services/storefrontDb';
 import { aiFetch } from '@/services/aiProxy';
 import type { StorefrontSettings, StorefrontProduct, StorefrontBanner, StorefrontGroup, StorefrontVariantGroup, StorefrontTheme } from '../services/storefrontDb';
@@ -720,6 +722,7 @@ export class SimaStoreModule {
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button id="vs-var-suggest" class="vs-btn vs-btn-sec vs-btn-sm">${ic(I.search,14)} Авто-группировка</button>
+        ${aiModelButton('storefront')}
         <button id="vs-var-ai" class="vs-btn vs-btn-sec vs-btn-sm">${ic(I.star,14)} ИИ-группировка</button>
         <button id="vs-var-add" class="vs-btn vs-btn-sm">${ic(I.plus,14)} Создать группу</button>
       </div>
@@ -1047,7 +1050,7 @@ export class SimaStoreModule {
   }
 
   private async runAISuggest(): Promise<void> {
-    const model = localStorage.getItem('sd_ai_model') || 'anthropic/claude-haiku-4-5';
+    const model = selectedAiModel('storefront');
 
     const aiBtn = document.getElementById('vs-var-ai') as HTMLButtonElement|null;
     if (aiBtn) { aiBtn.disabled = true; aiBtn.innerHTML = `${ic(I.star,14)} ИИ думает…`; }
@@ -1083,7 +1086,7 @@ export class SimaStoreModule {
 Список артикулов:
 ${candidates.join('\n')}`;
 
-      const resp = await aiFetch({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 2000 });
+      const resp = await aiFetch({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 2000 }, undefined, 'storefront');
       if (!resp.ok) throw new Error(`AI API error ${resp.status}`);
       const data = await resp.json();
       reportAiUsage('Витрина · группировка', data);

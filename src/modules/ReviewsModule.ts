@@ -1,3 +1,4 @@
+import { aiModelButton } from '@/components/aiModelPicker';
 /**
  * ReviewsModule — отзывы WB, Ozon, Яндекс Маркет.
  * Несколько магазинов на каждом маркетплейсе поддерживаются.
@@ -668,7 +669,7 @@ export class ReviewsModule {
             ` : ''}
           </div>
           <div style="display:flex;gap:8px;align-items:center">
-            ${helpBtn('reviews')}
+            ${aiModelButton('reviews')}${helpBtn('reviews')}
             <button onclick="window.reviewsModule.openAutoReplySettings()"
               style="display:flex;align-items:center;gap:6px;padding:7px 14px;border:1px solid var(--border);
                 border-radius:8px;background:${autoReplyDb.getSettings().enabled ? '#16a34a18' : 'var(--bg)'};

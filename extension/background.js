@@ -218,10 +218,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  if (msg.type === 'sima-model-write' && typeof msg.model === 'string' && msg.model.length <= 200) {
+    chrome.storage.local.set({ sima_ai_model: msg.model });
+    chrome.tabs.query({ url: ['https://simadesk.ru/*'] }, tabs => {
+      for (const tab of tabs) if (tab.id != null) chrome.tabs.sendMessage(tab.id, msg).catch(() => {});
+    });
+    return;
+  }
+
   // SimaDesk key + quota sync from bridge
   if (msg.type === 'sima-sync') {
     const updates = {};
-    if (msg.ai_key)     updates.sima_ai_key   = msg.ai_key;
+    if (!/^https:\/\/simadesk\.ru(?:\/|$)|^http:\/\/localhost:/.test(sender.tab?.url || '')) return;
+    if (msg.access_token !== undefined) updates.sima_access_token = msg.access_token;
+    if (msg.model !== undefined) updates.sima_ai_model = msg.model;
     if (msg.used_today !== undefined) updates.sima_used_today = msg.used_today;
     if (msg.boost !== undefined)      updates.sima_boost      = msg.boost;
     if (Object.keys(updates).length) {

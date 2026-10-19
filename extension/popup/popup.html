@@ -633,7 +633,7 @@ body {
     <div class="key-setup" id="sima-no-sync" style="display:none">
       <div class="k-icon">🔗</div>
       <h3>Открой SimaDesk</h3>
-      <p>Сима синхронизируется с SimaDesk автоматически — используется тот же ключ и те же лимиты токенов.</p>
+      <p>Сима синхронизируется с SimaDesk автоматически — используется ваш вход в аккаунт и общие лимиты токенов.</p>
       <a href="https://simadesk.ru" target="_blank" class="key-save" style="text-decoration:none;display:block;text-align:center">Открыть SimaDesk →</a>
       <p class="key-hint">После открытия SimaDesk перезапусти этот popup</p>
     </div>
@@ -647,6 +647,12 @@ body {
         <span class="ctx-label" id="sima-ctx-label">Определяю страницу…</span>
         <span class="ctx-badge" id="sima-ctx-mp" style="display:none"></span>
       </div>
+      <details style="padding:8px 12px;border-bottom:1px solid #ffffff12;flex:none">
+        <summary style="font-size:11px;color:#aaa;cursor:pointer">Модель ИИ · OpenRouter</summary>
+        <input id="sima-model-search" type="search" placeholder="Поиск модели…" style="width:100%;margin:8px 0;padding:8px;background:#17171c;color:#eee;border:1px solid #333;border-radius:7px">
+        <select id="sima-model-select" aria-label="Модель ИИ" style="width:100%;padding:8px;background:#17171c;color:#eee;border:1px solid #333;border-radius:7px"><option value="auto">Авто · лучшая бесплатная</option></select>
+        <p id="sima-model-info" style="font-size:10px;color:#888;line-height:1.5;max-height:100px;overflow:auto">Авто выбирает бесплатную модель под задачу.</p>
+      </details>
       <!-- Quota bar -->
       <div class="sq-bar">
         <div class="sq-track"><div class="sq-fill" id="sima-quota-bar" style="width:0%"></div></div>
