@@ -109,6 +109,23 @@ it('checks a gallery one photo at a time, retries a transient free-model failure
   expect(finding.details.summary.checked[0]).toBe('Фото просмотрены моделью: 2/2');
 });
 
+it('sends at most one reference image with a product photo to reduce vision-model load', async () => {
+  const complete = vi.fn(async (body: Record<string, unknown>) => {
+    const content = (body.messages as { content: { type?: string }[] }[])[1].content;
+    if (!content.some(part => part.type === 'image_url')) return answer({ objects: [] });
+    expect(content.filter(part => part.type === 'image_url')).toHaveLength(2);
+    return answer({ image_observed: true, visual_description: 'Фото рассмотрено', objects: [] });
+  });
+  const result = await runRightsAudit({ photo_url: PHOTO, title: 'Товар', references: [
+    { id: 'ref1', name: 'Эталон 1', image_url: 'https://megalicense.ru/ref1.png' },
+    { id: 'ref2', name: 'Эталон 2', image_url: 'https://megalicense.ru/ref2.png' },
+  ] }, 'auto', complete, fetcher as typeof fetch);
+  const finding = JSON.parse(result.choices[0].message.content);
+  expect(complete).toHaveBeenCalledTimes(2);
+  expect(finding.details.reference_images).toHaveLength(1);
+  expect(finding.details.reference_images[0].id).toBe('ref1');
+});
+
 it('keeps title findings when photo download fails, without claiming visual success', async () => {
   const complete = vi.fn(async () => answer({ objects: [{ name: 'Рик и Морти', type: 'название', source: 'title', evidence: 'Рик и Морти', confidence: .9 }] }));
   const result = await runRightsAudit({ photo_url: 'https://localhost/secret', title: 'Рик и Морти' }, 'auto', complete, fetcher as typeof fetch);

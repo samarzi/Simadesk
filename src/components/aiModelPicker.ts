@@ -1,4 +1,4 @@
-import { AI_AUTO, AI_SCOPE_LABELS, aiModelLabel, cachedAiCatalog, filterAiModels, loadAiCatalog, modelCompatible, selectedAiModel, setAiModel, type AiScope, type ModelRequirements } from '@/services/aiModels';
+import { AI_AUTO, AI_SCOPE_LABELS, aiModelLabel, cachedAiCatalog, filterAiModels, loadAiCatalog, modelCompatible, modelPriceLabel, modelRecommendationScore, selectedAiModel, setAiModel, type AiScope, type ModelRequirements } from '@/services/aiModels';
 import '@/styles/ai-model-picker.css';
 
 const esc = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -42,9 +42,9 @@ export function openAiModelPicker(scope: AiScope, requirements: ModelRequirement
   dialog.innerHTML = `<header class="sd-model-header"><div><small>OPENROUTER</small><h2 id="sd-model-title">${esc(AI_SCOPE_LABELS[scope])} · модель ИИ</h2></div><button type="button" class="sd-model-close" aria-label="Закрыть">×</button></header>
     <button type="button" class="sd-model-auto" data-select-auto><span class="sd-model-auto-icon">✦</span><span><b>Авто · лучшая бесплатная</b><small>Сервер подберёт модель под задачу и переключится на другую, если она не ответит.</small></span><span class="sd-model-auto-check"></span></button>
     <div class="sd-model-controls"><input type="search" placeholder="Поиск по названию, разработчику или возможностям…" aria-label="Поиск модели" autocomplete="off"><button type="button" data-reload title="Обновить каталог">↻</button></div>
-    <div class="sd-model-filters"><label><input type="checkbox" data-filter="free" checked> Бесплатные</label><label><input type="checkbox" data-filter="vision" ${requirements.vision ? 'checked' : ''}> Фото</label><label><input type="checkbox" data-filter="tools" ${requirements.tools ? 'checked' : ''}> Инструменты</label><label><input type="checkbox" data-filter="reasoning"> Рассуждение</label><select aria-label="Сортировка"><option value="context">По контексту</option><option value="name">По имени</option><option value="new">Сначала новые</option></select></div>
+    <div class="sd-model-filters"><label>Цена<select data-tier aria-label="Тип оплаты"><option value="all">Любая</option><option value="free" selected>Бесплатные</option><option value="paid">Платные</option></select></label><label><input type="checkbox" data-filter="vision" ${requirements.vision ? 'checked' : ''}> Фото</label><label><input type="checkbox" data-filter="tools" ${requirements.tools ? 'checked' : ''}> Инструменты</label><label><input type="checkbox" data-filter="reasoning"> Рассуждение</label><select aria-label="Рейтинг и сортировка" data-sort><option value="top">Топ по параметрам</option><option value="value">Возможности за цену</option><option value="price">Сначала дешевле</option><option value="context">Контекст</option><option value="output">Лимит ответа</option><option value="new">Сначала новые</option><option value="name">По имени</option></select></div>
     <div class="sd-model-status" role="status">Загружаем каталог…</div><div class="sd-model-list"></div>
-    <footer class="sd-model-footer">${requirements.vision ? 'Для этой задачи нужна модель, которая видит изображения.' : requirements.tools ? 'Для этой задачи нужна поддержка инструментов.' : 'Выбор сохраняется для этого инструмента.'}</footer>`;
+    <footer class="sd-model-footer">${requirements.vision ? 'Показываются модели с поддержкой изображений. Топ рассчитывается по параметрам каталога и цене, это не рейтинг независимых тестов.' : requirements.tools ? 'Показываются совместимые модели. Топ рассчитывается по параметрам каталога и цене.' : 'Топ учитывает контекст, лимит ответа, возможности, актуальность и стоимость; это не независимый рейтинг качества.'}</footer>`;
   document.body.append(dialog);
   dialog.showModal();
   const close = () => dialog.close();
@@ -63,18 +63,30 @@ export function openAiModelPicker(scope: AiScope, requirements: ModelRequirement
   const render = () => {
     const options: Record<string, boolean> = {};
     dialog.querySelectorAll<HTMLInputElement>('[data-filter]').forEach(el => { options[el.dataset.filter!] = el.checked; });
+    const tier = dialog.querySelector<HTMLSelectElement>('[data-tier]')!.value;
+    if (tier === 'free') options.free = true;
+    if (tier === 'paid') options.paid = true;
     const filtered = filterAiModels(catalog?.models ?? [], search.value, options);
-    const sort = dialog.querySelector<HTMLSelectElement>('select')!.value;
-    filtered.sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : sort === 'new' ? (b.created ?? 0) - (a.created ?? 0) : (b.context ?? 0) - (a.context ?? 0));
+    const sort = dialog.querySelector<HTMLSelectElement>('[data-sort]')!.value;
+    const price = (m: typeof filtered[number]) => m.free ? 0 : (m.priceInput ?? Number.POSITIVE_INFINITY) + (m.priceOutput ?? Number.POSITIVE_INFINITY);
+    filtered.sort((a, b) => {
+      if (sort === 'name') return a.name.localeCompare(b.name);
+      if (sort === 'new') return (b.created ?? 0) - (a.created ?? 0);
+      if (sort === 'context') return (b.context ?? 0) - (a.context ?? 0);
+      if (sort === 'output') return (b.maxOutput ?? 0) - (a.maxOutput ?? 0);
+      if (sort === 'price') return price(a) - price(b);
+      if (sort === 'value') return modelRecommendationScore(b, requirements) / Math.max(price(b), 0.000001) - modelRecommendationScore(a, requirements) / Math.max(price(a), 0.000001);
+      return modelRecommendationScore(b, requirements) - modelRecommendationScore(a, requirements) || price(a) - price(b);
+    });
     const selected = selectedAiModel(scope);
     status.textContent = error || (loading ? 'Загружаем каталог OpenRouter…' : `${filtered.length} из ${catalog?.models.length ?? 0} моделей · сейчас ${aiModelLabel(scope)}`);
     status.classList.toggle('error', !!error);
     list.innerHTML = filtered.slice(0, shown).map(m => {
       const usable = modelCompatible(m, requirements);
-      const capabilities = [m.free ? 'Бесплатная' : '', m.input.includes('image') ? 'Фото' : '', m.parameters.includes('tools') ? 'Инструменты' : '', m.parameters.includes('reasoning') ? 'Рассуждение' : '', `Контекст ${tokens(m.context)}`].filter(Boolean);
+      const capabilities = [m.free ? 'Бесплатная' : 'Платная', m.input.includes('image') ? 'Фото' : '', m.parameters.includes('tools') ? 'Инструменты' : '', m.parameters.includes('reasoning') ? 'Рассуждение' : '', `Контекст ${tokens(m.context)}`, sort === 'top' ? `Топ ${modelRecommendationScore(m, requirements)}/100` : ''].filter(Boolean);
       return `<article class="sd-model-row${selected === m.id ? ' selected' : ''}${!usable ? ' incompatible' : ''}"><div class="sd-model-row-top"><div><b>${esc(m.name)}</b><small>${esc(m.id)}</small></div><button type="button" data-select-model="${esc(m.id)}" ${!usable || selected === m.id ? 'disabled' : ''}>${selected === m.id ? 'Выбрана ✓' : usable ? 'Выбрать' : 'Не подходит'}</button></div>
-        <div class="sd-model-tags">${capabilities.map(c => `<span>${esc(c)}</span>`).join('')}</div>
-        <details><summary>Возможности и описание</summary><p>${esc(m.description || 'Описание не предоставлено разработчиком.')}</p><dl><dt>Принимает</dt><dd>${esc(m.input.join(', '))}</dd><dt>Возвращает</dt><dd>${esc(m.output.join(', '))}</dd><dt>Контекст</dt><dd>${tokens(m.context)} токенов</dd><dt>Максимальный ответ</dt><dd>${tokens(m.maxOutput)} токенов</dd><dt>Параметры</dt><dd>${esc(m.parameters.join(', ') || 'не указаны')}</dd><dt>Знания до</dt><dd>${esc(m.knowledgeCutoff || 'не указано')}</dd><dt>Токенизатор</dt><dd>${esc(m.tokenizer || 'не указан')}</dd><dt>Формат инструкций</dt><dd>${esc(m.instructType || 'не указан')}</dd><dt>Модерация провайдера</dt><dd>${m.moderated == null ? 'не указана' : m.moderated ? 'да' : 'нет'}</dd><dt>Добавлена</dt><dd>${m.created ? new Date(m.created * 1000).toLocaleDateString('ru-RU') : 'не указано'}</dd><dt>Срок доступности</dt><dd>${esc(m.expiration || 'не указан')}</dd></dl></details></article>`;
+        <div class="sd-model-tags">${capabilities.map(c => `<span>${esc(c)}</span>`).join('')}<span>${esc(modelPriceLabel(m))}</span></div>
+        <details><summary>Возможности и описание</summary><p>${esc(m.description || 'Описание не предоставлено разработчиком.')}</p><dl><dt>Принимает</dt><dd>${esc(m.input.join(', '))}</dd><dt>Возвращает</dt><dd>${esc(m.output.join(', '))}</dd><dt>Контекст</dt><dd>${tokens(m.context)} токенов</dd><dt>Максимальный ответ</dt><dd>${tokens(m.maxOutput)} токенов</dd><dt>Цена OpenRouter</dt><dd>${esc(modelPriceLabel(m))}</dd><dt>Параметры</dt><dd>${esc(m.parameters.join(', ') || 'не указаны')}</dd><dt>Знания до</dt><dd>${esc(m.knowledgeCutoff || 'не указано')}</dd><dt>Токенизатор</dt><dd>${esc(m.tokenizer || 'не указан')}</dd><dt>Формат инструкций</dt><dd>${esc(m.instructType || 'не указан')}</dd><dt>Модерация провайдера</dt><dd>${m.moderated == null ? 'не указана' : m.moderated ? 'да' : 'нет'}</dd><dt>Добавлена</dt><dd>${m.created ? new Date(m.created * 1000).toLocaleDateString('ru-RU') : 'не указано'}</dd><dt>Срок доступности</dt><dd>${esc(m.expiration || 'не указан')}</dd></dl></details></article>`;
     }).join('') || (!loading ? '<div class="sd-model-empty">Модели не найдены. Измените поиск или фильтры.</div>' : '');
     if (filtered.length > shown) list.insertAdjacentHTML('beforeend', '<button type="button" class="sd-model-more" data-more>Показать ещё 50</button>');
   };

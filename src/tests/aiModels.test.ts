@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { filterAiModels, modelCompatible, normalizeCatalog, selectedAiModel, setAiModel } from '@/services/aiModels';
+import { filterAiModels, modelCompatible, modelPriceLabel, modelRecommendationScore, normalizeCatalog, selectedAiModel, setAiModel } from '@/services/aiModels';
 
 const catalog = normalizeCatalog({ data: [
-  { id: 'provider/vision:free', name: 'Vision One', is_free: true, description: 'Распознаёт логотипы', context_length: 128000, architecture: { input_modalities: ['text','image'], output_modalities: ['text'] }, supported_parameters: ['reasoning','tools'], pricing: { prompt: '9' } },
-  { id: 'other/text', name: 'Text Two', architecture: { modality: 'text->text' }, context_length: 64000 },
+  { id: 'provider/vision:free', name: 'Vision One', is_free: true, description: 'Распознаёт логотипы', context_length: 128000, architecture: { input_modalities: ['text','image'], output_modalities: ['text'] }, supported_parameters: ['reasoning','tools'] },
+  { id: 'other/text', name: 'Text Two', architecture: { modality: 'text->text' }, context_length: 64000, pricing: { prompt: '0.000009', completion: '0.00003' } },
   { id: 'other/image', architecture: { input_modalities: ['text'], output_modalities: ['image'] } },
 ] });
 
@@ -35,8 +35,11 @@ describe('OpenRouter catalog', () => {
     expect(modelCompatible(catalog.models[1], { vision: true })).toBe(false);
     expect(modelCompatible(catalog.models[2])).toBe(false);
   });
-  it('does not retain price data or invent metadata', () => {
-    expect(catalog.models[0]).not.toHaveProperty('pricing');
+  it('retains published input/output prices and ranks models by transparent metadata', () => {
+    expect(catalog.models[1]).toMatchObject({ priceInput: 0.000009, priceOutput: 0.00003 });
+    expect(modelPriceLabel(catalog.models[1])).toContain('$9 / 1 млн вход');
+    expect(modelRecommendationScore(catalog.models[0], { vision: true })).toBeGreaterThan(modelRecommendationScore(catalog.models[1], { vision: true }));
+    expect(filterAiModels(catalog.models, '', { paid: true })).toHaveLength(2);
     expect(catalog.models[1].maxOutput).toBeNull();
     expect(catalog.models[1].input).toEqual(['text']);
   });

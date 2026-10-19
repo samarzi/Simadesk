@@ -10,6 +10,7 @@ export const AI_SCOPE_LABELS: Record<AiScope, string> = {
 export interface AiModel {
   id: string; name: string; description: string; free: boolean;
   context: number | null; maxOutput: number | null; created: number | null;
+  priceInput: number | null; priceOutput: number | null;
   input: string[]; output: string[]; parameters: string[];
   knowledgeCutoff: string | null; expiration: string | null; tokenizer: string | null;
   instructType: string | null; moderated: boolean | null;
@@ -32,6 +33,7 @@ export function normalizeCatalog(raw: any): AiCatalog {
         id: m.id, name: String(m.name || m.id), description: String(m.description || ''),
         free: m.is_free === true || m.id.endsWith(':free'),
         context: number(m.context_length), maxOutput: number(m.top_provider?.max_completion_tokens), created: number(m.created),
+        priceInput: number(m.pricing?.prompt), priceOutput: number(m.pricing?.completion),
         input: strings(m.architecture?.input_modalities).length ? strings(m.architecture.input_modalities) : modality[0]?.split('+').filter(Boolean) ?? [],
         output: strings(m.architecture?.output_modalities).length ? strings(m.architecture.output_modalities) : modality[1]?.split('+').filter(Boolean) ?? [],
         parameters: strings(m.supported_parameters), knowledgeCutoff: m.knowledge_cutoff ?? null,
@@ -82,11 +84,37 @@ export async function loadAiCatalog(force = false): Promise<AiCatalog> {
 }
 
 export function filterAiModels(models: AiModel[], query: string, options: {
-  free?: boolean; vision?: boolean; tools?: boolean; reasoning?: boolean; minContext?: number;
+  free?: boolean; paid?: boolean; vision?: boolean; tools?: boolean; reasoning?: boolean; minContext?: number;
 } = {}): AiModel[] {
   const q = query.trim().toLocaleLowerCase();
   return models.filter(m => (!q || `${m.id} ${m.name} ${m.description}`.toLocaleLowerCase().includes(q)) &&
-    (!options.free || m.free) && (!options.vision || m.input.includes('image')) &&
+    (!options.free || m.free) && (!options.paid || !m.free) && (!options.vision || m.input.includes('image')) &&
     (!options.tools || m.parameters.includes('tools')) && (!options.reasoning || m.parameters.includes('reasoning')) &&
     (m.context ?? 0) >= (options.minContext ?? 0));
+}
+
+/** Transparent metadata-based recommendation, not an independent quality benchmark. */
+export function modelRecommendationScore(m: AiModel, requirements: ModelRequirements = {}): number {
+  const logFit = (value: number | null, ceiling: number, weight: number) =>
+    value && value > 0 ? Math.min(1, Math.log10(value) / Math.log10(ceiling)) * weight : 0;
+  let score = logFit(m.context, 1_000_000, 16) + logFit(m.maxOutput, 100_000, 14);
+  if (m.input.includes('text')) score += 8;
+  if (m.output.includes('text')) score += 8;
+  if (m.input.includes('image')) score += requirements.vision ? 22 : 4;
+  if (m.parameters.includes('tools')) score += requirements.tools ? 12 : 4;
+  if (m.parameters.includes('reasoning')) score += 7;
+  if (m.parameters.includes('structured_outputs') || m.parameters.includes('json')) score += 4;
+  if (!m.expiration || !Number.isFinite(Date.parse(m.expiration)) || Date.parse(m.expiration) > Date.now()) score += 4;
+  if (m.priceInput != null && m.priceOutput != null) {
+    const perMillion = (m.priceInput + m.priceOutput) * 1_000_000;
+    score += perMillion === 0 ? 10 : Math.max(0, 10 - Math.min(10, Math.log10(1 + perMillion) * 3));
+  }
+  return Math.round(Math.min(100, score));
+}
+
+export function modelPriceLabel(m: AiModel): string {
+  if (m.free || (m.priceInput === 0 && m.priceOutput === 0)) return 'Бесплатно';
+  if (m.priceInput == null && m.priceOutput == null) return 'Цена не указана';
+  const money = (n: number | null) => n == null ? '—' : `$${(n * 1_000_000).toLocaleString('en-US', { maximumFractionDigits: 4 })}`;
+  return `${money(m.priceInput)} / 1 млн вход · ${money(m.priceOutput)} / 1 млн выход`;
 }

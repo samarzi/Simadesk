@@ -246,7 +246,10 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
     ...(photoProofs.find(p => p.status !== 'sent')?.error ? { error: photoProofs.find(p => p.status !== 'sent')?.error } : {}) };
   const refContent: Record<string, unknown>[] = [];
   const refProof: Record<string, unknown>[] = [];
-  for (const ref of (input.references ?? []).filter(r => r.image_url).slice(0, 3)) {
+  // Keep each free-vision request small: one product photo plus at most one
+  // reference image. Sending a gallery of references with every product photo
+  // made providers time out or truncate their JSON response.
+  for (const ref of (input.references ?? []).filter(r => r.image_url).slice(0, 1)) {
     try {
       const refImage = await loadAuditImage(text(ref.image_url, 3000), fetcher);
       refContent.push({ type: 'text', text: `Эталон ID ${text(ref.id,100)}` }, { type: 'image_url', image_url: { url: refImage.dataUrl } });
@@ -265,7 +268,7 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
     for (let attempt = 0; attempt < 3 && !completed; attempt++) {
       if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 700 * attempt));
       try {
-        const body = await complete({ model, max_tokens: 3000, reasoning: { effort: 'low' }, temperature: 0,
+        const body = await complete({ model, max_tokens: 1600, reasoning: { effort: 'low' }, temperature: 0,
           messages: [{ role: 'system', content: VISUAL_PROMPT }, { role: 'user', content: [
             { type: 'text', text: `Проверь только это фото товара №${photoNumber}. Верни один объект photos с photo_number ${photoNumber}.` },
             { type: 'image_url', image_url: { url: file.dataUrl } }, ...refContent,
@@ -282,7 +285,7 @@ export async function runRightsAudit(input: AuditInput, model: string, complete:
     }
     photoCalls.push(completed ? { status: 'fulfilled', value: completed } : { status: 'rejected', reason: lastError });
   }
-  const textCalls = await Promise.allSettled([complete({ model, max_tokens: 2500, reasoning: { effort: 'low' }, temperature: 0, messages: [{ role: 'system', content: TEXT_PROMPT },
+  const textCalls = await Promise.allSettled([complete({ model, max_tokens: 1200, reasoning: { effort: 'low' }, temperature: 0, messages: [{ role: 'system', content: TEXT_PROMPT },
     { role: 'user', content: JSON.stringify({ title: input.title, description: input.description }) }] })]);
   const results = [...photoCalls, ...textCalls];
   const failures: string[] = [];
