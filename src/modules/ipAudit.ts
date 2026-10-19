@@ -149,7 +149,26 @@ export class IpAudit {
     } catch (e) { this.message = `Не удалось открыть результаты: ${e instanceof Error ? e.message : String(e)}`; }
     finally { if (this.loadingRun === runId) this.loadingRun = ''; this.paint(); }
   }
-  requestStop(): void { this.stop = true; this.currentAbort?.abort(); this.message = 'Останавливаем…'; this.paint(); }
+  async deleteRun(id: string): Promise<void> {
+    if (this.busy) return;
+    const run = this.runs.find(r => r.id === id);
+    if (!run) return;
+    if (!confirm('Удалить проверку и все её результаты?')) return;
+    try {
+      await dbFetch(`ip_audit_runs?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' });
+      this.runs = this.runs.filter(r => r.id !== id);
+      this.findings = this.findings.filter(f => f.run_id !== id);
+      if (this.selectedRun === id) {
+        this.selectedRun = this.runs.length ? this.runs[0].id : '';
+        this.loadedFindingRun = '';
+        if (this.selectedRun) void this.loadRunFindings(this.selectedRun);
+      }
+      this.message = 'Проверка удалена';
+    } catch (e) {
+      this.message = `Не удалось удалить: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    this.paint();
+  }
   skipCurrentCard(): void {
     if (!this.currentCard) return;
     this.skipCurrentRequested = true;
@@ -604,7 +623,7 @@ export class IpAudit {
     } else if (this.section === 'settings') {
       out += `<section class="ca-surface"><div class="ca-setting-line"><div><h2>Модель для анализа прав</h2><p>Авто выбирает бесплатную модель с поддержкой фото. В отчёте видны фактические модели обоих этапов.</p></div>${aiModelButton('rights', { vision: true })}</div></section><section class="ca-surface">${this.renderStores()}</section><section class="ca-surface"><h2>Как проходит проверка для РФ</h2><p>Проверяются все фотографии карточки. Сервер загружает JPEG, PNG или WebP с CDN Wildberries, Ozon и Яндекс Маркета и передаёт сам файл модели. Распознавание фото выполняется без названия и описания; текст анализируется отдельно. Недоступное фото не получает положительную оценку.</p><p>Открытый каталог MegaLicense и поимённые отзывы BrandMonitor обновляются при проверках с кэшем до 6 часов. Это неполные публичные сведения. Договоры, доверенности, территория, категории и сроки автоматически не подтверждаются; реестры ФИПС/ВОИС автоматически не опрашиваются.</p><p>Авторское право на персонаж, рисунок, обложку или фотографию проверяется отдельно от товарного знака и МКТУ. Перепродажа оригинального товара отличается от изготовления вещи с чужим принтом. Иностранное происхождение и параллельный импорт не дают общего разрешения использовать чужую графику.</p><p>Эталоны — ваши материалы, а не доказательство прав. Для сравнения с фото товара отправляется максимум один эталон, чтобы не перегружать модель. Ссылки на неподдерживаемые хосты не загружаются. Решение по обращению принимает маркетплейс. Сведения о лицензии и полномочиях нужно подтвердить документами.</p></section>`;
     } else if (this.section === 'history') {
-      out += `<div class="ca-page-heading"><h2>История проверок</h2><span>${this.runs.length} заданий</span></div><div class="ip-history">${this.runs.map(r => `<article class="ca-surface ip-history-row"><div><b>${date(r.created_at)}</b><small>${scopes[r.scope] || clean(r.scope)} · ${clean(r.model_id === 'auto' ? 'Авто · бесплатная' : r.model_id)}</small></div><span class="ip-status">${status[r.status] || clean(r.status)}</span><span>${r.processed}/${r.total}</span><button class="ca-btn" onclick="window.myAnalysisModule?.ipChooseRun('${r.id}')">Открыть</button>${r.status !== 'completed' || r.errors > 0 ? `<button class="ca-btn" onclick="window.myAnalysisModule?.ipResume('${r.id}')" ${this.busy ? 'disabled' : ''}>Продолжить</button>` : ''}</article>`).join('') || '<div class="ca-empty"><b>Проверок пока нет</b><p>Начните с пробной проверки во вкладке «Проверка».</p></div>'}</div>`;
+      out += `<div class="ca-page-heading"><h2>История проверок</h2><span>${this.runs.length} заданий</span></div><div class="ip-history">${this.runs.map(r => `<article class="ca-surface ip-history-row"><div><b>${date(r.created_at)}</b><small>${scopes[r.scope] || clean(r.scope)} · ${clean(r.model_id === 'auto' ? 'Авто · бесплатная' : r.model_id)}</small></div><span class="ip-status">${status[r.status] || clean(r.status)}</span><span>${r.processed}/${r.total}</span><button class="ca-btn" onclick="window.myAnalysisModule?.ipChooseRun('${r.id}')">Открыть</button>${r.status !== 'completed' || r.errors > 0 ? `<button class="ca-btn" onclick="window.myAnalysisModule?.ipResume('${r.id}')" ${this.busy ? 'disabled' : ''}>Продолжить</button>` : ''}<button class="ca-btn" style="color:#ef4444" onclick="window.myAnalysisModule?.ipDeleteRun('${r.id}')" ${this.busy ? 'disabled' : ''}>Удалить</button></article>`).join('') || '<div class="ca-empty"><b>Проверок пока нет</b><p>Начните с пробной проверки во вкладке «Проверка».</p></div>'}</div>`;
     } else if (this.section === 'references') {
       out += `<div class="ca-page-heading"><div><h2>Ваши эталоны</h2><p>Объекты и источники, с которыми нужно сопоставлять товары.</p></div><span>${this.references.length} объектов</span></div><details class="ca-surface" data-key="new-reference"><summary>+ Добавить объект</summary><form class="ip-ref-form" onsubmit="event.preventDefault();window.myAnalysisModule?.ipAddReference(this)"><label>Объект<input name="name" required placeholder="Название объекта"></label><label>Правообладатель<input name="rights_holder" placeholder="Если известен"></label><label>Тип<input name="object_type" placeholder="Бренд, персонаж, принт"></label><label>Источник<input name="source_url" type="url" placeholder="https://…"></label><label>Эталонное фото<input name="image_url" type="url" placeholder="https://…"></label><label>Заметки<input name="notes" placeholder="На что обратить внимание"></label><button class="ca-primary">Добавить эталон</button></form></details><div class="ip-reference-list">${this.references.map(r => `<article class="ca-surface ip-reference">${safeUrl(r.image_url) ? `<img src="${clean(r.image_url)}" loading="lazy" alt="">` : '<span class="ip-ref-symbol">◇</span>'}<div><b>${clean(r.name)}</b><small>${clean(r.object_type)} · ${clean(r.rights_holder || 'Правообладатель не указан')}</small>${r.notes ? `<p>${clean(r.notes)}</p>` : ''}</div>${safeUrl(r.source_url) ? `<a href="${clean(r.source_url)}" target="_blank" rel="noopener noreferrer">Источник ↗</a>` : ''}</article>`).join('')}</div><p class="ca-footnote">Эталоны — предоставленные вами материалы. Их сведения не считаются подтверждёнными автоматически.</p>`;
     } else {

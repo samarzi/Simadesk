@@ -313,6 +313,7 @@ export class MyAnalysisModule {
   ipChooseRun(v: string) { this.ipAudit.setRun(v); this.ipAudit.setSection('results'); }
   ipStart(scope: 'sample' | 'all' | 'new' | 'selected', selection = '') { void this.ipAudit.start(scope, selection); }
   ipResume(id: string) { void this.ipAudit.resume(id); }
+ipDeleteRun(id: string) { void this.ipAudit.deleteRun(id); }
   ipStop() { this.ipAudit.requestStop(); }
   ipSkipCard() { this.ipAudit.skipCurrentCard(); }
   ipToggleStore(id: string) { this.ipAudit.toggleStore(id); }
