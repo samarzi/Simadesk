@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS platform_admins (
 );
 
 ALTER TABLE platform_admins ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "admin reads own row" ON platform_admins;
 CREATE POLICY "admin reads own row" ON platform_admins FOR SELECT USING (auth.uid() = user_id);
 
 -- ── RPC: check if current user is admin ───────────────────────────────────────
