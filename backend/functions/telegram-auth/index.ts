@@ -25,7 +25,7 @@ function aiEndpoint(fallbackKey?: string | null): { url: string; key: string } |
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
 // ── Login Widget verification (SHA-256 of bot token as key) ──────────────────
@@ -1309,6 +1309,47 @@ async function handleSimaMind(req: Request): Promise<Response> {
 }
 
 // ── ai-proxy: ИИ через SIMA Platform ──────────────────────────────────────────
+let modelCatalogCache: { at: number; body: string } | null = null;
+
+async function handleAiModels(req: Request): Promise<Response> {
+  if (req.method !== 'GET') return new Response('Method Not Allowed', { status: 405, headers: corsHeaders });
+  const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+  const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+  const { data: { user }, error } = await admin.auth.getUser(token);
+  if (error || !user) return new Response('{"error":"Нужно войти заново"}', { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  
+  // Кэшируем на 6 часов
+  if (modelCatalogCache && Date.now() - modelCatalogCache.at < 6 * 3600_000)
+    return new Response(modelCatalogCache.body, { headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=300' } });
+
+  const platformUrl = Deno.env.get('SIMA_PLATFORM_URL');
+  const platformKey = Deno.env.get('SIMA_PLATFORM_KEY');
+  
+  if (!platformUrl || !platformKey) {
+    return new Response(JSON.stringify({ error: 'ИИ не настроен на сервере' }), { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  // Пробуем получить каталог через SIMA Platform
+  let response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models?output_modalities=all`, { signal: AbortSignal.timeout(20_000) });
+  if (!response.ok) response = await fetch(`${platformUrl.replace(/\/$/, '')}/api/v1/openrouter/models`, { signal: AbortSignal.timeout(20_000) });
+  
+  if (!response.ok) return new Response(JSON.stringify({ error: `Каталог моделей недоступен (HTTP ${response.status})` }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  
+  const data = await response.json();
+  if (!Array.isArray(data.data)) return new Response('{"error":"Некорректный каталог моделей"}', { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  
+  const models = data.data.map((m: any) => ({
+    id: m.id, name: m.name, description: m.description, context_length: m.context_length,
+    created: m.created, knowledge_cutoff: m.knowledge_cutoff, expiration_date: m.expiration_date,
+    architecture: m.architecture, supported_parameters: m.supported_parameters,
+    top_provider: { max_completion_tokens: m.top_provider?.max_completion_tokens, is_moderated: m.top_provider?.is_moderated },
+  }));
+  
+  const body = JSON.stringify({ data: models });
+  modelCatalogCache = { at: Date.now(), body };
+  return new Response(body, { headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=300' } });
+}
+
 // Браузер присылает тот же запрос, что раньше слал в OpenRouter, но со своим
 // пропуском (JWT) вместо ключа. Ключи OpenRouter живут только в Платформе:
 // она подставляет их, переключается между ними и считает расход.
@@ -1396,6 +1437,15 @@ Deno.serve(async (req: Request) => {
     catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'error';
       return new Response(JSON.stringify({ error: { message } }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+  }
+
+  // Route to ai-models handler (каталог моделей)
+  if (sub === 'ai-models' || path === 'ai-models') {
+    try { return await handleAiModels(req); }
+    catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'error';
+      return new Response(JSON.stringify({ error: message }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
   }
 
